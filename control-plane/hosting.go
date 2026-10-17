@@ -237,6 +237,7 @@ func (s *Server) hostingDomainActions(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/hosting/domains/"), "/"), "/")
 	if len(parts) != 2 || parts[0] == "" { reply(w, 404, map[string]string{"error":"expected /v1/hosting/domains/{slug}/activate or /disable"}); return }
 	slug, action := strings.ToLower(parts[0]), parts[1]
+	if !hostingSlugPattern.MatchString(slug) || isReservedDomainSlug(slug) { reply(w, http.StatusBadRequest, map[string]string{"error":"invalid or reserved domain slug"}); return }
 	if r.Method != http.MethodPost { methodNotAllowed(w); return }
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
