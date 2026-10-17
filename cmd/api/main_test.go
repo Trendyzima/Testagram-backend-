@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 )
 
@@ -222,5 +223,83 @@ func TestAuthenticatedResponsesNeverUseSharedPublicCache(t *testing.T) {
 	}
 	if w.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatalf("unsafe cache header %q", w.Header().Get("Cache-Control"))
+	}
+}
+
+func testMediaSigner(t *testing.T) *media.Signer {
+	t.Helper()
+	signer, err := media.NewSigner(media.Config{
+		Endpoint: "https://media.testagram.site", SigningHost: "object-storage:9000",
+		AccessKey: "test-access", SecretKey: "test-secret", Region: "us-east-1",
+		PrivateBucket: "private-media", PublicBucket: "public-media",
+	})
+	if err != nil { t.Fatal(err) }
+	return signer
+}
+
+func testSupabaseAuthServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/v1/user" { http.NotFound(w, r); return }
+		if r.Header.Get("apikey") != "test-publishable-key" { http.Error(w, "bad key", http.StatusUnauthorized); return }
+		if r.Header.Get("Authorization") != "Bearer valid-session-token" { http.Error(w, "bad token", http.StatusUnauthorized); return }
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{\"id\":\"user-123\"}"))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("SUPABASE_URL", server.URL)
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
+	return server
+}
+
+func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
+	testSupabaseAuthServer(t)
+	s := &service{media: testMediaSigner()}
+	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":100}"))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized { t.Fatalf("status=%d body=%s", w.Code, w.Body.String()) }
+}
+
+func TestMediaUploadIntentReturnsOwnerScopedSignedPolicy(t *testing.T) {
+	upstream := testSupabaseAuthServer(t)
+	s := &service{media: testMediaSigner(), upstream: upstream.Client()}
+	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":1024}"))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer valid-session-token")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusCreated { t.Fatalf("status=%d body=%s", w.Code, w.Body.String()) }
+	var response map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil { t.Fatal(err) }
+	data, ok := response["data"].(map[string]any)
+	if !ok { t.Fatalf("missing data: %+v", response) }
+	fields, ok := data["fields"].(map[string]any)
+	key, _ := data["key"].(string)
+	bucket, _ := data["bucket"].(string)
+	publicURL, _ := data["public_url"].(string)
+	if response["ok"] != true || !ok || bucket != "private-media" || !strings.HasPrefix(key, "users/user-123/") || fields["x-amz-signature"] == "" || publicURL != "" {
+		t.Fatalf("unsafe or incomplete upload intent: %+v", response)
+	}
+}
+
+func TestPrivateMediaDownloadURLEnforcesOwnerPrefix(t *testing.T) {
+	upstream := testSupabaseAuthServer(t)
+	s := &service{media: testMediaSigner(), upstream: upstream.Client()}
+	handler := s.routes()
+	for _, test := range []struct { name, key string; wantStatus int }{
+		{"owner can sign", "users/user-123/0123456789abcdef0123456789abcdef", http.StatusOK},
+		{"other user denied", "users/other-user/0123456789abcdef0123456789abcdef", http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]string{"key": test.key})
+			r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(string(body)))
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("Authorization", "Bearer valid-session-token")
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != test.wantStatus { t.Fatalf("status=%d want=%d body=%s", w.Code, test.wantStatus, w.Body.String()) }
+		})
 	}
 }
