@@ -24,3 +24,17 @@ Take and verify a backup before changing an existing database. The migration is 
 ## Status and boundaries
 
 This service is now packaged in this repository and is included in the optional self-hosted Compose stack. The provider-independent client lives in `internal/platformclient`. Application call sites still need to be migrated to that client and tested before the cache/queue API becomes a critical production dependency. The hosting control-plane OpenAPI file is a cross-repository contract only; this service does not implement domain registration, deployment scheduling, or registrar/DNS writes.
+
+
+## Durable PostgreSQL jobs
+
+Use `/v1/jobs/*` for durable work that must survive Valkey restarts or queue trimming. Jobs are stored in PostgreSQL and support bounded retries, delayed availability, idempotency keys, worker leases, and a terminal `dead` state. Endpoints require the internal bearer token:
+
+- `POST /v1/jobs/enqueue`: `queue`, JSON-object `payload`, optional `idempotency_key`, `max_attempts` (1–20; default 8), and `delay_seconds` (0–604800).
+- `POST /v1/jobs/claim`: `queue`, `worker`, optional `count` (1–25) and `lease_seconds` (5–3600). Claims use row locks with `SKIP LOCKED`.
+- `POST /v1/jobs/ack`: `id` and the same `worker` value to acknowledge only a lease owned by that worker.
+- `POST /v1/jobs/fail`: `id`, `worker`, bounded `error`, and optional `retry_after_seconds`. Retries stop at the configured attempt limit.
+
+Delivery is **at least once**. A worker can finish a job and crash before acknowledging it, so handlers must be idempotent and should use a business-level idempotency key for side effects. A lease expiry allows another worker to retry; it does not prove that the previous worker stopped. Keep lease durations above normal processing time or implement lease renewal before running long media transcodes. Never put credentials or raw private user content in job payloads unless retention, access and redaction policies explicitly allow it.
+
+The migration `005_durable_jobs.sql` is mounted for fresh databases only. Existing volumes must be backed up and the migration applied manually after staging validation. The older Valkey Streams endpoints remain available for ephemeral/high-throughput work; use PostgreSQL jobs when losing a queued item is unacceptable. This is a queue API foundation, not yet a deployed feed/media worker fleet.
