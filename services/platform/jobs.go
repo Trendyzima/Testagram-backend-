@@ -85,7 +85,7 @@ func (s *server) jobClaim(w http.ResponseWriter, r *http.Request) {
 		" select id from testagram_platform.jobs "+
 		" where queue=$1 and attempts < max_attempts and run_after <= now() and "+
 		" (status='queued' or (status='running' and locked_at < now()-($3 * interval '1 second'))) "+
-		" order by run_after,created_at for update skip locked limit $4"+
+		" order by run_after,created_at limit $4 for update skip locked"+
 		") update testagram_platform.jobs j set status='running', attempts=j.attempts+1,"+
 		" locked_by=$2,locked_at=now(),updated_at=now() from candidates c where j.id=c.id "+
 		" returning j.id::text,j.queue,j.payload,j.attempts,j.max_attempts,j.locked_by",
