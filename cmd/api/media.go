@@ -1,12 +1,12 @@
 package main
 
 import (
-	"crypto/subtle"
-	"log"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -167,6 +167,19 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	var body privateMediaDownloadRequest
 	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
+		return
+	}
+	var visibility, assetStatus string
+	if err := s.db.QueryRow(r.Context(), `select visibility, status from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus); err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
+		return
+	}
+	if visibility != "private" || assetStatus != "ready" {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
 	}
 	signedURL, err := s.media.PresignPrivateDownload(userID, body.Key, 5*time.Minute, time.Now())
@@ -591,9 +604,14 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	}
 	intentRows.Close()
 	for _, item := range intents {
-		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
-			where object_key=$1 and status in ('issued','cleanup_pending')`, item.key); err != nil {
+		tag, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
+			where object_key=$1 and status in ('issued','cleanup_pending')`, item.key)
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() == 0 {
+			// Completion/cancellation may have won the race after selection.
+			continue
 		}
 		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
 			continue
