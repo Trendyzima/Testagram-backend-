@@ -109,7 +109,7 @@ paths:
     get:
       security: []
       summary: Private Caddy on-demand TLS authorization callback
-      description: Only returns success for an active, DNS-verified subdomain whose target remains allowlisted. Must remain private to the service network.
+      description: Only returns success for an active subdomain whose DNS still resolves to TESTAGRAM_PUBLIC_ORIGIN_IP and whose target remains allowlisted. Must remain private to the service network.
       parameters:
         - in: query
           name: domain
