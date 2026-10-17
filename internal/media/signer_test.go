@@ -1,6 +1,8 @@
 package media
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"strings"
 	"testing"
@@ -48,6 +50,27 @@ func TestUploadIntentSignsOwnerScopedPUTURL(t *testing.T) {
 	}
 	if q.Get("X-Amz-Expires") != "600" {
 		t.Fatalf("unexpected upload expiry: %v", q)
+	}
+}
+
+func TestUploadIntentPUTSignatureMatchesCanonicalRequest(t *testing.T) {
+	signer := testSigner(t, "https://media.example.test")
+	now := time.Date(2026, 10, 17, 12, 30, 0, 0, time.UTC)
+	intent, err := signer.CreateUploadIntent("user-123", "image/webp", "private", 1024, now)
+	if err != nil { t.Fatal(err) }
+	u, err := url.Parse(intent.URL)
+	if err != nil { t.Fatal(err) }
+	q := u.Query()
+	gotSignature := q.Get("X-Amz-Signature")
+	q.Del("X-Amz-Signature")
+	scope := q.Get("X-Amz-Date")[:8] + "/" + signer.region + "/s3/aws4_request"
+	canonicalHeaders := "content-type:image/webp\n" + "host:" + signer.signingHost
+	canonicalRequest := strings.Join([]string{"PUT", u.EscapedPath(), q.Encode(), canonicalHeaders, "content-type;host", "UNSIGNED-PAYLOAD"}, "\n")
+	requestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\n" + q.Get("X-Amz-Date") + "\n" + scope + "\n" + hex.EncodeToString(requestHash[:])
+	wantSignature := hex.EncodeToString(hmacSHA256(signingKey(signer.secretKey, q.Get("X-Amz-Date")[:8], signer.region), []byte(stringToSign)))
+	if gotSignature != wantSignature {
+		t.Fatalf("PUT signature mismatch: got %q want %q", gotSignature, wantSignature)
 	}
 }
 
