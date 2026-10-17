@@ -404,3 +404,37 @@ func TestEnsureProductMediaRecordCreatesServerSideRecord(t *testing.T) {
 		t.Fatalf("external media ID=%q", got)
 	}
 }
+
+
+func TestUserOwnsProductPostUsesAuthenticatedPostgRESTContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/rest/v1/posts" {
+			t.Errorf("unexpected PostgREST request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer user-session-token" || r.Header.Get("apikey") != "publishable-key" {
+			t.Errorf("post ownership lookup did not use the caller session")
+		}
+		if r.URL.Query().Get("id") != "eq.post-123" {
+			t.Errorf("post filter=%q", r.URL.Query().Get("id"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"post-123","author_id":"user-123","user_id":"someone-else"}]`))
+	}))
+	defer server.Close()
+	t.Setenv("SUPABASE_URL", server.URL)
+	s := &service{upstream: server.Client()}
+	owned, err := s.userOwnsProductPost(context.Background(), "Bearer user-session-token", "publishable-key", "user-123", "post-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned {
+		t.Fatal("expected the authenticated post author to be allowed")
+	}
+	owned, err = s.userOwnsProductPost(context.Background(), "Bearer user-session-token", "publishable-key", "other-user", "post-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned {
+		t.Fatal("post must not be attachable by a non-owner")
+	}
+}
