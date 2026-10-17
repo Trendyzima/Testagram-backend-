@@ -17,8 +17,7 @@ Persistent data lives in local Docker volumes.
 
 ## Current boundaries — read before production use
 
-- Valkey is provisioned but the current Go gateway does not yet consume it.
-  Cache, queue, session, and rate-limit features are not automatically active.
+- Valkey is used by the private platform service for cache, queues and rate limiting. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
 - MinIO provisions separate private and public media buckets. Only objects intentionally
   uploaded to the public-media bucket are anonymously downloadable; the private
   bucket remains private. The current gateway does not yet upload media to MinIO
