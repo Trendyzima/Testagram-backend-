@@ -164,4 +164,3 @@ func strconvFormatInt(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
 
-var _ = media.UploadIntent{}
