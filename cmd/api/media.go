@@ -733,7 +733,7 @@ func publicMediaURL(key string) string {
 		return ""
 	}
 	key = strings.TrimLeft(key, "/")
-	if key == "" || strings.Contains(key, "..") || strings.ContainsAny(key, "\\r\\n\\x00") {
+	if key == "" || strings.Contains(key, "..") || strings.ContainsAny(key, "\r\n\x00") {
 		return ""
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/" + key
