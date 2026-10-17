@@ -108,6 +108,10 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+	if body.Visibility == "public" && body.SizeBytes > maxProductPostMediaBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_SIZE_NOT_SUPPORTED", "Public product media must not exceed 20 MiB", id))
+		return
+	}
 	body.Name, err = sanitizeOriginalName(body.Name)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer and contain no line breaks", id))
@@ -557,6 +561,15 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, errorBody("MEDIA_NOT_ATTACHABLE", "Only ready public media can be attached to a post", id))
 		return
 	}
+	mediaType, supported := productPostMediaType(contentType)
+	if !supported {
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_TYPE_NOT_ATTACHABLE", "Posts currently support image and video media only", id))
+		return
+	}
+	if sizeBytes < 1 || sizeBytes > maxProductPostMediaBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_SIZE_NOT_ATTACHABLE", "Post media must be between 1 byte and 20 MiB", id))
+		return
+	}
 	publicURL := publicMediaURL(body.Key)
 	if publicURL == "" {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
@@ -586,17 +599,28 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not commit media attachment", id))
 		return
 	}
-	mediaType := "file"
-	if strings.HasPrefix(contentType, "image/") {
-		mediaType = "image"
-	} else if strings.HasPrefix(contentType, "video/") {
-		mediaType = "video"
-	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{
 		"key": body.Key, "post_id": body.PostID, "public_url": publicURL,
 		"size_bytes": sizeBytes, "content_type": contentType, "media_type": mediaType,
 		"status": "uploaded", "external_media_id": externalID,
 	}, "error": nil, "request_id": id})
+}
+
+const maxProductPostMediaBytes int64 = 20 << 20
+
+// productPostMediaType maps upload MIME types to values accepted by the
+// product database's post_media.media_type constraint. Files may be stored as
+// private media, but unsupported document types must not reach the post bridge.
+func productPostMediaType(contentType string) (string, bool) {
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch {
+	case strings.HasPrefix(contentType, "image/"):
+		return "image", true
+	case strings.HasPrefix(contentType, "video/"):
+		return "video", true
+	default:
+		return "", false
+	}
 }
 
 func publicMediaURL(key string) string {
@@ -664,11 +688,12 @@ func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, owne
 	if knownID != "" {
 		return "", errors.New("local product media reference is missing remotely")
 	}
-	mediaType := "file"
-	if strings.HasPrefix(contentType, "image/") {
-		mediaType = "image"
-	} else if strings.HasPrefix(contentType, "video/") {
-		mediaType = "video"
+	mediaType, supported := productPostMediaType(contentType)
+	if !supported {
+		return "", errors.New("unsupported product post media type")
+	}
+	if sizeBytes < 1 || sizeBytes > maxProductPostMediaBytes {
+		return "", errors.New("product post media size is outside the 1-byte to 20-MiB limit")
 	}
 	payload := map[string]any{
 		"owner_id": ownerID, "post_id": nil, "thread_id": nil,
@@ -751,15 +776,14 @@ func (s *service) attachProductMediaToPost(ctx context.Context, serviceKey, owne
 	if len(last) > 0 {
 		sortOrder = last[0].SortOrder + 1
 	}
+	mediaType, supported := productPostMediaType(contentType)
+	if !supported || sizeBytes < 1 || sizeBytes > maxProductPostMediaBytes {
+		return errors.New("unsupported product post media type or size")
+	}
 	join := map[string]any{
 		"post_id": postID, "owner_id": ownerID, "media_url": publicURL,
-		"media_type": "file", "mime_type": contentType, "byte_size": sizeBytes,
+		"media_type": mediaType, "mime_type": contentType, "byte_size": sizeBytes,
 		"media_asset_id": externalID, "sort_order": sortOrder,
-	}
-	if strings.HasPrefix(contentType, "image/") {
-		join["media_type"] = "image"
-	} else if strings.HasPrefix(contentType, "video/") {
-		join["media_type"] = "video"
 	}
 	_, status, err = s.supabaseREST(ctx, http.MethodPost, "post_media", url.Values{}, serviceKey, serviceKey, join, "return=minimal")
 	if err != nil || status < 200 || status >= 300 {

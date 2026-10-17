@@ -462,3 +462,31 @@ func TestSanitizeOriginalName(t *testing.T) {
 		}
 	}
 }
+
+func TestProductPostMediaTypeMatchesDatabaseConstraint(t *testing.T) {
+	cases := []struct {
+		contentType string
+		want        string
+		ok          bool
+	}{
+		{contentType: "image/jpeg", want: "image", ok: true},
+		{contentType: "image/gif; charset=binary", want: "image", ok: true},
+		{contentType: "video/mp4", want: "video", ok: true},
+		{contentType: "audio/ogg", ok: false},
+		{contentType: "application/pdf", ok: false},
+		{contentType: "application/octet-stream", ok: false},
+		{contentType: "", ok: false},
+	}
+	for _, tc := range cases {
+		got, ok := productPostMediaType(tc.contentType)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("productPostMediaType(%q) = (%q, %v), want (%q, %v)", tc.contentType, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestProductPostMediaSizeMatchesDatabaseConstraint(t *testing.T) {
+	if maxProductPostMediaBytes != 20<<20 {
+		t.Fatalf("max product post media bytes=%d, want %d", maxProductPostMediaBytes, 20<<20)
+	}
+}
