@@ -40,6 +40,18 @@ Requirements: Go 1.23+, Docker Compose.
 
 The local database is for development only and is not automatically wired to the live Supabase project. Do not put production credentials in this repository or in .env.example.
 
+## Testagram platform core
+
+The optional self-hosted stack now includes a private platform service for Valkey-backed cache, atomic rate limiting, Redis Streams queues, PostgreSQL-backed feature configuration, events and audit records. It is available only on the internal Docker network at `platform:8095`; do not publish this port.
+
+- [Service catalogue](docs/platform/service-catalog.md)
+- [Internal platform API contract](docs/platform/openapi/internal-platform.yaml)
+- [Hosting control-plane contract (separate service; not yet packaged here)](docs/platform/openapi/hosting-control-plane.yaml)
+- [Platform client](internal/platformclient)
+- [Operations and readiness gates](docs/platform/self-sustaining-operations.md)
+
+The platform internal token is required in `deploy/self-hosted/.env`. On a new PostgreSQL volume the platform schema is initialized automatically; for an existing volume, follow [the migration instructions](services/platform/README.md). The API gateway does not yet consume the new client, and this is not a claim that production traffic has migrated.
+
 ## Local-first self-hosted deployment
 
 For the owned-hardware deployment path, see [deploy/self-hosted](deploy/self-hosted/README.md).
