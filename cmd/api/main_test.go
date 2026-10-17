@@ -435,3 +435,30 @@ func TestUserOwnsProductPostUsesAuthenticatedPostgRESTContext(t *testing.T) {
 		t.Fatal("post must not be attachable by a non-owner")
 	}
 }
+
+func TestSanitizeOriginalName(t *testing.T) {
+	cases := []struct {
+		name string
+		want string
+		bad  bool
+	}{
+		{name: "folder/render.png", want: "render.png"},
+		{name: "  photo.webp  ", want: "photo.webp"},
+		{name: "", want: "upload"},
+		{name: "../", bad: true},
+		{name: "bad\\nname.jpg", bad: true},
+		{name: "bad\\x00name.jpg", bad: true},
+	}
+	for _, tc := range cases {
+		got, err := sanitizeOriginalName(tc.name)
+		if tc.bad {
+			if err == nil {
+				t.Errorf("sanitizeOriginalName(%q) = %q, want error", tc.name, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("sanitizeOriginalName(%q) = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+}
