@@ -9,15 +9,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 const maxMediaIntentBody = 16 << 10
 
 type mediaUploadIntentRequest struct {
 	ContentType string `json:"content_type"`
-	Visibility string `json:"visibility"`
-	SizeBytes int64 `json:"size_bytes"`
+	Visibility  string `json:"visibility"`
+	SizeBytes   int64  `json:"size_bytes"`
 }
 
 type privateMediaDownloadRequest struct {
@@ -66,7 +65,9 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		}
 		if !result.Allowed {
 			retryAfter := result.RetryAfterSeconds
-			if retryAfter < 1 { retryAfter = 1 }
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
 			w.Header().Set("Retry-After", strconvFormatInt(retryAfter))
 			writeJSON(w, http.StatusTooManyRequests, errorBody("MEDIA_RATE_LIMITED", "Too many upload intents; try again later", id))
 			return
@@ -116,10 +117,14 @@ func decodeMediaJSON(w http.ResponseWriter, r *http.Request, destination any) er
 	r.Body = http.MaxBytesReader(w, r.Body, maxMediaIntentBody)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil { return err }
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil { return errors.New("multiple JSON values") }
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
 		return err
 	}
 	return nil
@@ -138,14 +143,20 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/auth/v1/user", nil)
-	if err != nil { return "", http.StatusBadGateway, err }
+	if err != nil {
+		return "", http.StatusBadGateway, err
+	}
 	req.Header.Set("apikey", apiKey)
 	req.Header.Set("Authorization", authorization)
 	req.Header.Set("Accept", "application/json")
 	client := s.upstream
-	if client == nil { client = &http.Client{Timeout: 3 * time.Second} }
+	if client == nil {
+		client = &http.Client{Timeout: 3 * time.Second}
+	}
 	resp, err := client.Do(req)
-	if err != nil { return "", http.StatusBadGateway, err }
+	if err != nil {
+		return "", http.StatusBadGateway, err
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", http.StatusUnauthorized, errors.New("session rejected")
@@ -153,7 +164,9 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", http.StatusBadGateway, errors.New("authentication service failed")
 	}
-	var user struct { ID string `json:"id"` }
+	var user struct {
+		ID string `json:"id"`
+	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&user); err != nil || user.ID == "" {
 		return "", http.StatusBadGateway, errors.New("authentication service returned invalid user")
 	}
