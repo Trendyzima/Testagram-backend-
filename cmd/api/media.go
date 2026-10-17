@@ -506,7 +506,9 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A media key and valid post ID are required", id))
 		return
 	}
-	owned, err := s.userOwnsProductPost(r.Context(), r.Header.Get("Authorization"), publishableKey, userID, body.PostID)
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	owned, err := s.userOwnsProductPost(ctx, r.Header.Get("Authorization"), publishableKey, userID, body.PostID)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("POST_OWNERSHIP_CHECK_FAILED", "Could not verify post ownership", id))
 		return
@@ -515,10 +517,19 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "Post was not found for this account", id))
 		return
 	}
+
+	// Hold a short row lock while syncing the remote join. Delete/quarantine
+	// transitions cannot race through the middle and resurrect a deleted join.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not begin media attachment", id))
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	var visibility, contentType, assetStatus, externalID string
 	var sizeBytes int64
-	err = s.db.QueryRow(r.Context(), `select visibility, content_type, size_bytes, status, coalesce(external_media_id::text,'')
-		from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).
+	err = tx.QueryRow(ctx, `select visibility, content_type, size_bytes, status, coalesce(external_media_id::text,'')
+		from testagram_media.assets where object_key=$1 and owner_id=$2 for update`, body.Key, userID).
 		Scan(&visibility, &contentType, &sizeBytes, &assetStatus, &externalID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
@@ -533,14 +544,12 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
 	externalID, err = s.ensureProductMediaRecord(ctx, serviceKey, userID, body.Key, contentType, sizeBytes, publicURL, externalID)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_PRODUCT_SYNC_FAILED", "Could not synchronize media metadata with the product data plane", id))
 		return
 	}
-	tag, err := s.db.Exec(ctx, `update testagram_media.assets set external_media_id=$3, updated_at=now()
+	tag, err := tx.Exec(ctx, `update testagram_media.assets set external_media_id=$3, updated_at=now()
 		where object_key=$1 and owner_id=$2 and status='ready'
 		and (external_media_id is null or external_media_id=$3::uuid)`, body.Key, userID, externalID)
 	if err != nil {
@@ -553,6 +562,10 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.attachProductMediaToPost(ctx, serviceKey, userID, body.PostID, externalID, body.Key, contentType, sizeBytes, publicURL); err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_POST_LINK_FAILED", "Media was registered but could not be linked to the post; retry is safe", id))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not commit media attachment", id))
 		return
 	}
 	mediaType := "file"
