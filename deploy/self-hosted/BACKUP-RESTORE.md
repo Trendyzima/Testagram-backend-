@@ -61,6 +61,24 @@ Do not reuse MinIO root credentials for an off-host backup destination.
 
 ## Restore drill (never experiment on production)
 
+From the repository root, the automated database restore check is:
+
+```sh
+./scripts/self-hosted-restore-drill.sh
+```
+
+It restores the latest `testagram` snapshot to a private temporary directory,
+starts a disposable PostgreSQL container with `--network none` and no published
+ports, restores the dump into that database, and checks that application tables
+exist. It reports the number of recovered private/public media files and
+securely removes its temporary directory, container, and volume on exit. The
+operator must have enough free disk space for a full temporary snapshot restore
+and Docker volume for the restored database.
+
+This automated check does **not** restore media files into a running MinIO
+instance, test public/private URLs, or measure production traffic recovery. Use
+the full manual drill below before cutover and periodically thereafter.
+
 1. Provision a clean, isolated recovery host and install compatible Docker,
    PostgreSQL client tools, MinIO client, and restic.
 2. Configure `RESTIC_REPOSITORY` and `RESTIC_PASSWORD_FILE` for the backup
