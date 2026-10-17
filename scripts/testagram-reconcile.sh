@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
-log(){ printf 'testagram-reconcile: %s\n' "$*" >&2; command -v logger >/dev/null 2>&1 && logger -t testagram-reconcile -- "$*" || true; }
+log() {
+  printf 'testagram-reconcile: %s\n' "$*" >&2
+  if command -v logger >/dev/null 2>&1; then
+    logger -t testagram-reconcile -- "$*" || true
+  fi
+}
 die(){ log "ERROR: $*"; exit 1; }
 compose_dir="${TESTAGRAM_COMPOSE_DIR:-/opt/testagram/deploy/self-hosted}"
 state_dir="${TESTAGRAM_RECONCILE_STATE_DIR:-/var/lib/testagram-reconcile}"
