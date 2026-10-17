@@ -15,6 +15,11 @@ on:
     branches: [main]
     paths:
       - "deploy/self-hosted/**"
+      - "services/platform/**"
+      - "internal/platformclient/**"
+      - "migrations/**"
+      - "docs/platform/**"
+      - "scripts/validate-platform-openapi.py"
       - ".github/workflows/self-hosted-stack.yml"
 
 permissions:
