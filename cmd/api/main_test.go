@@ -42,3 +42,62 @@ func TestMetricsCountsRequests(t *testing.T) {
 		t.Fatalf("metrics did not report request count: %q", w.Body.String())
 	}
 }
+
+
+func TestCapabilityRequiresBearerForPrivateCalls(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "https://supabase.example")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "public-test-key")
+	s := &service{}
+	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("private capability status = %d, want %d: %s", w.Code, http.StatusUnauthorized, w.Body.String())
+	}
+}
+
+func TestCapabilityGatewayForwardsUserJWTAndPayload(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
+	var sawAuth, sawAPIKey, sawPayload bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuth = r.Header.Get("Authorization") == "Bearer user-session-token"
+		sawAPIKey = r.Header.Get("apikey") == "test-publishable-key"
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		sawPayload = body["p_capability"] == "testagram.posts.create"
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"post_id":"post-123","created":true}`))
+	}))
+	defer upstream.Close()
+	t.Setenv("SUPABASE_URL", upstream.URL)
+
+	s := &service{upstream: upstream.Client()}
+	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer user-session-token")
+	r.Header.Set("Origin", "https://testagram.site")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("gateway status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !sawAuth || !sawAPIKey || !sawPayload {
+		t.Fatalf("gateway did not forward contract: auth=%v apikey=%v payload=%v", sawAuth, sawAPIKey, sawPayload)
+	}
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://testagram.site" {
+		t.Fatalf("unexpected CORS origin: %q", w.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.health.read","input":{}}`))
+	r.Header.Set("Origin", "https://evil.example")
+	w := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("untrusted origin status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
