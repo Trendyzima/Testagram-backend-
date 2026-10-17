@@ -39,7 +39,7 @@ func (c *Client) Claim(ctx context.Context, queue, group, consumer string, count
 
 // Reclaim returns pending messages that have been idle long enough to indicate
 // that their previous consumer may have crashed. Re-delivery is expected.
-func (c *Client) Reclaim(ctx context.Context, queue, group, consumer string, minIdle time.Duration, count int64) ([]QueueMessage, string, error) {
+func (c *Client) Reclaim(ctx context.Context, queue, group, consumer string, minIdle time.Duration, count int64, start string) ([]QueueMessage, string, error) {
 	if queue == "" || group == "" || consumer == "" {
 		return nil, "", errors.New("queue, group and consumer are required")
 	}
@@ -56,6 +56,9 @@ func (c *Client) Reclaim(ctx context.Context, queue, group, consumer string, min
 	q.Set("consumer", consumer)
 	q.Set("min_idle_ms", strconv.FormatInt(idleMS, 10))
 	q.Set("count", strconv.FormatInt(count, 10))
+	if start != "" {
+		q.Set("start", start)
+	}
 	var result queueMessagesResponse
 	err := c.do(ctx, http.MethodGet, "/v1/queue/reclaim?"+q.Encode(), nil, &result)
 	return result.Messages, result.NextStart, err
