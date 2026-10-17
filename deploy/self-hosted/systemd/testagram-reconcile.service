@@ -1,0 +1,20 @@
+[Unit]
+Description=Testagram self-healing Compose reconciliation
+Documentation=https://github.com/Trendyzima/Testagram-backend-/blob/main/deploy/self-hosted/AUTONOMY.md
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/testagram-reconcile
+ExecStart=/usr/local/sbin/testagram-reconcile
+TimeoutStartSec=5min
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/run/lock /var/lib/testagram-reconcile
