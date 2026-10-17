@@ -1,6 +1,9 @@
 {
   email {$ACME_EMAIL}
   admin off
+  on_demand_tls {
+    ask http://control-plane:8787/v1/hosting/tls/authorize
+  }
 }
 {$API_DOMAIN} {
   encode zstd gzip
@@ -21,4 +24,20 @@
     -Server
   }
   reverse_proxy media-cache:8081
+}
+
+# Tenant subdomains fall through to the private hosting control plane.
+# On-demand TLS is guarded by the control-plane callback, which only permits
+# DNS-verified and activated hostnames. Named API/media sites above stay specific.
+:443 {
+  tls {
+    on_demand
+  }
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    -Server
+  }
+  reverse_proxy control-plane:8787
 }
