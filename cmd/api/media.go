@@ -235,12 +235,12 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
-	var intentOwner, intentVisibility, intentType, intentStatus string
+	var intentOwner, intentVisibility, intentType, intentName, intentStatus string
 	var intentMaxBytes int64
 	var intentExpires time.Time
-	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, max_bytes, expires_at, status
+	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
-		Scan(&intentOwner, &intentVisibility, &intentType, &intentMaxBytes, &intentExpires, &intentStatus)
+		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus)
 	if err != nil || intentOwner != userID || intentVisibility != body.Visibility || intentType != body.ContentType ||
 		(time.Now().After(intentExpires) && intentStatus != "completed") || (intentStatus != "issued" && intentStatus != "completed") {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not match this account and object", id))
@@ -289,17 +289,17 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	etag := strings.Trim(resp.Header.Get("ETag"), "\"")
 	var asset mediaAsset
 	err = s.db.QueryRow(ctx, `insert into testagram_media.assets
-		(object_key, owner_id, visibility, content_type, size_bytes, etag, status)
-		values ($1,$2,$3,$4,$5,$6,'ready')
+		(object_key, owner_id, visibility, content_type, original_name, size_bytes, etag, status)
+		values ($1,$2,$3,$4,$5,$6,$7,'ready')
 		on conflict (object_key) do nothing
-		returning object_key, visibility, content_type, size_bytes, etag, status, created_at`,
-		body.Key, userID, body.Visibility, actualType, size, etag).
-		Scan(&asset.Key, &asset.Visibility, &asset.ContentType, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
+		returning object_key, visibility, content_type, original_name, size_bytes, etag, status, created_at`,
+		body.Key, userID, body.Visibility, actualType, intentName, size, etag).
+		Scan(&asset.Key, &asset.Visibility, &asset.ContentType, &asset.OriginalName, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
 	if err != nil {
 		var ownerID string
-		err = s.db.QueryRow(ctx, `select object_key, owner_id, visibility, content_type, size_bytes, etag, status, created_at
+		err = s.db.QueryRow(ctx, `select object_key, owner_id, visibility, content_type, original_name, size_bytes, etag, status, created_at
 			from testagram_media.assets where object_key=$1`, body.Key).
-			Scan(&asset.Key, &ownerID, &asset.Visibility, &asset.ContentType, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
+			Scan(&asset.Key, &ownerID, &asset.Visibility, &asset.ContentType, &asset.OriginalName, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not persist media metadata", id))
 			return
