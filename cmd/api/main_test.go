@@ -307,7 +307,6 @@ func TestPrivateMediaDownloadURLFailsClosedWithoutMetadataDatabase(t *testing.T)
 	}
 }
 
-
 func TestMediaQuarantineRequiresOperatorToken(t *testing.T) {
 	t.Setenv("MEDIA_MODERATION_TOKEN", "")
 	r := httptest.NewRequest(http.MethodPost, "/internal/media/quarantine", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef","reason":"policy violation"}`))
