@@ -6,59 +6,79 @@ command -v docker >/dev/null
 command -v sha256sum >/dev/null
 docker compose config --quiet
 
-# Fail before dumping data if the off-host destination is not configured.
-docker compose run --rm --no-deps --entrypoint /bin/sh object-init -ec '
-  : "${BACKUP_S3_ENDPOINT:?Set BACKUP_S3_ENDPOINT in deploy/self-hosted/.env}"
-  : "${BACKUP_S3_ACCESS_KEY:?Set BACKUP_S3_ACCESS_KEY in deploy/self-hosted/.env}"
-  : "${BACKUP_S3_SECRET_KEY:?Set BACKUP_S3_SECRET_KEY in deploy/self-hosted/.env}"
-  : "${BACKUP_S3_BUCKET:?Set BACKUP_S3_BUCKET in deploy/self-hosted/.env}"
-'
+compose_env() {
+  local key="$1"
+  docker compose config --environment | awk -v key="$key" 'index($0,key"=")==1 { print substr($0,length(key)+2); found=1; exit } END { if (!found) exit 1 }'
+}
+repository="$(compose_env BACKUP_RESTIC_REPOSITORY)"
+restic_password="$(compose_env BACKUP_RESTIC_PASSWORD)"
+s3_access_key="$(compose_env BACKUP_S3_ACCESS_KEY)"
+s3_secret_key="$(compose_env BACKUP_S3_SECRET_KEY)"
+if [[ "$repository" != s3:https://* ]]; then
+  echo "BACKUP_RESTIC_REPOSITORY must use an HTTPS S3-compatible endpoint." >&2
+  exit 2
+fi
+if [[ -z "$restic_password" || -z "$s3_access_key" || -z "$s3_secret_key" ]]; then
+  echo "Set BACKUP_RESTIC_PASSWORD, BACKUP_S3_ACCESS_KEY and BACKUP_S3_SECRET_KEY in .env." >&2
+  exit 2
+fi
 
 docker compose exec -T postgres pg_isready -q
-BACKUP_ID="${BACKUP_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
-if [[ ! "$BACKUP_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+backup_id="${BACKUP_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+if [[ ! "$backup_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
   echo "BACKUP_ID contains unsupported characters." >&2
   exit 2
 fi
-export BACKUP_ID
-export BACKUP_CREATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
+created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 tmpdir="$(mktemp -d)"
 chmod 700 "$tmpdir"
+mkdir -m 700 "$tmpdir/staging"
+printf '%s' "$restic_password" > "$tmpdir/restic-password"
+chmod 600 "$tmpdir/restic-password"
 trap 'rm -rf "$tmpdir"' EXIT
 
-docker compose exec -T postgres sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$tmpdir/postgres.dump"
-test -s "$tmpdir/postgres.dump"
-(
-  cd "$tmpdir"
-  sha256sum postgres.dump > SHA256SUMS
-)
-export BACKUP_POSTGRES_SHA256="$(awk '{print $1}' "$tmpdir/SHA256SUMS")"
-export BACKUP_POSTGRES_BYTES="$(wc -c < "$tmpdir/postgres.dump" | tr -d ' ')"
-printf '%s\n' "$BACKUP_ID" > "$tmpdir/SNAPSHOT.txt"
+docker compose exec -T postgres sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$tmpdir/staging/postgres.dump"
+test -s "$tmpdir/staging/postgres.dump"
 
 docker compose run --rm --no-deps \
-  --volume "$tmpdir:/backup" \
+  --volume "$tmpdir/staging:/backup" \
   --entrypoint /bin/sh object-init -ec '
-    : "${BACKUP_S3_ENDPOINT:?}"
-    : "${BACKUP_S3_ACCESS_KEY:?}"
-    : "${BACKUP_S3_SECRET_KEY:?}"
-    : "${BACKUP_S3_BUCKET:?}"
     mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" --api S3v4
-    mc alias set backup "$BACKUP_S3_ENDPOINT" "$BACKUP_S3_ACCESS_KEY" "$BACKUP_S3_SECRET_KEY" --api S3v4
-    mc mb --ignore-existing "backup/$BACKUP_S3_BUCKET"
-    mkdir -p /backup
-    printf "{\"backupId\":\"%s\",\"createdAt\":\"%s\",\"postgresSha256\":\"%s\",\"postgresBytes\":%s,\"privateBucket\":\"%s\",\"publicBucket\":\"%s\"}\n" \
-      "$BACKUP_ID" "$BACKUP_CREATED_AT" "$BACKUP_POSTGRES_SHA256" "$BACKUP_POSTGRES_BYTES" "$MINIO_BUCKET" "$PUBLIC_MEDIA_BUCKET" > /backup/manifest.json
-    mc cp /backup/postgres.dump "backup/$BACKUP_S3_BUCKET/$BACKUP_ID/postgres.dump"
-    mc cp /backup/SHA256SUMS "backup/$BACKUP_S3_BUCKET/$BACKUP_ID/SHA256SUMS"
-    mc cp /backup/manifest.json "backup/$BACKUP_S3_BUCKET/$BACKUP_ID/manifest.json"
-    mc mirror --overwrite "local/$MINIO_BUCKET" "backup/$BACKUP_S3_BUCKET/$BACKUP_ID/private-media"
-    mc cp /backup/SNAPSHOT.txt "backup/$BACKUP_S3_BUCKET/$BACKUP_ID/private-media/SNAPSHOT.txt"
-    mc mirror --overwrite "local/$PUBLIC_MEDIA_BUCKET" "backup/$BACKUP_S3_BUCKET/$BACKUP_ID/public-media"
-    mc cp /backup/SNAPSHOT.txt "backup/$BACKUP_S3_BUCKET/$BACKUP_ID/public-media/SNAPSHOT.txt"
+    mkdir -p /backup/private-media /backup/public-media
+    mc mirror --overwrite "local/$MINIO_BUCKET" /backup/private-media
+    mc mirror --overwrite "local/$PUBLIC_MEDIA_BUCKET" /backup/public-media
   '
 
-printf 'Backup uploaded: %s\n' "$BACKUP_ID"
-printf 'Database archive SHA-256: %s\n' "$BACKUP_POSTGRES_SHA256"
-printf 'Destination: configured off-host S3-compatible backup bucket (credentials hidden).\n'
+(
+  cd "$tmpdir/staging"
+  sha256sum postgres.dump > SHA256SUMS
+)
+postgres_sha="$(awk '{print $1}' "$tmpdir/staging/SHA256SUMS")"
+postgres_bytes="$(wc -c < "$tmpdir/staging/postgres.dump" | tr -d ' ')"
+private_objects="$(find "$tmpdir/staging/private-media" -type f | wc -l | tr -d ' ')"
+public_objects="$(find "$tmpdir/staging/public-media" -type f | wc -l | tr -d ' ')"
+printf '{"backupId":"%s","createdAt":"%s","postgresSha256":"%s","postgresBytes":%s,"privateObjectFiles":%s,"publicObjectFiles":%s}\n' \
+  "$backup_id" "$created_at" "$postgres_sha" "$postgres_bytes" "$private_objects" "$public_objects" > "$tmpdir/staging/manifest.json"
+
+restic_run() {
+  docker run --rm \
+    --volume "$tmpdir/staging:/data:ro" \
+    --volume "$tmpdir/restic-password:/run/secrets/restic-password:ro" \
+    --env RESTIC_REPOSITORY="$repository" \
+    --env RESTIC_PASSWORD_FILE=/run/secrets/restic-password \
+    --env AWS_ACCESS_KEY_ID="$s3_access_key" \
+    --env AWS_SECRET_ACCESS_KEY="$s3_secret_key" \
+    --env AWS_DEFAULT_REGION=us-east-1 \
+    --env AWS_S3_FORCE_PATH_STYLE=true \
+    restic/restic:0.18.1 "$@"
+}
+if ! restic_run snapshots --json >/dev/null 2>&1; then
+  restic_run init
+fi
+restic_run backup /data --tag testagram --tag "$backup_id"
+restic_run check
+
+printf 'Encrypted off-host backup created: %s\n' "$backup_id"
+printf 'PostgreSQL archive SHA-256: %s\n' "$postgres_sha"
+printf 'Files staged from private/public media buckets: %s/%s\n' "$private_objects" "$public_objects"
+printf 'Restic repository: configured HTTPS S3-compatible destination (credentials hidden).\n'
