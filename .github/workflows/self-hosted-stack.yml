@@ -8,6 +8,7 @@ on:
       - "services/platform/**"
       - "cmd/api/**"
       - "control-plane/**"
+      - "node-agent/**"
       - "internal/crypto/**"
       - "internal/platformclient/**"
       - "migrations/**"
