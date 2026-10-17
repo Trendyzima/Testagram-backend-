@@ -170,7 +170,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [api, media-cache]
+    depends_on: [api, media-cache, control-plane]
     restart: unless-stopped
     networks: [edge, control-plane]
 
