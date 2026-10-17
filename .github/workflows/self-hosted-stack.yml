@@ -6,6 +6,8 @@ on:
     paths:
       - "deploy/self-hosted/**"
       - "services/platform/**"
+      - "control-plane/**"
+      - "internal/crypto/**"
       - "internal/platformclient/**"
       - "migrations/**"
       - "docs/platform/**"
@@ -45,6 +47,9 @@ jobs:
           go test -race -count=1 ./...
           go vet ./...
           CGO_ENABLED=0 go build -trimpath ./...
+          go test -race -count=1 ./control-plane
+          go vet ./control-plane
+          CGO_ENABLED=0 go build -trimpath -o /tmp/testagram-control-plane ./control-plane
       - name: Validate OpenAPI contracts
         run: |
           python -m pip install --disable-pip-version-check PyYAML
@@ -69,3 +74,5 @@ jobs:
           grep -q 'REPLACE_WITH_LONG_RANDOM_VALKEY_PASSWORD' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_MINIO_PASSWORD' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_PLATFORM_INTERNAL_TOKEN' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_VPS_INTERNAL_TOKEN' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_NODE_BOOTSTRAP_TOKEN' deploy/self-hosted/.env.example
