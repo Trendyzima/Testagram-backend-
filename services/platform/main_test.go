@@ -79,3 +79,40 @@ func TestValidQueuePayloadBounds(t *testing.T) {
 		})
 	}
 }
+
+
+func TestDecodeJSONRejectsTrailingData(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "valid object", body: `{"key":"value"}`, want: true},
+		{name: "second JSON value", body: `{"key":"value"} {"key":"attacker"}`, want: false},
+		{name: "trailing garbage", body: `{"key":"value"} garbage`, want: false},
+		{name: "empty body", body: "", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			var payload struct {
+				Key string `json:"key"`
+			}
+			if got := decodeJSON(rec, req, &payload); got != tt.want {
+				t.Fatalf("decodeJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecodeJSONRejectsUnknownFields(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"key":"value","unexpected":true}`))
+	rec := httptest.NewRecorder()
+	var payload struct {
+		Key string `json:"key"`
+	}
+	if decodeJSON(rec, req, &payload) {
+		t.Fatal("decodeJSON accepted an unknown field")
+	}
+}

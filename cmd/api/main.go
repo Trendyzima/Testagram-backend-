@@ -20,15 +20,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const maxCapabilityBody = 64 << 10
 const maxUpstreamBody = 2 << 20
 
 type service struct {
-	db       *pgxpool.Pool
+	db             *pgxpool.Pool
 	requests       atomic.Uint64
 	cacheHits      atomic.Uint64
 	cacheMisses    atomic.Uint64
@@ -36,6 +37,7 @@ type service struct {
 	platformErrors atomic.Uint64
 	upstream       *http.Client
 	platform       *platformclient.Client
+	media          *media.Signer
 }
 
 type capabilityRequest struct {
@@ -77,13 +79,17 @@ func (s *service) routes() http.Handler {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		_, _ = w.Write([]byte(
 			"# HELP testagram_http_requests_total Total HTTP requests handled by this process.\n# TYPE testagram_http_requests_total counter\ntestagram_http_requests_total " + strconv.FormatUint(s.requests.Load(), 10) + "\n" +
-			"# HELP testagram_platform_cache_hits_total Public capability responses served from the shared cache.\n# TYPE testagram_platform_cache_hits_total counter\ntestagram_platform_cache_hits_total " + strconv.FormatUint(s.cacheHits.Load(), 10) + "\n" +
-			"# HELP testagram_platform_cache_misses_total Public capability cache misses.\n# TYPE testagram_platform_cache_misses_total counter\ntestagram_platform_cache_misses_total " + strconv.FormatUint(s.cacheMisses.Load(), 10) + "\n" +
-			"# HELP testagram_rate_limited_requests_total Requests denied by the shared rate limiter.\n# TYPE testagram_rate_limited_requests_total counter\ntestagram_rate_limited_requests_total " + strconv.FormatUint(s.rateLimited.Load(), 10) + "\n" +
-			"# HELP testagram_platform_errors_total Shared platform API errors observed by the gateway.\n# TYPE testagram_platform_errors_total counter\ntestagram_platform_errors_total " + strconv.FormatUint(s.platformErrors.Load(), 10) + "\n"))
+				"# HELP testagram_platform_cache_hits_total Public capability responses served from the shared cache.\n# TYPE testagram_platform_cache_hits_total counter\ntestagram_platform_cache_hits_total " + strconv.FormatUint(s.cacheHits.Load(), 10) + "\n" +
+				"# HELP testagram_platform_cache_misses_total Public capability cache misses.\n# TYPE testagram_platform_cache_misses_total counter\ntestagram_platform_cache_misses_total " + strconv.FormatUint(s.cacheMisses.Load(), 10) + "\n" +
+				"# HELP testagram_rate_limited_requests_total Requests denied by the shared rate limiter.\n# TYPE testagram_rate_limited_requests_total counter\ntestagram_rate_limited_requests_total " + strconv.FormatUint(s.rateLimited.Load(), 10) + "\n" +
+				"# HELP testagram_platform_errors_total Shared platform API errors observed by the gateway.\n# TYPE testagram_platform_errors_total counter\ntestagram_platform_errors_total " + strconv.FormatUint(s.platformErrors.Load(), 10) + "\n"))
 	})
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
+	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
+	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
@@ -157,7 +163,9 @@ func publicCacheTTL(capability string) (time.Duration, bool) {
 
 func capabilityCacheKey(body capabilityRequest) string {
 	raw, err := json.Marshal(body)
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	sum := sha256.Sum256(raw)
 	return "testagram:api:v1:" + hex.EncodeToString(sum[:])
 }
@@ -166,7 +174,9 @@ func capabilityRateLimitKey(r *http.Request, authorization string) string {
 	identity := strings.TrimSpace(authorization)
 	if identity == "" {
 		identity = strings.TrimSpace(r.Header.Get("X-Real-IP"))
-		if identity == "" { identity = strings.TrimSpace(r.RemoteAddr) }
+		if identity == "" {
+			identity = strings.TrimSpace(r.RemoteAddr)
+		}
 	}
 	sum := sha256.Sum256([]byte(identity))
 	return "api:" + hex.EncodeToString(sum[:])
@@ -174,7 +184,9 @@ func capabilityRateLimitKey(r *http.Request, authorization string) string {
 
 func isWriteCapability(capability string) bool {
 	for _, suffix := range []string{".create", ".add", ".remove", ".update", ".delete", ".send", ".upload"} {
-		if strings.HasSuffix(capability, suffix) { return true }
+		if strings.HasSuffix(capability, suffix) {
+			return true
+		}
 	}
 	return false
 }
@@ -184,7 +196,7 @@ func writeRawCapability(w http.ResponseWriter, r *http.Request, id string, raw [
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Request-ID", id)
 	if cacheTTL > 0 && strings.TrimSpace(r.Header.Get("Authorization")) == "" {
-		w.Header().Set("Cache-Control", "public, max-age=" + strconv.Itoa(int(cacheTTL.Seconds())))
+		w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(cacheTTL.Seconds())))
 	} else {
 		w.Header().Set("Cache-Control", "private, no-store")
 	}
@@ -235,7 +247,9 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		body.Capability == "testagram.news.trending"
 	if s.platform != nil {
 		limit := int64(120)
-		if isWriteCapability(body.Capability) { limit = 30 }
+		if isWriteCapability(body.Capability) {
+			limit = 30
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 		result, err := s.platform.Check(ctx, capabilityRateLimitKey(r, authorization), limit, time.Minute)
 		cancel()
@@ -247,7 +261,9 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		} else if !result.Allowed {
 			s.rateLimited.Add(1)
 			retryAfter := result.RetryAfterSeconds
-			if retryAfter < 1 { retryAfter = 1 }
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
 			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
 			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Request rate limit exceeded", id))
 			return
@@ -511,12 +527,34 @@ func main() {
 	platformToken := strings.TrimSpace(os.Getenv("PLATFORM_INTERNAL_TOKEN"))
 	if platformURL != "" && platformToken != "" {
 		platform, err = platformclient.New(platformURL, platformToken, 2*time.Second)
-		if err != nil { log.Fatalf("configure internal platform client: %v", err) }
+		if err != nil {
+			log.Fatalf("configure internal platform client: %v", err)
+		}
 		log.Printf("internal cache and rate limiting enabled")
 	} else if platformURL != "" || platformToken != "" {
 		log.Printf("internal platform integration disabled: PLATFORM_URL and PLATFORM_INTERNAL_TOKEN must both be configured")
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform}
+	var mediaSigner *media.Signer
+	mediaAccessKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_ACCESS_KEY"))
+	mediaSecretKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_SECRET_KEY"))
+	if mediaAccessKey != "" || mediaSecretKey != "" {
+		if mediaAccessKey == "" || mediaSecretKey == "" {
+			log.Fatal("MINIO_MEDIA_ACCESS_KEY and MINIO_MEDIA_SECRET_KEY must be configured together")
+		}
+		mediaSigner, err = media.NewSigner(media.Config{
+			Endpoint:    env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site")),
+			SigningHost: env("MINIO_SIGNING_HOST", "object-storage:9000"),
+			AccessKey:   mediaAccessKey, SecretKey: mediaSecretKey,
+			Region:        env("MINIO_REGION", "us-east-1"),
+			PrivateBucket: env("MINIO_BUCKET", "testagram-private-media"),
+			PublicBucket:  env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
+		})
+		if err != nil {
+			log.Fatalf("configure MinIO media signer: %v", err)
+		}
+		log.Printf("MinIO media upload and private download signing enabled")
+	}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
