@@ -60,9 +60,12 @@ The current control plane can schedule work only when a healthy node has registe
   without an authenticated admin/VPN route. The stack now scrapes a read-only
   node-exporter for host filesystem and memory metrics and loads
   `prometheus-alerts.yml` rules for low/critical disk space, memory headroom,
-  and missing API/platform/node metrics. These rules are evaluated by Prometheus;
+  missing API/platform/node metrics, queue backlog, and oldest pending-message
+  age. Queue alerts only cover queue/group pairs configured in
+  `PLATFORM_MONITORED_QUEUE_GROUPS`. These rules are evaluated by Prometheus;
   notifications are not delivered until an operator configures an Alertmanager
-  receiver and an appropriate private alert route. The exporter requires Linux
+  receiver and an appropriate private alert route. A dedicated CI workflow
+  validates the Prometheus config and rule syntax. The exporter requires Linux
   host mounts and is intended for the self-hosted Linux deployment.
 
 ## Start locally
