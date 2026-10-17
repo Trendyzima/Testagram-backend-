@@ -22,6 +22,9 @@ services:
     environment:
       LISTEN_ADDR: ":8080"
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site,http://localhost:5173,http://127.0.0.1:5173}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
