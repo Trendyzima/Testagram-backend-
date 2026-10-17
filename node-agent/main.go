@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"net/http"
 	"os"
 	"os/exec"
@@ -103,7 +104,6 @@ func (a *Agent) post(path string, body any, out any) (int, error) {
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNoContent {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return resp.StatusCode, fmt.Errorf("control plane returned HTTP %d", resp.StatusCode)
-		_ = data
 	}
 	if out != nil && resp.StatusCode != http.StatusNoContent {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, maxControlResponse)).Decode(out); err != nil { return resp.StatusCode, errors.New("invalid control-plane response") }
