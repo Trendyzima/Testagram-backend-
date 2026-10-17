@@ -75,7 +75,7 @@ paths:
   /v1/hosting/audit:
     get:
       summary: Read the operator audit trail
-      description: Returns recent hosting actions; filter by resourceType/resourceId and limit results to 1-500.
+      description: Returns recent recorded operator actions (currently node drain/resume); filter by resourceType/resourceId and limit results to 1-500.
       parameters:
         - in: query
           name: resourceType
