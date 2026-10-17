@@ -122,6 +122,13 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
 		return
 	}
+	if body.Visibility == "public" {
+		intent.PublicURL = publicMediaURL(intent.Key)
+		if intent.PublicURL == "" {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
+			return
+		}
+	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
 		return
@@ -238,24 +245,34 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	var body mediaCompleteRequest
 	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key, visibility and content type are required", id))
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
 		return
 	}
-	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
-	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
-		return
-	}
-	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
 	var intentOwner, intentVisibility, intentType, intentName, intentStatus string
 	var intentMaxBytes int64
 	var intentExpires time.Time
 	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
 		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus)
-	if err != nil || intentOwner != userID || intentVisibility != body.Visibility || intentType != body.ContentType ||
+	if err != nil || intentOwner != userID ||
 		(time.Now().After(intentExpires) && intentStatus != "completed") || (intentStatus != "issued" && intentStatus != "completed") {
-		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not match this account and object", id))
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
+		return
+	}
+	if strings.TrimSpace(body.Visibility) == "" {
+		body.Visibility = intentVisibility
+	}
+	if strings.TrimSpace(body.ContentType) == "" {
+		body.ContentType = intentType
+	}
+	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+	if intentVisibility != body.Visibility || intentType != body.ContentType {
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
+		return
+	}
+	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
+	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
 	}
 	if intentMaxBytes < 1 || intentMaxBytes > maxBytes {
@@ -295,7 +312,16 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	actualType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
 	size := resp.ContentLength
 	if actualType != body.ContentType || size < 1 || size > intentMaxBytes || size > maxBytes {
-		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_OBJECT_INVALID", "Uploaded object type or size does not satisfy media policy", id))
+		// Make invalid objects eligible for the janitor before attempting immediate
+		// deletion. A storage timeout must not leave an untracked object indefinitely.
+		_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents
+			set status='cleanup_pending', expires_at=now(), updated_at=now()
+			where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+		if deleteErr := s.deleteMediaObject(ctx, userID, body.Key, body.Visibility); deleteErr == nil {
+			_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents
+				set status='expired', updated_at=now() where object_key=$1 and owner_id=$2 and status='cleanup_pending'`, body.Key, userID)
+		}
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_OBJECT_INVALID", "Uploaded object type or size does not satisfy media policy; cleanup was scheduled", id))
 		return
 	}
 	etag := strings.Trim(resp.Header.Get("ETag"), "\"")
@@ -624,12 +650,15 @@ func productPostMediaType(contentType string) (string, bool) {
 }
 
 func publicMediaURL(key string) string {
-	base, err := url.Parse(strings.TrimRight(env("MINIO_PUBLIC_ENDPOINT", "https://media.testagram.site"), "/"))
-	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+	base, err := url.Parse(strings.TrimRight(env("MEDIA_PUBLIC_BASE_URL", "https://media.testagram.site/v1"), "/"))
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.RawQuery != "" || base.Fragment != "" {
 		return ""
 	}
-	bucket := env("PUBLIC_MEDIA_BUCKET", "testagram-public-media")
-	base.Path = strings.TrimRight(base.Path, "/") + "/" + bucket + "/" + strings.TrimLeft(key, "/")
+	key = strings.TrimLeft(key, "/")
+	if key == "" || strings.Contains(key, "..") || strings.ContainsAny(key, "\\r\\n\\x00") {
+		return ""
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + key
 	base.RawPath = ""
 	return base.String()
 }
