@@ -30,10 +30,18 @@ The current control plane can schedule work only when a healthy node has registe
 ## Current boundaries — read before production use
 
 - Valkey is used by the private platform service for cache, queues and rate limiting. The self-hosted configuration uses `--maxmemory-policy noeviction`: an `allkeys-*` eviction policy could evict queue-stream keys under memory pressure and silently discard unprocessed work. With `noeviction`, writes fail rather than evicting queue data when memory is exhausted; cache/rate-limit operations can therefore fail until capacity is restored. Alert on memory headroom and queue age, and size/scale Valkey before sustained production load. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
-- MinIO provisions separate private and public media buckets. Only objects intentionally
-  uploaded to the public-media bucket are anonymously downloadable; the private
-  bucket remains private. The current gateway does not yet upload media to MinIO
-  or sign private object URLs, so the app integration is still required.
+- MinIO provisions separate private and public media buckets. The API can issue
+  authenticated, owner-prefixed S3 POST upload policies and five-minute private
+  download URLs when the restricted `MINIO_MEDIA_ACCESS_KEY` /
+  `MINIO_MEDIA_SECRET_KEY` identity is configured. It never returns the secret
+  signing key. Public uploads are limited to approved image/video MIME types;
+  private URLs are only issued for keys under the authenticated user's prefix.
+  The media edge permits signed POST uploads, bypasses shared caching for signed
+  private GETs, and adds CORS headers for the Testagram web origins.
+  This provides upload-intent/signing primitives, not a complete media lifecycle:
+  clients still need to upload using the returned form fields and persist the
+  returned key in the product's post/profile workflow. Object verification,
+  deletion/moderation workflows, and quota accounting remain follow-up gates.
 - Nginx caches GET/HEAD media requests only. This is a single-machine cache,
   not a global edge network. The application must publish media through this
   origin before media delivery will work.
@@ -61,6 +69,33 @@ The current control plane can schedule work only when a healthy node has registe
    media endpoint needs authorized object upload/signing integration before it
    can serve application media.
 7. Inspect docker compose ps and logs before any production traffic cutover.
+
+## MinIO media upload signing
+
+Set `MINIO_MEDIA_ACCESS_KEY` and a unique, long `MINIO_MEDIA_SECRET_KEY` in
+`.env`. Do not reuse `MINIO_ROOT_PASSWORD`. The one-shot `object-init` service
+creates a restricted MinIO identity with object read/write permissions limited
+to the configured private and public media buckets. `MINIO_PUBLIC_ENDPOINT`
+must match the public media hostname routed through Caddy/Nginx (default:
+`https://media.testagram.site`). If you change the media domain or bucket names,
+update the endpoint/configuration and recreate the restricted MinIO policy as
+part of a controlled maintenance window.
+
+The API exposes:
+
+- `POST /api/media/upload-intent`: requires a valid Supabase bearer session and
+  returns a short-lived S3-compatible POST policy. Send the returned form fields
+  and file to the returned URL using `multipart/form-data`; do not send the
+  file to the JSON API endpoint.
+- `POST /api/media/private-download-url`: requires a valid Supabase bearer
+  session and returns a five-minute signed URL only when the object key belongs
+  to that user.
+
+Only JPEG, PNG, WebP, AVIF, GIF, MP4 and WebM are accepted by upload intent.
+The policy enforces an upper bound derived from the requested file size and
+configured image/video limits. The Nginx media cache must remain the only public
+route to MinIO; never publish MinIO ports 9000/9001 directly. Signed private GET
+URLs are marked `private, no-store` and bypass the shared cache.
 
 ## Safe node maintenance
 
