@@ -54,7 +54,7 @@ func TestQueueReclaimAndAck(t *testing.T) {
 			calls++
 			if r.Method != http.MethodGet || r.URL.Query().Get("queue") != "mail" ||
 				r.URL.Query().Get("group") != "sender" || r.URL.Query().Get("consumer") != "worker-2" ||
-				r.URL.Query().Get("min_idle_ms") != "30000" || r.URL.Query().Get("count") != "5" {
+				r.URL.Query().Get("min_idle_ms") != "30000" || r.URL.Query().Get("count") != "5" || r.URL.Query().Get("start") != "0-0" {
 				t.Fatalf("unexpected reclaim request: %s %s", r.Method, r.URL)
 			}
 			_, _ = w.Write([]byte(`{"messages":[{"id":"1720000000001-0","values":{"job_id":"mail-1"}}],"next_start":"0-0"}`))
@@ -69,7 +69,7 @@ func TestQueueReclaimAndAck(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	})
-	messages, cursor, err := client.Reclaim(context.Background(), "mail", "sender", "worker-2", 30*time.Second, 5)
+	messages, cursor, err := client.Reclaim(context.Background(), "mail", "sender", "worker-2", 30*time.Second, 5, "0-0")
 	if err != nil {
 		t.Fatal(err)
 	}
