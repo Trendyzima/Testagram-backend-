@@ -30,6 +30,8 @@ jobs:
         run: go vet ./...
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api
+      - name: Build production container
+        run: docker build --pull -t testagram-backend:ci .
       - name: Format Go source
         run: gofmt -w cmd
       - name: Persist formatter changes on feature branches
