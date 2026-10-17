@@ -1,0 +1,38 @@
+name: testagram-backend-dev
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-testagram}
+      POSTGRES_USER: ${POSTGRES_USER:-testagram}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    # Database is not published to the host.
+
+  api:
+    build: .
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
