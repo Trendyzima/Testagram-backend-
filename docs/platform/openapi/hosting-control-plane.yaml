@@ -1,0 +1,276 @@
+openapi: 3.1.0
+info:
+  title: Testagram Hosting Control Plane API
+  version: 0.1.0
+  description: >
+    Private operator API for desired-state domain reservations, immutable-image deployments,
+    resource inventory, usage and backup/recovery reports. This is not a public customer API.
+    Domain reservation exports DNS desired state but does not update a registrar or authoritative
+    DNS server. Secret references are rejected for deployment until a real secret resolver is enabled.
+servers:
+  - url: http://127.0.0.1:8787
+    description: Local operator endpoint; keep the control-plane port private.
+security:
+  - OperatorBearer: []
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Control-plane liveness
+      responses:
+        '200': {description: Process is alive}
+  /readyz:
+    get:
+      security: []
+      summary: Control-plane readiness (database ping)
+      responses:
+        '200': {description: Database reachable}
+        '503': {description: Database unavailable}
+  /v1/hosting/health:
+    get:
+      summary: Hosting health summary
+      responses:
+        '200':
+          description: Node freshness, active deployment and unverified backup counts
+          content:
+            application/json:
+              schema: {type: object}
+        '401': {description: Unauthorized}
+        '503': {description: Database unavailable}
+  /v1/hosting/nodes:
+    get:
+      summary: Node inventory and reserved workload capacity
+      responses:
+        '200': {description: Node inventory}
+        '401': {description: Unauthorized}
+        '503': {description: Database unavailable}
+  /v1/hosting/usage:
+    get:
+      summary: Aggregate compute reservations and workload status
+      responses:
+        '200': {description: Usage snapshot}
+        '401': {description: Unauthorized}
+        '503': {description: Database unavailable}
+  /v1/hosting/domains:
+    get:
+      summary: List reserved domains
+      responses:
+        '200': {description: Domain inventory}
+        '401': {description: Unauthorized}
+    post:
+      summary: Reserve a subdomain under TESTAGRAM_BASE_DOMAIN
+      description: >
+        Only valid non-reserved single labels are accepted. targetService must be present in
+        TESTAGRAM_DOMAIN_TARGETS. Creates a pending_dns reservation and a desired DNS record;
+        it does not change public DNS or activate HTTPS routing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [slug, targetService]
+              properties:
+                slug: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]?$'}
+                targetService: {type: string, minLength: 1, maxLength: 63}
+      responses:
+        '201': {description: Domain reserved in pending_dns state}
+        '400': {description: Invalid slug or target service not allowlisted}
+        '401': {description: Unauthorized}
+        '409': {description: Slug or hostname already reserved}
+        '503': {description: Base domain is not configured}
+  /v1/hosting/domains/{slug}/activate:
+    post:
+      summary: Activate a reservation only after DNS resolves to the configured origin IP
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: DNS verified and domain activated for gated HTTPS routing}
+        '401': {description: Unauthorized}
+        '409': {description: DNS does not resolve to the configured origin IP}
+        '503': {description: Base domain or origin IP not configured}
+  /v1/hosting/domains/{slug}/disable:
+    post:
+      summary: Disable a managed subdomain
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Domain disabled; proxy and new certificate authorization fail closed}
+        '401': {description: Unauthorized}
+        '404': {description: Reservation not found}
+  /v1/hosting/tls/authorize:
+    get:
+      security: []
+      summary: Private Caddy on-demand TLS authorization callback
+      description: Only returns success for an active, DNS-verified subdomain whose target remains allowlisted. Must remain private to the service network.
+      parameters:
+        - in: query
+          name: domain
+          required: true
+          schema: {type: string, format: hostname}
+      responses:
+        '200': {description: Domain may receive a certificate}
+        '403': {description: Domain not active or not authorized}
+  /v1/hosting/dns/records:
+    get:
+      summary: Export DNS desired state
+      responses:
+        '200': {description: Records requiring operator application and verification}
+        '401': {description: Unauthorized}
+  /v1/hosting/deployments:
+    get:
+      summary: List deployments
+      responses:
+        '200': {description: Deployment inventory}
+        '401': {description: Unauthorized}
+    post:
+      summary: Schedule an immutable-image deployment
+      description: >
+        Chooses a fresh online node with sufficient unreserved CPU, memory and storage, then
+        records the workload and deployment atomically. Environment values are public configuration
+        only. Deployments containing secretRefs are rejected until a secret resolver is implemented.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [appName, image, imageDigest]
+              properties:
+                appName: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]?$'}
+                image: {type: string, minLength: 1, maxLength: 255}
+                imageDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                arch: {type: string}
+                cpuMillis: {type: integer, minimum: 50, maximum: 64000, default: 250}
+                memoryBytes: {type: integer, minimum: 67108864, maximum: 68719476736, default: 268435456}
+                storageBytes: {type: integer, minimum: 67108864, maximum: 1099511627776, default: 268435456}
+                publicEnv:
+                  type: object
+                  maxProperties: 64
+                  additionalProperties: {type: string, maxLength: 2048}
+                secretRefs:
+                  type: object
+                  maxProperties: 64
+                  additionalProperties: {type: string, pattern: '^secret://[a-zA-Z0-9._/-]{1,180}$'}
+                command:
+                  type: array
+                  maxItems: 16
+                  items: {type: string, maxLength: 256}
+                volume: {type: string, pattern: '^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]?$'}
+      responses:
+        '201': {description: Workload assigned; execution is asynchronous}
+        '400': {description: Invalid request, secret-like public environment key or out-of-bounds resources}
+        '401': {description: Unauthorized}
+        '503': {description: No healthy node with enough unreserved resources}
+  /v1/hosting/deployments/{id}:
+    get:
+      summary: Get deployment status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Deployment status}
+        '401': {description: Unauthorized}
+        '404': {description: Deployment not found}
+  /v1/hosting/backups:
+    get:
+      summary: List backup manifests
+      responses:
+        '200': {description: Backup inventory}
+        '401': {description: Unauthorized}
+    post:
+      summary: Register backup manifest
+      description: Registration does not prove that backup bytes exist or can be restored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, storageUri, sha256, sizeBytes, sourceHost]
+              properties:
+                kind: {type: string, enum: [postgres, objects, config, full]}
+                storageUri: {type: string, minLength: 1, maxLength: 2048}
+                sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+                sizeBytes: {type: integer, minimum: 0}
+                sourceHost: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        '201': {description: Manifest registered, pending content verification}
+        '400': {description: Invalid manifest}
+        '401': {description: Unauthorized}
+  /v1/hosting/backups/{id}/verify:
+    post:
+      summary: Record observed backup hash and byte count
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [observedSha256, observedBytes]
+              properties:
+                observedSha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+                observedBytes: {type: integer, minimum: 0}
+      responses:
+        '200': {description: Hash and byte count match manifest}
+        '401': {description: Unauthorized}
+        '404': {description: Manifest not found}
+        '422': {description: Hash or size mismatch}
+  /v1/hosting/recovery/drills:
+    get:
+      summary: List reported recovery drills
+      responses:
+        '200': {description: Recovery drill reports}
+        '401': {description: Unauthorized}
+    post:
+      summary: Record an isolated restore drill result
+      description: >
+        The trusted reporting worker must actually restore into an isolated target before reporting.
+        The API checks the recorded restored hash against a verified backup manifest, but cannot
+        independently prove that the worker performed the restore.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [backupId, targetId, restoredSha256, success, startedAt, completedAt]
+              properties:
+                backupId: {type: string, format: uuid}
+                targetId: {type: string, minLength: 1, maxLength: 160}
+                restoredSha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+                success: {type: boolean}
+                notes: {type: string, maxLength: 2000}
+                startedAt: {type: string, format: date-time}
+                completedAt: {type: string, format: date-time}
+      responses:
+        '201': {description: Successful report recorded}
+        '400': {description: Invalid report}
+        '401': {description: Unauthorized}
+        '409': {description: Backup must be verified first}
+        '422': {description: Failed or mismatched restore report}
+components:
+  securitySchemes:
+    OperatorBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: VPS_INTERNAL_TOKEN. Keep private; never expose to browser/mobile clients.
