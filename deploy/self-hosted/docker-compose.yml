@@ -157,6 +157,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-testagram-private-media}
       PUBLIC_MEDIA_BUCKET: ${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
       MEDIA_USER_QUOTA_BYTES: ${MEDIA_USER_QUOTA_BYTES:-2147483648}
+      MEDIA_MODERATION_TOKEN: ${MEDIA_MODERATION_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
