@@ -1,5 +1,7 @@
 # Testagram self-hosted platform stack
 
+Local-first PostgreSQL, Valkey, object storage, API gateway, media cache, HTTPS edge and monitoring for owned hardware.
+
 ## Private platform service
 
 The stack includes `platform:8095` for internal cache, rate limiting, queues, feature configuration and audit/event APIs. Its port is not published to the host; it is reachable only on the private Docker networks. The `PLATFORM_INTERNAL_TOKEN` in `.env` is required and must never be exposed to browser or mobile clients. Prometheus scrapes platform metrics on a separate internal monitoring network.
