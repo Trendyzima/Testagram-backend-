@@ -27,6 +27,10 @@ VPS_INTERNAL_TOKEN authenticates control-plane operations, and VPS_NODE_BOOTSTRA
 
 The current control plane can schedule work only when a healthy node has registered and reported capacity. The node agent is not automatically installed or enrolled by this Compose file; node-agent hardening, enrollment, deployment integration tests and restore drills remain release gates.
 
+## Backup and restore drill
+
+The backup scripts under backup/ use Restic client-side encryption for PostgreSQL and both MinIO buckets, then provide a restore smoke test into disposable PostgreSQL and MinIO containers. Configure the HTTPS Restic repository, strong separate Restic password and least-privilege S3 credentials first. Follow [the backup guide](backup/README.md); placeholder credentials intentionally do not work.
+
 ## Current boundaries — read before production use
 
 - Valkey is used by the private platform service for cache, queues and rate limiting. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
