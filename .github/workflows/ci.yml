@@ -91,6 +91,10 @@ jobs:
       - name: Validate Compose configuration
         env:
           POSTGRES_PASSWORD: ci-only-password-not-for-production
+          VALKEY_PASSWORD: ci-only-valkey-password-not-for-production
+          MINIO_ROOT_USER: ci-only-minio-user
+          MINIO_ROOT_PASSWORD: ci-only-minio-password-not-for-production
+          ACME_EMAIL: ci-only@example.invalid
           DATABASE_URL: postgres://testagram:ci-only-password-not-for-production@db:5432/testagram?sslmode=disable
           PLATFORM_INTERNAL_TOKEN: ci-only-platform-token-not-for-production
           VPS_INTERNAL_TOKEN: ci-only-vps-token-not-for-production
