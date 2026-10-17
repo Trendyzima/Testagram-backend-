@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -329,5 +330,135 @@ func TestMediaDeleteFailsClosedWithoutStorageOrMetadata(t *testing.T) {
 	(&service{}).routes().ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+}
+
+func TestMediaAttachFailsClosedWithoutMetadataDatabase(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/api/media/attach", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef","post_id":"post-123"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "MEDIA_METADATA_UNAVAILABLE") {
+		t.Fatalf("expected fail-closed metadata error, got %s", w.Body.String())
+	}
+}
+
+func TestPublicMediaURLUsesConfiguredBucketAndEndpoint(t *testing.T) {
+	t.Setenv("MINIO_PUBLIC_ENDPOINT", "https://media.example.test")
+	t.Setenv("PUBLIC_MEDIA_BUCKET", "public-assets")
+	got := publicMediaURL("users/user-123/0123456789abcdef0123456789abcdef")
+	want := "https://media.example.test/public-assets/users/user-123/0123456789abcdef0123456789abcdef"
+	if got != want {
+		t.Fatalf("publicMediaURL()=%q want=%q", got, want)
+	}
+}
+
+func TestEnsureProductMediaRecordCreatesServerSideRecord(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "")
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer service-secret" || r.Header.Get("apikey") != "service-secret" {
+			t.Errorf("missing server-only bearer/API key headers")
+		}
+		if r.URL.Path != "/rest/v1/media_assets" {
+			t.Errorf("path=%q want=/rest/v1/media_assets", r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			if r.URL.Query().Get("storage_key") != "eq.users/user-123/0123456789abcdef0123456789abcdef" {
+				t.Errorf("unexpected storage key filter: %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		case http.MethodPost:
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create payload: %v", err)
+			}
+			if body["owner_id"] != "user-123" || body["status"] != "uploaded" || body["original_name"] != "photo.png" || body["media_url"] != "https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef" {
+				t.Errorf("unexpected product media payload: %#v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`[{"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","owner_id":"user-123","post_id":null,"status":"uploaded"}]`))
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("SUPABASE_URL", server.URL)
+	s := &service{upstream: server.Client()}
+	got, err := s.ensureProductMediaRecord(context.Background(), "service-secret", "user-123",
+		"users/user-123/0123456789abcdef0123456789abcdef", "photo.png", "image/png", 1234,
+		"https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" {
+		t.Fatalf("external media ID=%q", got)
+	}
+}
+
+func TestUserOwnsProductPostUsesAuthenticatedPostgRESTContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/rest/v1/posts" {
+			t.Errorf("unexpected PostgREST request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer user-session-token" || r.Header.Get("apikey") != "publishable-key" {
+			t.Errorf("post ownership lookup did not use the caller session")
+		}
+		if r.URL.Query().Get("id") != "eq.post-123" {
+			t.Errorf("post filter=%q", r.URL.Query().Get("id"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"post-123","author_id":"user-123","user_id":"someone-else"}]`))
+	}))
+	defer server.Close()
+	t.Setenv("SUPABASE_URL", server.URL)
+	s := &service{upstream: server.Client()}
+	owned, err := s.userOwnsProductPost(context.Background(), "Bearer user-session-token", "publishable-key", "user-123", "post-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owned {
+		t.Fatal("expected the authenticated post author to be allowed")
+	}
+	owned, err = s.userOwnsProductPost(context.Background(), "Bearer user-session-token", "publishable-key", "other-user", "post-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned {
+		t.Fatal("post must not be attachable by a non-owner")
+	}
+}
+
+func TestSanitizeOriginalName(t *testing.T) {
+	cases := []struct {
+		name string
+		want string
+		bad  bool
+	}{
+		{name: "folder/render.png", want: "render.png"},
+		{name: "  photo.webp  ", want: "photo.webp"},
+		{name: "", want: "upload"},
+		{name: "../", bad: true},
+		{name: "bad\nname.jpg", bad: true},
+		{name: "bad\x00name.jpg", bad: true},
+	}
+	for _, tc := range cases {
+		got, err := sanitizeOriginalName(tc.name)
+		if tc.bad {
+			if err == nil {
+				t.Errorf("sanitizeOriginalName(%q) = %q, want error", tc.name, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("sanitizeOriginalName(%q) = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
 	}
 }
