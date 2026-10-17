@@ -1,0 +1,32 @@
+name: Prometheus Config Validation
+
+on:
+  pull_request:
+    paths:
+      - "deploy/self-hosted/prometheus.yml"
+      - "deploy/self-hosted/prometheus-alerts.yml"
+      - ".github/workflows/prometheus-config-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/self-hosted/prometheus.yml"
+      - "deploy/self-hosted/prometheus-alerts.yml"
+      - ".github/workflows/prometheus-config-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-prometheus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Prometheus config and alert rules
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/deploy/self-hosted/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/deploy/self-hosted/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/deploy/self-hosted/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            prom/prometheus:v3.5.0 check rules /etc/prometheus/alerts.yml
