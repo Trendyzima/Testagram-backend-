@@ -52,7 +52,7 @@ The optional self-hosted stack now includes a private platform service for Valke
 - [Platform client](internal/platformclient)
 - [Operations and readiness gates](docs/platform/self-sustaining-operations.md)
 
-The platform internal token is required in `deploy/self-hosted/.env`. On a new PostgreSQL volume the platform schema is initialized automatically; for an existing volume, follow [the migration instructions](services/platform/README.md). The API gateway does not yet consume the new client, and this is not a claim that production traffic has migrated.
+The platform internal token is required in `deploy/self-hosted/.env`. On a new PostgreSQL volume the platform schema is initialized automatically; for an existing volume, follow [the migration instructions](services/platform/README.md). The API gateway now optionally uses the internal platform API for shared rate limiting and short-lived caching of explicitly public capability responses. Authenticated responses are never stored in the shared cache. Rate limiting fails open during a platform outage so it does not take the whole gateway offline; monitor the platform error metrics and keep edge-level protection in place.
 
 ## Hosting control plane
 
@@ -68,9 +68,10 @@ a media-only Nginx cache, Caddy TLS termination, and Prometheus. It is opt-in an
 does not change production routing.
 
 Important: this is infrastructure groundwork, not yet a complete replacement
-for hosted Supabase or a global Cloudflare network. The gateway still depends
-on a compatible Supabase API; Valkey and MinIO are provisioned but not yet
-integrated into the gateway's application flows. Follow the deployment README's
+for hosted Supabase or a global Cloudflare network. The capability gateway still
+depends on a compatible Supabase API. Valkey is integrated for bounded shared
+rate limiting and safe public-response caching, but MinIO is not yet connected
+to a user-authorized upload/signing API. Follow the deployment README's
 migration, media integration, backup, restore, and load-test gates before
 cutting over traffic.
 
