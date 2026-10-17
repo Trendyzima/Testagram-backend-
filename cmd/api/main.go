@@ -29,9 +29,13 @@ const maxUpstreamBody = 2 << 20
 
 type service struct {
 	db       *pgxpool.Pool
-	requests atomic.Uint64
-	upstream *http.Client
-	platform *platformclient.Client
+	requests       atomic.Uint64
+	cacheHits      atomic.Uint64
+	cacheMisses    atomic.Uint64
+	rateLimited    atomic.Uint64
+	platformErrors atomic.Uint64
+	upstream       *http.Client
+	platform       *platformclient.Client
 }
 
 type capabilityRequest struct {
@@ -71,7 +75,12 @@ func (s *service) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		_, _ = w.Write([]byte("# HELP testagram_http_requests_total Total HTTP requests handled by this process.\n# TYPE testagram_http_requests_total counter\ntestagram_http_requests_total " + strconv.FormatUint(s.requests.Load(), 10) + "\n"))
+		_, _ = w.Write([]byte(
+			"# HELP testagram_http_requests_total Total HTTP requests handled by this process.\n# TYPE testagram_http_requests_total counter\ntestagram_http_requests_total " + strconv.FormatUint(s.requests.Load(), 10) + "\n" +
+			"# HELP testagram_platform_cache_hits_total Public capability responses served from the shared cache.\n# TYPE testagram_platform_cache_hits_total counter\ntestagram_platform_cache_hits_total " + strconv.FormatUint(s.cacheHits.Load(), 10) + "\n" +
+			"# HELP testagram_platform_cache_misses_total Public capability cache misses.\n# TYPE testagram_platform_cache_misses_total counter\ntestagram_platform_cache_misses_total " + strconv.FormatUint(s.cacheMisses.Load(), 10) + "\n" +
+			"# HELP testagram_rate_limited_requests_total Requests denied by the shared rate limiter.\n# TYPE testagram_rate_limited_requests_total counter\ntestagram_rate_limited_requests_total " + strconv.FormatUint(s.rateLimited.Load(), 10) + "\n" +
+			"# HELP testagram_platform_errors_total Shared platform API errors observed by the gateway.\n# TYPE testagram_platform_errors_total counter\ntestagram_platform_errors_total " + strconv.FormatUint(s.platformErrors.Load(), 10) + "\n"))
 	})
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
@@ -234,8 +243,10 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 			// Rate limiting is defense in depth; a platform outage must not take
 			// the capability gateway offline. The error is deliberately not logged
 			// with the raw key or credential.
+			s.platformErrors.Add(1)
 			log.Printf("platform rate-limit check unavailable; continuing with bounded upstream request")
 		} else if !result.Allowed {
+			s.rateLimited.Add(1)
 			retryAfter := result.RetryAfterSeconds
 			if retryAfter < 1 { retryAfter = 1 }
 			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
@@ -256,8 +267,19 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		cached, err := s.platform.Get(ctx, cacheKey)
 		cancel()
 		if err == nil && len(cached) <= 128<<10 && json.Valid([]byte(cached)) {
+			s.cacheHits.Add(1)
 			writeRawCapability(w, r, id, []byte(cached), cacheTTL)
 			return
+		}
+		s.cacheMisses.Add(1)
+		if err != nil && !errors.Is(err, platformclient.ErrNotFound) {
+			s.platformErrors.Add(1)
+		}
+		if err == nil {
+			// Invalid or oversized cache content must never be returned to clients.
+			ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+			_ = s.platform.Delete(ctx, cacheKey)
+			cancel()
 		}
 	}
 	if authorization == "" {
@@ -356,6 +378,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if cacheKey != "" && len(raw) <= 128<<10 && json.Valid(raw) {
 		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		if err := s.platform.Set(ctx, cacheKey, string(raw), cacheTTL); err != nil {
+			s.platformErrors.Add(1)
 			log.Printf("platform public-response cache write unavailable")
 		}
 		cancel()
