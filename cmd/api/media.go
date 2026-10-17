@@ -560,7 +560,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_CHANGED", "Media state changed while it was being attached", id))
 		return
 	}
-	if err := s.attachProductMediaToPost(ctx, serviceKey, userID, body.PostID, externalID, body.Key, contentType, sizeBytes, publicURL); err != nil {
+	if err := s.attachProductMediaToPost(ctx, serviceKey, userID, body.PostID, externalID, contentType, sizeBytes, publicURL); err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_POST_LINK_FAILED", "Media was registered but could not be linked to the post; retry is safe", id))
 		return
 	}
@@ -671,7 +671,7 @@ func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, owne
 	return records[0].ID, nil
 }
 
-func (s *service) attachProductMediaToPost(ctx context.Context, serviceKey, ownerID, postID, externalID, key, contentType string, sizeBytes int64, publicURL string) error {
+func (s *service) attachProductMediaToPost(ctx context.Context, serviceKey, ownerID, postID, externalID, contentType string, sizeBytes int64, publicURL string) error {
 	query := url.Values{}
 	query.Set("id", "eq."+externalID)
 	query.Set("owner_id", "eq."+ownerID)
@@ -747,7 +747,6 @@ func (s *service) attachProductMediaToPost(ctx context.Context, serviceKey, owne
 	if err != nil || status < 200 || status >= 300 {
 		return errors.New("post media join insert failed")
 	}
-	_ = key
 	return nil
 }
 
