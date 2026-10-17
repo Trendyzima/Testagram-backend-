@@ -15,6 +15,7 @@ services:
       - ../../migrations/004_hosting_operations.sql:/docker-entrypoint-initdb.d/004_hosting_operations.sql:ro
       - ../../migrations/005_media_assets.sql:/docker-entrypoint-initdb.d/005_media_assets.sql:ro
       - ../../migrations/006_media_lifecycle.sql:/docker-entrypoint-initdb.d/006_media_lifecycle.sql:ro
+      - ../../migrations/007_media_product_bridge.sql:/docker-entrypoint-initdb.d/007_media_product_bridge.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -146,6 +147,7 @@ services:
       DB_MAX_CONNS: ${DB_MAX_CONNS:-20}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
       PLATFORM_URL: ${PLATFORM_URL:-http://platform:8095}
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in .env}
