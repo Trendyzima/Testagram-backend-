@@ -236,7 +236,9 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 			// with the raw key or credential.
 			log.Printf("platform rate-limit check unavailable; continuing with bounded upstream request")
 		} else if !result.Allowed {
-			w.Header().Set("Retry-After", strconv.FormatInt(max64(result.RetryAfterSeconds, 1), 10))
+			retryAfter := result.RetryAfterSeconds
+			if retryAfter < 1 { retryAfter = 1 }
+			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
 			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Request rate limit exceeded", id))
 			return
 		}
