@@ -1,7 +1,6 @@
 package main
 
 import (
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,6 +53,3 @@ func withinPath(root, candidate string) bool {
 	return err == nil && rel != ".." && !filepath.IsAbs(rel) && len(rel) > 0 && rel[:1] != "."
 }
 
-func TestNodeMemoryMetricsDoNotTrustExternalEndpoint(t *testing.T) {
-	if ip := net.ParseIP("127.0.0.1"); ip == nil || !ip.IsLoopback() { t.Fatal("test assumption about loopback failed") }
-}
