@@ -19,6 +19,10 @@ on:
     paths:
       - "deploy/self-hosted/**"
       - "services/platform/**"
+      - "cmd/api/**"
+      - "control-plane/**"
+      - "node-agent/**"
+      - "internal/crypto/**"
       - "internal/platformclient/**"
       - "migrations/**"
       - "docs/platform/**"
