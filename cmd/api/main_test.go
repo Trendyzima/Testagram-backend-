@@ -275,7 +275,7 @@ func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
 	}
 }
 
-func TestMediaUploadIntentReturnsOwnerScopedSignedPolicy(t *testing.T) {
+func TestMediaUploadIntentFailsClosedWithoutMetadataDatabase(t *testing.T) {
 	upstream := testSupabaseAuthServer(t)
 	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":1024}"))
@@ -283,23 +283,11 @@ func TestMediaUploadIntentReturnsOwnerScopedSignedPolicy(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer valid-session-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
 	}
-	var response map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	data, ok := response["data"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing data: %+v", response)
-	}
-	fields, ok := data["fields"].(map[string]any)
-	key, _ := data["key"].(string)
-	bucket, _ := data["bucket"].(string)
-	publicURL, _ := data["public_url"].(string)
-	if response["ok"] != true || !ok || bucket != "private-media" || !strings.HasPrefix(key, "users/user-123/") || fields["x-amz-signature"] == "" || publicURL != "" {
-		t.Fatalf("unsafe or incomplete upload intent: %+v", response)
+	if !strings.Contains(w.Body.String(), "MEDIA_METADATA_UNAVAILABLE") {
+		t.Fatalf("expected fail-closed metadata error, got %s", w.Body.String())
 	}
 }
 
