@@ -77,6 +77,7 @@ if ! restic_run snapshots --json >/dev/null 2>&1; then
 fi
 restic_run backup /data --tag testagram --tag "$backup_id"
 restic_run check
+restic_run forget --tag testagram --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune
 
 printf 'Encrypted off-host backup created: %s\n' "$backup_id"
 printf 'PostgreSQL archive SHA-256: %s\n' "$postgres_sha"
