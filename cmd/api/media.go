@@ -1012,6 +1012,9 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
 			continue
 		}
+		if err := s.deleteProductMedia(batchCtx, item.externalID); err != nil {
+			continue
+		}
 		finalStatus := "deleted"
 		if item.status == "quarantine_pending" {
 			finalStatus = "quarantined"
