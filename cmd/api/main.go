@@ -72,6 +72,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := requestID(r)
+		w.Header().Set("X-Request-ID", id)
 		s.requests.Add(1)
 		mux.ServeHTTP(w, r)
 	})
@@ -252,11 +254,8 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
+		// Never expose raw database/upstream errors to clients.
 		message := "Capability database request failed"
-		var detail struct { Message string `json:"message"` }
-		if json.Unmarshal(raw, &detail) == nil && strings.TrimSpace(detail.Message) != "" {
-			message = detail.Message
-		}
 		status := upstreamResponse.StatusCode
 		if status >= 500 {
 			status = http.StatusBadGateway
