@@ -176,4 +176,3 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 func strconvFormatInt(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
-
