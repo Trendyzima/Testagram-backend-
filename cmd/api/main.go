@@ -283,8 +283,8 @@ func (s *service) bookmarkList(w http.ResponseWriter, r *http.Request, id, baseU
 		"/rest/v1/federated_bookmarks?select=id,object_uri,created_at&order=created_at.desc&limit=100",
 	}
 	type result struct {
-		items []map[string]any
-		err   error
+		items  []map[string]any
+		err    error
 		status int
 	}
 	results := make(chan result, len(paths))
