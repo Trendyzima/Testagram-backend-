@@ -145,3 +145,30 @@ func TestTLSAuthorizationRejectsHostOutsideManagedZone(t *testing.T) {
 		t.Fatalf("wanted 403 for external host, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestManagedDomainRoutingFailsClosedForApexReservedAndNestedHosts(t *testing.T) {
+	t.Setenv("TESTAGRAM_BASE_DOMAIN", "testagram.site")
+	s := &Server{}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	tests := []struct {
+		host string
+		want int
+	}{
+		{host: "testagram.site", want: http.StatusNotFound},
+		{host: "api.testagram.site", want: http.StatusNotFound},
+		{host: "foo.bar.testagram.site", want: http.StatusNotFound},
+		{host: "unrelated.example", want: http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "https://"+tt.host+"/", nil)
+			rec := httptest.NewRecorder()
+			s.withManagedDomainRouting(next).ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("host %q: wanted %d, got %d", tt.host, tt.want, rec.Code)
+			}
+		})
+	}
+}
