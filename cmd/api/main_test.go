@@ -346,13 +346,16 @@ func TestMediaAttachFailsClosedWithoutMetadataDatabase(t *testing.T) {
 	}
 }
 
-func TestPublicMediaURLUsesConfiguredBucketAndEndpoint(t *testing.T) {
-	t.Setenv("MINIO_PUBLIC_ENDPOINT", "https://media.example.test")
-	t.Setenv("PUBLIC_MEDIA_BUCKET", "public-assets")
+func TestPublicMediaURLUsesCanonicalCDNPrefix(t *testing.T) {
+	t.Setenv("MEDIA_PUBLIC_BASE_URL", "https://media.example.test/v1/")
 	got := publicMediaURL("users/user-123/0123456789abcdef0123456789abcdef")
-	want := "https://media.example.test/public-assets/users/user-123/0123456789abcdef0123456789abcdef"
+	want := "https://media.example.test/v1/users/user-123/0123456789abcdef0123456789abcdef"
 	if got != want {
 		t.Fatalf("publicMediaURL()=%q want=%q", got, want)
+	}
+	t.Setenv("MEDIA_PUBLIC_BASE_URL", "https://media.example.test/v1?cache=1")
+	if got := publicMediaURL("users/user-123/0123456789abcdef0123456789abcdef"); got != "" {
+		t.Fatalf("publicMediaURL accepted a query-bearing base URL: %q", got)
 	}
 }
 
