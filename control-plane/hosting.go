@@ -301,14 +301,20 @@ func (s *Server) withManagedDomainRouting(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base, err := normalizedBaseDomain()
 		host := normalizeRequestHost(r.Host)
-		mainDomain := strings.ToLower(strings.TrimSpace(os.Getenv("TESTAGRAM_DOMAIN")))
-		if parsed, parseErr := url.Parse(mainDomain); parseErr == nil && parsed.Host != "" { mainDomain = parsed.Host }
-		if err == nil && host != "" && host != mainDomain && strings.HasSuffix(host, "."+base) {
+		if err == nil && host == base {
+			http.NotFound(w, r)
+			return
+		}
+		if err == nil && host != "" && strings.HasSuffix(host, "."+base) {
 			label := strings.TrimSuffix(host, "."+base)
-			if !strings.Contains(label, ".") && !isReservedDomainSlug(label) {
-				s.proxyManagedDomain(w, r, host)
+			// Only one-label, non-reserved hostnames may enter tenant routing.
+			// Never fall through to operator APIs for an unknown tenant hostname.
+			if strings.Contains(label, ".") || isReservedDomainSlug(label) {
+				http.NotFound(w, r)
 				return
 			}
+			s.proxyManagedDomain(w, r, host)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
