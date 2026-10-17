@@ -36,11 +36,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     volumes: [object-data:/data]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/ready >/dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     restart: unless-stopped
     networks: [data]
 
@@ -48,10 +43,11 @@ services:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     depends_on:
       object-storage:
-        condition: service_healthy
+        condition: service_started
     entrypoint: ["/bin/sh", "-ec"]
     command: >
-      mc alias set local http://object-storage:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD";
+      until mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &&
+      mc admin info local >/dev/null 2>&1; do sleep 2; done;
       mc mb --ignore-existing local/${MINIO_BUCKET:-testagram-private-media};
       mc anonymous set none local/${MINIO_BUCKET:-testagram-private-media};
       mc mb --ignore-existing local/${PUBLIC_MEDIA_BUCKET:-testagram-public-media};
