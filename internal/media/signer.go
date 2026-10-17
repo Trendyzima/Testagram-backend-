@@ -22,7 +22,6 @@ import (
 
 const (
 	defaultRegion = "us-east-1"
-	policyOverhead = int64(64 << 10)
 	defaultUploadTTL = 10 * time.Minute
 )
 
@@ -106,9 +105,9 @@ func NewSigner(cfg Config) (*Signer, error) {
 	}, nil
 }
 
-// CreateUploadIntent returns a policy-constrained multipart POST. The signature is
-// bound to the exact bucket, owner-prefixed object key, content type and body-size
-// ceiling; the secret access key is never returned to the caller.
+// CreateUploadIntent returns a short-lived signed PUT URL compatible with the
+// existing browser uploader. Object size is verified against the persisted intent
+// on completion; invalid objects are deleted or queued for durable cleanup.
 func (s *Signer) CreateUploadIntent(userID, contentType, visibility string, requestedBytes int64, now time.Time) (UploadIntent, error) {
 	if !userIDPattern.MatchString(userID) { return UploadIntent{}, errors.New("invalid authenticated user ID") }
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
@@ -128,36 +127,44 @@ func (s *Signer) CreateUploadIntent(userID, contentType, visibility string, requ
 	bucket := s.privateBucket
 	if visibility == "public" { bucket = s.publicBucket }
 	now = now.UTC()
+	expiresAt := now.Add(s.uploadTTL)
+	uploadURL, err := s.presignObjectPut(userID, key, visibility, contentType, s.uploadTTL, now)
+	if err != nil { return UploadIntent{}, err }
+	result := UploadIntent{Bucket: bucket, Key: key, Method: "PUT", URL: uploadURL, Fields: map[string]string{}, ExpiresAt: expiresAt, MaxUploadBytes: requestedBytes}
+	return result, nil
+}
+
+func (s *Signer) presignObjectPut(userID, key, visibility, contentType string, lifetime time.Duration, now time.Time) (string, error) {
+	if !userIDPattern.MatchString(userID) || !objectKeyPattern.MatchString(key) || !strings.HasPrefix(key, "users/"+userID+"/") {
+		return "", errors.New("media object does not belong to authenticated user")
+	}
+	if visibility != "private" && visibility != "public" { return "", errors.New("invalid media visibility") }
+	if lifetime < time.Minute || lifetime > time.Hour { return "", errors.New("upload URL lifetime must be between 1 minute and 1 hour") }
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if _, ok := allowedTypes[contentType]; !ok { return "", errors.New("unsupported media content type") }
+	bucket := s.privateBucket
+	if visibility == "public" { bucket = s.publicBucket }
+	now = now.UTC()
 	date := now.Format("20060102")
 	amzDate := now.Format("20060102T150405Z")
-	credential := s.accessKey + "/" + date + "/" + s.region + "/s3/aws4_request"
-	expiresAt := now.Add(s.uploadTTL)
-	policy, err := json.Marshal(map[string]any{
-		"expiration": expiresAt.Format(time.RFC3339),
-		"conditions": []any{
-			map[string]string{"bucket": bucket},
-			map[string]string{"key": key},
-			map[string]string{"Content-Type": contentType},
-			map[string]string{"success_action_status": "201"},
-			map[string]string{"x-amz-algorithm": "AWS4-HMAC-SHA256"},
-			map[string]string{"x-amz-credential": credential},
-			map[string]string{"x-amz-date": amzDate},
-			[]any{"content-length-range", 1, requestedBytes + policyOverhead},
-		},
-	})
-	if err != nil { return UploadIntent{}, errors.New("could not build media upload policy") }
-	encodedPolicy := base64.StdEncoding.EncodeToString(policy)
-	signature := hex.EncodeToString(hmacSHA256(signingKey(s.secretKey, date, s.region), []byte(encodedPolicy)))
-	fields := map[string]string{
-		"key": key, "Content-Type": contentType,
-		"success_action_status": "201", "policy": encodedPolicy,
-		"x-amz-algorithm": "AWS4-HMAC-SHA256", "x-amz-credential": credential,
-		"x-amz-date": amzDate, "x-amz-signature": signature,
-	}
-	action := s.objectURL(bucket, "")
-	result := UploadIntent{Bucket: bucket, Key: key, Method: "POST", URL: action.String(), Fields: fields, ExpiresAt: expiresAt, MaxUploadBytes: requestedBytes}
-	if visibility == "public" { result.PublicURL = s.objectURL(bucket, key).String() }
-	return result, nil
+	scope := date + "/" + s.region + "/s3/aws4_request"
+	u := s.objectURL(bucket, key)
+	q := u.Query()
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", s.accessKey+"/"+scope)
+	q.Set("X-Amz-Date", amzDate)
+	q.Set("X-Amz-Expires", strconv.FormatInt(int64(lifetime/time.Second), 10))
+	q.Set("X-Amz-SignedHeaders", "content-type;host")
+	u.RawQuery = q.Encode()
+	canonicalHeaders := "content-type:" + contentType + "\\n" + "host:" + s.signingHost + "\\n"
+	canonicalRequest := strings.Join([]string{"PUT", u.EscapedPath(), u.RawQuery, canonicalHeaders, "content-type;host", "UNSIGNED-PAYLOAD"}, "\\n")
+	requestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\\n" + amzDate + "\\n" + scope + "\\n" + hex.EncodeToString(requestHash[:])
+	signature := hex.EncodeToString(hmacSHA256(signingKey(s.secretKey, date, s.region), []byte(stringToSign)))
+	q = u.Query()
+	q.Set("X-Amz-Signature", signature)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // MaxBytesForContentType returns the configured maximum for an accepted MIME type.
