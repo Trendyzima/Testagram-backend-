@@ -1,3 +1,5 @@
+# Testagram self-hosted platform stack
+
 ## Private platform service
 
 The stack includes `platform:8095` for internal cache, rate limiting, queues, feature configuration and audit/event APIs. Its port is not published to the host; it is reachable only on the private Docker networks. The `PLATFORM_INTERNAL_TOKEN` in `.env` is required and must never be exposed to browser or mobile clients. Prometheus scrapes platform metrics on a separate internal monitoring network.
@@ -6,7 +8,6 @@ A fresh PostgreSQL data directory runs `migrations/001_platform.sql` through the
 
 The platform client is available at `internal/platformclient`, but application call sites are not migrated yet. Keep this service optional until the consumer integration and end-to-end tests pass.
 
-# Testagram self-hosted platform stack
 
 This is a local-first starting point for replacing managed infrastructure where
 owned hardware and connectivity permit. It provisions PostgreSQL, Valkey
