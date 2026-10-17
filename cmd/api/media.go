@@ -44,6 +44,7 @@ type mediaAsset struct {
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	PublicURL    string    `json:"public_url,omitempty"`
+	MediaType    string    `json:"media_type,omitempty"`
 }
 
 func sanitizeOriginalName(name string) (string, error) {
@@ -419,6 +420,11 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	asset.Key = body.Key
+	if strings.HasPrefix(body.ContentType, "image/") {
+		asset.MediaType = "image"
+	} else if strings.HasPrefix(body.ContentType, "video/") {
+		asset.MediaType = "video"
+	}
 	if body.Visibility == "public" {
 		asset.PublicURL = publicMediaURL(body.Key)
 		if asset.PublicURL == "" {
