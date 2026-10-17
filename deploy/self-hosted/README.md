@@ -1,0 +1,65 @@
+# Testagram self-hosted platform stack
+
+This is a local-first starting point for replacing managed infrastructure where
+owned hardware and connectivity permit. It provisions PostgreSQL, Valkey
+(Redis-compatible), private S3-compatible object storage, an Nginx media cache,
+Caddy HTTPS reverse proxy, the existing Go capability gateway, and Prometheus.
+Persistent data lives in local Docker volumes.
+
+## Current boundaries — read before production use
+
+- Valkey is provisioned but the current Go gateway does not yet consume it.
+  Cache, queue, session, and rate-limit features are not automatically active.
+- MinIO provisions a private media bucket, but the current gateway does not yet
+  upload media to it or sign object URLs. Do not make the bucket public to work
+  around this missing integration.
+- Nginx caches GET/HEAD media requests only. This is a single-machine cache,
+  not a global edge network. The application must publish media through this
+  origin before media delivery will work.
+- PostgreSQL is local and durable, but this does not migrate the existing
+  Supabase schema, authentication, RLS policies, storage objects, or Edge
+  Functions. The capability gateway still expects a compatible Supabase API
+  configured using SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.
+- Caddy can obtain free TLS certificates once public DNS points at this host
+  and inbound ports 80/443 are reachable.
+- Prometheus is private to the Compose network. Do not expose it publicly
+  without an authenticated admin/VPN route.
+
+## Start locally
+
+1. Install Docker Engine and Docker Compose on the host.
+2. Copy .env.example to .env. Replace every REPLACE_ placeholder with a
+   unique long random secret, set a real operations email, then run chmod 600 .env.
+3. Point api.testagram.site and media.testagram.site A/AAAA records to the
+   host's public address. Publish AAAA only if IPv6 connectivity works.
+4. Forward TCP ports 80 and 443 through the router/firewall. Never forward
+   PostgreSQL, Valkey, MinIO, or Prometheus ports to the public internet.
+5. From this directory run docker compose config --quiet, then
+   docker compose up -d --build.
+6. Verify https://api.testagram.site/healthz, /readyz, and /metrics. The
+   media endpoint needs authorized object upload/signing integration before it
+   can serve application media.
+7. Inspect docker compose ps and logs before any production traffic cutover.
+
+## Backup and recovery
+
+Named Docker volumes are not backups. Before production use, implement and
+test encrypted PostgreSQL dumps, MinIO replication/versioning, Valkey
+rebuildability, off-machine backup copies, disk-space alerts, and power-loss
+recovery. Keep at least one backup off the primary host: a single machine
+cannot survive its own disk failure, theft, fire, or power loss.
+
+## Zero-rent target
+
+Run the app, cache, database, object store, and media cache on owned hardware;
+use open-source software, private internal networking, free ACME certificates,
+and automated builds, updates, backups, health checks, alerts, and restore
+tests. Later, split roles across replaceable nodes and add private networking,
+replicated storage, database replication/partitioning, and multiple edge nodes.
+
+Zero rent does not mean zero cost. Domain renewals, electricity, internet
+transit, static/public IP or tunnel, hardware replacement, cooling, and
+off-site backups may still cost money. Residential ISP terms, CGNAT, upload
+bandwidth, uptime, and power reliability can block home hosting. This is not
+proof of 500-million-user capacity; that requires representative load tests,
+multi-site redundancy, and an independently validated capacity design.
