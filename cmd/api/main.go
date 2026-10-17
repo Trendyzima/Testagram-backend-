@@ -550,7 +550,10 @@ func main() {
 		if mediaAccessKey == "" || mediaSecretKey == "" {
 			log.Fatal("MEDIA_S3_ACCESS_KEY and MEDIA_S3_SECRET_KEY must be configured together")
 		}
-		mediaEndpoint := env("MEDIA_S3_ENDPOINT", env("R2_S3_ENDPOINT", env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site"))))
+		mediaEndpoint := env("MEDIA_S3_ENDPOINT", env("R2_S3_ENDPOINT", env("MINIO_PUBLIC_ENDPOINT", "")))
+		if mediaEndpoint == "" {
+			log.Fatal("MEDIA_S3_ENDPOINT (or legacy MINIO_PUBLIC_ENDPOINT) must be configured when media credentials are set")
+		}
 		defaultSigningHost := strings.TrimPrefix(strings.TrimPrefix(mediaEndpoint, "https://"), "http://")
 		if strings.Contains(defaultSigningHost, "/") {
 			log.Fatal("MEDIA_S3_ENDPOINT must be an absolute S3 endpoint without a path")
