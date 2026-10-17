@@ -97,6 +97,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
+	mux.HandleFunc("OPTIONS /api/media/list", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/list", s.mediaList)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
