@@ -25,6 +25,7 @@ jobs:
       - name: Resolve and verify Go modules
         run: |
           go mod tidy
+          cat go.sum
           git diff --exit-code -- go.mod
       - name: Tests
         run: go test -race -count=1 ./...
