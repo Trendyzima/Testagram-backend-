@@ -234,7 +234,7 @@ func (a *Agent) execute(w Workload) error {
 }
 func controlURLValid(raw string) error {
 	if raw == "" { return errors.New("VPS_CONTROL_PLANE_URL is required") }
-	u,err:=net/url.Parse(raw); if err!=nil || u.Host=="" { return errors.New("invalid control-plane URL") }
+	u,err:=url.Parse(raw); if err!=nil || u.Host=="" { return errors.New("invalid control-plane URL") }
 	if u.Scheme!="https" {
 		host:=u.Hostname()
 		if u.Scheme!="http" || (host!="localhost" && net.ParseIP(host)==nil) { return errors.New("control-plane URL must use HTTPS except for loopback development") }
