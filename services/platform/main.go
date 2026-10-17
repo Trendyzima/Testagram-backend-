@@ -30,6 +30,7 @@ type server struct {
 	queueAdds atomic.Uint64
 	queueAcks atomic.Uint64
 	rateChecks atomic.Uint64
+	queueMonitorErrors atomic.Uint64
 }
 
 type cacheRequest struct {
@@ -104,7 +105,76 @@ func main() {
 }
 func (s *server) health(w http.ResponseWriter,_ *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
 func (s *server) readyz(w http.ResponseWriter,r *http.Request){if !s.ready.Load(){http.Error(w,"not ready",503);return};ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};if err:=s.redis.Ping(ctx).Err();err!=nil{http.Error(w,"redis unavailable",503);return};_,_=w.Write([]byte("ready\n"))}
-func (s *server) metrics(w http.ResponseWriter,_ *http.Request){w.Header().Set("Content-Type","text/plain; version=0.0.4");fmt.Fprintf(w,"testagram_platform_cache_hits_total %d\n",s.cacheHits.Load());fmt.Fprintf(w,"testagram_platform_cache_misses_total %d\n",s.cacheMiss.Load());fmt.Fprintf(w,"testagram_platform_queue_enqueued_total %d\n",s.queueAdds.Load());fmt.Fprintf(w,"testagram_platform_queue_acked_total %d\n",s.queueAcks.Load());fmt.Fprintf(w,"testagram_platform_rate_limit_checks_total %d\n",s.rateChecks.Load())}
+func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprintf(w, "testagram_platform_cache_hits_total %d\n", s.cacheHits.Load())
+	fmt.Fprintf(w, "testagram_platform_cache_misses_total %d\n", s.cacheMiss.Load())
+	fmt.Fprintf(w, "testagram_platform_queue_enqueued_total %d\n", s.queueAdds.Load())
+	fmt.Fprintf(w, "testagram_platform_queue_acked_total %d\n", s.queueAcks.Load())
+	fmt.Fprintf(w, "testagram_platform_rate_limit_checks_total %d\n", s.rateChecks.Load())
+	fmt.Fprintf(w, "testagram_platform_queue_monitor_errors_total %d\n", s.queueMonitorErrors.Load())
+
+	// Queue names/groups are explicit configuration, avoiding a costly or
+	// unbounded Redis key scan on every Prometheus scrape.
+	monitors := parseQueueMonitorConfigs(os.Getenv("PLATFORM_MONITORED_QUEUE_GROUPS"))
+	if len(monitors) == 0 { return }
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	for _, monitor := range monitors {
+		stream := "testagram:queue:" + monitor.Queue
+		length, err := s.redis.XLen(ctx, stream).Result()
+		if err != nil {
+			s.queueMonitorErrors.Add(1)
+			continue
+		}
+		fmt.Fprintf(w, "testagram_platform_queue_stream_length{queue=%q} %d\n", monitor.Queue, length)
+		pending, err := s.redis.XPending(ctx, stream, monitor.Group).Result()
+		if err != nil {
+			// A queue without a consumer group has no pending-entry summary yet.
+			s.queueMonitorErrors.Add(1)
+			continue
+		}
+		fmt.Fprintf(w, "testagram_platform_queue_pending_messages{queue=%q,group=%q} %d\n", monitor.Queue, monitor.Group, pending.Count)
+		age, ok := streamEntryAgeSeconds(pending.Lower, time.Now())
+		if ok && pending.Count > 0 {
+			fmt.Fprintf(w, "testagram_platform_queue_oldest_pending_entry_age_seconds{queue=%q,group=%q} %.3f\n", monitor.Queue, monitor.Group, age)
+		}
+	}
+}
+
+type queueMonitorConfig struct {
+	Queue string
+	Group string
+}
+
+// parseQueueMonitorConfigs accepts comma-separated queue:group pairs.
+func parseQueueMonitorConfigs(raw string) []queueMonitorConfig {
+	var result []queueMonitorConfig
+	seen := make(map[string]struct{})
+	for _, item := range strings.Split(raw, ",") {
+		parts := strings.Split(strings.TrimSpace(item), ":")
+		if len(parts) != 2 || !validKey(parts[0]) || !validKey(parts[1]) {
+			continue
+		}
+		key := parts[0] + ":" + parts[1]
+		if _, exists := seen[key]; exists { continue }
+		seen[key] = struct{}{}
+		result = append(result, queueMonitorConfig{Queue: parts[0], Group: parts[1]})
+	}
+	return result
+}
+
+// Stream IDs start with the enqueue timestamp in Unix milliseconds. This is
+// message age, not time spent pending after delivery.
+func streamEntryAgeSeconds(id string, now time.Time) (float64, bool) {
+	parts := strings.SplitN(id, "-", 2)
+	if len(parts) != 2 { return 0, false }
+	millis, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || millis < 0 { return 0, false }
+	age := now.Sub(time.UnixMilli(millis)).Seconds()
+	if age < 0 { age = 0 }
+	return age, true
+}
 func (s *server) authorize(w http.ResponseWriter,r *http.Request)bool{got:=strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer "));if got==""||subtle.ConstantTimeCompare([]byte(got),[]byte(s.internal))!=1{http.Error(w,"unauthorized",401);return false};return true}
 func (s *server) cacheGet(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};key:=r.URL.Query().Get("key");if !validKey(key){http.Error(w,"invalid key",400);return};v,err:=s.redis.Get(r.Context(),key).Result();if errors.Is(err,redis.Nil){s.cacheMiss.Add(1);http.Error(w,"not found",404);return};if err!=nil{http.Error(w,"cache unavailable",503);return};s.cacheHits.Add(1);writeJSON(w,map[string]string{"value":v})}
 func (s *server) cacheSet(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};var in cacheRequest;if !decodeJSON(w,r,&in)||!validKey(in.Key)||in.TTL<1||in.TTL>86400{http.Error(w,"invalid request",400);return};if err:=s.redis.Set(r.Context(),in.Key,in.Value,time.Duration(in.TTL)*time.Second).Err();err!=nil{http.Error(w,"cache unavailable",503);return};w.WriteHeader(204)}

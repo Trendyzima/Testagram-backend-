@@ -90,8 +90,16 @@ The API exposes:
 - `POST /api/media/private-download-url`: requires a valid Supabase bearer
   session and returns a five-minute signed URL only when the object key belongs
   to that user.
+- `POST /api/media/complete`: after the client uploads the returned form to
+  object storage, the API verifies the object with a signed HEAD request and
+  persists server-reported size, MIME type and ETag in `testagram_media.assets`.
+  It is idempotent for matching metadata and rejects cross-owner key conflicts.
 
-Only JPEG, PNG, WebP, AVIF, GIF, MP4 and WebM are accepted by upload intent.
+For an existing PostgreSQL volume, back up first and apply
+`migrations/005_media_assets.sql` manually; Compose init scripts run only for a
+new data directory. The completion endpoint requires this migration to be applied.
+
+Only JPEG, PNG, WebP, AVIF, GIF, MP4 and WebM are accepted by upload intent. The API reserves upload-intent size against a per-account quota (default 2 GiB, configurable with `MEDIA_USER_QUOTA_BYTES`) inside a transaction serialized per owner, so concurrent requests cannot bypass the quota.
 The policy enforces an upper bound derived from the requested file size and
 configured image/video limits. The Nginx media cache must remain the only public
 route to MinIO; never publish MinIO ports 9000/9001 directly. Signed private GET

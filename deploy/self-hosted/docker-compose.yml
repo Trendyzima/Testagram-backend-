@@ -13,6 +13,7 @@ services:
       - ../../migrations/002_production_hardening.sql:/docker-entrypoint-initdb.d/002_production_hardening.sql:ro
       - ../../migrations/003_hosting_control_plane.sql:/docker-entrypoint-initdb.d/003_hosting_control_plane.sql:ro
       - ../../migrations/004_hosting_operations.sql:/docker-entrypoint-initdb.d/004_hosting_operations.sql:ro
+      - ../../migrations/005_media_assets.sql:/docker-entrypoint-initdb.d/005_media_assets.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -45,6 +46,7 @@ services:
       VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD in .env}
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in .env}
       PLATFORM_ADDR: ":8095"
+      PLATFORM_MONITORED_QUEUE_GROUPS: ${PLATFORM_MONITORED_QUEUE_GROUPS:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,6 +129,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       MINIO_BUCKET: ${MINIO_BUCKET:-testagram-private-media}
       PUBLIC_MEDIA_BUCKET: ${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
+      MEDIA_USER_QUOTA_BYTES: ${MEDIA_USER_QUOTA_BYTES:-2147483648}
       MINIO_MEDIA_ACCESS_KEY: ${MINIO_MEDIA_ACCESS_KEY:-}
       MINIO_MEDIA_SECRET_KEY: ${MINIO_MEDIA_SECRET_KEY:-}
     restart: "no"
@@ -152,6 +155,7 @@ services:
       MINIO_REGION: ${MINIO_REGION:-us-east-1}
       MINIO_BUCKET: ${MINIO_BUCKET:-testagram-private-media}
       PUBLIC_MEDIA_BUCKET: ${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
+      MEDIA_USER_QUOTA_BYTES: ${MEDIA_USER_QUOTA_BYTES:-2147483648}
     depends_on:
       postgres:
         condition: service_healthy
