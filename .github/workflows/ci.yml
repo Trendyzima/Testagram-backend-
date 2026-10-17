@@ -33,7 +33,13 @@ jobs:
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api
       - name: Check formatting
-        run: test -z "$(gofmt -l cmd)"
+        run: |
+          unformatted="$(gofmt -l cmd)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            gofmt -d cmd
+            exit 1
+          fi
       - name: Compose configuration
         env:
           POSTGRES_PASSWORD: ci-only-password-not-for-production
