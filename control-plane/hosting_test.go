@@ -184,3 +184,45 @@ func TestTLSAuthorizationRejectsWhenOriginIPIsNotConfigured(t *testing.T) {
 		t.Fatalf("wanted 403 without configured origin IP, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestNodeMaintenanceRequiresInternalBearer(t *testing.T) {
+	s := &Server{internal: "unit-test-token"}
+	req := httptest.NewRequest(http.MethodPost, "/v1/hosting/nodes/00000000-0000-0000-0000-000000000000/drain", nil)
+	rec := httptest.NewRecorder()
+	s.hostingNodeActions(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wanted 401 without bearer, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNodeMaintenanceRejectsUnknownActionBeforeDatabase(t *testing.T) {
+	s := &Server{internal: "unit-test-token"}
+	req := httptest.NewRequest(http.MethodPost, "/v1/hosting/nodes/00000000-0000-0000-0000-000000000000/reboot", nil)
+	req.Header.Set("Authorization", "Bearer unit-test-token")
+	rec := httptest.NewRecorder()
+	s.hostingNodeActions(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("wanted 404 for unsupported action, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHostingAuditRejectsInvalidLimitBeforeDatabase(t *testing.T) {
+	s := &Server{internal: "unit-test-token"}
+	req := httptest.NewRequest(http.MethodGet, "/v1/hosting/audit?limit=501", nil)
+	req.Header.Set("Authorization", "Bearer unit-test-token")
+	rec := httptest.NewRecorder()
+	s.hostingAuditEvents(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("wanted 400 for out-of-range audit limit, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHostingAuditRequiresInternalBearer(t *testing.T) {
+	s := &Server{internal: "unit-test-token"}
+	req := httptest.NewRequest(http.MethodGet, "/v1/hosting/audit", nil)
+	rec := httptest.NewRecorder()
+	s.hostingAuditEvents(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wanted 401 without bearer, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

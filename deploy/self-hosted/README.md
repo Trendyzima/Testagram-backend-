@@ -62,6 +62,12 @@ The current control plane can schedule work only when a healthy node has registe
    can serve application media.
 7. Inspect docker compose ps and logs before any production traffic cutover.
 
+## Safe node maintenance
+
+Authenticated operator-only endpoints `POST /v1/hosting/nodes/{id}/drain` and `POST /v1/hosting/nodes/{id}/resume` support maintenance without exposing a public admin port. Drain excludes a node from new scheduling while allowing already-running work to finish; it does not kill workloads. Resume is allowed only when the node is still heartbeating and was drained. Both transitions and their metadata are committed with an audit event in the same database transaction. The application records the shared internal bearer identity, not a human identity; put this API behind a trusted operator gateway/VPN and do not share the token among people if per-user attribution is required.
+
+The new `004_hosting_operations.sql` migration creates the private audit-event table. For existing databases, back up first and apply migrations 003 and 004 after verifying prior schema state. Fresh volumes pick up migration 004 automatically.
+
 ## Backup and recovery
 
 Named Docker volumes are not backups. Before production use, implement and

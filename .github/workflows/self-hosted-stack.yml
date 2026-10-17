@@ -88,7 +88,7 @@ jobs:
             if [ "$attempt" -eq 40 ]; then docker compose logs postgres; exit 1; fi
             sleep 2
           done
-          result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null")
+          result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null and to_regclass('testagram_hosting.audit_events') is not null")
           test "$result" = "t"
           docker compose down -v
       - name: Ensure no live secrets were added to the example
