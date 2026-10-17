@@ -46,7 +46,7 @@ case "${1:-}" in
     mkdir -p "$stage_parent"
     [[ -d "$stage_parent" && -w "$stage_parent" ]] || die "BACKUP_STAGE_DIR must be a writable directory"
     # Never chmod the parent (especially /tmp); mktemp creates a private 0700 directory.
-    stage="$(mktemp -d "$stage_parent/testagram-backup.XXXXXXXX")
+    stage=$(mktemp -d "${stage_parent%/}/testagram-backup.XXXXXXXX")
     chmod 700 "$stage"
     cleanup() { rm -rf -- "$stage"; }
     trap cleanup EXIT INT TERM
