@@ -33,4 +33,7 @@ jobs:
       - name: Check formatting
         run: test -z "$(gofmt -l cmd)"
       - name: Compose configuration
+        env:
+          POSTGRES_PASSWORD: ci-only-password-not-for-production
+          DATABASE_URL: postgres://testagram:ci-only-password-not-for-production@db:5432/testagram?sslmode=disable
         run: docker compose config --quiet
