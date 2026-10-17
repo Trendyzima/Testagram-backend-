@@ -31,6 +31,9 @@ func TestUploadIntentSignsOwnerScopedSizeLimitedPolicy(t *testing.T) {
 	if intent.Method != "POST" || intent.Bucket != "private-media" || intent.PublicURL != "" {
 		t.Fatalf("unexpected private upload intent: %+v", intent)
 	}
+	if _, exists := intent.Fields["bucket"]; exists {
+		t.Fatal("bucket must be selected by the POST action URL, not an extra form field")
+	}
 	if !strings.HasPrefix(intent.Key, "users/user-123/") || !objectKeyPattern.MatchString(intent.Key) {
 		t.Fatalf("object key is not owner scoped: %q", intent.Key)
 	}
