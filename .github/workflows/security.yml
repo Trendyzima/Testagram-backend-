@@ -31,3 +31,9 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Check dependency licenses and module metadata
         run: go mod verify
+      - name: Scan the isolated platform service module
+        working-directory: services/platform
+        run: |
+          go mod download
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+          go mod verify
