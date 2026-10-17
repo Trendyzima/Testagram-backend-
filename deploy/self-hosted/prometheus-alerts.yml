@@ -1,0 +1,81 @@
+groups:
+  - name: testagram-host-health
+    rules:
+      - alert: TestagramHostDiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{job="testagram-node",fstype!~"tmpfs|overlay|squashfs|nsfs|proc|sysfs|cgroup2",mountpoint!~"^/(proc|sys|dev|run)(/.*)?$"} /
+           node_filesystem_size_bytes{job="testagram-node",fstype!~"tmpfs|overlay|squashfs|nsfs|proc|sysfs|cgroup2",mountpoint!~"^/(proc|sys|dev|run)(/.*)?$"}) < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram host disk space is low
+          description: Root filesystem has less than 15% free space for 10 minutes. Check PostgreSQL, MinIO, Prometheus and Docker volume growth.
+      - alert: TestagramHostDiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{job="testagram-node",fstype!~"tmpfs|overlay|squashfs|nsfs|proc|sysfs|cgroup2",mountpoint!~"^/(proc|sys|dev|run)(/.*)?$"} /
+           node_filesystem_size_bytes{job="testagram-node",fstype!~"tmpfs|overlay|squashfs|nsfs|proc|sysfs|cgroup2",mountpoint!~"^/(proc|sys|dev|run)(/.*)?$"}) < 0.08
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram host disk space is critically low
+          description: Root filesystem has less than 8% free space. Prioritize safe capacity recovery and verify backups before deleting data.
+      - alert: TestagramHostMemoryLow
+        expr: |
+          node_memory_MemAvailable_bytes{job="testagram-node"} /
+          node_memory_MemTotal_bytes{job="testagram-node"} < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram host memory headroom is low
+          description: Less than 10% host memory is available for 10 minutes.
+      - alert: TestagramQueuePendingBacklog
+        expr: testagram_platform_queue_pending_messages > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram queue pending backlog is high
+          description: A configured queue consumer group has more than 1000 pending messages. Check worker health, idempotent retries, and poison-message handling.
+      - alert: TestagramQueueOldestPendingAgeHigh
+        expr: testagram_platform_queue_oldest_pending_entry_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram queue has an old pending message
+          description: A configured queue has a pending entry older than five minutes. Message age is based on enqueue timestamp, not last delivery attempt.
+      - alert: TestagramQueueOldestPendingAgeCritical
+        expr: testagram_platform_queue_oldest_pending_entry_age_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram queue delivery is severely delayed
+          description: A configured queue has a pending entry older than fifteen minutes. Inspect consumers and dead-letter/reclaim metrics.
+      - alert: TestagramQueueMonitoringErrors
+        expr: increase(testagram_platform_queue_monitor_errors_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram queue monitoring is failing
+          description: The platform cannot collect one or more configured queue metrics. Verify queue names, consumer groups, and Valkey health.
+      - alert: TestagramNodeExporterDown
+        expr: up{job="testagram-node"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram host metrics are unavailable
+          description: Prometheus cannot scrape node-exporter; host capacity alerts may be stale.
+      - alert: TestagramServiceMetricsTargetDown
+        expr: up{job=~"testagram-api|testagram-platform"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: A Testagram service metrics target is down
+          description: Check service health and container logs; this alert does not replace readiness probes.
