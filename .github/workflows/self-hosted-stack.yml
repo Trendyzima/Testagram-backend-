@@ -6,6 +6,7 @@ on:
     paths:
       - "deploy/self-hosted/**"
       - "services/platform/**"
+      - "cmd/api/**"
       - "control-plane/**"
       - "internal/crypto/**"
       - "internal/platformclient/**"
