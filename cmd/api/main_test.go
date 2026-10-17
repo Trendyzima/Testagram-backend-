@@ -112,7 +112,9 @@ func newTestPlatformClient(t *testing.T, handler http.Handler) *platformclient.C
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	client, err := platformclient.New(server.URL, "test-platform-token", time.Second)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return client
 }
 
@@ -121,7 +123,9 @@ func TestPublicCapabilityUsesSharedPlatformCache(t *testing.T) {
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
 	var cacheGets, upstreamCalls int
 	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-platform-token" { t.Errorf("missing platform auth") }
+		if r.Header.Get("Authorization") != "Bearer test-platform-token" {
+			t.Errorf("missing platform auth")
+		}
 		switch r.URL.Path {
 		case "/v1/rate-limit/check":
 			_, _ = w.Write([]byte(`{"allowed":true,"count":1,"remaining":119,"retry_after_seconds":60}`))
@@ -129,42 +133,57 @@ func TestPublicCapabilityUsesSharedPlatformCache(t *testing.T) {
 			cacheGets++
 			_, _ = w.Write([]byte(`{"value":"{\"trending\":[\"cached-item\"]}"}`))
 		default:
-			http.NotFound(w,r)
+			http.NotFound(w, r)
 		}
 	}))
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls++
 		_, _ = w.Write([]byte(`{"trending":["upstream-item"]}`))
 	}))
 	defer upstream.Close()
-	s := &service{upstream:upstream.Client(),platform:platform}
-	r := httptest.NewRequest(http.MethodPost,"/api/capability",strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
+	s := &service{upstream: upstream.Client(), platform: platform}
+	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w,r)
-	if w.Code != http.StatusOK { t.Fatalf("status=%d body=%s",w.Code,w.Body.String()) }
-	if cacheGets != 1 || upstreamCalls != 0 { t.Fatalf("cacheGets=%d upstreamCalls=%d",cacheGets,upstreamCalls) }
-	if !strings.Contains(w.Body.String(),"cached-item") { t.Fatalf("cached response not returned: %s",w.Body.String()) }
-	if !strings.Contains(w.Header().Get("Cache-Control"),"public") { t.Fatalf("expected public cache headers, got %q",w.Header().Get("Cache-Control")) }
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if cacheGets != 1 || upstreamCalls != 0 {
+		t.Fatalf("cacheGets=%d upstreamCalls=%d", cacheGets, upstreamCalls)
+	}
+	if !strings.Contains(w.Body.String(), "cached-item") {
+		t.Fatalf("cached response not returned: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Header().Get("Cache-Control"), "public") {
+		t.Fatalf("expected public cache headers, got %q", w.Header().Get("Cache-Control"))
+	}
 }
 
 func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
 	t.Setenv("SUPABASE_URL", "https://supabase.example")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
 	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/rate-limit/check" { http.NotFound(w,r); return }
-		_, _ = fmt.Fprint(w,`{"allowed":false,"count":31,"remaining":0,"retry_after_seconds":17}`)
+		if r.URL.Path != "/v1/rate-limit/check" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"allowed":false,"count":31,"remaining":0,"retry_after_seconds":17}`)
 	}))
 	upstreamCalls := 0
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) { upstreamCalls++; _,_=w.Write([]byte(`{}`)) }))
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { upstreamCalls++; _,_=w.Write([]byte(`{}`)) }))
 	defer upstream.Close()
-	s := &service{upstream:upstream.Client(),platform:platform}
-	r := httptest.NewRequest(http.MethodPost,"/api/capability",strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
-	r.Header.Set("Authorization","Bearer user-session-token")
+	s := &service{upstream: upstream.Client(), platform: platform}
+	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
+	r.Header.Set("Authorization", "Bearer user-session-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w,r)
 	if w.Code != http.StatusTooManyRequests { t.Fatalf("status=%d body=%s",w.Code,w.Body.String()) }
-	if w.Header().Get("Retry-After") != "17" { t.Fatalf("Retry-After=%q",w.Header().Get("Retry-After")) }
-	if upstreamCalls != 0 { t.Fatalf("upstream called %d times after rate-limit denial",upstreamCalls) }
+	if w.Header().Get("Retry-After") != "17" {
+		t.Fatalf("Retry-After=%q", w.Header().Get("Retry-After"))
+	}
+	if upstreamCalls != 0 {
+		t.Fatalf("upstream called %d times after rate-limit denial", upstreamCalls)
+	}
 }
 
 func TestAuthenticatedResponsesNeverUseSharedPublicCache(t *testing.T) {
@@ -176,21 +195,30 @@ func TestAuthenticatedResponsesNeverUseSharedPublicCache(t *testing.T) {
 		case "/v1/rate-limit/check":
 			_, _ = w.Write([]byte(`{"allowed":true,"count":1,"remaining":119,"retry_after_seconds":60}`))
 		case "/v1/cache/get":
-			cacheGets++; http.Error(w,"not found",http.StatusNotFound)
+			cacheGets++
+			http.Error(w, "not found", http.StatusNotFound)
 		case "/v1/cache/set":
-			cacheSets++; w.WriteHeader(http.StatusNoContent)
-		default: http.NotFound(w,r)
+			cacheSets++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
 		}
 	}))
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) { _,_=w.Write([]byte(`{"private":"user-specific"}`)) }))
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"private":"user-specific"}`)) }))
 	defer upstream.Close()
 	t.Setenv("SUPABASE_URL", upstream.URL)
-	s := &service{upstream:upstream.Client(),platform:platform}
-	r := httptest.NewRequest(http.MethodPost,"/api/capability",strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
-	r.Header.Set("Authorization","Bearer user-session-token")
+	s := &service{upstream: upstream.Client(), platform: platform}
+	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
+	r.Header.Set("Authorization", "Bearer user-session-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w,r)
-	if w.Code != http.StatusOK { t.Fatalf("status=%d body=%s",w.Code,w.Body.String()) }
-	if cacheGets != 0 || cacheSets != 0 { t.Fatalf("authenticated request touched shared cache: gets=%d sets=%d",cacheGets,cacheSets) }
-	if w.Header().Get("Cache-Control") != "private, no-store" { t.Fatalf("unsafe cache header %q",w.Header().Get("Cache-Control")) }
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if cacheGets != 0 || cacheSets != 0 {
+		t.Fatalf("authenticated request touched shared cache: gets=%d sets=%d", cacheGets, cacheSets)
+	}
+	if w.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("unsafe cache header %q", w.Header().Get("Cache-Control"))
+	}
 }
