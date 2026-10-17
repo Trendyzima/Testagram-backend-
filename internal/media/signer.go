@@ -7,9 +7,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -156,10 +154,10 @@ func (s *Signer) presignObjectPut(userID, key, visibility, contentType string, l
 	q.Set("X-Amz-Expires", strconv.FormatInt(int64(lifetime/time.Second), 10))
 	q.Set("X-Amz-SignedHeaders", "content-type;host")
 	u.RawQuery = q.Encode()
-	canonicalHeaders := "content-type:" + contentType + "\\n" + "host:" + s.signingHost + "\\n"
-	canonicalRequest := strings.Join([]string{"PUT", u.EscapedPath(), u.RawQuery, canonicalHeaders, "content-type;host", "UNSIGNED-PAYLOAD"}, "\\n")
+	canonicalHeaders := "content-type:" + contentType + "\n" + "host:" + s.signingHost + "\n"
+	canonicalRequest := strings.Join([]string{"PUT", u.EscapedPath(), u.RawQuery, canonicalHeaders, "content-type;host", "UNSIGNED-PAYLOAD"}, "\n")
 	requestHash := sha256.Sum256([]byte(canonicalRequest))
-	stringToSign := "AWS4-HMAC-SHA256\\n" + amzDate + "\\n" + scope + "\\n" + hex.EncodeToString(requestHash[:])
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hex.EncodeToString(requestHash[:])
 	signature := hex.EncodeToString(hmacSHA256(signingKey(s.secretKey, date, s.region), []byte(stringToSign)))
 	q = u.Query()
 	q.Set("X-Amz-Signature", signature)
@@ -294,9 +292,9 @@ func (s *Signer) PresignObjectDelete(userID, key, visibility string, lifetime ti
 	q.Set("X-Amz-Expires", strconv.FormatInt(int64(lifetime/time.Second), 10))
 	q.Set("X-Amz-SignedHeaders", "host")
 	u.RawQuery = q.Encode()
-	canonicalRequest := strings.Join([]string{"DELETE", u.EscapedPath(), u.RawQuery, "host:"+s.signingHost+"\\n", "host", "UNSIGNED-PAYLOAD"}, "\\n")
+	canonicalRequest := strings.Join([]string{"DELETE", u.EscapedPath(), u.RawQuery, "host:"+s.signingHost+"\n", "host", "UNSIGNED-PAYLOAD"}, "\n")
 	requestHash := sha256.Sum256([]byte(canonicalRequest))
-	stringToSign := "AWS4-HMAC-SHA256\\n" + amzDate + "\\n" + scope + "\\n" + hex.EncodeToString(requestHash[:])
+	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hex.EncodeToString(requestHash[:])
 	signature := hex.EncodeToString(hmacSHA256(signingKey(s.secretKey, date, s.region), []byte(stringToSign)))
 	q = u.Query()
 	q.Set("X-Amz-Signature", signature)
