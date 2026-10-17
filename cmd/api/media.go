@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -21,6 +22,22 @@ type mediaUploadIntentRequest struct {
 
 type privateMediaDownloadRequest struct {
 	Key string `json:"key"`
+}
+
+type mediaCompleteRequest struct {
+	Key string `json:"key"`
+	Visibility string `json:"visibility"`
+	ContentType string `json:"content_type"`
+}
+
+type mediaAsset struct {
+	Key string `json:"key"`
+	Visibility string `json:"visibility"`
+	ContentType string `json:"content_type"`
+	SizeBytes int64 `json:"size_bytes"`
+	ETag string `json:"etag,omitempty"`
+	Status string `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (s *service) mediaPreflight(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +128,96 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"url": signedURL, "expires_in_seconds": 300}, "error": nil, "request_id": id})
+}
+
+// mediaComplete verifies the actual object through a signed HEAD request before
+// persisting metadata. Client-supplied size and ETag are deliberately not trusted.
+func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.media == nil || s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 { code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable" }
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	var body mediaCompleteRequest
+	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key, visibility and content type are required", id))
+		return
+	}
+	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
+	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
+		return
+	}
+	headURL, err := s.media.PresignObjectHead(userID, body.Key, body.Visibility, time.Minute, time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_ACCESS_DENIED", "This media key is not owned by the authenticated account", id))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, headURL, nil)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Could not verify uploaded media", id))
+		return
+	}
+	client := s.upstream
+	if client == nil { client = &http.Client{Timeout: 4*time.Second} }
+	resp, err := client.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Media storage could not be reached", id))
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_UPLOAD_NOT_FOUND", "Upload is not present in object storage yet", id))
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Object storage rejected media verification", id))
+		return
+	}
+	actualType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	size := resp.ContentLength
+	if actualType != strings.ToLower(strings.TrimSpace(body.ContentType)) || size < 1 || size > maxBytes {
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_OBJECT_INVALID", "Uploaded object type or size does not satisfy media policy", id))
+		return
+	}
+	etag := strings.Trim(resp.Header.Get("ETag"), "\"")
+	var asset mediaAsset
+	err = s.db.QueryRow(ctx, `insert into testagram_media.assets
+		(object_key, owner_id, visibility, content_type, size_bytes, etag, status)
+		values ($1,$2,$3,$4,$5,$6,'ready')
+		on conflict (object_key) do nothing
+		returning object_key, visibility, content_type, size_bytes, etag, status, created_at`,
+		body.Key, userID, body.Visibility, actualType, size, etag).
+		Scan(&asset.Key, &asset.Visibility, &asset.ContentType, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
+	if err != nil {
+		var ownerID string
+		err = s.db.QueryRow(ctx, `select object_key, owner_id, visibility, content_type, size_bytes, etag, status, created_at
+			from testagram_media.assets where object_key=$1`, body.Key).
+			Scan(&asset.Key, &ownerID, &asset.Visibility, &asset.ContentType, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not persist media metadata", id))
+			return
+		}
+		if ownerID != userID || asset.Status != "ready" || asset.Visibility != body.Visibility || asset.ContentType != actualType || asset.SizeBytes != size {
+			writeJSON(w, http.StatusConflict, errorBody("MEDIA_KEY_CONFLICT", "Media key already exists with different ownership or metadata", id))
+			return
+		}
+	}
+	asset.Key = body.Key
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": asset, "error": nil, "request_id": id})
 }
 
 func decodeMediaJSON(w http.ResponseWriter, r *http.Request, destination any) error {
