@@ -304,8 +304,11 @@ func (s *Server) withManagedDomainRouting(next http.Handler) http.Handler {
 		mainDomain := strings.ToLower(strings.TrimSpace(os.Getenv("TESTAGRAM_DOMAIN")))
 		if parsed, parseErr := url.Parse(mainDomain); parseErr == nil && parsed.Host != "" { mainDomain = parsed.Host }
 		if err == nil && host != "" && host != mainDomain && strings.HasSuffix(host, "."+base) {
-			s.proxyManagedDomain(w, r, host)
-			return
+			label := strings.TrimSuffix(host, "."+base)
+			if !strings.Contains(label, ".") && !isReservedDomainSlug(label) {
+				s.proxyManagedDomain(w, r, host)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
