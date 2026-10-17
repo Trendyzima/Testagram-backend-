@@ -40,9 +40,13 @@ The current control plane can schedule work only when a healthy node has registe
   private GETs, and adds CORS headers for the Testagram web origins.
   The API now persists upload intents, verifies uploaded objects with signed
   HEAD requests, records verified metadata, and reserves a configurable per-user
-  quota. This is still not a complete media lifecycle: product clients must be
-  wired to the upload/complete/retrieval flow, and deletion, moderation,
-  transformation, cache invalidation, and expired-intent cleanup remain gates.
+  quota. The API now also supports owner-scoped deletion with a durable
+  `deletion_pending` retry state and a five-minute janitor that cleans up expired
+  unfinished uploads and retries failed deletions. Public cache TTL is capped at
+  60 seconds and stale-on-origin-error serving is disabled; this bounds stale
+  public copies but is not an instantaneous purge API. Product clients still need
+  wiring, and moderator authorization/workflows, transformations, thumbnails,
+  and transcoding remain gates.
 - Nginx caches GET/HEAD media requests only. This is a single-machine cache,
   not a global edge network. The application must publish media through this
   origin before media delivery will work.
@@ -75,8 +79,8 @@ The current control plane can schedule work only when a healthy node has registe
 
 Set `MINIO_MEDIA_ACCESS_KEY` and a unique, long `MINIO_MEDIA_SECRET_KEY` in
 `.env`. Do not reuse `MINIO_ROOT_PASSWORD`. The one-shot `object-init` service
-creates a restricted MinIO identity with object read/write permissions limited
-to the configured private and public media buckets. `MINIO_PUBLIC_ENDPOINT`
+creates a restricted MinIO identity with object read/write/delete permissions
+limited to the configured private and public media buckets. `MINIO_PUBLIC_ENDPOINT`
 must match the public media hostname routed through Caddy/Nginx (default:
 `https://media.testagram.site`). If you change the media domain or bucket names,
 update the endpoint/configuration and recreate the restricted MinIO policy as
@@ -91,20 +95,27 @@ The API exposes:
 - `POST /api/media/private-download-url`: requires a valid Supabase bearer
   session and returns a five-minute signed URL only when the object key belongs
   to that user.
+- `POST /api/media/delete`: requires the authenticated owner and an existing
+  ready asset. It records a durable deletion state before requesting a signed
+  MinIO DELETE. A 202 response means the background janitor will retry; clients
+  should treat the object as unavailable and refresh their media references.
 - `POST /api/media/complete`: after the client uploads the returned form to
   object storage, the API verifies the object with a signed HEAD request and
   persists server-reported size, MIME type and ETag in `testagram_media.assets`.
   It is idempotent for matching metadata and rejects cross-owner key conflicts.
 
 For an existing PostgreSQL volume, back up first and apply
-`migrations/005_media_assets.sql` manually; Compose init scripts run only for a
-new data directory. The completion endpoint requires this migration to be applied.
+`migrations/005_media_assets.sql` and `migrations/006_media_lifecycle.sql` manually; Compose init scripts run only for a
+new data directory. Upload, completion, cleanup and deletion require both migrations.
 
 Only JPEG, PNG, WebP, AVIF, GIF, MP4 and WebM are accepted by upload intent. The API reserves upload-intent size against a per-account quota (default 2 GiB, configurable with `MEDIA_USER_QUOTA_BYTES`) inside a transaction serialized per owner, so concurrent requests cannot bypass the quota.
 The policy enforces an upper bound derived from the requested file size and
 configured image/video limits. The Nginx media cache must remain the only public
 route to MinIO; never publish MinIO ports 9000/9001 directly. Signed private GET
-URLs are marked `private, no-store` and bypass the shared cache.
+URLs are marked `private, no-store` and bypass the shared cache. Public media
+responses are cached for at most 60 seconds. The cache has no synchronous purge
+endpoint in this release, so deletion/takedown propagation is bounded by cache
+and downstream browser behavior rather than instantaneous.
 
 ## Safe node maintenance
 
