@@ -92,6 +92,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/media/complete", s.mediaComplete)
 	mux.HandleFunc("OPTIONS /api/media/delete", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/delete", s.mediaDelete)
+	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
