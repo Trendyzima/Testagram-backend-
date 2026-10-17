@@ -8,7 +8,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ../../migrations/000_vps.sql:/docker-entrypoint-initdb.d/000_vps.sql:ro
       - ../../migrations/001_platform.sql:/docker-entrypoint-initdb.d/001_platform.sql:ro
+      - ../../migrations/002_production_hardening.sql:/docker-entrypoint-initdb.d/002_production_hardening.sql:ro
+      - ../../migrations/003_hosting_control_plane.sql:/docker-entrypoint-initdb.d/003_hosting_control_plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -57,6 +60,34 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     networks: [data, monitoring]
+
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: control-plane/Dockerfile
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
+      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:?Set VPS_INTERNAL_TOKEN in .env}
+      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:?Set VPS_NODE_BOOTSTRAP_TOKEN in .env}
+      VPS_CONTROL_PLANE_ADDR: ":8787"
+      TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
+      TESTAGRAM_DOMAIN: ${TESTAGRAM_DOMAIN:-}
+      TESTAGRAM_PUBLIC_ORIGIN_IP: ${TESTAGRAM_PUBLIC_ORIGIN_IP:-}
+      TESTAGRAM_DOMAIN_TARGETS: ${TESTAGRAM_DOMAIN_TARGETS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose: ["8787"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8787/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [data, control-plane]
 
   object-storage:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -141,7 +172,7 @@ services:
       - caddy-config:/config
     depends_on: [api, media-cache]
     restart: unless-stopped
-    networks: [edge]
+    networks: [edge, control-plane]
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -158,6 +189,8 @@ networks:
   data:
     internal: true
   monitoring:
+    internal: true
+  control-plane:
     internal: true
 
 volumes:
