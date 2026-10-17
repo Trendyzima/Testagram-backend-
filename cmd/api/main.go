@@ -545,7 +545,7 @@ func main() {
 			Endpoint:    env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site")),
 			SigningHost: env("MINIO_SIGNING_HOST", "object-storage:9000"),
 			AccessKey:   mediaAccessKey, SecretKey: mediaSecretKey,
-			Region:      env("MINIO_REGION", "us-east-1"),
+			Region:        env("MINIO_REGION", "us-east-1"),
 			PrivateBucket: env("MINIO_BUCKET", "testagram-private-media"),
 			PublicBucket:  env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
 		})
