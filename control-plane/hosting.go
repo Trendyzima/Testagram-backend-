@@ -107,11 +107,12 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(ctx, "select n.id::text,n.name,n.platform,n.arch,n.cpu_cores,n.memory_bytes,n.storage_bytes,n.free_bytes,"+
-		"n.status,n.last_seen_at,coalesce(x.active_workloads,0),coalesce(x.cpu_reserved,0),coalesce(x.memory_reserved,0) "+
+		"n.status,n.last_seen_at,coalesce(x.active_workloads,0),coalesce(x.cpu_reserved,0),coalesce(x.memory_reserved,0),coalesce(x.storage_reserved,0) "+
 		"from public.vps_nodes n left join lateral ("+
 		"select count(*) filter (where status in ('assigned','running'))::int active_workloads,"+
 		"coalesce(sum(cpu_millis) filter (where status in ('assigned','running')),0)::bigint cpu_reserved,"+
-		"coalesce(sum(memory_bytes) filter (where status in ('assigned','running')),0)::bigint memory_reserved "+
+		"coalesce(sum(memory_bytes) filter (where status in ('assigned','running')),0)::bigint memory_reserved,"+
+		"coalesce(sum(storage_bytes) filter (where status in ('assigned','running')),0)::bigint storage_reserved "+
 		"from public.vps_workloads where node_id=n.id) x on true order by n.last_seen_at desc limit 500")
 	if err != nil { reply(w, http.StatusServiceUnavailable, map[string]string{"error":"node inventory unavailable"}); return }
 	defer rows.Close()
