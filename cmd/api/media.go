@@ -124,7 +124,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_QUOTA_CHECK_FAILED", "Could not calculate media quota usage", id))
 		return
 	}
-	if body.SizeBytes > quotaBytes-usedBytes {
+	if usedBytes >= quotaBytes || body.SizeBytes > quotaBytes-usedBytes {
 		writeJSON(w, http.StatusInsufficientStorage, errorBody("MEDIA_QUOTA_EXCEEDED", "This upload would exceed the account media storage quota", id))
 		return
 	}
