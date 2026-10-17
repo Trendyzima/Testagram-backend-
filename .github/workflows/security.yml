@@ -25,8 +25,8 @@ jobs:
         with:
           go-version: "1.26.x"
           cache: true
-      - name: Verify dependencies
-        run: go mod download
+      - name: Resolve module checksums
+        run: go mod tidy
       - name: Check known Go vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Check dependency licenses and module metadata
