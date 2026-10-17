@@ -184,6 +184,7 @@ func TestAuthenticatedResponsesNeverUseSharedPublicCache(t *testing.T) {
 	}))
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) { _,_=w.Write([]byte(`{"private":"user-specific"}`)) }))
 	defer upstream.Close()
+	t.Setenv("SUPABASE_URL", upstream.URL)
 	s := &service{upstream:upstream.Client(),platform:platform}
 	r := httptest.NewRequest(http.MethodPost,"/api/capability",strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
 	r.Header.Set("Authorization","Bearer user-session-token")
