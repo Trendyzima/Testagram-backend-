@@ -371,9 +371,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("parse DATABASE_URL: %v", err)
 	}
-	if poolConfig.MaxConns == 0 || poolConfig.MaxConns > 20 {
-		poolConfig.MaxConns = 20
+	maxConns, parseErr := strconv.ParseInt(env("DB_MAX_CONNS", "10"), 10, 32)
+	if parseErr != nil || maxConns < 1 || maxConns > 20 {
+		log.Fatal("DB_MAX_CONNS must be an integer from 1 to 20")
 	}
+	poolConfig.MaxConns = int32(maxConns)
 	if poolConfig.MinConns > poolConfig.MaxConns {
 		poolConfig.MinConns = poolConfig.MaxConns
 	}
