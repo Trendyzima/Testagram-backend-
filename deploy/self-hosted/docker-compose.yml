@@ -106,7 +106,7 @@ services:
       object-storage:
         condition: service_started
     entrypoint: ["/bin/sh", "-ec"]
-    command: >
+    command: |
       until mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" &&
       mc admin info local >/dev/null 2>&1; do sleep 2; done;
       mc mb --ignore-existing local/${MINIO_BUCKET:-testagram-private-media};
