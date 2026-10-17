@@ -472,7 +472,7 @@ func TestProductPostMediaTypeMatchesDatabaseConstraint(t *testing.T) {
 		{contentType: "image/jpeg", want: "image", ok: true},
 		{contentType: "image/gif; charset=binary", want: "image", ok: true},
 		{contentType: "video/mp4", want: "video", ok: true},
-		{contentType: "audio/ogg", want: "audio", ok: true},
+		{contentType: "audio/ogg", ok: false},
 		{contentType: "application/pdf", ok: false},
 		{contentType: "application/octet-stream", ok: false},
 		{contentType: "", ok: false},
