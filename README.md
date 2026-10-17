@@ -53,4 +53,4 @@ The local database is for development only and is not automatically wired to the
 
 ## Scale strategy
 
-Read docs/architecture.md and docs/operations.md. Scale by measured bottleneck: CDN/cache for media, stateless API replicas for request throughput, bounded workers for asynchronous work, and database tuning/replicas when query metrics justify them. Registered account count alone is not a capacity metric.
+Read docs/architecture.md, docs/operations.md, and docs/capacity-model.md. The Kubernetes starting template is in deploy/kubernetes/backend.yaml; replace its image placeholder and provide the named Kubernetes Secret before deploying. The included k6 test is a staged smoke/load test, not a capacity certification. Scale by measured bottleneck: CDN/cache for media, stateless API replicas for request throughput, bounded workers for asynchronous work, and database tuning/replicas when query metrics justify them. Registered account count alone is not a capacity metric.
