@@ -79,7 +79,7 @@ jobs:
         run: |
           grep -q 'limit_req zone=media_per_ip burst=60 nodelay' nginx-media-cache.conf
           grep -q 'limit_conn media_conn_per_ip 50' nginx-media-cache.conf
-          docker run --rm -v "$PWD/nginx-media-cache.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.28-alpine nginx -t
+          docker run --rm --add-host object-storage:127.0.0.1 -v "$PWD/nginx-media-cache.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.28-alpine nginx -t
       - name: Check public ports are limited to HTTPS edge
         working-directory: deploy/self-hosted
         run: |
