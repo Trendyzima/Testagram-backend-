@@ -222,6 +222,76 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"url": signedURL, "expires_in_seconds": 300}, "error": nil, "request_id": id})
 }
 
+// mediaList returns only ready assets owned by the authenticated user. Private
+// items receive short-lived, owner-scoped URLs; raw private object URLs are never
+// exposed by the public CDN contract.
+func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.media == nil || s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media storage or metadata database is unavailable", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at
+		from testagram_media.assets where owner_id=$1 and status='ready'
+		order by created_at desc limit 100`, userID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not list media assets", id))
+		return
+	}
+	defer rows.Close()
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		var key, visibility, contentType, originalName string
+		var sizeBytes int64
+		var createdAt time.Time
+		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not read media assets", id))
+			return
+		}
+		mediaURL := ""
+		if visibility == "public" {
+			mediaURL = publicMediaURL(key)
+		} else if visibility == "private" {
+			mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_URL_FAILED", "Could not create private media URL", id))
+				return
+			}
+		} else {
+			continue
+		}
+		mediaType := "file"
+		if strings.HasPrefix(contentType, "image/") {
+			mediaType = "image"
+		} else if strings.HasPrefix(contentType, "video/") {
+			mediaType = "video"
+		}
+		items = append(items, map[string]any{
+			"id": key, "name": originalName, "path": key, "url": mediaURL,
+			"type": mediaType, "size": sizeBytes, "updatedAt": createdAt.UTC().Format(time.RFC3339),
+			"visibility": visibility, "content_type": contentType,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not list media assets", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items}, "error": nil, "request_id": id})
+}
+
 // mediaComplete verifies the actual object through a signed HEAD request before
 // persisting metadata. Client-supplied size and ETag are deliberately not trusted.
 func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
