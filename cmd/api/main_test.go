@@ -380,7 +380,7 @@ func TestEnsureProductMediaRecordCreatesServerSideRecord(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("decode create payload: %v", err)
 			}
-			if body["owner_id"] != "user-123" || body["status"] != "uploaded" || body["media_url"] != "https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef" {
+			if body["owner_id"] != "user-123" || body["status"] != "uploaded" || body["original_name"] != "photo.png" || body["media_url"] != "https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef" {
 				t.Errorf("unexpected product media payload: %#v", body)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -395,7 +395,7 @@ func TestEnsureProductMediaRecordCreatesServerSideRecord(t *testing.T) {
 	t.Setenv("SUPABASE_URL", server.URL)
 	s := &service{upstream: server.Client()}
 	got, err := s.ensureProductMediaRecord(context.Background(), "service-secret", "user-123",
-		"users/user-123/0123456789abcdef0123456789abcdef", "image/png", 1234,
+		"users/user-123/0123456789abcdef0123456789abcdef", "photo.png", "image/png", 1234,
 		"https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef", "")
 	if err != nil {
 		t.Fatal(err)
