@@ -113,11 +113,22 @@ The new `004_hosting_operations.sql` migration creates the private audit-event t
 
 ## Backup and recovery
 
-Named Docker volumes are not backups. Before production use, implement and
-test encrypted PostgreSQL dumps, MinIO replication/versioning, Valkey
-rebuildability, off-machine backup copies, disk-space alerts, and power-loss
-recovery. Keep at least one backup off the primary host: a single machine
-cannot survive its own disk failure, theft, fire, or power loss.
+Named Docker volumes are not backups. The operator-run
+[`BACKUP-RESTORE.md`](BACKUP-RESTORE.md) runbook and
+[`scripts/self-hosted-backup.sh`](../../scripts/self-hosted-backup.sh) now
+provide a restic-based workflow that snapshots PostgreSQL plus both configured
+MinIO media buckets, validates the dump, checks repository integrity, and
+supports daily/weekly/monthly retention. Configure an encrypted **off-host**
+restic repository and schedule it using a protected systemd timer or cron
+environment; the repository and password are not provisioned by Compose.
+
+The script stages a temporary plaintext copy while it runs. Use encrypted host
+storage, a protected staging directory, and enough free disk space. It does not
+back up host secrets, TLS keys, DNS configuration, or Valkey queue state, and
+it does not itself configure alerts or prove a restore. Complete an isolated
+restore drill and record RPO/RTO before production use. Keep at least one copy
+off the primary host: a single machine cannot survive its own disk failure,
+theft, fire, or power loss.
 
 ## Zero-rent target
 
