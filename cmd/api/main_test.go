@@ -306,3 +306,29 @@ func TestPrivateMediaDownloadURLFailsClosedWithoutMetadataDatabase(t *testing.T)
 		t.Fatalf("expected fail-closed metadata error, got %s", w.Body.String())
 	}
 }
+
+
+func TestMediaQuarantineRequiresOperatorToken(t *testing.T) {
+	t.Setenv("MEDIA_MODERATION_TOKEN", "")
+	r := httptest.NewRequest(http.MethodPost, "/internal/media/quarantine", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef","reason":"policy violation"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Testagram-Moderator-ID", "moderator-1")
+	w := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusUnauthorized, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "MODERATION_UNAUTHORIZED") {
+		t.Fatalf("expected moderation authorization error, got %s", w.Body.String())
+	}
+}
+
+func TestMediaDeleteFailsClosedWithoutStorageOrMetadata(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/api/media/delete", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+}
