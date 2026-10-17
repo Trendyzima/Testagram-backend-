@@ -44,7 +44,6 @@ func TestMetricsCountsRequests(t *testing.T) {
 	}
 }
 
-
 func TestCapabilityRequiresBearerForPrivateCalls(t *testing.T) {
 	t.Setenv("SUPABASE_URL", "https://supabase.example")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "public-test-key")
