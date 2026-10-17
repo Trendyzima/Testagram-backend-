@@ -116,6 +116,12 @@ func TestNewSignerRejectsMissingCredentialsAndBadEndpoint(t *testing.T) {
 	if _, err := NewSigner(Config{Endpoint: "file:///tmp", AccessKey: "key", SecretKey: "secret"}); err == nil {
 		t.Fatal("expected invalid endpoint to be rejected")
 	}
+	if _, err := NewSigner(Config{Endpoint: "https://media.example.test/prefix", AccessKey: "key", SecretKey: "secret"}); err == nil {
+		t.Fatal("expected endpoint path prefix to be rejected")
+	}
+	if _, err := NewSigner(Config{Endpoint: "https://user:pass@media.example.test", AccessKey: "key", SecretKey: "secret"}); err == nil {
+		t.Fatal("expected endpoint user info to be rejected")
+	}
 	if _, err := NewSigner(Config{Endpoint: "http://minio:9000", AccessKey: "key"}); err == nil {
 		t.Fatal("expected missing secret to be rejected")
 	}
