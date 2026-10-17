@@ -254,7 +254,7 @@ func testSupabaseAuthServer(t *testing.T) *httptest.Server {
 
 func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
 	testSupabaseAuthServer(t)
-	s := &service{media: testMediaSigner()}
+	s := &service{media: testMediaSigner(t)}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":100}"))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -264,7 +264,7 @@ func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
 
 func TestMediaUploadIntentReturnsOwnerScopedSignedPolicy(t *testing.T) {
 	upstream := testSupabaseAuthServer(t)
-	s := &service{media: testMediaSigner(), upstream: upstream.Client()}
+	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":1024}"))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Authorization", "Bearer valid-session-token")
@@ -286,7 +286,7 @@ func TestMediaUploadIntentReturnsOwnerScopedSignedPolicy(t *testing.T) {
 
 func TestPrivateMediaDownloadURLEnforcesOwnerPrefix(t *testing.T) {
 	upstream := testSupabaseAuthServer(t)
-	s := &service{media: testMediaSigner(), upstream: upstream.Client()}
+	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	handler := s.routes()
 	for _, test := range []struct { name, key string; wantStatus int }{
 		{"owner can sign", "users/user-123/0123456789abcdef0123456789abcdef", http.StatusOK},
