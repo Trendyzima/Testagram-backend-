@@ -542,24 +542,29 @@ func main() {
 		log.Printf("internal platform integration disabled: PLATFORM_URL and PLATFORM_INTERNAL_TOKEN must both be configured")
 	}
 	var mediaSigner *media.Signer
-	mediaAccessKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_ACCESS_KEY"))
-	mediaSecretKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_SECRET_KEY"))
+	mediaAccessKey := env("MEDIA_S3_ACCESS_KEY", env("R2_ACCESS_KEY_ID", env("MINIO_MEDIA_ACCESS_KEY", "")))
+	mediaSecretKey := env("MEDIA_S3_SECRET_KEY", env("R2_SECRET_ACCESS_KEY", env("MINIO_MEDIA_SECRET_KEY", "")))
 	if mediaAccessKey != "" || mediaSecretKey != "" {
 		if mediaAccessKey == "" || mediaSecretKey == "" {
-			log.Fatal("MINIO_MEDIA_ACCESS_KEY and MINIO_MEDIA_SECRET_KEY must be configured together")
+			log.Fatal("MEDIA_S3_ACCESS_KEY and MEDIA_S3_SECRET_KEY must be configured together")
+		}
+		mediaEndpoint := env("MEDIA_S3_ENDPOINT", env("R2_S3_ENDPOINT", env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site"))))
+		defaultSigningHost := strings.TrimPrefix(strings.TrimPrefix(mediaEndpoint, "https://"), "http://")
+		if strings.Contains(defaultSigningHost, "/") {
+			log.Fatal("MEDIA_S3_ENDPOINT must be an absolute S3 endpoint without a path")
 		}
 		mediaSigner, err = media.NewSigner(media.Config{
-			Endpoint:    env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site")),
-			SigningHost: env("MINIO_SIGNING_HOST", "object-storage:9000"),
+			Endpoint:    mediaEndpoint,
+			SigningHost: env("MEDIA_S3_SIGNING_HOST", env("R2_SIGNING_HOST", env("MINIO_SIGNING_HOST", defaultSigningHost))),
 			AccessKey:   mediaAccessKey, SecretKey: mediaSecretKey,
-			Region:        env("MINIO_REGION", "us-east-1"),
-			PrivateBucket: env("MINIO_BUCKET", "testagram-private-media"),
-			PublicBucket:  env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
+			Region:        env("MEDIA_S3_REGION", env("R2_REGION", env("MINIO_REGION", "auto"))),
+			PrivateBucket: env("MEDIA_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media")),
+			PublicBucket:  env("MEDIA_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media")),
 		})
 		if err != nil {
-			log.Fatalf("configure MinIO media signer: %v", err)
+			log.Fatalf("configure S3-compatible media signer: %v", err)
 		}
-		log.Printf("MinIO media upload and private download signing enabled")
+		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
 	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner}
 	server := &http.Server{
