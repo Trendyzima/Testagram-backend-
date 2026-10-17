@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -69,6 +70,7 @@ type RecoveryDrillRequest struct {
 func (s *Server) registerHostingRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/hosting/health", s.hostingHealth)
 	mux.HandleFunc("/v1/hosting/nodes", s.hostingNodes)
+	mux.HandleFunc("/v1/hosting/nodes/", s.hostingNodeActions)
 	mux.HandleFunc("/v1/hosting/usage", s.hostingUsage)
 	mux.HandleFunc("/v1/hosting/domains", s.hostingDomains)
 	mux.HandleFunc("/v1/hosting/domains/", s.hostingDomainActions)
@@ -132,6 +134,36 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	if err:=rows.Err(); err!=nil { reply(w,http.StatusServiceUnavailable,map[string]string{"error":"node inventory unavailable"}); return }
 	reply(w,http.StatusOK,map[string]any{"nodes":items,"count":len(items)})
+}
+
+func (s *Server) hostingNodeActions(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOnly(w, r) { return }
+	if r.Method != http.MethodPost { methodNotAllowed(w); return }
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/hosting/nodes/"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || (parts[1] != "drain" && parts[1] != "resume") {
+		reply(w, http.StatusNotFound, map[string]string{"error":"expected /v1/hosting/nodes/{id}/drain or /resume"}); return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil { reply(w, http.StatusServiceUnavailable, map[string]string{"error":"node maintenance transaction unavailable"}); return }
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	var status string
+	var tag pgconn.CommandTag
+	if parts[1] == "drain" {
+		tag, err = tx.Exec(ctx, "update public.vps_nodes set status='draining' where id=$1::uuid and status in ('online','draining')", parts[0])
+		status = "draining"
+	} else {
+		tag, err = tx.Exec(ctx, "update public.vps_nodes set status='online' where id=$1::uuid and status='draining' and last_seen_at > now()-interval '45 seconds'", parts[0])
+		status = "online"
+	}
+	if err != nil { reply(w, http.StatusConflict, map[string]string{"error":"node id invalid or state transition rejected"}); return }
+	if tag.RowsAffected() != 1 { reply(w, http.StatusConflict, map[string]string{"error":"node not found, stale, or not in a state that permits this transition"}); return }
+	metadata, _ := json.Marshal(map[string]string{"status":status,"operation":parts[1]})
+	_, err = tx.Exec(ctx, "insert into testagram_hosting.audit_events(actor,action,resource_type,resource_id,metadata) values($1,$2,$3,$4,$5::jsonb)", "internal-bearer", "node."+parts[1], "node", parts[0], metadata)
+	if err != nil { reply(w, http.StatusServiceUnavailable, map[string]string{"error":"audit event could not be persisted; operation rolled back"}); return }
+	if err = tx.Commit(ctx); err != nil { reply(w, http.StatusServiceUnavailable, map[string]string{"error":"node maintenance transaction commit failed"}); return }
+	reply(w, http.StatusOK, map[string]any{"nodeId":parts[0],"status":status,"operation":parts[1],"note":"Draining prevents new workload placement. It does not forcibly terminate workloads already running."})
 }
 
 func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
