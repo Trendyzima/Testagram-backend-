@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-# Run from deploy/self-hosted. The restic repository must be off-host in production.
+# Run from the repository root or any directory. Use an off-host restic repository in production.
 # Required environment: RESTIC_REPOSITORY and RESTIC_PASSWORD_FILE.
 # Optional: RESTIC_CACHE_DIR, BACKUP_STAGE_DIR, RESTIC_KEEP_DAILY/WEEKLY/MONTHLY.
 
@@ -44,8 +44,9 @@ case "${1:-}" in
   backup)
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
-    chmod 700 "$stage_parent"
-    stage="$(mktemp -d "$stage_parent/testagram-backup.XXXXXXXX")"
+    [[ -d "$stage_parent" && -w "$stage_parent" ]] || die "BACKUP_STAGE_DIR must be a writable directory"
+    # Never chmod the parent (especially /tmp); mktemp creates a private 0700 directory.
+    stage="$(mktemp -d "$stage_parent/testagram-backup.XXXXXXXX")
     chmod 700 "$stage"
     cleanup() { rm -rf -- "$stage"; }
     trap cleanup EXIT INT TERM
