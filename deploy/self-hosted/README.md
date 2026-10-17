@@ -38,10 +38,11 @@ The current control plane can schedule work only when a healthy node has registe
   private URLs are only issued for keys under the authenticated user's prefix.
   The media edge permits signed POST uploads, bypasses shared caching for signed
   private GETs, and adds CORS headers for the Testagram web origins.
-  This provides upload-intent/signing primitives, not a complete media lifecycle:
-  clients still need to upload using the returned form fields and persist the
-  returned key in the product's post/profile workflow. Object verification,
-  deletion/moderation workflows, and quota accounting remain follow-up gates.
+  The API now persists upload intents, verifies uploaded objects with signed
+  HEAD requests, records verified metadata, and reserves a configurable per-user
+  quota. This is still not a complete media lifecycle: product clients must be
+  wired to the upload/complete/retrieval flow, and deletion, moderation,
+  transformation, cache invalidation, and expired-intent cleanup remain gates.
 - Nginx caches GET/HEAD media requests only. This is a single-machine cache,
   not a global edge network. The application must publish media through this
   origin before media delivery will work.
