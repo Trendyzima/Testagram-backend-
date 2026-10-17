@@ -160,6 +160,45 @@ func (s *Signer) CreateUploadIntent(userID, contentType, visibility string, requ
 	return result, nil
 }
 
+// MaxBytesForContentType returns the configured maximum for an accepted MIME type.
+func (s *Signer) MaxBytesForContentType(contentType string) (int64, bool) {
+	kind, ok := allowedTypes[strings.ToLower(strings.TrimSpace(contentType))]
+	if !ok { return 0, false }
+	if kind == "video" { return s.maxVideoBytes, true }
+	return s.maxImageBytes, true
+}
+
+// PresignObjectHead creates a short-lived HEAD URL used to verify an uploaded object.
+func (s *Signer) PresignObjectHead(userID, key, visibility string, lifetime time.Duration, now time.Time) (string, error) {
+	if !userIDPattern.MatchString(userID) || !objectKeyPattern.MatchString(key) || !strings.HasPrefix(key, "users/"+userID+"/") {
+		return "", errors.New("media object does not belong to authenticated user")
+	}
+	if visibility != "private" && visibility != "public" { return "", errors.New("invalid media visibility") }
+	if lifetime < time.Minute || lifetime > time.Hour { return "", errors.New("verification URL lifetime must be between 1 minute and 1 hour") }
+	bucket := s.privateBucket
+	if visibility == "public" { bucket = s.publicBucket }
+	now = now.UTC()
+	date := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+	scope := date + "/" + s.region + "/s3/aws4_request"
+	u := s.objectURL(bucket, key)
+	q := u.Query()
+	q.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	q.Set("X-Amz-Credential", s.accessKey+"/"+scope)
+	q.Set("X-Amz-Date", amzDate)
+	q.Set("X-Amz-Expires", strconv.FormatInt(int64(lifetime/time.Second), 10))
+	q.Set("X-Amz-SignedHeaders", "host")
+	u.RawQuery = q.Encode()
+	canonicalRequest := strings.Join([]string{"HEAD", u.EscapedPath(), u.RawQuery, "host:"+s.signingHost+"\\n", "host", "UNSIGNED-PAYLOAD"}, "\\n")
+	requestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\\n" + amzDate + "\\n" + scope + "\\n" + hex.EncodeToString(requestHash[:])
+	signature := hex.EncodeToString(hmacSHA256(signingKey(s.secretKey, date, s.region), []byte(stringToSign)))
+	q = u.Query()
+	q.Set("X-Amz-Signature", signature)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
 // PresignPrivateDownload only signs keys under the authenticated user's prefix.
 // A guessed key belonging to another account is rejected before a URL is issued.
 func (s *Signer) PresignPrivateDownload(userID, key string, lifetime time.Duration, now time.Time) (string, error) {
