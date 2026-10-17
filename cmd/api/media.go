@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"context"
 	"encoding/json"
 	"errors"
@@ -352,4 +353,201 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 
 func strconvFormatInt(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+type mediaDeleteRequest struct {
+	Key string `json:"key"`
+}
+
+// mediaDelete starts a durable deletion before touching object storage. If the
+// storage request fails, the janitor retries deletion_pending assets.
+func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.media == nil || s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	var body mediaDeleteRequest
+	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
+		return
+	}
+	var visibility, currentStatus string
+	err = s.db.QueryRow(r.Context(), `select visibility, status from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &currentStatus)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
+		return
+	}
+	if currentStatus == "deleted" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deleted"}, "error": nil, "request_id": id})
+		return
+	}
+	if currentStatus == "quarantined" {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_QUARANTINED", "Quarantined media must be handled by a moderator", id))
+		return
+	}
+	if currentStatus != "ready" && currentStatus != "deletion_pending" {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_INVALID", "Media asset cannot be deleted in its current state", id))
+		return
+	}
+	if currentStatus == "ready" {
+		tag, err := s.db.Exec(r.Context(), `update testagram_media.assets set status='deletion_pending', updated_at=now()
+			where object_key=$1 and owner_id=$2 and status='ready'`, body.Key, userID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not schedule media deletion", id))
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_CHANGED", "Media state changed; retry the request", id))
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.deleteMediaObject(ctx, userID, body.Key, visibility); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	if _, err := s.db.Exec(ctx, `update testagram_media.assets set status='deleted', updated_at=now()
+		where object_key=$1 and owner_id=$2 and status='deletion_pending'`, body.Key, userID); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deleted"}, "error": nil, "request_id": id})
+}
+
+func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility string) error {
+	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, nil)
+	if err != nil {
+		return err
+	}
+	client := s.upstream
+	if client == nil {
+		client = &http.Client{Timeout: 4 * time.Second}
+	}
+	// Never forward a signed storage URL across redirects to another host.
+	safeClient := *client
+	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := safeClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("object storage rejected deletion")
+	}
+	return nil
+}
+
+// runMediaJanitor expires unfinished upload reservations and retries durable
+// deletions in bounded batches. It never expires a completed asset's intent as
+// a reason to delete the completed object.
+func (s *service) runMediaJanitor(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		if err := s.cleanupMediaBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("media janitor pass failed: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+type mediaCleanupObject struct {
+	key, ownerID, visibility string
+}
+
+func (s *service) cleanupMediaBatch(ctx context.Context) error {
+	if s.db == nil || s.media == nil {
+		return nil
+	}
+	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility
+		from testagram_media.upload_intents
+		where expires_at <= now() and status in ('issued','cleanup_pending')
+		order by expires_at asc limit 50`)
+	if err != nil {
+		return err
+	}
+	var intents []mediaCleanupObject
+	for intentRows.Next() {
+		var item mediaCleanupObject
+		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility); err != nil {
+			intentRows.Close()
+			return err
+		}
+		intents = append(intents, item)
+	}
+	if err := intentRows.Err(); err != nil {
+		intentRows.Close()
+		return err
+	}
+	intentRows.Close()
+	for _, item := range intents {
+		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
+			where object_key=$1 and status in ('issued','cleanup_pending')`, item.key); err != nil {
+			return err
+		}
+		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
+			continue
+		}
+		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='expired', updated_at=now()
+			where object_key=$1 and status='cleanup_pending'`, item.key); err != nil {
+			return err
+		}
+	}
+
+	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility
+		from testagram_media.assets where status='deletion_pending'
+		order by updated_at asc limit 50`)
+	if err != nil {
+		return err
+	}
+	var assets []mediaCleanupObject
+	for assetRows.Next() {
+		var item mediaCleanupObject
+		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility); err != nil {
+			assetRows.Close()
+			return err
+		}
+		assets = append(assets, item)
+	}
+	if err := assetRows.Err(); err != nil {
+		assetRows.Close()
+		return err
+	}
+	assetRows.Close()
+	for _, item := range assets {
+		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
+			continue
+		}
+		if _, err := s.db.Exec(batchCtx, `update testagram_media.assets set status='deleted', updated_at=now()
+			where object_key=$1 and status='deletion_pending'`, item.key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
