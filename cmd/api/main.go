@@ -542,14 +542,16 @@ func main() {
 			log.Fatal("MINIO_MEDIA_ACCESS_KEY and MINIO_MEDIA_SECRET_KEY must be configured together")
 		}
 		mediaSigner, err = media.NewSigner(media.Config{
-			Endpoint: env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site")),
+			Endpoint:    env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site")),
 			SigningHost: env("MINIO_SIGNING_HOST", "object-storage:9000"),
-			AccessKey: mediaAccessKey, SecretKey: mediaSecretKey,
-			Region: env("MINIO_REGION", "us-east-1"),
+			AccessKey:   mediaAccessKey, SecretKey: mediaSecretKey,
+			Region:      env("MINIO_REGION", "us-east-1"),
 			PrivateBucket: env("MINIO_BUCKET", "testagram-private-media"),
-			PublicBucket: env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
+			PublicBucket:  env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
 		})
-		if err != nil { log.Fatalf("configure MinIO media signer: %v", err) }
+		if err != nil {
+			log.Fatalf("configure MinIO media signer: %v", err)
+		}
 		log.Printf("MinIO media upload and private download signing enabled")
 	}
 	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner}
