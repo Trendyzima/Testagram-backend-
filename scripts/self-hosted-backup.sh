@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-# Run from deploy/self-hosted. The restic repository must be off-host in production.
+# Run from the repository root or any directory. Use an off-host restic repository in production.
 # Required environment: RESTIC_REPOSITORY and RESTIC_PASSWORD_FILE.
 # Optional: RESTIC_CACHE_DIR, BACKUP_STAGE_DIR, RESTIC_KEEP_DAILY/WEEKLY/MONTHLY.
 
@@ -44,8 +44,7 @@ case "${1:-}" in
   backup)
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
-    chmod 700 "$stage_parent"
-    stage="$(mktemp -d "$stage_parent/testagram-backup.XXXXXXXX")"
+    stage=$(mktemp -d "${stage_parent%/}/testagram-backup.XXXXXXXX")
     chmod 700 "$stage"
     cleanup() { rm -rf -- "$stage"; }
     trap cleanup EXIT INT TERM
@@ -66,14 +65,13 @@ case "${1:-}" in
         mc mirror --preserve local/"$MINIO_BUCKET" /backup/minio-private
         mc mirror --preserve local/"$PUBLIC_MEDIA_BUCKET" /backup/minio-public
       '
-    cat > "$stage/manifest.txt" <<EOF
-Testagram self-hosted backup
-created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-postgres_database=$(docker compose exec -T postgres sh -ec 'printf %s "$POSTGRES_DB"')
-private_bucket=${MINIO_BUCKET:-testagram-private-media}
-public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
-repository=${RESTIC_REPOSITORY}
-EOF
+    printf '%s\n' \
+      "Testagram self-hosted backup" \
+      "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "postgres_database=$(docker compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')" \
+      "private_bucket=${MINIO_BUCKET:-testagram-private-media}" \
+      "public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}" \
+      "repository=${RESTIC_REPOSITORY}" > "$stage/manifest.txt"
     chmod 600 "$stage/manifest.txt"
     printf 'Writing encrypted restic snapshot...\n'
     restic backup --host testagram-self-hosted --tag testagram --tag automated "$stage"
