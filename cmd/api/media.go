@@ -45,6 +45,19 @@ type mediaAsset struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+
+func sanitizeOriginalName(name string) (string, error) {
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\\\\", "/"))
+	if name == "" {
+		return "upload", nil
+	}
+	name = path.Base(name)
+	if name == "." || name == ".." || len(name) > 255 || strings.ContainsAny(name, "\\r\\n\\x00") {
+		return "", errors.New("invalid original filename")
+	}
+	return name, nil
+}
+
 func (s *service) mediaPreflight(w http.ResponseWriter, r *http.Request) {
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
@@ -96,13 +109,9 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
-	body.Name = strings.TrimSpace(strings.ReplaceAll(body.Name, "\\", "/"))
-	if body.Name == "" {
-		body.Name = "upload"
-	}
-	body.Name = path.Base(body.Name)
-	if len(body.Name) > 255 || strings.ContainsAny(body.Name, "\\r\\n") {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer", id))
+	body.Name, err = sanitizeOriginalName(body.Name)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer and contain no line breaks", id))
 		return
 	}
 	intent, err := s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
