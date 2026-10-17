@@ -409,8 +409,8 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var ownerID, visibility, currentStatus string
-	err = tx.QueryRow(r.Context(), `select owner_id, visibility, status from testagram_media.assets where object_key=$1 for update`, body.Key).Scan(&ownerID, &visibility, &currentStatus)
+	var ownerID, visibility, currentStatus, externalID string
+	err = tx.QueryRow(r.Context(), `select owner_id, visibility, status, coalesce(external_media_id::text,'') from testagram_media.assets where object_key=$1 for update`, body.Key).Scan(&ownerID, &visibility, &currentStatus, &externalID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found", id))
 		return
@@ -442,6 +442,10 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if err := s.deleteMediaObject(ctx, ownerID, body.Key, visibility); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	if err := s.deleteProductMedia(ctx, externalID); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
 		return
 	}
