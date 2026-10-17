@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"strings"
 )
 
 func TestControlURLRequiresTLSOutsideLoopback(t *testing.T) {
@@ -53,3 +54,12 @@ func withinPath(root, candidate string) bool {
 	return err == nil && rel != ".." && !filepath.IsAbs(rel) && len(rel) > 0 && rel[:1] != "."
 }
 
+
+func TestWorkloadIDIsSafeForContainerNames(t *testing.T) {
+	for _, good := range []string{"abc123", "b4bb93ad-6a3f-4b21-88a0-2e5a8c8f14de"} {
+		if !validWorkloadID(good) { t.Errorf("expected valid ID %q", good) }
+	}
+	for _, bad := range []string{"", "../root", "x;touch", strings.Repeat("a", 65)} {
+		if validWorkloadID(bad) { t.Errorf("expected invalid ID %q", bad) }
+	}
+}
