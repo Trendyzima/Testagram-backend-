@@ -89,9 +89,22 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
 	intent, err := s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
+		return
+	}
+	_, err = s.db.Exec(r.Context(), `insert into testagram_media.upload_intents
+		(object_key, owner_id, visibility, content_type, max_bytes, expires_at, status)
+		values ($1,$2,$3,$4,$5,$6,'issued')`,
+		intent.Key, userID, body.Visibility, body.ContentType, body.SizeBytes, intent.ExpiresAt)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_PERSIST_FAILED", "Could not safely register the upload intent", id))
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": intent, "error": nil, "request_id": id})
@@ -158,6 +171,22 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
 	}
+	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+	var intentOwner, intentVisibility, intentType, intentStatus string
+	var intentMaxBytes int64
+	var intentExpires time.Time
+	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, max_bytes, expires_at, status
+		from testagram_media.upload_intents where object_key=$1`, body.Key).
+		Scan(&intentOwner, &intentVisibility, &intentType, &intentMaxBytes, &intentExpires, &intentStatus)
+	if err != nil || intentOwner != userID || intentVisibility != body.Visibility || intentType != body.ContentType ||
+		(time.Now().After(intentExpires) && intentStatus != "completed") || (intentStatus != "issued" && intentStatus != "completed") {
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not match this account and object", id))
+		return
+	}
+	if intentMaxBytes < 1 || intentMaxBytes > maxBytes {
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_INTENT_INVALID", "Stored upload limit is invalid", id))
+		return
+	}
 	headURL, err := s.media.PresignObjectHead(userID, body.Key, body.Visibility, time.Minute, time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_ACCESS_DENIED", "This media key is not owned by the authenticated account", id))
@@ -188,7 +217,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	actualType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
 	size := resp.ContentLength
-	if actualType != strings.ToLower(strings.TrimSpace(body.ContentType)) || size < 1 || size > maxBytes {
+	if actualType != body.ContentType || size < 1 || size > intentMaxBytes || size > maxBytes {
 		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_OBJECT_INVALID", "Uploaded object type or size does not satisfy media policy", id))
 		return
 	}
@@ -216,6 +245,11 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	asset.Key = body.Key
+	if _, err := s.db.Exec(ctx, `update testagram_media.upload_intents set status='completed', updated_at=now()
+		where object_key=$1 and owner_id=$2 and status in ('issued','completed')`, body.Key, userID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Media was verified but upload completion state could not be saved", id))
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": asset, "error": nil, "request_id": id})
 }
 
