@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "scripts/self-hosted-backup.sh"
+      - "scripts/self-hosted-restore-drill.sh"
       - "deploy/self-hosted/BACKUP-RESTORE.md"
       - ".github/workflows/self-hosted-backup-validation.yml"
   push:
@@ -22,10 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Bash syntax
-        run: bash -n scripts/self-hosted-backup.sh
+        run: |
+          bash -n scripts/self-hosted-backup.sh
+          bash -n scripts/self-hosted-restore-drill.sh
       - name: Install ShellCheck
         run: |
           sudo apt-get update
           sudo apt-get install --yes shellcheck
-      - name: Lint backup script
-        run: shellcheck --severity=style scripts/self-hosted-backup.sh
+      - name: Lint backup and restore scripts
+        run: shellcheck --severity=style scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh
