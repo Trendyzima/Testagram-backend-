@@ -135,3 +135,31 @@ func mapValues(m map[string]string) []string {
 	for _, value := range m { values = append(values, value) }
 	return values
 }
+
+func TestPresignObjectHeadIsOwnerScopedAndVisibilityScoped(t *testing.T) {
+	signer := testSigner(t, "https://media.example.test")
+	now := time.Date(2026, 10, 17, 12, 30, 0, 0, time.UTC)
+	key := "users/user-123/0123456789abcdef0123456789abcdef"
+	got, err := signer.PresignObjectHead("user-123", key, "public", time.Minute, now)
+	if err != nil { t.Fatal(err) }
+	u, err := url.Parse(got)
+	if err != nil { t.Fatal(err) }
+	if !strings.HasPrefix(u.Path, "/public-media/users/user-123/") {
+		t.Fatalf("HEAD verification URL has wrong bucket/path: %q", u.Path)
+	}
+	if u.Query().Get("X-Amz-Signature") == "" || u.Query().Get("X-Amz-Expires") != "60" {
+		t.Fatalf("HEAD verification URL is not signed or has wrong expiry: %v", u.Query())
+	}
+	if _, err := signer.PresignObjectHead("other-user", key, "public", time.Minute, now); err == nil {
+		t.Fatal("cross-owner HEAD URL must be rejected")
+	}
+	if _, err := signer.PresignObjectHead("user-123", key, "unknown", time.Minute, now); err == nil {
+		t.Fatal("invalid visibility must be rejected")
+	}
+	if max, ok := signer.MaxBytesForContentType("video/mp4"); !ok || max != 100<<20 {
+		t.Fatalf("unexpected video max: %d %v", max, ok)
+	}
+	if _, ok := signer.MaxBytesForContentType("text/html"); ok {
+		t.Fatal("HTML must not be accepted as media")
+	}
+}
