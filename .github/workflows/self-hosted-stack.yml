@@ -59,6 +59,11 @@ jobs:
       - name: Prepare validation-only environment
         working-directory: deploy/self-hosted
         run: cp .env.example .env
+      - name: Validate backup script syntax
+        run: |
+          bash -n deploy/self-hosted/backup/backup.sh
+          bash -n deploy/self-hosted/backup/restore-postgres-smoke.sh
+          bash -n deploy/self-hosted/backup/restore-smoke.sh
       - name: Validate Compose model
         working-directory: deploy/self-hosted
         run: docker compose config --quiet
@@ -90,6 +95,8 @@ jobs:
           done
           result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null")
           test "$result" = "t"
+          docker compose exec -T postgres sh -ec 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$RUNNER_TEMP/testagram-postgres.dump"
+          bash backup/restore-postgres-smoke.sh "$RUNNER_TEMP/testagram-postgres.dump"
           docker compose down -v
       - name: Ensure no live secrets were added to the example
         run: |
@@ -99,3 +106,6 @@ jobs:
           grep -q 'REPLACE_WITH_LONG_RANDOM_PLATFORM_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_VPS_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_NODE_BOOTSTRAP_TOKEN' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_RESTIC_PASSWORD' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_BACKUP_ACCESS_KEY' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_BACKUP_SECRET_KEY' deploy/self-hosted/.env.example
