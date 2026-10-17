@@ -369,7 +369,6 @@ func strconvFormatInt(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
 
-
 type mediaQuarantineRequest struct {
 	Key    string `json:"key"`
 	Reason string `json:"reason"`
