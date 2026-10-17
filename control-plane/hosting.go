@@ -107,11 +107,12 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(ctx, "select n.id::text,n.name,n.platform,n.arch,n.cpu_cores,n.memory_bytes,n.storage_bytes,n.free_bytes,"+
-		"n.status,n.last_seen_at,coalesce(x.active_workloads,0),coalesce(x.cpu_reserved,0),coalesce(x.memory_reserved,0) "+
+		"n.status,n.last_seen_at,coalesce(x.active_workloads,0),coalesce(x.cpu_reserved,0),coalesce(x.memory_reserved,0),coalesce(x.storage_reserved,0) "+
 		"from public.vps_nodes n left join lateral ("+
 		"select count(*) filter (where status in ('assigned','running'))::int active_workloads,"+
 		"coalesce(sum(cpu_millis) filter (where status in ('assigned','running')),0)::bigint cpu_reserved,"+
-		"coalesce(sum(memory_bytes) filter (where status in ('assigned','running')),0)::bigint memory_reserved "+
+		"coalesce(sum(memory_bytes) filter (where status in ('assigned','running')),0)::bigint memory_reserved,"+
+		"coalesce(sum(storage_bytes) filter (where status in ('assigned','running')),0)::bigint storage_reserved "+
 		"from public.vps_workloads where node_id=n.id) x on true order by n.last_seen_at desc limit 500")
 	if err != nil { reply(w, http.StatusServiceUnavailable, map[string]string{"error":"node inventory unavailable"}); return }
 	defer rows.Close()
@@ -119,15 +120,15 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id,name,platform,arch,status string
 		var cpu int
-		var memory,storage,free,cpuReserved,memoryReserved int64
+		var memory,storage,free,cpuReserved,memoryReserved,storageReserved int64
 		var lastSeen time.Time
 		var active int
-		if err:=rows.Scan(&id,&name,&platform,&arch,&cpu,&memory,&storage,&free,&status,&lastSeen,&active,&cpuReserved,&memoryReserved); err!=nil {
+		if err:=rows.Scan(&id,&name,&platform,&arch,&cpu,&memory,&storage,&free,&status,&lastSeen,&active,&cpuReserved,&memoryReserved,&storageReserved); err!=nil {
 			reply(w,http.StatusInternalServerError,map[string]string{"error":"node inventory decode failed"}); return
 		}
 		items=append(items,map[string]any{"id":id,"name":name,"platform":platform,"arch":arch,"cpuCores":cpu,
 			"memoryBytes":memory,"storageBytes":storage,"freeBytes":free,"status":status,"lastSeenAt":lastSeen,
-			"activeWorkloads":active,"reservedCpuMillis":cpuReserved,"reservedMemoryBytes":memoryReserved})
+			"activeWorkloads":active,"reservedCpuMillis":cpuReserved,"reservedMemoryBytes":memoryReserved,"reservedStorageBytes":storageReserved})
 	}
 	if err:=rows.Err(); err!=nil { reply(w,http.StatusServiceUnavailable,map[string]string{"error":"node inventory unavailable"}); return }
 	reply(w,http.StatusOK,map[string]any{"nodes":items,"count":len(items)})
@@ -139,7 +140,7 @@ func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	var nodes, freshNodes, active, queued, failed int
-	var cpuReserved, memoryReserved int64
+	var cpuReserved, memoryReserved, storageReserved int64
 	err:=s.db.QueryRow(ctx, "select "+
 		"(select count(*) from public.vps_nodes), "+
 		"(select count(*) from public.vps_nodes where status='online' and last_seen_at > now()-interval '45 seconds'), "+
@@ -147,12 +148,13 @@ func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
 		"(select count(*) from public.vps_workloads where status='queued'), "+
 		"(select count(*) from public.vps_workloads where status='failed'), "+
 		"coalesce((select sum(cpu_millis) from public.vps_workloads where status in ('assigned','running')),0), "+
-		"coalesce((select sum(memory_bytes) from public.vps_workloads where status in ('assigned','running')),0)").
-		Scan(&nodes,&freshNodes,&active,&queued,&failed,&cpuReserved,&memoryReserved)
+		"coalesce((select sum(memory_bytes) from public.vps_workloads where status in ('assigned','running')),0), "+
+		"coalesce((select sum(storage_bytes) from public.vps_workloads where status in ('assigned','running')),0)").
+		Scan(&nodes,&freshNodes,&active,&queued,&failed,&cpuReserved,&memoryReserved,&storageReserved)
 	if err!=nil { reply(w,http.StatusServiceUnavailable,map[string]string{"error":"usage query unavailable"}); return }
 	reply(w,http.StatusOK,map[string]any{"nodes":nodes,"freshNodes":freshNodes,"activeWorkloads":active,
 		"queuedWorkloads":queued,"failedWorkloads":failed,"reservedCpuMillis":cpuReserved,
-		"reservedMemoryBytes":memoryReserved,"sampledAt":time.Now().UTC()})
+		"reservedMemoryBytes":memoryReserved,"reservedStorageBytes":storageReserved,"sampledAt":time.Now().UTC()})
 }
 
 func normalizedBaseDomain() (string,error) {
@@ -235,6 +237,7 @@ func (s *Server) hostingDomainActions(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/hosting/domains/"), "/"), "/")
 	if len(parts) != 2 || parts[0] == "" { reply(w, 404, map[string]string{"error":"expected /v1/hosting/domains/{slug}/activate or /disable"}); return }
 	slug, action := strings.ToLower(parts[0]), parts[1]
+	if !hostingSlugPattern.MatchString(slug) || isReservedDomainSlug(slug) { reply(w, http.StatusBadRequest, map[string]string{"error":"invalid or reserved domain slug"}); return }
 	if r.Method != http.MethodPost { methodNotAllowed(w); return }
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
@@ -301,9 +304,18 @@ func (s *Server) withManagedDomainRouting(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base, err := normalizedBaseDomain()
 		host := normalizeRequestHost(r.Host)
-		mainDomain := strings.ToLower(strings.TrimSpace(os.Getenv("TESTAGRAM_DOMAIN")))
-		if parsed, parseErr := url.Parse(mainDomain); parseErr == nil && parsed.Host != "" { mainDomain = parsed.Host }
-		if err == nil && host != "" && host != mainDomain && strings.HasSuffix(host, "."+base) {
+		if err == nil && host == base {
+			http.NotFound(w, r)
+			return
+		}
+		if err == nil && host != "" && strings.HasSuffix(host, "."+base) {
+			label := strings.TrimSuffix(host, "."+base)
+			// Only one-label, non-reserved hostnames may enter tenant routing.
+			// Never fall through to operator APIs for an unknown tenant hostname.
+			if strings.Contains(label, ".") || isReservedDomainSlug(label) {
+				http.NotFound(w, r)
+				return
+			}
 			s.proxyManagedDomain(w, r, host)
 			return
 		}

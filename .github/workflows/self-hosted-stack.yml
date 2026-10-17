@@ -6,6 +6,8 @@ on:
     paths:
       - "deploy/self-hosted/**"
       - "services/platform/**"
+      - "control-plane/**"
+      - "internal/crypto/**"
       - "internal/platformclient/**"
       - "migrations/**"
       - "docs/platform/**"
@@ -41,10 +43,15 @@ jobs:
       - name: Test platform client and private service
         run: |
           go test -race -count=1 ./internal/platformclient
-          cd services/platform
-          go test -race -count=1 ./...
-          go vet ./...
-          CGO_ENABLED=0 go build -trimpath ./...
+          (
+            cd services/platform
+            go test -race -count=1 ./...
+            go vet ./...
+            CGO_ENABLED=0 go build -trimpath ./...
+          )
+          go test -race -count=1 ./control-plane
+          go vet ./control-plane
+          CGO_ENABLED=0 go build -trimpath -o /tmp/testagram-control-plane ./control-plane
       - name: Validate OpenAPI contracts
         run: |
           python -m pip install --disable-pip-version-check PyYAML
@@ -59,13 +66,36 @@ jobs:
         working-directory: deploy/self-hosted
         run: |
           docker compose config > /tmp/testagram-compose.yml
-          if grep -Eq 'published: "(5432|6379|9000|9001|9090)"' /tmp/testagram-compose.yml; then
+          if grep -Eq 'published: "(5432|6379|8787|8095|9000|9001|9090)"' /tmp/testagram-compose.yml; then
             echo "A private data/monitoring port is published to the host."
             exit 1
           fi
+      - name: Validate Caddy tenant TLS configuration
+        working-directory: deploy/self-hosted
+        run: |
+          docker run --rm \
+            -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -e API_DOMAIN=api.testagram.site \
+            -e MEDIA_DOMAIN=media.testagram.site \
+            -e ACME_EMAIL=ops@example.com \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Smoke-test fresh PostgreSQL migrations
+        working-directory: deploy/self-hosted
+        run: |
+          docker compose up -d postgres
+          for attempt in $(seq 1 40); do
+            if docker compose exec -T postgres pg_isready -U testagram -d testagram; then break; fi
+            if [ "$attempt" -eq 40 ]; then docker compose logs postgres; exit 1; fi
+            sleep 2
+          done
+          result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null")
+          test "$result" = "t"
+          docker compose down -v
       - name: Ensure no live secrets were added to the example
         run: |
           grep -q 'REPLACE_WITH_LONG_RANDOM_POSTGRES_PASSWORD' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_VALKEY_PASSWORD' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_MINIO_PASSWORD' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_PLATFORM_INTERNAL_TOKEN' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_VPS_INTERNAL_TOKEN' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_NODE_BOOTSTRAP_TOKEN' deploy/self-hosted/.env.example

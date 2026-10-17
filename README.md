@@ -46,11 +46,19 @@ The optional self-hosted stack now includes a private platform service for Valke
 
 - [Service catalogue](docs/platform/service-catalog.md)
 - [Internal platform API contract](docs/platform/openapi/internal-platform.yaml)
-- [Hosting control-plane contract (separate service; not yet packaged here)](docs/platform/openapi/hosting-control-plane.yaml)
+- [Hosting control-plane API contract](docs/platform/openapi/hosting-control-plane.yaml)
+- [Hosting control-plane runtime](control-plane)
+- [Self-hosted operations and migration notes](deploy/self-hosted/README.md)
 - [Platform client](internal/platformclient)
 - [Operations and readiness gates](docs/platform/self-sustaining-operations.md)
 
 The platform internal token is required in `deploy/self-hosted/.env`. On a new PostgreSQL volume the platform schema is initialized automatically; for an existing volume, follow [the migration instructions](services/platform/README.md). The API gateway does not yet consume the new client, and this is not a claim that production traffic has migrated.
+
+## Hosting control plane
+
+The optional stack now packages a private control-plane for node registration, heartbeats, CPU/RAM/disk-aware scheduling, immutable-image deployment requests, domain reservations, DNS-verified activation, gated Caddy on-demand TLS, usage, backup manifests and recovery-drill records. It has no published host port; the TLS edge reaches it over a dedicated internal network. The node agent is not enrolled automatically, secret resolution is deliberately disabled, and DNS writes/registrar purchases are not implemented. Do not treat the hosting API as production-ready until a node-agent deployment test, DNS/TLS end-to-end test and real restore drill pass.
+
+For a fresh PostgreSQL volume, the self-hosted Compose stack applies migrations in the documented order. Existing volumes are never modified by PostgreSQL init scripts; back up and apply the reviewed migrations manually before starting the control plane against an existing database.
 
 ## Local-first self-hosted deployment
 

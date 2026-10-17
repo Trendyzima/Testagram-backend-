@@ -43,8 +43,11 @@ create table if not exists testagram_hosting.usage_snapshots (
   active_workloads integer not null default 0 check (active_workloads >= 0),
   active_cpu_millis bigint not null default 0 check (active_cpu_millis >= 0),
   active_memory_bytes bigint not null default 0 check (active_memory_bytes >= 0),
+  active_storage_bytes bigint not null default 0 check (active_storage_bytes >= 0),
   sampled_at timestamptz not null default now()
 );
+alter table testagram_hosting.usage_snapshots add column if not exists active_storage_bytes bigint not null default 0 check (active_storage_bytes >= 0);
+
 create index if not exists hosting_usage_node_time_idx on testagram_hosting.usage_snapshots(node_id, sampled_at desc);
 
 create table if not exists testagram_hosting.backup_manifests (
