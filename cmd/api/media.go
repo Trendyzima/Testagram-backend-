@@ -537,11 +537,11 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var visibility, contentType, assetStatus, externalID string
+	var visibility, contentType, originalName, assetStatus, externalID string
 	var sizeBytes int64
-	err = tx.QueryRow(ctx, `select visibility, content_type, size_bytes, status, coalesce(external_media_id::text,'')
+	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, coalesce(external_media_id::text,'')
 		from testagram_media.assets where object_key=$1 and owner_id=$2 for update`, body.Key, userID).
-		Scan(&visibility, &contentType, &sizeBytes, &assetStatus, &externalID)
+		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &externalID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
 		return
@@ -555,7 +555,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
 		return
 	}
-	externalID, err = s.ensureProductMediaRecord(ctx, serviceKey, userID, body.Key, contentType, sizeBytes, publicURL, externalID)
+	externalID, err = s.ensureProductMediaRecord(ctx, serviceKey, userID, body.Key, originalName, contentType, sizeBytes, publicURL, externalID)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_PRODUCT_SYNC_FAILED", "Could not synchronize media metadata with the product data plane", id))
 		return
@@ -631,7 +631,7 @@ func (s *service) userOwnsProductPost(ctx context.Context, authorization, publis
 	return false, nil
 }
 
-func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, ownerID, key, contentType string, sizeBytes int64, publicURL, knownID string) (string, error) {
+func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, ownerID, key, originalName, contentType string, sizeBytes int64, publicURL, knownID string) (string, error) {
 	query := url.Values{}
 	query.Set("storage_key", "eq."+key)
 	query.Set("select", "id,owner_id,post_id,status")
@@ -666,7 +666,7 @@ func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, owne
 	payload := map[string]any{
 		"owner_id": ownerID, "post_id": nil, "thread_id": nil,
 		"storage_key": key, "bucket": env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
-		"original_name": path.Base(key), "mime_type": contentType, "media_type": mediaType,
+		"original_name": originalName, "mime_type": contentType, "media_type": mediaType,
 		"byte_size": sizeBytes, "status": "uploaded", "media_url": publicURL,
 	}
 	query = url.Values{}
