@@ -14,12 +14,19 @@ The initial Go service provides:
 - GET /healthz: process liveness only; does not depend on the database.
 - GET /readyz: readiness check with a bounded PostgreSQL ping; returns 503 if the database is not ready.
 - GET /metrics: minimal Prometheus text-format request counter.
+- POST /api/capability: Testagram capability gateway compatible with the current web client contract.
 - Bounded PostgreSQL connection pool (maximum 20 per instance by default).
 - Request timeouts, header limit, and graceful shutdown.
 - Non-root, multi-stage container build.
 - Isolated local Docker Compose stack and CI checks.
 
 This is a foundation, not a claim of production readiness or a 5-million-concurrent-user capacity result. Product endpoints should be added only after the existing Testagram contracts and database schema have been audited.
+
+## Testagram compatibility gateway
+
+`POST /api/capability` implements the same capability-dispatch envelope used by the existing Testagram web client. It forwards the user's Bearer JWT and the publishable API key to the canonical Supabase `capability_dispatch_v2` RPC; it does not use a service-role key to bypass row-level security. It also preserves the bookmark RPC compatibility paths, applies strict origin allow-listing, caps request/response bodies, applies an 8-second upstream deadline, and returns request IDs on gateway errors. `GET /healthz`, `GET /readyz`, and `GET /metrics` remain available.
+
+To opt the web app into this gateway only after deployment, set `VITE_TESTAGRAM_API_URL=https://api.testagram.site` in the frontend build environment. Leave it blank to keep the current same-origin `/api/capability` Vercel route. Configure matching TLS/DNS and `ALLOWED_ORIGINS` before switching production traffic. The gateway requires `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`; never set the Supabase service-role key in browser-visible configuration.
 
 ## Local development
 
@@ -46,4 +53,4 @@ The local database is for development only and is not automatically wired to the
 
 ## Scale strategy
 
-Read docs/architecture.md and docs/operations.md. Scale by measured bottleneck: CDN/cache for media, stateless API replicas for request throughput, bounded workers for asynchronous work, and database tuning/replicas when query metrics justify them. Registered account count alone is not a capacity metric.
+Read docs/architecture.md, docs/operations.md, and docs/capacity-model.md. The Kubernetes starting template is in deploy/kubernetes/backend.yaml; replace its image placeholder and provide the named Kubernetes Secret before deploying. The included k6 test is a staged smoke/load test, not a capacity certification. Scale by measured bottleneck: CDN/cache for media, stateless API replicas for request throughput, bounded workers for asynchronous work, and database tuning/replicas when query metrics justify them. Registered account count alone is not a capacity metric.

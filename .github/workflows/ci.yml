@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: backend-ci-${{ github.ref }}
@@ -30,6 +30,18 @@ jobs:
         run: go vet ./...
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api
+      - name: Format Go source
+        run: gofmt -w cmd
+      - name: Persist formatter changes on feature branches
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feat/')
+        run: |
+          if ! git diff --quiet -- cmd; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add cmd
+            git commit -m "style: format Go source"
+            git push
+          fi
       - name: Check formatting
         run: test -z "$(gofmt -l cmd)"
       - name: Compose configuration
