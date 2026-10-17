@@ -43,6 +43,7 @@ type mediaAsset struct {
 	ETag         string    `json:"etag,omitempty"`
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
+	PublicURL    string    `json:"public_url,omitempty"`
 }
 
 func sanitizeOriginalName(name string) (string, error) {
@@ -418,6 +419,13 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	asset.Key = body.Key
+	if body.Visibility == "public" {
+		asset.PublicURL = publicMediaURL(body.Key)
+		if asset.PublicURL == "" {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
+			return
+		}
+	}
 	if _, err := s.db.Exec(ctx, `update testagram_media.upload_intents set status='completed', updated_at=now()
 		where object_key=$1 and owner_id=$2 and status in ('issued','completed')`, body.Key, userID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Media was verified but upload completion state could not be saved", id))
