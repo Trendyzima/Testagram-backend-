@@ -29,7 +29,7 @@ The current control plane can schedule work only when a healthy node has registe
 
 ## Current boundaries — read before production use
 
-- Valkey is used by the private platform service for cache, queues and rate limiting. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
+- Valkey is used by the private platform service for cache, queues and rate limiting. The self-hosted configuration uses `--maxmemory-policy noeviction`: an `allkeys-*` eviction policy could evict queue-stream keys under memory pressure and silently discard unprocessed work. With `noeviction`, writes fail rather than evicting queue data when memory is exhausted; cache/rate-limit operations can therefore fail until capacity is restored. Alert on memory headroom and queue age, and size/scale Valkey before sustained production load. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
 - MinIO provisions separate private and public media buckets. Only objects intentionally
   uploaded to the public-media bucket are anonymously downloadable; the private
   bucket remains private. The current gateway does not yet upload media to MinIO
