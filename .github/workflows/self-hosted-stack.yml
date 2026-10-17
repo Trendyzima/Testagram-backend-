@@ -14,6 +14,9 @@ on:
       - "migrations/**"
       - "docs/platform/**"
       - "scripts/validate-platform-openapi.py"
+      - "scripts/testagram-reconcile.sh"
+      - "scripts/install-testagram-autonomy.sh"
+      - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
   pull_request:
     branches: [main]
@@ -28,6 +31,9 @@ on:
       - "migrations/**"
       - "docs/platform/**"
       - "scripts/validate-platform-openapi.py"
+      - "scripts/testagram-reconcile.sh"
+      - "scripts/install-testagram-autonomy.sh"
+      - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
 
 permissions:
@@ -105,3 +111,25 @@ jobs:
           grep -q 'REPLACE_WITH_LONG_RANDOM_PLATFORM_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_VPS_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_NODE_BOOTSTRAP_TOKEN' deploy/self-hosted/.env.example
+
+  autonomy-validation:
+    name: Autonomous recovery scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Bash syntax
+        run: |
+          bash -n scripts/testagram-reconcile.sh
+          bash -n scripts/install-testagram-autonomy.sh
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+      - name: Lint recovery scripts
+        run: shellcheck --severity=style scripts/testagram-reconcile.sh scripts/install-testagram-autonomy.sh
+      - name: Validate systemd unit structure
+        run: |
+          grep -q '^OnBootSec=45s$' deploy/self-hosted/systemd/testagram-reconcile.timer
+          grep -q '^OnUnitActiveSec=60s$' deploy/self-hosted/systemd/testagram-reconcile.timer
+          grep -q '^Type=oneshot$' deploy/self-hosted/systemd/testagram-reconcile.service
+          ! grep -R -E 'docker compose down -v|docker system prune|docker volume prune' scripts/testagram-reconcile.sh
