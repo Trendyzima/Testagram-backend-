@@ -1,0 +1,45 @@
+name: Self-hosted Stack Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/self-hosted/**"
+      - ".github/workflows/self-hosted-stack.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "deploy/self-hosted/**"
+      - ".github/workflows/self-hosted-stack.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-stack-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare validation-only environment
+        working-directory: deploy/self-hosted
+        run: cp .env.example .env
+      - name: Validate Compose model
+        working-directory: deploy/self-hosted
+        run: docker compose config --quiet
+      - name: Check public ports are limited to HTTPS edge
+        working-directory: deploy/self-hosted
+        run: |
+          docker compose config > /tmp/testagram-compose.yml
+          if grep -Eq 'published: "(5432|6379|9000|9001|9090)"' /tmp/testagram-compose.yml; then
+            echo "A private data/monitoring port is published to the host."
+            exit 1
+          fi
+      - name: Ensure no live secrets were added to the example
+        run: |
+          grep -q 'REPLACE_WITH_LONG_RANDOM_POSTGRES_PASSWORD' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_VALKEY_PASSWORD' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_MINIO_PASSWORD' deploy/self-hosted/.env.example

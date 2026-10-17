@@ -40,6 +40,20 @@ Requirements: Go 1.23+, Docker Compose.
 
 The local database is for development only and is not automatically wired to the live Supabase project. Do not put production credentials in this repository or in .env.example.
 
+## Local-first self-hosted deployment
+
+For the owned-hardware deployment path, see [deploy/self-hosted](deploy/self-hosted/README.md).
+It includes Compose services for PostgreSQL, Valkey, private/public MinIO buckets,
+a media-only Nginx cache, Caddy TLS termination, and Prometheus. It is opt-in and
+does not change production routing.
+
+Important: this is infrastructure groundwork, not yet a complete replacement
+for hosted Supabase or a global Cloudflare network. The gateway still depends
+on a compatible Supabase API; Valkey and MinIO are provisioned but not yet
+integrated into the gateway's application flows. Follow the deployment README's
+migration, media integration, backup, restore, and load-test gates before
+cutting over traffic.
+
 ## Production integration rules
 
 - Inject secrets through deployment secrets; never bake them into images.
