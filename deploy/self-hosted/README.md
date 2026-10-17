@@ -10,9 +10,10 @@ Persistent data lives in local Docker volumes.
 
 - Valkey is provisioned but the current Go gateway does not yet consume it.
   Cache, queue, session, and rate-limit features are not automatically active.
-- MinIO provisions a private media bucket, but the current gateway does not yet
-  upload media to it or sign object URLs. Do not make the bucket public to work
-  around this missing integration.
+- MinIO provisions separate private and public media buckets. Only objects intentionally
+  uploaded to the public-media bucket are anonymously downloadable; the private
+  bucket remains private. The current gateway does not yet upload media to MinIO
+  or sign private object URLs, so the app integration is still required.
 - Nginx caches GET/HEAD media requests only. This is a single-machine cache,
   not a global edge network. The application must publish media through this
   origin before media delivery will work.
