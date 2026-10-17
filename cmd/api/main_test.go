@@ -291,27 +291,18 @@ func TestMediaUploadIntentFailsClosedWithoutMetadataDatabase(t *testing.T) {
 	}
 }
 
-func TestPrivateMediaDownloadURLEnforcesOwnerPrefix(t *testing.T) {
+func TestPrivateMediaDownloadURLFailsClosedWithoutMetadataDatabase(t *testing.T) {
 	upstream := testSupabaseAuthServer(t)
 	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
-	handler := s.routes()
-	for _, test := range []struct {
-		name, key  string
-		wantStatus int
-	}{
-		{"owner can sign", "users/user-123/0123456789abcdef0123456789abcdef", http.StatusOK},
-		{"other user denied", "users/other-user/0123456789abcdef0123456789abcdef", http.StatusForbidden},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			body, _ := json.Marshal(map[string]string{"key": test.key})
-			r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(string(body)))
-			r.Header.Set("Content-Type", "application/json")
-			r.Header.Set("Authorization", "Bearer valid-session-token")
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
-			if w.Code != test.wantStatus {
-				t.Fatalf("status=%d want=%d body=%s", w.Code, test.wantStatus, w.Body.String())
-			}
-		})
+	r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer valid-session-token")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "MEDIA_METADATA_UNAVAILABLE") {
+		t.Fatalf("expected fail-closed metadata error, got %s", w.Body.String())
 	}
 }
