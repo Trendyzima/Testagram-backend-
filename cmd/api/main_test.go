@@ -144,7 +144,7 @@ func TestPublicCapabilityUsesSharedPlatformCache(t *testing.T) {
 	s := &service{upstream: upstream.Client(), platform: platform}
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
 	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w,r)
+	s.routes().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -170,14 +170,16 @@ func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"allowed":false,"count":31,"remaining":0,"retry_after_seconds":17}`)
 	}))
 	upstreamCalls := 0
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { upstreamCalls++; _,_=w.Write([]byte(`{}`)) }))
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { upstreamCalls++; _, _ = w.Write([]byte(`{}`)) }))
 	defer upstream.Close()
 	s := &service{upstream: upstream.Client(), platform: platform}
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
 	r.Header.Set("Authorization", "Bearer user-session-token")
 	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w,r)
-	if w.Code != http.StatusTooManyRequests { t.Fatalf("status=%d body=%s",w.Code,w.Body.String()) }
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
 	if w.Header().Get("Retry-After") != "17" {
 		t.Fatalf("Retry-After=%q", w.Header().Get("Retry-After"))
 	}
@@ -211,7 +213,7 @@ func TestAuthenticatedResponsesNeverUseSharedPublicCache(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
 	r.Header.Set("Authorization", "Bearer user-session-token")
 	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w,r)
+	s.routes().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
