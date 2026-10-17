@@ -44,6 +44,34 @@ paths:
         '200': {description: Node inventory}
         '401': {description: Unauthorized}
         '503': {description: Database unavailable}
+  /v1/hosting/nodes/{id}/drain:
+    post:
+      summary: Drain an online node from new workload placement
+      description: Transactionally changes the node to draining and records an audit event. Existing workloads are not forcibly terminated.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Node is draining}
+        '401': {description: Unauthorized}
+        '409': {description: Node is stale, missing, or in an incompatible state}
+        '503': {description: Maintenance transaction or audit storage unavailable}
+  /v1/hosting/nodes/{id}/resume:
+    post:
+      summary: Resume a recently heartbeating drained node
+      description: Only a node in draining state with a heartbeat in the last 45 seconds may resume. Records an audit event.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Node is online and eligible for scheduling}
+        '401': {description: Unauthorized}
+        '409': {description: Node is stale, missing, or not draining}
+        '503': {description: Maintenance transaction or audit storage unavailable}
   /v1/hosting/usage:
     get:
       summary: Aggregate compute reservations and workload status
