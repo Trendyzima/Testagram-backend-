@@ -1,6 +1,6 @@
 module github.com/Trendyzima/Testagram-backend-/services/platform
 
-go 1.23
+go 1.26.0
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
