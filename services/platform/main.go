@@ -75,6 +75,8 @@ func main() {
 	internal := required("PLATFORM_INTERNAL_TOKEN")
 	db, err := pgxpool.New(ctx, dbURL); if err != nil { log.Fatal(err) }; defer db.Close()
 	opts, err := redis.ParseURL(redisURL); if err != nil { log.Fatal(err) }
+	// Compose can inject the secret directly, avoiding URL-encoding pitfalls in passwords.
+	if password := env("VALKEY_PASSWORD", ""); password != "" { opts.Password = password }
 	rdb := redis.NewClient(opts); defer rdb.Close()
 	s := &server{db: db, redis: rdb, internal: internal}; s.ready.Store(true)
 
