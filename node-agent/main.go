@@ -127,6 +127,7 @@ func (a *Agent) saveState(id, token string) error {
 	tmp := a.stateFile + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600); if err != nil { return err }
 	if _, err = f.Write(data); err != nil { _ = f.Close(); return err }
+	if err = f.Chmod(0600); err != nil { _ = f.Close(); return err }
 	if err = f.Sync(); err != nil { _ = f.Close(); return err }
 	if err = f.Close(); err != nil { return err }
 	if err = os.Rename(tmp, a.stateFile); err != nil { return err }
@@ -144,11 +145,20 @@ func (a *Agent) register() error {
 	a.mu.Lock(); a.nodeID, a.nodeToken = out.ID, out.Token; a.mu.Unlock()
 	return nil
 }
-func (a *Agent) heartbeat() error {
+func (a *Agent) heartbeat() (int, error) {
 	total, free := a.disk()
 	body := Registration{CPUCores:runtime.NumCPU(), MemoryBytes:a.memory(), StorageBytes:total, FreeBytes:free,
 		Capabilities:map[string]any{"containers":runtimeBin()!="", "workloadTimeout":true}}
-	_, err := a.post("/v1/nodes/heartbeat", body, nil); return err
+	return a.post("/v1/nodes/heartbeat", body, nil)
+}
+func (a *Agent) invalidateNodeToken() {
+	a.mu.Lock()
+	a.nodeToken = ""
+	a.nodeID = ""
+	a.mu.Unlock()
+	if err := os.Remove(a.stateFile); err != nil && !os.IsNotExist(err) {
+		log.Printf("could not remove rejected node state: %v", err)
+	}
 }
 func (a *Agent) poll() (*pollResponse, int, error) {
 	var out pollResponse
@@ -251,15 +261,19 @@ func main() {
 		if a.token()=="" {
 			if err:=a.register(); err!=nil { log.Printf("registration failed: %v",err); time.Sleep(backoff); if backoff<30*time.Second { backoff*=2 }; continue }
 		}
-		if err:=a.heartbeat(); err!=nil {
-			log.Printf("heartbeat failed: %v",err)
-			// Do not discard a valid persisted node credential on transient network/database errors.
-			// Only a confirmed 401 during poll/result should trigger explicit re-enrollment.
+		heartbeatCode, heartbeatErr := a.heartbeat()
+		if heartbeatErr != nil {
+			if heartbeatCode == http.StatusUnauthorized {
+				a.invalidateNodeToken()
+				log.Printf("node credential rejected; re-enrollment required")
+			} else {
+				log.Printf("heartbeat failed: %v", heartbeatErr)
+			}
 			time.Sleep(backoff); if backoff<30*time.Second { backoff*=2 }; continue
 		}
 		work,code,err:=a.poll()
 		if code==http.StatusUnauthorized {
-			a.mu.Lock(); a.nodeToken=""; a.mu.Unlock()
+			a.invalidateNodeToken()
 			log.Printf("node credential rejected; registration will be retried")
 		} else if err!=nil { log.Printf("poll failed: %v",err) } else if work!=nil {
 			runErr:=a.execute(work.Workload)
