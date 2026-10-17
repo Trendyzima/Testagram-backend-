@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 )
 
 const maxCapabilityBody = 64 << 10
@@ -28,6 +31,7 @@ type service struct {
 	db       *pgxpool.Pool
 	requests atomic.Uint64
 	upstream *http.Client
+	platform *platformclient.Client
 }
 
 type capabilityRequest struct {
@@ -129,6 +133,56 @@ func requestID(r *http.Request) string {
 	return id
 }
 
+func publicCacheTTL(capability string) (time.Duration, bool) {
+	switch capability {
+	case "testagram.capabilities.list":
+		return 10 * time.Minute, true
+	case "testagram.news.trending":
+		return 30 * time.Second, true
+	case "testagram.health.read":
+		return 10 * time.Second, true
+	default:
+		return 0, false
+	}
+}
+
+func capabilityCacheKey(body capabilityRequest) string {
+	raw, err := json.Marshal(body)
+	if err != nil { return "" }
+	sum := sha256.Sum256(raw)
+	return "testagram:api:v1:" + hex.EncodeToString(sum[:])
+}
+
+func capabilityRateLimitKey(r *http.Request, authorization string) string {
+	identity := strings.TrimSpace(authorization)
+	if identity == "" {
+		identity = strings.TrimSpace(r.Header.Get("X-Real-IP"))
+		if identity == "" { identity = strings.TrimSpace(r.RemoteAddr) }
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return "api:" + hex.EncodeToString(sum[:])
+}
+
+func isWriteCapability(capability string) bool {
+	for _, suffix := range []string{".create", ".add", ".remove", ".update", ".delete", ".send", ".upload"} {
+		if strings.HasSuffix(capability, suffix) { return true }
+	}
+	return false
+}
+
+func writeRawCapability(w http.ResponseWriter, r *http.Request, id string, raw []byte, cacheTTL time.Duration) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Request-ID", id)
+	if cacheTTL > 0 && r.Header.Get("Authorization") == "" {
+		w.Header().Set("Cache-Control", "public, max-age=" + strconv.Itoa(int(cacheTTL.Seconds())))
+	} else {
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
 func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
@@ -170,9 +224,39 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	public := body.Capability == "testagram.capabilities.list" ||
 		body.Capability == "testagram.health.read" ||
 		body.Capability == "testagram.news.trending"
+	if s.platform != nil {
+		limit := int64(120)
+		if isWriteCapability(body.Capability) { limit = 30 }
+		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+		result, err := s.platform.Check(ctx, capabilityRateLimitKey(r, authorization), limit, time.Minute)
+		cancel()
+		if err != nil {
+			// Rate limiting is defense in depth; a platform outage must not take
+			// the capability gateway offline. The error is deliberately not logged
+			// with the raw key or credential.
+			log.Printf("platform rate-limit check unavailable; continuing with bounded upstream request")
+		} else if !result.Allowed {
+			w.Header().Set("Retry-After", strconv.FormatInt(max64(result.RetryAfterSeconds, 1), 10))
+			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Request rate limit exceeded", id))
+			return
+		}
+	}
 	if !public && !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
 		return
+	}
+
+	cacheTTL, cacheable := publicCacheTTL(body.Capability)
+	cacheKey := ""
+	if s.platform != nil && cacheable && authorization == "" {
+		cacheKey = capabilityCacheKey(body)
+		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+		cached, err := s.platform.Get(ctx, cacheKey)
+		cancel()
+		if err == nil && len(cached) <= 128<<10 && json.Valid([]byte(cached)) {
+			writeRawCapability(w, r, id, []byte(cached), cacheTTL)
+			return
+		}
 	}
 	if authorization == "" {
 		authorization = "Bearer " + publishableKey
@@ -267,12 +351,14 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Request-ID", id)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(raw)
+	if cacheKey != "" && len(raw) <= 128<<10 && json.Valid(raw) {
+		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
+		if err := s.platform.Set(ctx, cacheKey, string(raw), cacheTTL); err != nil {
+			log.Printf("platform public-response cache write unavailable")
+		}
+		cancel()
+	}
+	writeRawCapability(w, r, id, raw, cacheTTL)
 }
 
 func (s *service) bookmarkList(w http.ResponseWriter, r *http.Request, id, baseURL, apiKey, authorization string) {
@@ -397,7 +483,17 @@ func main() {
 		log.Fatalf("database startup check failed: %v", err)
 	}
 
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}}
+	var platform *platformclient.Client
+	platformURL := strings.TrimSpace(os.Getenv("PLATFORM_URL"))
+	platformToken := strings.TrimSpace(os.Getenv("PLATFORM_INTERNAL_TOKEN"))
+	if platformURL != "" && platformToken != "" {
+		platform, err = platformclient.New(platformURL, platformToken, 2*time.Second)
+		if err != nil { log.Fatalf("configure internal platform client: %v", err) }
+		log.Printf("internal cache and rate limiting enabled")
+	} else if platformURL != "" || platformToken != "" {
+		log.Printf("internal platform integration disabled: PLATFORM_URL and PLATFORM_INTERNAL_TOKEN must both be configured")
+	}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
