@@ -18,6 +18,7 @@ import (
 const maxMediaIntentBody = 16 << 10
 
 type mediaUploadIntentRequest struct {
+	Name        string `json:"name"`
 	ContentType string `json:"content_type"`
 	Visibility  string `json:"visibility"`
 	SizeBytes   int64  `json:"size_bytes"`
@@ -34,13 +35,14 @@ type mediaCompleteRequest struct {
 }
 
 type mediaAsset struct {
-	Key         string    `json:"key"`
-	Visibility  string    `json:"visibility"`
-	ContentType string    `json:"content_type"`
-	SizeBytes   int64     `json:"size_bytes"`
-	ETag        string    `json:"etag,omitempty"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
+	Key          string    `json:"key"`
+	Visibility   string    `json:"visibility"`
+	ContentType  string    `json:"content_type"`
+	OriginalName string    `json:"original_name,omitempty"`
+	SizeBytes    int64     `json:"size_bytes"`
+	ETag         string    `json:"etag,omitempty"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (s *service) mediaPreflight(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +96,15 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+	body.Name = strings.TrimSpace(strings.ReplaceAll(body.Name, "\\", "/"))
+	if body.Name == "" {
+		body.Name = "upload"
+	}
+	body.Name = path.Base(body.Name)
+	if len(body.Name) > 255 || strings.ContainsAny(body.Name, "\\r\\n") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer", id))
+		return
+	}
 	intent, err := s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
@@ -133,9 +144,9 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = tx.Exec(r.Context(), `insert into testagram_media.upload_intents
-		(object_key, owner_id, visibility, content_type, max_bytes, expires_at, status)
-		values ($1,$2,$3,$4,$5,$6,'issued')`,
-		intent.Key, userID, body.Visibility, body.ContentType, body.SizeBytes, intent.ExpiresAt)
+		(object_key, owner_id, visibility, content_type, original_name, max_bytes, expires_at, status)
+		values ($1,$2,$3,$4,$5,$6,$7,'issued')`,
+		intent.Key, userID, body.Visibility, body.ContentType, body.Name, body.SizeBytes, intent.ExpiresAt)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_PERSIST_FAILED", "Could not safely register the upload intent", id))
 		return
