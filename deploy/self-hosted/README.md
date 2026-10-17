@@ -57,7 +57,13 @@ The current control plane can schedule work only when a healthy node has registe
 - Caddy can obtain free TLS certificates once public DNS points at this host
   and inbound ports 80/443 are reachable.
 - Prometheus is private to the Compose network. Do not expose it publicly
-  without an authenticated admin/VPN route.
+  without an authenticated admin/VPN route. The stack now scrapes a read-only
+  node-exporter for host filesystem and memory metrics and loads
+  `prometheus-alerts.yml` rules for low/critical disk space, memory headroom,
+  and missing API/platform/node metrics. These rules are evaluated by Prometheus;
+  notifications are not delivered until an operator configures an Alertmanager
+  receiver and an appropriate private alert route. The exporter requires Linux
+  host mounts and is intended for the self-hosted Linux deployment.
 
 ## Start locally
 
