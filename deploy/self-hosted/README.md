@@ -99,6 +99,13 @@ The API exposes:
   ready asset. It records a durable deletion state before requesting a signed
   MinIO DELETE. A 202 response means the background janitor will retry; clients
   should treat the object as unavailable and refresh their media references.
+- `POST /internal/media/quarantine`: operator takedown protected by
+  `X-Testagram-Moderation-Token` matching the server-only
+  `MEDIA_MODERATION_TOKEN`, plus a required moderator ID and reason. It writes
+  an audit event and removes the object from storage; a 202 response means
+  takedown is queued for retry. Generate a long random token, keep it out of
+  browser/mobile apps, and restrict this route at the edge/VPN where possible.
+  This is an operator primitive, not a full moderator dashboard or role system.
 - `POST /api/media/complete`: after the client uploads the returned form to
   object storage, the API verifies the object with a signed HEAD request and
   persists server-reported size, MIME type and ETag in `testagram_media.assets`.
@@ -106,7 +113,7 @@ The API exposes:
 
 For an existing PostgreSQL volume, back up first and apply
 `migrations/005_media_assets.sql` and `migrations/006_media_lifecycle.sql` manually; Compose init scripts run only for a
-new data directory. Upload, completion, cleanup and deletion require both migrations.
+new data directory. Upload, completion, cleanup, deletion and quarantine require both migrations.
 
 Only JPEG, PNG, WebP, AVIF, GIF, MP4 and WebM are accepted by upload intent. The API reserves upload-intent size against a per-account quota (default 2 GiB, configurable with `MEDIA_USER_QUOTA_BYTES`) inside a transaction serialized per owner, so concurrent requests cannot bypass the quota.
 The policy enforces an upper bound derived from the requested file size and
