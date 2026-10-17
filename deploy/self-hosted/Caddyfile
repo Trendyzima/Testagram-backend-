@@ -13,7 +13,9 @@
     Referrer-Policy no-referrer
     -Server
   }
-  reverse_proxy api:8080
+  reverse_proxy api:8080 {
+    header_up X-Real-IP {remote_host}
+  }
 }
 {$MEDIA_DOMAIN} {
   encode zstd gzip
