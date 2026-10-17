@@ -155,6 +155,7 @@ services:
       MINIO_REGION: ${MINIO_REGION:-us-east-1}
       MINIO_BUCKET: ${MINIO_BUCKET:-testagram-private-media}
       PUBLIC_MEDIA_BUCKET: ${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
+      MEDIA_USER_QUOTA_BYTES: ${MEDIA_USER_QUOTA_BYTES:-2147483648}
     depends_on:
       postgres:
         condition: service_healthy
