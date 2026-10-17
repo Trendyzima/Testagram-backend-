@@ -132,8 +132,12 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
+      PLATFORM_URL: ${PLATFORM_URL:-http://platform:8095}
+      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in .env}
     depends_on:
       postgres:
+        condition: service_healthy
+      platform:
         condition: service_healthy
     expose: ["8080"]
     read_only: true
