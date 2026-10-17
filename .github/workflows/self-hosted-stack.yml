@@ -31,6 +31,9 @@ on:
       - "migrations/**"
       - "docs/platform/**"
       - "scripts/validate-platform-openapi.py"
+      - "scripts/testagram-reconcile.sh"
+      - "scripts/install-testagram-autonomy.sh"
+      - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
 
 permissions:
