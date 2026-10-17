@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -56,6 +57,25 @@ func TestAuthorizeRequiresExactBearerToken(t *testing.T) {
 			if rec.Code != tt.status {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.status)
 			}
+		})
+	}
+}
+
+
+func TestValidQueuePayloadBounds(t *testing.T) {
+	tests := []struct {
+		name string
+		payload map[string]string
+		want bool
+	}{
+		{name: "valid", payload: map[string]string{"job_id":"123","kind":"federation"}, want: true},
+		{name: "empty", payload: map[string]string{}, want: false},
+		{name: "too many fields", payload: func() map[string]string { m:=map[string]string{}; for i:=0;i<65;i++ { m[fmt.Sprintf("k%d",i)]="v" }; return m }(), want: false},
+		{name: "payload too large", payload: map[string]string{"body":strings.Repeat("x",256*1024)}, want: false},
+	}
+	for _,tt:=range tests {
+		t.Run(tt.name,func(t *testing.T) {
+			if got:=validQueuePayload(tt.payload); got!=tt.want { t.Fatalf("validQueuePayload()=%v, want %v",got,tt.want) }
 		})
 	}
 }
