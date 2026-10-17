@@ -604,9 +604,14 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	}
 	intentRows.Close()
 	for _, item := range intents {
-		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
-			where object_key=$1 and status in ('issued','cleanup_pending')`, item.key); err != nil {
+		tag, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
+			where object_key=$1 and status in ('issued','cleanup_pending')`, item.key)
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() == 0 {
+			// Completion/cancellation may have won the race after selection.
+			continue
 		}
 		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
 			continue
