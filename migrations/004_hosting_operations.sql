@@ -12,4 +12,4 @@ create index if not exists hosting_audit_resource_time_idx
 create index if not exists hosting_audit_time_idx
   on testagram_hosting.audit_events(created_at desc);
 alter table testagram_hosting.audit_events enable row level security;
-comment on table testagram_hosting.audit_events is 'Append-only-by-application operator audit trail for Testagram hosting actions.';
+comment on table testagram_hosting.audit_events is 'Append-only-by-application audit trail for node maintenance state transitions.';
