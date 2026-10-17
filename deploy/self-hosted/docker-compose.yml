@@ -6,7 +6,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-testagram}
       POSTGRES_USER: ${POSTGRES_USER:-testagram}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    volumes: [postgres-data:/var/lib/postgresql/data]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../migrations/001_platform.sql:/docker-entrypoint-initdb.d/001_platform.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -28,6 +30,33 @@ services:
       retries: 20
     restart: unless-stopped
     networks: [data]
+
+  platform:
+    build:
+      context: ../..
+      dockerfile: services/platform/Dockerfile
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD in .env}
+      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in .env}
+      PLATFORM_ADDR: ":8095"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose: ["8095"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8095/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [data, monitoring]
 
   object-storage:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -79,7 +108,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [edge, data]
+    networks: [edge, data, monitoring]
 
   media-cache:
     image: nginx:1.28-alpine
@@ -122,11 +151,13 @@ services:
       - prometheus-data:/prometheus
     expose: ["9090"]
     restart: unless-stopped
-    networks: [edge]
+    networks: [monitoring]
 
 networks:
   edge:
   data:
+    internal: true
+  monitoring:
     internal: true
 
 volumes:

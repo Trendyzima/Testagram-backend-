@@ -1,5 +1,16 @@
 # Testagram self-hosted platform stack
 
+Local-first PostgreSQL, Valkey, object storage, API gateway, media cache, HTTPS edge and monitoring for owned hardware.
+
+## Private platform service
+
+The stack includes `platform:8095` for internal cache, rate limiting, queues, feature configuration and audit/event APIs. Its port is not published to the host; it is reachable only on the private Docker networks. The `PLATFORM_INTERNAL_TOKEN` in `.env` is required and must never be exposed to browser or mobile clients. Prometheus scrapes platform metrics on a separate internal monitoring network.
+
+A fresh PostgreSQL data directory runs `migrations/001_platform.sql` through the PostgreSQL image's init hook. That hook does not modify an existing volume: apply the migration manually to an existing database as documented in `services/platform/README.md`, after taking a verified backup.
+
+The platform client is available at `internal/platformclient`, but application call sites are not migrated yet. Keep this service optional until the consumer integration and end-to-end tests pass.
+
+
 This is a local-first starting point for replacing managed infrastructure where
 owned hardware and connectivity permit. It provisions PostgreSQL, Valkey
 (Redis-compatible), private S3-compatible object storage, an Nginx media cache,
@@ -8,8 +19,7 @@ Persistent data lives in local Docker volumes.
 
 ## Current boundaries — read before production use
 
-- Valkey is provisioned but the current Go gateway does not yet consume it.
-  Cache, queue, session, and rate-limit features are not automatically active.
+- Valkey is used by the private platform service for cache, queues and rate limiting. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
 - MinIO provisions separate private and public media buckets. Only objects intentionally
   uploaded to the public-media bucket are anonymously downloadable; the private
   bucket remains private. The current gateway does not yet upload media to MinIO

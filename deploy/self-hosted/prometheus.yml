@@ -9,3 +9,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["api:8080"]
+  - job_name: testagram-platform
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["platform:8095"]
