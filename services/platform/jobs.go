@@ -73,6 +73,11 @@ func (s *server) jobClaim(w http.ResponseWriter, r *http.Request) {
 	if in.Count < 1 || in.Count > 25 { in.Count = 1 }
 	if in.LeaseSeconds < 5 || in.LeaseSeconds > 3600 { in.LeaseSeconds = 60 }
 	ctx := r.Context()
+	// A worker may die on its final attempt. Close expired exhausted leases instead of
+	// leaving them stuck forever in running state.
+	if _, err := s.db.Exec(ctx, "update testagram_platform.jobs set status='dead',locked_by=null,locked_at=null,completed_at=now(),updated_at=now(),last_error=case when last_error='' then 'worker lease expired after final attempt' else last_error end where queue=$1 and status='running' and attempts>=max_attempts and locked_at < now()-($2 * interval '1 second')", in.Queue, in.LeaseSeconds); err != nil {
+		http.Error(w, "job queue unavailable", http.StatusServiceUnavailable); return
+	}
 	// Expired leases become eligible again. Attempts are incremented atomically when a
 	// worker receives the job; delivery is at-least-once, never exactly-once.
 	rows, err := s.db.Query(ctx,
