@@ -43,10 +43,12 @@ jobs:
       - name: Test platform client and private service
         run: |
           go test -race -count=1 ./internal/platformclient
-          cd services/platform
-          go test -race -count=1 ./...
-          go vet ./...
-          CGO_ENABLED=0 go build -trimpath ./...
+          (
+            cd services/platform
+            go test -race -count=1 ./...
+            go vet ./...
+            CGO_ENABLED=0 go build -trimpath ./...
+          )
           go test -race -count=1 ./control-plane
           go vet ./control-plane
           CGO_ENABLED=0 go build -trimpath -o /tmp/testagram-control-plane ./control-plane
@@ -86,7 +88,8 @@ jobs:
             if [ "$attempt" -eq 40 ]; then docker compose logs postgres; exit 1; fi
             sleep 2
           done
-          docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null"
+          result="$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null")"
+          test "$result" = "t"
           docker compose down -v
       - name: Ensure no live secrets were added to the example
         run: |
