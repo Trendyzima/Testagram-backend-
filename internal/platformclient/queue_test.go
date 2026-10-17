@@ -85,7 +85,7 @@ func TestQueueReclaimAndAck(t *testing.T) {
 	if err := client.Ack(context.Background(), "", "sender", "id"); err == nil {
 		t.Fatal("expected missing queue to be rejected")
 	}
-	if _, _, err := client.Reclaim(context.Background(), "mail", "sender", "worker-2", 0, 5); err == nil {
+	if _, _, err := client.Reclaim(context.Background(), "mail", "sender", "worker-2", 0, 5, "0-0"); err == nil {
 		t.Fatal("expected invalid idle time to be rejected")
 	}
 }
