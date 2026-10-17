@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -36,6 +37,7 @@ type service struct {
 	platformErrors atomic.Uint64
 	upstream       *http.Client
 	platform       *platformclient.Client
+	media          *media.Signer
 }
 
 type capabilityRequest struct {
@@ -84,6 +86,10 @@ func (s *service) routes() http.Handler {
 	})
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
+	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
+	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
@@ -528,7 +534,25 @@ func main() {
 	} else if platformURL != "" || platformToken != "" {
 		log.Printf("internal platform integration disabled: PLATFORM_URL and PLATFORM_INTERNAL_TOKEN must both be configured")
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform}
+	var mediaSigner *media.Signer
+	mediaAccessKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_ACCESS_KEY"))
+	mediaSecretKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_SECRET_KEY"))
+	if mediaAccessKey != "" || mediaSecretKey != "" {
+		if mediaAccessKey == "" || mediaSecretKey == "" {
+			log.Fatal("MINIO_MEDIA_ACCESS_KEY and MINIO_MEDIA_SECRET_KEY must be configured together")
+		}
+		mediaSigner, err = media.NewSigner(media.Config{
+			Endpoint: env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site")),
+			SigningHost: env("MINIO_SIGNING_HOST", "object-storage:9000"),
+			AccessKey: mediaAccessKey, SecretKey: mediaSecretKey,
+			Region: env("MINIO_REGION", "us-east-1"),
+			PrivateBucket: env("MINIO_BUCKET", "testagram-private-media"),
+			PublicBucket: env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
+		})
+		if err != nil { log.Fatalf("configure MinIO media signer: %v", err) }
+		log.Printf("MinIO media upload and private download signing enabled")
+	}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
