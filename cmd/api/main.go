@@ -90,6 +90,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
 	mux.HandleFunc("OPTIONS /api/media/complete", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/complete", s.mediaComplete)
+	mux.HandleFunc("OPTIONS /api/media/delete", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/delete", s.mediaDelete)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -571,6 +573,7 @@ func main() {
 
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go svc.runMediaJanitor(signalCtx)
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
