@@ -282,8 +282,27 @@ func (s *Server) hostingTLSAuthorize(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !strings.HasSuffix(host, "."+base) { http.Error(w, "denied", http.StatusForbidden); return }
 	label := strings.TrimSuffix(host, "."+base)
 	if !hostingSlugPattern.MatchString(label) || isReservedDomainSlug(label) { http.Error(w, "denied", http.StatusForbidden); return }
+	expectedOrigin := net.ParseIP(strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_ORIGIN_IP")))
+	if expectedOrigin == nil {
+		http.Error(w, "denied", http.StatusForbidden)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	addresses, lookupErr := net.DefaultResolver.LookupIPAddr(ctx, host)
+	resolvedToOrigin := false
+	if lookupErr == nil {
+		for _, address := range addresses {
+			if address.IP.Equal(expectedOrigin) {
+				resolvedToOrigin = true
+				break
+			}
+		}
+	}
+	if !resolvedToOrigin {
+		http.Error(w, "denied", http.StatusForbidden)
+		return
+	}
 	var targetService string
 	err = s.db.QueryRow(ctx, "select target_service from testagram_hosting.domains where hostname=$1 and status='active'", host).Scan(&targetService)
 	if err != nil { http.Error(w, "denied", http.StatusForbidden); return }
