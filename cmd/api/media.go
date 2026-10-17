@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -449,6 +451,359 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantined"}, "error": nil, "request_id": id})
+}
+
+
+type mediaAttachRequest struct {
+	Key    string `json:"key"`
+	PostID string `json:"post_id"`
+}
+
+type productMediaRecord struct {
+	ID      string  `json:"id"`
+	OwnerID string  `json:"owner_id"`
+	PostID  *string `json:"post_id"`
+	Status  string  `json:"status"`
+}
+
+func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
+		return
+	}
+	serviceKey := strings.TrimSpace(env("SUPABASE_SERVICE_ROLE_KEY", ""))
+	publishableKey := strings.TrimSpace(env("SUPABASE_PUBLISHABLE_KEY", ""))
+	if serviceKey == "" || publishableKey == "" || strings.TrimSpace(env("SUPABASE_URL", "")) == "" {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PRODUCT_BRIDGE_UNAVAILABLE", "Product media linking is not configured on this server", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	var body mediaAttachRequest
+	if err := decodeMediaJSON(w, r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A media key and post ID are required", id))
+		return
+	}
+	body.Key = strings.TrimSpace(body.Key)
+	body.PostID = strings.TrimSpace(body.PostID)
+	if body.Key == "" || body.PostID == "" || len(body.PostID) > 128 || strings.ContainsAny(body.PostID, "\r\n") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A media key and valid post ID are required", id))
+		return
+	}
+	owned, err := s.userOwnsProductPost(r.Context(), r.Header.Get("Authorization"), publishableKey, userID, body.PostID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("POST_OWNERSHIP_CHECK_FAILED", "Could not verify post ownership", id))
+		return
+	}
+	if !owned {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "Post was not found for this account", id))
+		return
+	}
+	var visibility, contentType, assetStatus, externalID string
+	var sizeBytes int64
+	err = s.db.QueryRow(r.Context(), `select visibility, content_type, size_bytes, status, coalesce(external_media_id::text,'')
+		from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).
+		Scan(&visibility, &contentType, &sizeBytes, &assetStatus, &externalID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
+		return
+	}
+	if visibility != "public" || assetStatus != "ready" {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_NOT_ATTACHABLE", "Only ready public media can be attached to a post", id))
+		return
+	}
+	publicURL := publicMediaURL(body.Key)
+	if publicURL == "" {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	externalID, err = s.ensureProductMediaRecord(ctx, serviceKey, userID, body.Key, contentType, sizeBytes, publicURL, externalID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_PRODUCT_SYNC_FAILED", "Could not synchronize media metadata with the product data plane", id))
+		return
+	}
+	tag, err := s.db.Exec(ctx, `update testagram_media.assets set external_media_id=$3, updated_at=now()
+		where object_key=$1 and owner_id=$2 and status='ready'
+		and (external_media_id is null or external_media_id=$3::uuid)`, body.Key, userID, externalID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not persist product media reference", id))
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_CHANGED", "Media state changed while it was being attached", id))
+		return
+	}
+	if err := s.attachProductMediaToPost(ctx, serviceKey, userID, body.PostID, externalID, body.Key, contentType, sizeBytes, publicURL); err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_POST_LINK_FAILED", "Media was registered but could not be linked to the post; retry is safe", id))
+		return
+	}
+	mediaType := "file"
+	if strings.HasPrefix(contentType, "image/") {
+		mediaType = "image"
+	} else if strings.HasPrefix(contentType, "video/") {
+		mediaType = "video"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{
+		"key": body.Key, "post_id": body.PostID, "public_url": publicURL,
+		"size_bytes": sizeBytes, "content_type": contentType, "media_type": mediaType,
+		"status": "uploaded", "external_media_id": externalID,
+	}, "error": nil, "request_id": id})
+}
+
+func publicMediaURL(key string) string {
+	base, err := url.Parse(strings.TrimRight(env("MINIO_PUBLIC_ENDPOINT", "https://media.testagram.site"), "/"))
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+		return ""
+	}
+	bucket := env("PUBLIC_MEDIA_BUCKET", "testagram-public-media")
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + bucket + "/" + strings.TrimLeft(key, "/")
+	base.RawPath = ""
+	return base.String()
+}
+
+func (s *service) userOwnsProductPost(ctx context.Context, authorization, publishableKey, userID, postID string) (bool, error) {
+	query := url.Values{}
+	query.Set("id", "eq."+postID)
+	query.Set("select", "id,author_id,user_id")
+	query.Set("limit", "1")
+	data, status, err := s.supabaseREST(ctx, http.MethodGet, "posts", query, authorization, publishableKey, nil, "")
+	if err != nil {
+		return false, err
+	}
+	if status < 200 || status >= 300 {
+		return false, errors.New("post ownership query failed")
+	}
+	var posts []struct {
+		ID       string `json:"id"`
+		AuthorID string `json:"author_id"`
+		UserID   string `json:"user_id"`
+	}
+	if err := json.Unmarshal(data, &posts); err != nil {
+		return false, err
+	}
+	for _, post := range posts {
+		if post.ID == postID && (post.AuthorID == userID || post.UserID == userID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, ownerID, key, contentType string, sizeBytes int64, publicURL, knownID string) (string, error) {
+	query := url.Values{}
+	query.Set("storage_key", "eq."+key)
+	query.Set("select", "id,owner_id,post_id,status")
+	query.Set("limit", "1")
+	data, status, err := s.supabaseREST(ctx, http.MethodGet, "media_assets", query, serviceKey, serviceKey, nil, "")
+	if err != nil || status < 200 || status >= 300 {
+		return "", errors.New("product media lookup failed")
+	}
+	var records []productMediaRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		return "", err
+	}
+	if len(records) > 0 {
+		record := records[0]
+		if record.OwnerID != ownerID || record.Status != "uploaded" {
+			return "", errors.New("existing product media record has different owner or state")
+		}
+		if knownID != "" && record.ID != knownID {
+			return "", errors.New("product media ID conflicts with local metadata")
+		}
+		return record.ID, nil
+	}
+	if knownID != "" {
+		return "", errors.New("local product media reference is missing remotely")
+	}
+	mediaType := "file"
+	if strings.HasPrefix(contentType, "image/") {
+		mediaType = "image"
+	} else if strings.HasPrefix(contentType, "video/") {
+		mediaType = "video"
+	}
+	payload := map[string]any{
+		"owner_id": ownerID, "post_id": nil, "thread_id": nil,
+		"storage_key": key, "bucket": env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
+		"original_name": path.Base(key), "mime_type": contentType, "media_type": mediaType,
+		"byte_size": sizeBytes, "status": "uploaded", "media_url": publicURL,
+	}
+	query = url.Values{}
+	query.Set("select", "id,owner_id,post_id,status")
+	data, status, err = s.supabaseREST(ctx, http.MethodPost, "media_assets", query, serviceKey, serviceKey, payload, "return=representation")
+	if err != nil || status < 200 || status >= 300 {
+		return "", errors.New("product media create failed")
+	}
+	records = nil
+	if err := json.Unmarshal(data, &records); err != nil || len(records) != 1 || records[0].ID == "" || records[0].OwnerID != ownerID {
+		return "", errors.New("product media create returned an invalid record")
+	}
+	return records[0].ID, nil
+}
+
+func (s *service) attachProductMediaToPost(ctx context.Context, serviceKey, ownerID, postID, externalID, key, contentType string, sizeBytes int64, publicURL string) error {
+	query := url.Values{}
+	query.Set("id", "eq."+externalID)
+	query.Set("owner_id", "eq."+ownerID)
+	query.Set("status", "eq.uploaded")
+	data, status, err := s.supabaseREST(ctx, http.MethodGet, "media_assets", query, serviceKey, serviceKey, nil, "")
+	if err != nil || status < 200 || status >= 300 {
+		return errors.New("product media lookup failed")
+	}
+	var records []productMediaRecord
+	if err := json.Unmarshal(data, &records); err != nil || len(records) != 1 {
+		return errors.New("product media record is missing")
+	}
+	if records[0].PostID != nil && *records[0].PostID != "" && *records[0].PostID != postID {
+		return errors.New("media is already attached to a different post")
+	}
+	if records[0].PostID == nil || *records[0].PostID == "" {
+		updateQuery := url.Values{}
+		updateQuery.Set("id", "eq."+externalID)
+		updateQuery.Set("owner_id", "eq."+ownerID)
+		if _, status, err := s.supabaseREST(ctx, http.MethodPatch, "media_assets", updateQuery, serviceKey, serviceKey,
+			map[string]any{"post_id": postID, "updated_at": time.Now().UTC()}, "return=minimal"); err != nil || status < 200 || status >= 300 {
+			return errors.New("product media post assignment failed")
+		}
+	}
+	joinQuery := url.Values{}
+	joinQuery.Set("post_id", "eq."+postID)
+	joinQuery.Set("media_asset_id", "eq."+externalID)
+	joinQuery.Set("select", "id")
+	joinQuery.Set("limit", "1")
+	data, status, err = s.supabaseREST(ctx, http.MethodGet, "post_media", joinQuery, serviceKey, serviceKey, nil, "")
+	if err != nil || status < 200 || status >= 300 {
+		return errors.New("post media join lookup failed")
+	}
+	var joins []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &joins); err != nil {
+		return err
+	}
+	if len(joins) > 0 {
+		return nil
+	}
+	sortQuery := url.Values{}
+	sortQuery.Set("post_id", "eq."+postID)
+	sortQuery.Set("select", "sort_order")
+	sortQuery.Set("order", "sort_order.desc")
+	sortQuery.Set("limit", "1")
+	data, status, err = s.supabaseREST(ctx, http.MethodGet, "post_media", sortQuery, serviceKey, serviceKey, nil, "")
+	if err != nil || status < 200 || status >= 300 {
+		return errors.New("post media sort lookup failed")
+	}
+	var last []struct {
+		SortOrder int `json:"sort_order"`
+	}
+	if err := json.Unmarshal(data, &last); err != nil {
+		return err
+	}
+	sortOrder := 0
+	if len(last) > 0 {
+		sortOrder = last[0].SortOrder + 1
+	}
+	join := map[string]any{
+		"post_id": postID, "owner_id": ownerID, "media_url": publicURL,
+		"media_type": "file", "mime_type": contentType, "byte_size": sizeBytes,
+		"media_asset_id": externalID, "sort_order": sortOrder,
+	}
+	if strings.HasPrefix(contentType, "image/") {
+		join["media_type"] = "image"
+	} else if strings.HasPrefix(contentType, "video/") {
+		join["media_type"] = "video"
+	}
+	_, status, err = s.supabaseREST(ctx, http.MethodPost, "post_media", url.Values{}, serviceKey, serviceKey, join, "return=minimal")
+	if err != nil || status < 200 || status >= 300 {
+		return errors.New("post media join insert failed")
+	}
+	_ = key
+	return nil
+}
+
+func (s *service) deleteProductMedia(ctx context.Context, externalID string) error {
+	if strings.TrimSpace(externalID) == "" {
+		return nil
+	}
+	serviceKey := strings.TrimSpace(env("SUPABASE_SERVICE_ROLE_KEY", ""))
+	if serviceKey == "" {
+		return errors.New("product media bridge is not configured")
+	}
+	joinQuery := url.Values{}
+	joinQuery.Set("media_asset_id", "eq."+externalID)
+	_, status, err := s.supabaseREST(ctx, http.MethodDelete, "post_media", joinQuery, serviceKey, serviceKey, nil, "return=minimal")
+	if err != nil || status < 200 || status >= 300 {
+		return errors.New("post media join deletion failed")
+	}
+	assetQuery := url.Values{}
+	assetQuery.Set("id", "eq."+externalID)
+	_, status, err = s.supabaseREST(ctx, http.MethodPatch, "media_assets", assetQuery, serviceKey, serviceKey,
+		map[string]any{"status": "deleted", "updated_at": time.Now().UTC()}, "return=minimal")
+	if err != nil || status < 200 || status >= 300 {
+		return errors.New("product media deletion sync failed")
+	}
+	return nil
+}
+
+func (s *service) supabaseREST(ctx context.Context, method, resource string, query url.Values, authorization, apiKey string, payload any, prefer string) ([]byte, int, error) {
+	base := strings.TrimRight(strings.TrimSpace(env("SUPABASE_URL", "")), "/")
+	if base == "" || apiKey == "" || authorization == "" {
+		return nil, 0, errors.New("Supabase REST is not configured")
+	}
+	target := base + "/rest/v1/" + resource
+	if encoded := query.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	var reader io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, 0, err
+		}
+		reader = strings.NewReader(string(encoded))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, reader)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", authorization)
+	req.Header.Set("apikey", apiKey)
+	req.Header.Set("Accept", "application/json")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if prefer != "" {
+		req.Header.Set("Prefer", prefer)
+	}
+	client := s.upstream
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	safeClient := *client
+	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := safeClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return data, resp.StatusCode, nil
 }
 
 type mediaDeleteRequest struct {
