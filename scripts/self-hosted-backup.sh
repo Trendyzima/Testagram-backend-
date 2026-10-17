@@ -67,14 +67,13 @@ case "${1:-}" in
         mc mirror --preserve local/"$MINIO_BUCKET" /backup/minio-private
         mc mirror --preserve local/"$PUBLIC_MEDIA_BUCKET" /backup/minio-public
       '
-    cat > "$stage/manifest.txt" <<EOF
-Testagram self-hosted backup
-created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-postgres_database=$(docker compose exec -T postgres sh -ec 'printf %s "$POSTGRES_DB"')
-private_bucket=${MINIO_BUCKET:-testagram-private-media}
-public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
-repository=${RESTIC_REPOSITORY}
-EOF
+    printf '%s\n' \
+      "Testagram self-hosted backup" \
+      "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "postgres_database=$(docker compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')" \
+      "private_bucket=${MINIO_BUCKET:-testagram-private-media}" \
+      "public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}" \
+      "repository=${RESTIC_REPOSITORY}" > "$stage/manifest.txt"
     chmod 600 "$stage/manifest.txt"
     printf 'Writing encrypted restic snapshot...\n'
     restic backup --host testagram-self-hosted --tag testagram --tag automated "$stage"
