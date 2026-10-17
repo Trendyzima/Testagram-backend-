@@ -1,3 +1,6 @@
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -13,3 +16,6 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["platform:8095"]
+  - job_name: testagram-node
+    static_configs:
+      - targets: ["node-exporter:9100"]
