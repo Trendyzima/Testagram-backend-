@@ -115,6 +115,10 @@ func (w *Worker) Run(ctx context.Context) error {
 // error. A failed handler does not get acknowledged until retry/dead-letter
 // enqueue succeeds.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
+	// Claim first so the platform can create the consumer group before reclaim
+	// is attempted. The group starts at stream ID 0, preserving older messages.
+	fresh, err := w.client.Claim(ctx, w.config.Queue, w.config.Group, w.config.Consumer, w.config.BatchSize)
+	if err != nil { return 0, fmt.Errorf("claim new jobs: %w", err) }
 	pending, next, err := w.client.Reclaim(ctx, w.config.Queue, w.config.Group, w.config.Consumer, w.config.ReclaimIdle, w.config.BatchSize, w.cursor)
 	if err != nil { return 0, fmt.Errorf("reclaim pending jobs: %w", err) }
 	w.cursor = next
@@ -124,8 +128,6 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		if err := w.process(ctx, message); err != nil { return processed, err }
 		processed++
 	}
-	fresh, err := w.client.Claim(ctx, w.config.Queue, w.config.Group, w.config.Consumer, w.config.BatchSize)
-	if err != nil { return processed, fmt.Errorf("claim new jobs: %w", err) }
 	for _, message := range fresh {
 		if err := w.process(ctx, message); err != nil { return processed, err }
 		processed++
