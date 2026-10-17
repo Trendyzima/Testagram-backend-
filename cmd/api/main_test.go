@@ -331,3 +331,27 @@ func TestMediaDeleteFailsClosedWithoutStorageOrMetadata(t *testing.T) {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
 	}
 }
+
+
+func TestMediaAttachFailsClosedWithoutMetadataDatabase(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/api/media/attach", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef","post_id":"post-123"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "MEDIA_METADATA_UNAVAILABLE") {
+		t.Fatalf("expected fail-closed metadata error, got %s", w.Body.String())
+	}
+}
+
+func TestPublicMediaURLUsesConfiguredBucketAndEndpoint(t *testing.T) {
+	t.Setenv("MINIO_PUBLIC_ENDPOINT", "https://media.example.test")
+	t.Setenv("PUBLIC_MEDIA_BUCKET", "public-assets")
+	got := publicMediaURL("users/user-123/0123456789abcdef0123456789abcdef")
+	want := "https://media.example.test/public-assets/users/user-123/0123456789abcdef0123456789abcdef"
+	if got != want {
+		t.Fatalf("publicMediaURL()=%q want=%q", got, want)
+	}
+}
