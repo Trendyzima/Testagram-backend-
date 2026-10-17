@@ -149,7 +149,7 @@ func (s *Signer) CreateUploadIntent(userID, contentType, visibility string, requ
 	encodedPolicy := base64.StdEncoding.EncodeToString(policy)
 	signature := hex.EncodeToString(hmacSHA256(signingKey(s.secretKey, date, s.region), []byte(encodedPolicy)))
 	fields := map[string]string{
-		"key": key, "bucket": bucket, "Content-Type": contentType,
+		"key": key, "Content-Type": contentType,
 		"success_action_status": "201", "policy": encodedPolicy,
 		"x-amz-algorithm": "AWS4-HMAC-SHA256", "x-amz-credential": credential,
 		"x-amz-date": amzDate, "x-amz-signature": signature,
