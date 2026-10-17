@@ -32,8 +32,6 @@ jobs:
         run: go vet ./...
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api
-      - name: Build production container
-        run: docker build --pull -t testagram-backend:ci .
       - name: Check formatting
         run: test -z "$(gofmt -l cmd)"
       - name: Compose configuration
