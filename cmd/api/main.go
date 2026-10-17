@@ -183,7 +183,7 @@ func writeRawCapability(w http.ResponseWriter, r *http.Request, id string, raw [
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Request-ID", id)
-	if cacheTTL > 0 && r.Header.Get("Authorization") == "" {
+	if cacheTTL > 0 && strings.TrimSpace(r.Header.Get("Authorization")) == "" {
 		w.Header().Set("Cache-Control", "public, max-age=" + strconv.Itoa(int(cacheTTL.Seconds())))
 	} else {
 		w.Header().Set("Cache-Control", "private, no-store")
@@ -244,7 +244,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 			// the capability gateway offline. The error is deliberately not logged
 			// with the raw key or credential.
 			s.platformErrors.Add(1)
-			log.Printf("platform rate-limit check unavailable; continuing with bounded upstream request")
 		} else if !result.Allowed {
 			s.rateLimited.Add(1)
 			retryAfter := result.RetryAfterSeconds
@@ -379,7 +378,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		if err := s.platform.Set(ctx, cacheKey, string(raw), cacheTTL); err != nil {
 			s.platformErrors.Add(1)
-			log.Printf("platform public-response cache write unavailable")
 		}
 		cancel()
 	}
