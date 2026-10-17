@@ -47,12 +47,12 @@ type mediaAsset struct {
 
 
 func sanitizeOriginalName(name string) (string, error) {
-	name = strings.TrimSpace(strings.ReplaceAll(name, "\\\\", "/"))
+	name = strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
 	if name == "" {
 		return "upload", nil
 	}
 	name = path.Base(name)
-	if name == "." || name == ".." || len(name) > 255 || strings.ContainsAny(name, "\\r\\n\\x00") {
+	if name == "." || name == ".." || len(name) > 255 || strings.ContainsAny(name, "\r\n\x00") {
 		return "", errors.New("invalid original filename")
 	}
 	return name, nil
