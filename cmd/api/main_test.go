@@ -490,4 +490,3 @@ func TestProductPostMediaSizeMatchesDatabaseConstraint(t *testing.T) {
 		t.Fatalf("max product post media bytes=%d, want %d", maxProductPostMediaBytes, 20<<20)
 	}
 }
-
