@@ -90,6 +90,14 @@ The API exposes:
 - `POST /api/media/private-download-url`: requires a valid Supabase bearer
   session and returns a five-minute signed URL only when the object key belongs
   to that user.
+- `POST /api/media/complete`: after the client uploads the returned form to
+  object storage, the API verifies the object with a signed HEAD request and
+  persists server-reported size, MIME type and ETag in `testagram_media.assets`.
+  It is idempotent for matching metadata and rejects cross-owner key conflicts.
+
+For an existing PostgreSQL volume, back up first and apply
+`migrations/005_media_assets.sql` manually; Compose init scripts run only for a
+new data directory. The completion endpoint requires this migration to be applied.
 
 Only JPEG, PNG, WebP, AVIF, GIF, MP4 and WebM are accepted by upload intent.
 The policy enforces an upper bound derived from the requested file size and
