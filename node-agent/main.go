@@ -102,7 +102,7 @@ func (a *Agent) post(path string, body any, out any) (int, error) {
 	req.Header.Set("Authorization", a.authHeader()); req.Header.Set("Content-Type", "application/json")
 	resp, err := a.client.Do(req); if err != nil { return 0, err }; defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNoContent {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_, _ = io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return resp.StatusCode, fmt.Errorf("control plane returned HTTP %d", resp.StatusCode)
 	}
 	if out != nil && resp.StatusCode != http.StatusNoContent {
