@@ -17,6 +17,16 @@ owned hardware and connectivity permit. It provisions PostgreSQL, Valkey
 Caddy HTTPS reverse proxy, the existing Go capability gateway, and Prometheus.
 Persistent data lives in local Docker volumes.
 
+## Private hosting control plane
+
+The stack now includes an internal-only control-plane:8787 API for node registration/heartbeats, resource-aware workload scheduling, domain reservations, DNS verification, deployment status, usage, backup manifests and recovery-drill records. Its port is not published. It shares only the private control-plane network with Caddy and the data network with PostgreSQL; Caddy is not attached to the database network.
+
+The fresh-database init sequence is 000_vps.sql, 001_platform.sql, 002_production_hardening.sql, then 003_hosting_control_plane.sql. PostgreSQL only runs init scripts on an empty data directory. For existing data, take and verify a backup, review/apply these migrations in order manually, and verify schema state before deploying the control-plane container.
+
+VPS_INTERNAL_TOKEN authenticates control-plane operations, and VPS_NODE_BOOTSTRAP_TOKEN permits node registration. Generate distinct long random values and never expose either to browser/mobile clients. TESTAGRAM_BASE_DOMAIN, TESTAGRAM_PUBLIC_ORIGIN_IP, and TESTAGRAM_DOMAIN_TARGETS are intentionally blank by default. Domain reservation/activation stays unavailable until operators explicitly configure a domain they control, verify DNS and allowlist private service origins. This PR does not register a public domain or write to authoritative DNS.
+
+The current control plane can schedule work only when a healthy node has registered and reported capacity. The node agent is not automatically installed or enrolled by this Compose file; node-agent hardening, enrollment, deployment integration tests and restore drills remain release gates.
+
 ## Current boundaries — read before production use
 
 - Valkey is used by the private platform service for cache, queues and rate limiting. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
