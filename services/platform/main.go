@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -102,7 +103,7 @@ func main() {
 	log.Fatal((&http.Server{Addr:addr, Handler:requestLog(mux), ReadHeaderTimeout:5*time.Second, ReadTimeout:15*time.Second, WriteTimeout:30*time.Second, IdleTimeout:60*time.Second}).ListenAndServe())
 }
 func (s *server) health(w http.ResponseWriter,_ *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
-func (s *server) readyz(w http.ResponseWriter,r *http.Request){if !s.ready.Load(){http.Error(w,"not ready",503);return};if err:=s.db.Ping(r.Context());err!=nil{http.Error(w,"database unavailable",503);return};if err:=s.redis.Ping(r.Context()).Err();err!=nil{http.Error(w,"redis unavailable",503);return};_,_=w.Write([]byte("ready\n"))}
+func (s *server) readyz(w http.ResponseWriter,r *http.Request){if !s.ready.Load(){http.Error(w,"not ready",503);return};ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};if err:=s.redis.Ping(ctx).Err();err!=nil{http.Error(w,"redis unavailable",503);return};_,_=w.Write([]byte("ready\n"))}
 func (s *server) metrics(w http.ResponseWriter,_ *http.Request){w.Header().Set("Content-Type","text/plain; version=0.0.4");fmt.Fprintf(w,"testagram_platform_cache_hits_total %d\n",s.cacheHits.Load());fmt.Fprintf(w,"testagram_platform_cache_misses_total %d\n",s.cacheMiss.Load());fmt.Fprintf(w,"testagram_platform_queue_enqueued_total %d\n",s.queueAdds.Load());fmt.Fprintf(w,"testagram_platform_queue_acked_total %d\n",s.queueAcks.Load());fmt.Fprintf(w,"testagram_platform_rate_limit_checks_total %d\n",s.rateChecks.Load())}
 func (s *server) authorize(w http.ResponseWriter,r *http.Request)bool{got:=strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer "));if got==""||subtle.ConstantTimeCompare([]byte(got),[]byte(s.internal))!=1{http.Error(w,"unauthorized",401);return false};return true}
 func (s *server) cacheGet(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};key:=r.URL.Query().Get("key");if !validKey(key){http.Error(w,"invalid key",400);return};v,err:=s.redis.Get(r.Context(),key).Result();if errors.Is(err,redis.Nil){s.cacheMiss.Add(1);http.Error(w,"not found",404);return};if err!=nil{http.Error(w,"cache unavailable",503);return};s.cacheHits.Add(1);writeJSON(w,map[string]string{"value":v})}
@@ -133,7 +134,7 @@ func (s *server) audit(w http.ResponseWriter,r *http.Request){if !s.authorize(w,
 
 func (s *server) publicConfig(w http.ResponseWriter,r *http.Request){key:=strings.TrimPrefix(r.URL.Path,"/v1/config/");if !validKey(key){http.Error(w,"invalid key",400);return};var value []byte;err:=s.db.QueryRow(r.Context(),`select value from testagram_platform.feature_flags where key=$1 and public=true and enabled=true`,key).Scan(&value);if errors.Is(err,pgx.ErrNoRows){http.Error(w,"not found",404);return};if err!=nil{http.Error(w,"database unavailable",503);return};w.Header().Set("Cache-Control","public, max-age=30, stale-while-revalidate=60");w.Header().Set("Content-Type","application/json");_,_=w.Write(value)}
 
-func decodeJSON(w http.ResponseWriter,r *http.Request,v any)bool{r.Body=http.MaxBytesReader(w,r.Body,1<<20);defer r.Body.Close();d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();return d.Decode(v)==nil}
+func decodeJSON(w http.ResponseWriter,r *http.Request,v any)bool{r.Body=http.MaxBytesReader(w,r.Body,1<<20);defer r.Body.Close();d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();if err:=d.Decode(v);err!=nil{return false};var trailing any;if err:=d.Decode(&trailing);err!=io.EOF{return false};return true}
 func writeJSON(w http.ResponseWriter,v any){w.Header().Set("Content-Type","application/json");_=json.NewEncoder(w).Encode(v)}
 func validQueuePayload(payload map[string]string) bool {
  if len(payload)==0 || len(payload)>64 { return false }
