@@ -17,6 +17,7 @@ import (
 )
 
 const attemptField = "__testagram_attempt"
+const stableJobIDField = "__testagram_job_id"
 
 // Client is the queue subset required by Worker. It allows deterministic tests
 // without a live Valkey instance.
@@ -85,6 +86,9 @@ func New(client Client, config Config, handler Handler, logger *log.Logger) (*Wo
 		return nil, errors.New("retry backoff must be between 0 and 1m")
 	}
 	if config.DeadLetterSuffix == "" { config.DeadLetterSuffix = ".dead" }
+	if len(config.Queue)+len(config.DeadLetterSuffix) > 160 {
+		return nil, errors.New("queue name plus dead-letter suffix exceeds 160 characters")
+	}
 	if strings.ContainsAny(config.DeadLetterSuffix, " :/") {
 		return nil, errors.New("dead-letter suffix contains invalid characters")
 	}
@@ -132,6 +136,8 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 func (w *Worker) process(ctx context.Context, message platformclient.QueueMessage) error {
 	w.claimed.Add(1)
 	if message.ID == "" { return errors.New("queue delivered a message without an ID") }
+	if message.Values == nil { message.Values = map[string]string{} }
+	if message.Values[stableJobIDField] == "" { message.Values[stableJobIDField] = message.ID }
 	if err := w.handle(ctx, message); err == nil {
 		if ackErr := w.client.Ack(ctx, w.config.Queue, w.config.Group, message.ID); ackErr != nil {
 			return fmt.Errorf("ack successful job %s (will be redelivered): %w", message.ID, ackErr)
@@ -146,7 +152,8 @@ func (w *Worker) process(ctx context.Context, message platformclient.QueueMessag
 func (w *Worker) retryOrDeadLetter(ctx context.Context, message platformclient.QueueMessage, handlerErr error) error {
 	values := make(map[string]string, len(message.Values)+1)
 	for key, value := range message.Values { values[key] = value }
-	attempt, _ := strconv.Atoi(values[attemptField])
+	attempt, parseErr := strconv.Atoi(values[attemptField])
+	if parseErr != nil || attempt < 0 { attempt = 0 }
 	attempt++
 	values[attemptField] = strconv.Itoa(attempt)
 	destination := w.config.Queue
