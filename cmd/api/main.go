@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"os"
 	"os/signal"
 	"strconv"
@@ -174,15 +175,16 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if authorization == "" {
 		authorization = "Bearer " + publishableKey
 	}
+	if body.Capability == "testagram.bookmarks.list" {
+		s.bookmarkList(w, r, id, supabaseURL, publishableKey, authorization)
+		return
+	}
 
 	path := "/rest/v1/rpc/capability_dispatch_v2"
 	method := http.MethodPost
 	var upstreamBody []byte
 	var err error
-	if body.Capability == "testagram.bookmarks.list" {
-		path = "/rest/v1/bookmarks?select=id,post_id,created_at&order=created_at.desc&limit=100"
-		method = http.MethodGet
-	} else if body.Capability == "testagram.bookmarks.add" || body.Capability == "testagram.bookmarks.remove" {
+	if body.Capability == "testagram.bookmarks.add" || body.Capability == "testagram.bookmarks.remove" {
 		postID, _ := body.Input["post_id"].(string)
 		postID = strings.TrimSpace(postID)
 		if postID == "" || len(postID) > 2048 {
@@ -272,6 +274,82 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Request-ID", id)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+func (s *service) bookmarkList(w http.ResponseWriter, r *http.Request, id, baseURL, apiKey, authorization string) {
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	paths := []string{
+		"/rest/v1/bookmarks?select=id,post_id,created_at&order=created_at.desc&limit=100",
+		"/rest/v1/federated_bookmarks?select=id,object_uri,created_at&order=created_at.desc&limit=100",
+	}
+	type result struct {
+		items []map[string]any
+		err   error
+		status int
+	}
+	results := make(chan result, len(paths))
+	client := s.upstream
+	if client == nil {
+		client = &http.Client{Timeout: 8 * time.Second}
+	}
+	for _, path := range paths {
+		path := path
+		go func() {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			req.Header.Set("apikey", apiKey)
+			req.Header.Set("Authorization", authorization)
+			req.Header.Set("Accept", "application/json")
+			req.Header.Set("X-Request-ID", id)
+			resp, err := client.Do(req)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			defer resp.Body.Close()
+			raw, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamBody+1))
+			if err != nil || len(raw) > maxUpstreamBody {
+				results <- result{err: errors.New("invalid upstream response"), status: resp.StatusCode}
+				return
+			}
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				results <- result{err: errors.New("bookmark query failed"), status: resp.StatusCode}
+				return
+			}
+			var items []map[string]any
+			if err := json.Unmarshal(raw, &items); err != nil {
+				results <- result{err: err, status: resp.StatusCode}
+				return
+			}
+			results <- result{items: items, status: resp.StatusCode}
+		}()
+	}
+	var items []map[string]any
+	for range paths {
+		res := <-results
+		if res.err != nil {
+			status := http.StatusBadGateway
+			if res.status == http.StatusUnauthorized || res.status == http.StatusForbidden {
+				status = res.status
+			}
+			writeJSON(w, status, errorBody("BOOKMARK_LIST_FAILED", "Bookmark list request failed", id))
+			return
+		}
+		items = append(items, res.items...)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		left, _ := items[i]["created_at"].(string)
+		right, _ := items[j]["created_at"].(string)
+		return left > right
+	})
+	if len(items) > 100 {
+		items = items[:100]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items}, "error": nil, "request_id": id})
 }
 
 func mustJSON(value any) []byte {
