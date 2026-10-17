@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -165,6 +167,19 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	var body privateMediaDownloadRequest
 	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
+		return
+	}
+	var visibility, assetStatus string
+	if err := s.db.QueryRow(r.Context(), `select visibility, status from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus); err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
+		return
+	}
+	if visibility != "private" || assetStatus != "ready" {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
 	}
 	signedURL, err := s.media.PresignPrivateDownload(userID, body.Key, 5*time.Minute, time.Now())
@@ -352,4 +367,297 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 
 func strconvFormatInt(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+
+type mediaQuarantineRequest struct {
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
+}
+
+// mediaQuarantine is an operator-only takedown endpoint. It intentionally
+// removes the object from storage rather than pretending a metadata flag alone
+// makes a public URL inaccessible.
+func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	expected := strings.TrimSpace(env("MEDIA_MODERATION_TOKEN", ""))
+	provided := strings.TrimSpace(r.Header.Get("X-Testagram-Moderation-Token"))
+	if expected == "" || provided == "" || subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
+		writeJSON(w, http.StatusUnauthorized, errorBody("MODERATION_UNAUTHORIZED", "A valid operator moderation token is required", id))
+		return
+	}
+	if s.media == nil || s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
+		return
+	}
+	var body mediaQuarantineRequest
+	if err := decodeMediaJSON(w, r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MODERATION_REQUEST", "A valid media key and reason are required", id))
+		return
+	}
+	body.Key = strings.TrimSpace(body.Key)
+	body.Reason = strings.TrimSpace(body.Reason)
+	moderatorID := strings.TrimSpace(r.Header.Get("X-Testagram-Moderator-ID"))
+	if body.Key == "" || body.Reason == "" || len(body.Reason) > 500 || moderatorID == "" || len(moderatorID) > 128 || strings.ContainsAny(moderatorID, "\r\n") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MODERATION_REQUEST", "A media key, reason (up to 500 characters), and moderator ID are required", id))
+		return
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not start moderation transaction", id))
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	var ownerID, visibility, currentStatus string
+	err = tx.QueryRow(r.Context(), `select owner_id, visibility, status from testagram_media.assets where object_key=$1 for update`, body.Key).Scan(&ownerID, &visibility, &currentStatus)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found", id))
+		return
+	}
+	if currentStatus == "quarantined" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantined"}, "error": nil, "request_id": id})
+		return
+	}
+	if currentStatus != "ready" && currentStatus != "quarantine_pending" {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_INVALID", "Media asset cannot be quarantined in its current state", id))
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `update testagram_media.assets set status='quarantine_pending',
+		moderation_reason=$2, moderated_at=now(), moderated_by=$3, updated_at=now()
+		where object_key=$1 and status in ('ready','quarantine_pending')`, body.Key, body.Reason, moderatorID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not record media quarantine", id))
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `insert into testagram_media.moderation_events
+		(object_key, owner_id, moderator_id, action, reason) values ($1,$2,$3,'quarantine',$4)`,
+		body.Key, ownerID, moderatorID, body.Reason); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_AUDIT_FAILED", "Could not record moderation audit event", id))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not commit media quarantine", id))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.deleteMediaObject(ctx, ownerID, body.Key, visibility); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	if _, err := s.db.Exec(ctx, `update testagram_media.assets set status='quarantined', updated_at=now()
+		where object_key=$1 and status='quarantine_pending'`, body.Key); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantined"}, "error": nil, "request_id": id})
+}
+
+type mediaDeleteRequest struct {
+	Key string `json:"key"`
+}
+
+// mediaDelete starts a durable deletion before touching object storage. If the
+// storage request fails, the janitor retries deletion_pending assets.
+func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.media == nil || s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	var body mediaDeleteRequest
+	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
+		return
+	}
+	var visibility, currentStatus string
+	err = s.db.QueryRow(r.Context(), `select visibility, status from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &currentStatus)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
+		return
+	}
+	if currentStatus == "deleted" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deleted"}, "error": nil, "request_id": id})
+		return
+	}
+	if currentStatus == "quarantined" {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_QUARANTINED", "Quarantined media must be handled by a moderator", id))
+		return
+	}
+	if currentStatus != "ready" && currentStatus != "deletion_pending" {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_INVALID", "Media asset cannot be deleted in its current state", id))
+		return
+	}
+	if currentStatus == "ready" {
+		tag, err := s.db.Exec(r.Context(), `update testagram_media.assets set status='deletion_pending', updated_at=now()
+			where object_key=$1 and owner_id=$2 and status='ready'`, body.Key, userID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not schedule media deletion", id))
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_CHANGED", "Media state changed; retry the request", id))
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.deleteMediaObject(ctx, userID, body.Key, visibility); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	if _, err := s.db.Exec(ctx, `update testagram_media.assets set status='deleted', updated_at=now()
+		where object_key=$1 and owner_id=$2 and status='deletion_pending'`, body.Key, userID); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deleted"}, "error": nil, "request_id": id})
+}
+
+func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility string) error {
+	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, nil)
+	if err != nil {
+		return err
+	}
+	client := s.upstream
+	if client == nil {
+		client = &http.Client{Timeout: 4 * time.Second}
+	}
+	// Never forward a signed storage URL across redirects to another host.
+	safeClient := *client
+	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := safeClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("object storage rejected deletion")
+	}
+	return nil
+}
+
+// runMediaJanitor expires unfinished upload reservations and retries durable
+// deletions in bounded batches. It never expires a completed asset's intent as
+// a reason to delete the completed object.
+func (s *service) runMediaJanitor(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		if err := s.cleanupMediaBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("media janitor pass failed: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+type mediaCleanupObject struct {
+	key, ownerID, visibility string
+}
+
+func (s *service) cleanupMediaBatch(ctx context.Context) error {
+	if s.db == nil || s.media == nil {
+		return nil
+	}
+	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility
+		from testagram_media.upload_intents
+		where expires_at <= now() and status in ('issued','cleanup_pending')
+		order by expires_at asc limit 50`)
+	if err != nil {
+		return err
+	}
+	var intents []mediaCleanupObject
+	for intentRows.Next() {
+		var item mediaCleanupObject
+		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility); err != nil {
+			intentRows.Close()
+			return err
+		}
+		intents = append(intents, item)
+	}
+	if err := intentRows.Err(); err != nil {
+		intentRows.Close()
+		return err
+	}
+	intentRows.Close()
+	for _, item := range intents {
+		tag, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
+			where object_key=$1 and status in ('issued','cleanup_pending')`, item.key)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			// Completion/cancellation may have won the race after selection.
+			continue
+		}
+		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
+			continue
+		}
+		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='expired', updated_at=now()
+			where object_key=$1 and status='cleanup_pending'`, item.key); err != nil {
+			return err
+		}
+	}
+
+	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status
+		from testagram_media.assets where status in ('deletion_pending','quarantine_pending')
+		order by updated_at asc limit 50`)
+	if err != nil {
+		return err
+	}
+	type pendingMediaObject struct {
+		mediaCleanupObject
+		status string
+	}
+	var assets []pendingMediaObject
+	for assetRows.Next() {
+		var item pendingMediaObject
+		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status); err != nil {
+			assetRows.Close()
+			return err
+		}
+		assets = append(assets, item)
+	}
+	if err := assetRows.Err(); err != nil {
+		assetRows.Close()
+		return err
+	}
+	assetRows.Close()
+	for _, item := range assets {
+		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
+			continue
+		}
+		finalStatus := "deleted"
+		if item.status == "quarantine_pending" {
+			finalStatus = "quarantined"
+		}
+		if _, err := s.db.Exec(batchCtx, `update testagram_media.assets set status=$2, updated_at=now()
+			where object_key=$1 and status=$3`, item.key, finalStatus, item.status); err != nil {
+			return err
+		}
+	}
+	return nil
 }
