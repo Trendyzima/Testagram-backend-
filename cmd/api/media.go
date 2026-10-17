@@ -108,6 +108,10 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+	if body.Visibility == "public" && body.SizeBytes > maxProductPostMediaBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_SIZE_NOT_SUPPORTED", "Public product media must not exceed 20 MiB", id))
+		return
+	}
 	body.Name, err = sanitizeOriginalName(body.Name)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer and contain no line breaks", id))
@@ -559,7 +563,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	mediaType, supported := productPostMediaType(contentType)
 	if !supported {
-		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_TYPE_NOT_ATTACHABLE", "Posts support image, video, and audio media only", id))
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_TYPE_NOT_ATTACHABLE", "Posts currently support image and video media only", id))
 		return
 	}
 	if sizeBytes < 1 || sizeBytes > maxProductPostMediaBytes {
@@ -614,8 +618,6 @@ func productPostMediaType(contentType string) (string, bool) {
 		return "image", true
 	case strings.HasPrefix(contentType, "video/"):
 		return "video", true
-	case strings.HasPrefix(contentType, "audio/"):
-		return "audio", true
 	default:
 		return "", false
 	}
