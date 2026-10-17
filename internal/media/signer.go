@@ -74,14 +74,14 @@ type UploadIntent struct {
 
 func NewSigner(cfg Config) (*Signer, error) {
 	endpoint, err := url.Parse(strings.TrimSpace(cfg.Endpoint))
-	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.RawQuery != "" || endpoint.Fragment != "" || endpoint.User != nil || strings.Trim(endpoint.Path, "/") != "" {
 		return nil, errors.New("media endpoint must be an absolute HTTP(S) URL without query or fragment")
 	}
 	if cfg.AccessKey == "" || cfg.SecretKey == "" {
 		return nil, errors.New("media signing credentials are required")
 	}
 	if strings.TrimSpace(cfg.SigningHost) == "" { cfg.SigningHost = endpoint.Host }
-	if strings.ContainsAny(cfg.SigningHost, "/?#\r\n") {
+	if strings.ContainsAny(cfg.SigningHost, "/?#\r\n@ ") {
 		return nil, errors.New("media signing host is invalid")
 	}
 	if cfg.Region == "" { cfg.Region = defaultRegion }
@@ -199,7 +199,7 @@ func (s *Signer) objectURL(bucket, key string) *url.URL {
 }
 
 func validBucket(bucket string) bool {
-	if len(bucket) < 3 || len(bucket) > 63 || strings.HasPrefix(bucket, ".") || strings.HasSuffix(bucket, ".") { return false }
+	if len(bucket) < 3 || len(bucket) > 63 || strings.HasPrefix(bucket, ".") || strings.HasSuffix(bucket, ".") || strings.HasPrefix(bucket, "-") || strings.HasSuffix(bucket, "-") || strings.Contains(bucket, "..") || strings.Contains(bucket, ".-") || strings.Contains(bucket, "-.") { return false }
 	for _, c := range bucket {
 		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.') { return false }
 	}
