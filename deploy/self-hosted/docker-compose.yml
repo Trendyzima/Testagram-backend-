@@ -14,6 +14,7 @@ services:
       - ../../migrations/003_hosting_control_plane.sql:/docker-entrypoint-initdb.d/003_hosting_control_plane.sql:ro
       - ../../migrations/004_hosting_operations.sql:/docker-entrypoint-initdb.d/004_hosting_operations.sql:ro
       - ../../migrations/005_media_assets.sql:/docker-entrypoint-initdb.d/005_media_assets.sql:ro
+      - ../../migrations/006_media_lifecycle.sql:/docker-entrypoint-initdb.d/006_media_lifecycle.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -118,7 +119,7 @@ services:
       mc anonymous set download local/${PUBLIC_MEDIA_BUCKET:-testagram-public-media};
       if [ -n "$MINIO_MEDIA_ACCESS_KEY" ] && [ -n "$MINIO_MEDIA_SECRET_KEY" ]; then
         cat > /tmp/testagram-media-policy.json <<EOF
-      {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject"],"Resource":["arn:aws:s3:::$MINIO_BUCKET/*","arn:aws:s3:::$PUBLIC_MEDIA_BUCKET/*"]}]}
+      {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::$MINIO_BUCKET/*","arn:aws:s3:::$PUBLIC_MEDIA_BUCKET/*"]}]}
       EOF
         mc admin policy create local testagram-media-api /tmp/testagram-media-policy.json || true;
         mc admin user add local "$MINIO_MEDIA_ACCESS_KEY" "$MINIO_MEDIA_SECRET_KEY" >/dev/null 2>&1 || true;
@@ -156,6 +157,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-testagram-private-media}
       PUBLIC_MEDIA_BUCKET: ${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
       MEDIA_USER_QUOTA_BYTES: ${MEDIA_USER_QUOTA_BYTES:-2147483648}
+      MEDIA_MODERATION_TOKEN: ${MEDIA_MODERATION_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

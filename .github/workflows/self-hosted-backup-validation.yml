@@ -1,0 +1,31 @@
+name: Self-hosted Backup Validation
+
+on:
+  pull_request:
+    paths:
+      - "scripts/self-hosted-backup.sh"
+      - "deploy/self-hosted/BACKUP-RESTORE.md"
+      - ".github/workflows/self-hosted-backup-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/self-hosted-backup.sh"
+      - "deploy/self-hosted/BACKUP-RESTORE.md"
+      - ".github/workflows/self-hosted-backup-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-backup-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Bash syntax
+        run: bash -n scripts/self-hosted-backup.sh
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+      - name: Lint backup script
+        run: shellcheck --severity=style scripts/self-hosted-backup.sh
