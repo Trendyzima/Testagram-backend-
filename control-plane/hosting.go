@@ -119,15 +119,15 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id,name,platform,arch,status string
 		var cpu int
-		var memory,storage,free,cpuReserved,memoryReserved int64
+		var memory,storage,free,cpuReserved,memoryReserved,storageReserved int64
 		var lastSeen time.Time
 		var active int
-		if err:=rows.Scan(&id,&name,&platform,&arch,&cpu,&memory,&storage,&free,&status,&lastSeen,&active,&cpuReserved,&memoryReserved); err!=nil {
+		if err:=rows.Scan(&id,&name,&platform,&arch,&cpu,&memory,&storage,&free,&status,&lastSeen,&active,&cpuReserved,&memoryReserved,&storageReserved); err!=nil {
 			reply(w,http.StatusInternalServerError,map[string]string{"error":"node inventory decode failed"}); return
 		}
 		items=append(items,map[string]any{"id":id,"name":name,"platform":platform,"arch":arch,"cpuCores":cpu,
 			"memoryBytes":memory,"storageBytes":storage,"freeBytes":free,"status":status,"lastSeenAt":lastSeen,
-			"activeWorkloads":active,"reservedCpuMillis":cpuReserved,"reservedMemoryBytes":memoryReserved})
+			"activeWorkloads":active,"reservedCpuMillis":cpuReserved,"reservedMemoryBytes":memoryReserved,"reservedStorageBytes":storageReserved})
 	}
 	if err:=rows.Err(); err!=nil { reply(w,http.StatusServiceUnavailable,map[string]string{"error":"node inventory unavailable"}); return }
 	reply(w,http.StatusOK,map[string]any{"nodes":items,"count":len(items)})
@@ -139,7 +139,7 @@ func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	var nodes, freshNodes, active, queued, failed int
-	var cpuReserved, memoryReserved int64
+	var cpuReserved, memoryReserved, storageReserved int64
 	err:=s.db.QueryRow(ctx, "select "+
 		"(select count(*) from public.vps_nodes), "+
 		"(select count(*) from public.vps_nodes where status='online' and last_seen_at > now()-interval '45 seconds'), "+
@@ -147,12 +147,13 @@ func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
 		"(select count(*) from public.vps_workloads where status='queued'), "+
 		"(select count(*) from public.vps_workloads where status='failed'), "+
 		"coalesce((select sum(cpu_millis) from public.vps_workloads where status in ('assigned','running')),0), "+
-		"coalesce((select sum(memory_bytes) from public.vps_workloads where status in ('assigned','running')),0)").
-		Scan(&nodes,&freshNodes,&active,&queued,&failed,&cpuReserved,&memoryReserved)
+		"coalesce((select sum(memory_bytes) from public.vps_workloads where status in ('assigned','running')),0), "+
+		"coalesce((select sum(storage_bytes) from public.vps_workloads where status in ('assigned','running')),0)").
+		Scan(&nodes,&freshNodes,&active,&queued,&failed,&cpuReserved,&memoryReserved,&storageReserved)
 	if err!=nil { reply(w,http.StatusServiceUnavailable,map[string]string{"error":"usage query unavailable"}); return }
 	reply(w,http.StatusOK,map[string]any{"nodes":nodes,"freshNodes":freshNodes,"activeWorkloads":active,
 		"queuedWorkloads":queued,"failedWorkloads":failed,"reservedCpuMillis":cpuReserved,
-		"reservedMemoryBytes":memoryReserved,"sampledAt":time.Now().UTC()})
+		"reservedMemoryBytes":memoryReserved,"reservedStorageBytes":storageReserved,"sampledAt":time.Now().UTC()})
 }
 
 func normalizedBaseDomain() (string,error) {
