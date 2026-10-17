@@ -233,16 +233,27 @@ func testMediaSigner(t *testing.T) *media.Signer {
 		AccessKey: "test-access", SecretKey: "test-secret", Region: "us-east-1",
 		PrivateBucket: "private-media", PublicBucket: "public-media",
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return signer
 }
 
 func testSupabaseAuthServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/auth/v1/user" { http.NotFound(w, r); return }
-		if r.Header.Get("apikey") != "test-publishable-key" { http.Error(w, "bad key", http.StatusUnauthorized); return }
-		if r.Header.Get("Authorization") != "Bearer valid-session-token" { http.Error(w, "bad token", http.StatusUnauthorized); return }
+		if r.URL.Path != "/auth/v1/user" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("apikey") != "test-publishable-key" {
+			http.Error(w, "bad key", http.StatusUnauthorized)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer valid-session-token" {
+			http.Error(w, "bad token", http.StatusUnauthorized)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("{\"id\":\"user-123\"}"))
 	}))
@@ -259,7 +270,9 @@ func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusUnauthorized { t.Fatalf("status=%d body=%s", w.Code, w.Body.String()) }
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
 }
 
 func TestMediaUploadIntentReturnsOwnerScopedSignedPolicy(t *testing.T) {
@@ -270,11 +283,17 @@ func TestMediaUploadIntentReturnsOwnerScopedSignedPolicy(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer valid-session-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusCreated { t.Fatalf("status=%d body=%s", w.Code, w.Body.String()) }
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
 	var response map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil { t.Fatal(err) }
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
 	data, ok := response["data"].(map[string]any)
-	if !ok { t.Fatalf("missing data: %+v", response) }
+	if !ok {
+		t.Fatalf("missing data: %+v", response)
+	}
 	fields, ok := data["fields"].(map[string]any)
 	key, _ := data["key"].(string)
 	bucket, _ := data["bucket"].(string)
@@ -288,7 +307,10 @@ func TestPrivateMediaDownloadURLEnforcesOwnerPrefix(t *testing.T) {
 	upstream := testSupabaseAuthServer(t)
 	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	handler := s.routes()
-	for _, test := range []struct { name, key string; wantStatus int }{
+	for _, test := range []struct {
+		name, key  string
+		wantStatus int
+	}{
 		{"owner can sign", "users/user-123/0123456789abcdef0123456789abcdef", http.StatusOK},
 		{"other user denied", "users/other-user/0123456789abcdef0123456789abcdef", http.StatusForbidden},
 	} {
@@ -299,7 +321,9 @@ func TestPrivateMediaDownloadURLEnforcesOwnerPrefix(t *testing.T) {
 			r.Header.Set("Authorization", "Bearer valid-session-token")
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
-			if w.Code != test.wantStatus { t.Fatalf("status=%d want=%d body=%s", w.Code, test.wantStatus, w.Body.String()) }
+			if w.Code != test.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", w.Code, test.wantStatus, w.Body.String())
+			}
 		})
 	}
 }
