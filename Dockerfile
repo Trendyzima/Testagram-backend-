@@ -3,7 +3,7 @@ WORKDIR /src
 COPY go.mod ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/testagram-api ./cmd/api
+RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/testagram-api ./cmd/api
 
 FROM alpine:3.23
 RUN addgroup -S app && adduser -S -G app app && apk add --no-cache ca-certificates
