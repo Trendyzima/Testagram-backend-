@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -353,5 +354,53 @@ func TestPublicMediaURLUsesConfiguredBucketAndEndpoint(t *testing.T) {
 	want := "https://media.example.test/public-assets/users/user-123/0123456789abcdef0123456789abcdef"
 	if got != want {
 		t.Fatalf("publicMediaURL()=%q want=%q", got, want)
+	}
+}
+
+
+func TestEnsureProductMediaRecordCreatesServerSideRecord(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "")
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer service-secret" || r.Header.Get("apikey") != "service-secret" {
+			t.Errorf("missing server-only bearer/API key headers")
+		}
+		if r.URL.Path != "/rest/v1/media_assets" {
+			t.Errorf("path=%q want=/rest/v1/media_assets", r.URL.Path)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			if r.URL.Query().Get("storage_key") != "eq.users/user-123/0123456789abcdef0123456789abcdef" {
+				t.Errorf("unexpected storage key filter: %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		case http.MethodPost:
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode create payload: %v", err)
+			}
+			if body["owner_id"] != "user-123" || body["status"] != "uploaded" || body["media_url"] != "https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef" {
+				t.Errorf("unexpected product media payload: %#v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`[{"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","owner_id":"user-123","post_id":null,"status":"uploaded"}]`))
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("SUPABASE_URL", server.URL)
+	s := &service{upstream: server.Client()}
+	got, err := s.ensureProductMediaRecord(context.Background(), "service-secret", "user-123",
+		"users/user-123/0123456789abcdef0123456789abcdef", "image/png", 1234,
+		"https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" {
+		t.Fatalf("external media ID=%q", got)
 	}
 }
