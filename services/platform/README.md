@@ -23,4 +23,4 @@ Take and verify a backup before changing an existing database. The migration is 
 
 ## Status and boundaries
 
-This service is now packaged in this repository and is included in the optional self-hosted Compose stack. The provider-independent client lives in `internal/platformclient`. Application call sites still need to be migrated to that client and tested before the cache/queue API becomes a critical production dependency. The hosting control-plane OpenAPI file is a cross-repository contract only; this service does not implement domain registration, deployment scheduling, or registrar/DNS writes.
+This service is now packaged in this repository and is included in the optional self-hosted Compose stack. The provider-independent client lives in `internal/platformclient`. The API gateway now consumes the client for public cache and rate-limit calls. Queue APIs remain available, but product workloads still need explicit producer/consumer integration and restart-recovery tests. The hosting control-plane OpenAPI file is a cross-repository contract only; this service does not implement domain registration, deployment scheduling, or registrar/DNS writes.
