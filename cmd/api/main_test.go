@@ -61,13 +61,13 @@ func TestCapabilityRequiresBearerForPrivateCalls(t *testing.T) {
 func TestCapabilityGatewayForwardsUserJWTAndPayload(t *testing.T) {
 	t.Setenv("SUPABASE_URL", "")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
-	var sawAuth, sawAPIKey, sawPayload bool
+	observed := make(chan [3]bool, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = r.Header.Get("Authorization") == "Bearer user-session-token"
-		sawAPIKey = r.Header.Get("apikey") == "test-publishable-key"
+		authOK := r.Header.Get("Authorization") == "Bearer user-session-token"
+		apiKeyOK := r.Header.Get("apikey") == "test-publishable-key"
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		sawPayload = body["p_capability"] == "testagram.posts.create"
+		observed <- [3]bool{authOK, apiKeyOK, body["p_capability"] == "testagram.posts.create"}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"post_id":"post-123","created":true}`))
 	}))
@@ -85,8 +85,9 @@ func TestCapabilityGatewayForwardsUserJWTAndPayload(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("gateway status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
 	}
-	if !sawAuth || !sawAPIKey || !sawPayload {
-		t.Fatalf("gateway did not forward contract: auth=%v apikey=%v payload=%v", sawAuth, sawAPIKey, sawPayload)
+	seen := <-observed
+	if !seen[0] || !seen[1] || !seen[2] {
+		t.Fatalf("gateway did not forward contract: auth=%v apikey=%v payload=%v", seen[0], seen[1], seen[2])
 	}
 	if w.Header().Get("Access-Control-Allow-Origin") != "https://testagram.site" {
 		t.Fatalf("unexpected CORS origin: %q", w.Header().Get("Access-Control-Allow-Origin"))
