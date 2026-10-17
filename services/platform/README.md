@@ -30,3 +30,20 @@ Take and verify a backup before changing an existing database. The migration is 
 ## Status and boundaries
 
 This service is now packaged in this repository and is included in the optional self-hosted Compose stack. The provider-independent client lives in `internal/platformclient`. The API gateway now consumes the client for public cache and rate-limit calls. Queue APIs remain available, but product workloads still need explicit producer/consumer integration and restart-recovery tests. The hosting control-plane OpenAPI file is a cross-repository contract only; this service does not implement domain registration, deployment scheduling, or registrar/DNS writes.
+
+
+## Queue backlog monitoring
+
+Set `PLATFORM_MONITORED_QUEUE_GROUPS` in the self-hosted `.env` file to a
+comma-separated list of `queue:consumer-group` pairs, for example
+`federation:delivery,notifications:sender,media:transcode,search:index`.
+Only configure queues and groups that the application actually creates. The
+platform's Prometheus endpoint then exports stream length, pending count, and
+oldest pending entry message age for each configured pair, plus a monitoring
+error counter. Message age is based on the stream entry timestamp; it is not
+the exact duration since the last delivery attempt. A missing group or Valkey
+error is counted rather than silently reported as zero pending messages.
+
+These are observability primitives, not proof that product consumers exist.
+Alert thresholds should be tuned to workload and delivery SLOs; keep the
+metrics endpoint on the private monitoring network.
