@@ -24,19 +24,19 @@ type privateMediaDownloadRequest struct {
 }
 
 type mediaCompleteRequest struct {
-	Key string `json:"key"`
-	Visibility string `json:"visibility"`
+	Key         string `json:"key"`
+	Visibility  string `json:"visibility"`
 	ContentType string `json:"content_type"`
 }
 
 type mediaAsset struct {
-	Key string `json:"key"`
-	Visibility string `json:"visibility"`
-	ContentType string `json:"content_type"`
-	SizeBytes int64 `json:"size_bytes"`
-	ETag string `json:"etag,omitempty"`
-	Status string `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	Key         string    `json:"key"`
+	Visibility  string    `json:"visibility"`
+	ContentType string    `json:"content_type"`
+	SizeBytes   int64     `json:"size_bytes"`
+	ETag        string    `json:"etag,omitempty"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 func (s *service) mediaPreflight(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +190,9 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
 		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 { code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable" }
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
 		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
@@ -233,7 +235,9 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := s.upstream
-	if client == nil { client = &http.Client{Timeout: 4*time.Second} }
+	if client == nil {
+		client = &http.Client{Timeout: 4 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Media storage could not be reached", id))
