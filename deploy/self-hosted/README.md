@@ -106,8 +106,15 @@ The API exposes:
   to that user.
 - `POST /api/media/delete`: requires the authenticated owner and an existing
   ready asset. It records a durable deletion state before requesting a signed
-  MinIO DELETE. A 202 response means the background janitor will retry; clients
-  should treat the object as unavailable and refresh their media references.
+  MinIO DELETE, then removes linked `post_media` rows and marks the product
+  `media_assets` record deleted. A 202 response means storage/product cleanup
+  will be retried by the janitor.
+- `POST /api/media/attach`: requires an authenticated owner, a ready public
+  media asset, and a post visible as owned by that user under PostgREST/RLS.
+  The backend synchronizes a product `media_assets` UUID and an idempotent
+  `post_media` join. Configure `SUPABASE_SERVICE_ROLE_KEY` only in the backend
+  environment; it is never returned to the client. This bridge uses the product
+  database exposed by `SUPABASE_URL` and fails closed when not configured.
 - `POST /internal/media/quarantine`: operator takedown protected by
   `X-Testagram-Moderation-Token` matching the server-only
   `MEDIA_MODERATION_TOKEN`, plus a required moderator ID and reason. It writes
@@ -121,8 +128,8 @@ The API exposes:
   It is idempotent for matching metadata and rejects cross-owner key conflicts.
 
 For an existing PostgreSQL volume, back up first and apply
-`migrations/005_media_assets.sql` and `migrations/006_media_lifecycle.sql` manually; Compose init scripts run only for a
-new data directory. Upload, completion, cleanup, deletion and quarantine require both migrations.
+`migrations/005_media_assets.sql`, `migrations/006_media_lifecycle.sql`, and `migrations/007_media_product_bridge.sql` manually; Compose init scripts run only for a
+new data directory. Upload, completion, cleanup, deletion, quarantine and post linking require all three migrations.
 
 Only JPEG, PNG, WebP, AVIF, GIF, MP4 and WebM are accepted by upload intent. The API reserves upload-intent size against a per-account quota (default 2 GiB, configurable with `MEDIA_USER_QUOTA_BYTES`) inside a transaction serialized per owner, so concurrent requests cannot bypass the quota.
 The policy enforces an upper bound derived from the requested file size and
