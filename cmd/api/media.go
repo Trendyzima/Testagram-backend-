@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -659,4 +661,156 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+type mediaAttachRequest struct {
+	MediaID      string `json:"media_id"`
+	MediaAssetID string `json:"media_asset_id"`
+	PostID       string `json:"post_id"`
+}
+
+type supabaseMediaRow struct {
+	ID        string  `json:"id"`
+	OwnerID   string  `json:"owner_id"`
+	Status    string  `json:"status"`
+	PostID    *string `json:"post_id"`
+	MediaURL  string  `json:"media_url"`
+	MediaType string  `json:"media_type"`
+	MIMEType  string  `json:"mime_type"`
+	ByteSize  int64   `json:"byte_size"`
+}
+
+type supabasePostRow struct {
+	ID       string  `json:"id"`
+	AuthorID *string `json:"author_id"`
+	UserID   *string `json:"user_id"`
+}
+
+func isUUID(value string) bool {
+	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
+		return false
+	}
+	for i, r := range value {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *service) supabaseAdminRequest(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(env("SUPABASE_URL", "")), "/")
+	serviceKey := strings.TrimSpace(env("SUPABASE_SERVICE_ROLE_KEY", ""))
+	if baseURL == "" || serviceKey == "" {
+		return nil, errors.New("Supabase admin integration is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("apikey", serviceKey)
+	req.Header.Set("Authorization", "Bearer "+serviceKey)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := s.upstream
+	if client == nil {
+		client = &http.Client{Timeout: 4 * time.Second}
+	}
+	return client.Do(req)
+}
+
+// mediaAttach links an already-uploaded product media record to a post.
+// The service-role key is used server-side only; ownership is checked for both
+// the media row and the post before updating media_assets.post_id. The database
+// trigger then maintains post_media consistently.
+func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	var body mediaAttachRequest
+	if err := decodeMediaJSON(w, r, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Media and post IDs are required", id))
+		return
+	}
+	mediaID := strings.TrimSpace(body.MediaID)
+	if mediaID == "" {
+		mediaID = strings.TrimSpace(body.MediaAssetID)
+	}
+	postID := strings.TrimSpace(body.PostID)
+	if !isUUID(mediaID) || !isUUID(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Media and post IDs must be valid UUIDs", id))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+
+	postQuery := url.Values{"select": {"id,author_id,user_id"}, "id": {"eq." + postID}, "limit": {"1"}}
+	postResp, err := s.supabaseAdminRequest(ctx, http.MethodGet, "/rest/v1/posts?"+postQuery.Encode(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_POST_LOOKUP_FAILED", "Could not verify post ownership", id))
+		return
+	}
+	var posts []supabasePostRow
+	decodeErr := json.NewDecoder(io.LimitReader(postResp.Body, 1<<20)).Decode(&posts)
+	postResp.Body.Close()
+	if postResp.StatusCode < 200 || postResp.StatusCode >= 300 || decodeErr != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_POST_LOOKUP_FAILED", "Could not verify post ownership", id))
+		return
+	}
+	if len(posts) == 0 || (posts[0].AuthorID == nil || *posts[0].AuthorID != userID) && (posts[0].UserID == nil || *posts[0].UserID != userID) {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "Post was not found for this account", id))
+		return
+	}
+
+	mediaQuery := url.Values{"select": {"id,owner_id,status,post_id,media_url,media_type,mime_type,byte_size"}, "id": {"eq." + mediaID}, "limit": {"1"}}
+	mediaResp, err := s.supabaseAdminRequest(ctx, http.MethodGet, "/rest/v1/media_assets?"+mediaQuery.Encode(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_LOOKUP_FAILED", "Could not verify media ownership", id))
+		return
+	}
+	var assets []supabaseMediaRow
+	decodeErr = json.NewDecoder(io.LimitReader(mediaResp.Body, 1<<20)).Decode(&assets)
+	mediaResp.Body.Close()
+	if mediaResp.StatusCode < 200 || mediaResp.StatusCode >= 300 || decodeErr != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_LOOKUP_FAILED", "Could not verify media ownership", id))
+		return
+	}
+	if len(assets) == 0 || assets[0].OwnerID != userID || assets[0].Status != "uploaded" {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Uploaded media was not found for this account", id))
+		return
+	}
+
+	update, err := json.Marshal(map[string]string{"post_id": postID})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorBody("MEDIA_ATTACH_FAILED", "Could not prepare media attachment", id))
+		return
+	}
+	updateQuery := url.Values{"id": {"eq." + mediaID}, "owner_id": {"eq." + userID}, "status": {"eq.uploaded"}}
+	patchResp, err := s.supabaseAdminRequest(ctx, http.MethodPatch, "/rest/v1/media_assets?"+updateQuery.Encode(), update)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_ATTACH_FAILED", "Could not attach media to post", id))
+		return
+	}
+	defer patchResp.Body.Close()
+	if patchResp.StatusCode < 200 || patchResp.StatusCode >= 300 {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_ATTACH_FAILED", "Could not attach media to post", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]string{"media_id": mediaID, "post_id": postID, "status": "uploaded"}, "error": nil, "request_id": id})
 }
