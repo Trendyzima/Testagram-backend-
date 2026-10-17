@@ -446,8 +446,8 @@ func TestSanitizeOriginalName(t *testing.T) {
 		{name: "  photo.webp  ", want: "photo.webp"},
 		{name: "", want: "upload"},
 		{name: "../", bad: true},
-		{name: "bad\\nname.jpg", bad: true},
-		{name: "bad\\x00name.jpg", bad: true},
+		{name: "bad\nname.jpg", bad: true},
+		{name: "bad\x00name.jpg", bad: true},
 	}
 	for _, tc := range cases {
 		got, err := sanitizeOriginalName(tc.name)
