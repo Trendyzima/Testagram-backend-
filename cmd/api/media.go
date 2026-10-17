@@ -99,12 +99,45 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
 		return
 	}
-	_, err = s.db.Exec(r.Context(), `insert into testagram_media.upload_intents
+	quotaBytes, parseErr := strconv.ParseInt(env("MEDIA_USER_QUOTA_BYTES", "2147483648"), 10, 64)
+	if parseErr != nil || quotaBytes < 1 || quotaBytes > 1<<50 {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_QUOTA_CONFIG_INVALID", "Media quota configuration is invalid", id))
+		return
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Could not start media metadata transaction", id))
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	// Serialize quota reservations per owner so parallel upload intents cannot
+	// over-reserve the same account's storage allowance.
+	if _, err := tx.Exec(r.Context(), `select pg_advisory_xact_lock(hashtext($1))`, userID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_QUOTA_CHECK_FAILED", "Could not reserve media quota", id))
+		return
+	}
+	var usedBytes int64
+	err = tx.QueryRow(r.Context(), `select
+		coalesce((select sum(size_bytes) from testagram_media.assets where owner_id=$1 and status='ready'),0) +
+		coalesce((select sum(max_bytes) from testagram_media.upload_intents where owner_id=$1 and status='issued' and expires_at > now()),0)`, userID).Scan(&usedBytes)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_QUOTA_CHECK_FAILED", "Could not calculate media quota usage", id))
+		return
+	}
+	if body.SizeBytes > quotaBytes-usedBytes {
+		writeJSON(w, http.StatusInsufficientStorage, errorBody("MEDIA_QUOTA_EXCEEDED", "This upload would exceed the account media storage quota", id))
+		return
+	}
+	_, err = tx.Exec(r.Context(), `insert into testagram_media.upload_intents
 		(object_key, owner_id, visibility, content_type, max_bytes, expires_at, status)
 		values ($1,$2,$3,$4,$5,$6,'issued')`,
 		intent.Key, userID, body.Visibility, body.ContentType, body.SizeBytes, intent.ExpiresAt)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_PERSIST_FAILED", "Could not safely register the upload intent", id))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_PERSIST_FAILED", "Could not commit the upload reservation", id))
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": intent, "error": nil, "request_id": id})
