@@ -45,7 +45,6 @@ type mediaAsset struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-
 func sanitizeOriginalName(name string) (string, error) {
 	name = strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
 	if name == "" {
