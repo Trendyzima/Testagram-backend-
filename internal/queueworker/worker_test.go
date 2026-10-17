@@ -54,7 +54,7 @@ func TestWorkerAcknowledgesOnlyAfterSuccessfulHandling(t *testing.T) {
 	client := newFakeQueue()
 	client.queued["mail"] = []platformclient.QueueMessage{{ID: "job-1", Values: map[string]string{"job_id": "mail-1"}}}
 	worker := testWorker(t, client, Config{Queue: "mail", Group: "sender", Consumer: "worker-1"}, func(_ context.Context, msg platformclient.QueueMessage) error {
-		if msg.Values["job_id"] != "mail-1" { t.Fatalf("unexpected job: %+v", msg) }
+		if msg.Values["job_id"] != "mail-1" || msg.Values[stableJobIDField] != "job-1" { t.Fatalf("unexpected job: %+v", msg) }
 		return nil
 	})
 	count, err := worker.RunOnce(context.Background())
@@ -74,10 +74,10 @@ func TestWorkerBoundsRetriesAndDeadLettersPoisonJobs(t *testing.T) {
 	})
 	if _, err := worker.RunOnce(context.Background()); err != nil { t.Fatal(err) }
 	retry := client.queued["federation"]
-	if len(retry) != 1 || retry[0].Values[attemptField] != "1" { t.Fatalf("retry not persisted: %+v", retry) }
+	if len(retry) != 1 || retry[0].Values[attemptField] != "1" || retry[0].Values[stableJobIDField] != "job-1" { t.Fatalf("retry not persisted with stable identity: %+v", retry) }
 	if _, err := worker.RunOnce(context.Background()); err != nil { t.Fatal(err) }
 	dead := client.queued["federation.dead"]
-	if len(dead) != 1 || dead[0].Values[attemptField] != "2" || dead[0].Values["job_id"] != "activity-1" {
+	if len(dead) != 1 || dead[0].Values[attemptField] != "2" || dead[0].Values["job_id"] != "activity-1" || dead[0].Values[stableJobIDField] != "job-1" {
 		t.Fatalf("job not moved to dead-letter queue: %+v", dead)
 	}
 	if len(client.acked) != 2 { t.Fatalf("expected original messages acked only after retry/dead-letter enqueue, got %v", client.acked) }
