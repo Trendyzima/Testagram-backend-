@@ -210,12 +210,21 @@ func validateWorkload(w Workload) error {
 	if w.CPUMillis < 0 || w.CPUMillis > 64000 || w.MemoryBytes < 0 || w.MemoryBytes > 68719476736 || w.StorageBytes < 0 || w.StorageBytes > 1099511627776 { return errors.New("resource request outside supported bounds") }
 	return nil
 }
-func (a *Agent) execute(w Workload) error {
+func validWorkloadID(id string) bool {
+	if len(id) < 1 || len(id) > 64 { return false }
+	for _, c := range id {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') { return false }
+	}
+	return true
+}
+func (a *Agent) execute(id string, w Workload) error {
+	if !validWorkloadID(id) { return errors.New("invalid workload ID") }
 	if err := validateWorkload(w); err != nil { return err }
 	if w.StorageBytes > 0 { _, free := a.disk(); if free < w.StorageBytes { return errors.New("insufficient free disk space") } }
 	rt := runtimeBin(); if rt == "" { return errors.New("docker or podman is required on this worker") }
 	image := w.Image+"@"+w.ImageDigest
-	args := []string{"run","--rm","--init","--read-only","--cap-drop=ALL","--security-opt=no-new-privileges",
+	containerName := "testagram-job-" + id
+	args := []string{"run","--rm","--name",containerName,"--init","--read-only","--cap-drop=ALL","--security-opt=no-new-privileges",
 		"--pids-limit=256","--network=bridge","--stop-timeout=10","--tmpfs","/tmp:rw,noexec,nosuid,size=64m"}
 	if w.CPUMillis > 0 { args=append(args,"--cpus",strconv.FormatFloat(float64(w.CPUMillis)/1000,'f',3,64)) }
 	if w.MemoryBytes > 0 { args=append(args,"--memory",strconv.FormatInt(w.MemoryBytes,10),"--memory-swap",strconv.FormatInt(w.MemoryBytes,10)) }
@@ -229,6 +238,12 @@ func (a *Agent) execute(w Workload) error {
 	cmd:=exec.CommandContext(ctx,rt,args...)
 	cmd.Stdout,cmd.Stderr=os.Stdout,os.Stderr
 	err:=cmd.Run()
+	// A killed Docker CLI can leave the daemon-managed container running. Always
+	// attempt bounded cleanup, including when the execution deadline expires.
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	cleanup := exec.CommandContext(cleanupCtx, rt, "rm", "-f", containerName)
+	_ = cleanup.Run()
+	cleanupCancel()
 	if ctx.Err()==context.DeadlineExceeded { return errors.New("workload exceeded configured execution timeout") }
 	return err
 }
@@ -276,7 +291,7 @@ func main() {
 			a.invalidateNodeToken()
 			log.Printf("node credential rejected; registration will be retried")
 		} else if err!=nil { log.Printf("poll failed: %v",err) } else if work!=nil {
-			runErr:=a.execute(work.Workload)
+			runErr:=a.execute(work.ID, work.Workload)
 			if reportErr:=a.report(work.ID,runErr==nil); reportErr!=nil { log.Printf("result report failed: %v",reportErr) }
 			if runErr!=nil { log.Printf("workload %s failed: %v",work.ID,runErr) }
 		}
