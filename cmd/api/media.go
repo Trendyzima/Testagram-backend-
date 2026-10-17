@@ -783,6 +783,9 @@ func (s *service) supabaseREST(ctx context.Context, method, resource string, que
 	if err != nil {
 		return nil, 0, err
 	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(authorization)), "bearer ") {
+		authorization = "Bearer " + authorization
+	}
 	req.Header.Set("Authorization", authorization)
 	req.Header.Set("apikey", apiKey)
 	req.Header.Set("Accept", "application/json")
