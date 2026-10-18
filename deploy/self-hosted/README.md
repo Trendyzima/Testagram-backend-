@@ -25,10 +25,10 @@ After starting the self-hosted stack, check container health and scrape targets 
 
 ```bash
 docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml ps
-docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml logs --tail=150 prometheus grafana
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml logs --tail=150 prometheus alertmanager grafana
 ```
 
-Open Grafana through the SSH tunnel described above and select **Testagram Operations**. In Prometheus, the `up` query should return `1` for `testagram-api`, `testagram-platform`, `testagram-grafana`, `testagram-node`, and `prometheus`. A target value of `0` means Prometheus can see the target but cannot scrape it; a missing series usually means the target or scrape configuration is absent. Check **Status → Targets** and **Alerts** in Prometheus when a panel is empty.
+Open Grafana through the SSH tunnel described above and select **Testagram Operations**. In Prometheus, the `up` query should return `1` for `testagram-api`, `testagram-platform`, `testagram-grafana`, `testagram-alertmanager`, `testagram-node`, and `prometheus`. A target value of `0` means Prometheus can see the target but cannot scrape it; a missing series usually means the target or scrape configuration is absent. Check **Status → Targets** and **Alerts** in Prometheus when a panel is empty.
 
 CI validates both the Prometheus scrape configuration and alert-rule syntax with `promtool`. That does not prove runtime delivery: run a staging smoke test after changes and confirm expected panels receive samples.
 
