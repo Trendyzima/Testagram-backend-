@@ -399,7 +399,7 @@ func (a *app) handleOverview(w http.ResponseWriter,r *http.Request) {
 		"p95_seconds":`histogram_quantile(0.95, sum by (le) (rate(testagram_http_request_duration_seconds_bucket[5m])))`,
 		"db_acquired":`testagram_db_pool_acquired_connections`,
 		"db_max":`testagram_db_pool_max_connections`,
-		"queue_pending":`sum(testagram_platform_queue_pending)`,
+		"queue_pending":`sum(testagram_platform_queue_pending_messages)`,
 	}
 	values:=map[string]metric{}
 	for name,q:=range queries {
