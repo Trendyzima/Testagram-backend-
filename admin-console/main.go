@@ -115,7 +115,9 @@ func (a *app) routes() http.Handler {
 	files, err := fs.Sub(webFiles, "web")
 	if err != nil { panic(err) }
 	mux := http.NewServeMux()
-	mux.Handle("GET /", http.FileServer(http.FS(files)))
+	static := http.FileServer(http.FS(files))
+	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/index.html"; static.ServeHTTP(w, r) })
+	mux.Handle("GET /", static)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
 	mux.HandleFunc("GET /api/session", a.handleSession)
 	mux.HandleFunc("POST /api/auth/sign-in", a.handleSignIn)
@@ -216,7 +218,7 @@ func (a *app) setSession(w http.ResponseWriter, s session) error {
 	nonce := make([]byte, a.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil { return err }
 	sealed := a.aead.Seal(nonce, nonce, raw, []byte("testagram-staff-session-v1"))
-	http.SetCookie(w, &http.Cookie{Name:"__Host-testagram-staff", Value:hex.EncodeToString(sealed), Path:"/", HttpOnly:true, Secure:a.cookieSecure, SameSite:http.SameSiteStrictMode, MaxAge:60*60*24*7})
+	http.SetCookie(w, &http.Cookie{Name:"testagram-staff", Value:hex.EncodeToString(sealed), Path:"/", HttpOnly:true, Secure:a.cookieSecure, SameSite:http.SameSiteStrictMode, MaxAge:60*60*24*7})
 	return nil
 }
 
@@ -241,7 +243,7 @@ func (a *app) currentUser(w http.ResponseWriter, r *http.Request) (session, auth
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second); defer cancel()
 	var user authUser
 	_, err = a.authRequest(ctx, http.MethodGet, "/auth/v1/user", s.AccessToken, nil, &user)
-	if err != nil && time.Now().Unix() >= s.ExpiresAt-60 {
+	if err != nil {
 		var refreshed authPayload
 		_, refreshErr := a.authRequest(ctx, http.MethodPost, "/auth/v1/token?grant_type=refresh_token", "", map[string]string{"refresh_token":s.RefreshToken}, &refreshed)
 		if refreshErr == nil && refreshed.AccessToken != "" && refreshed.RefreshToken != "" {
@@ -353,7 +355,8 @@ func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	var invited authUser
 	_,err:=a.adminAuthRequest(ctx,http.MethodPost,"/auth/v1/invite?redirect_to="+url.QueryEscape(redirect),map[string]any{"email":input.Email},&invited)
 	if err!=nil||invited.ID=="" { writeJSON(w,400,map[string]string{"error":"Invitation failed. Verify Auth admin configuration and whether this email already has an account."});return }
-	_,err=a.adminAuthRequest(ctx,http.MethodPut,"/auth/v1/admin/users/"+url.PathEscape(invited.ID),map[string]any{"app_metadata":map[string]string{"staff_role":input.Role}},nil)
+	appMetadata:=map[string]any{};for key,value:=range invited.AppMetadata{appMetadata[key]=value};appMetadata["staff_role"]=input.Role
+	_,err=a.adminAuthRequest(ctx,http.MethodPut,"/auth/v1/admin/users/"+url.PathEscape(invited.ID),map[string]any{"app_metadata":appMetadata},nil)
 	if err!=nil { log.Printf("staff invite role assignment failed actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role);writeJSON(w,502,map[string]string{"error":"Invite was created but staff role assignment failed. Revoke or repair this account in the Supabase Auth admin panel before use."});return }
 	log.Printf("staff invite created actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
 	writeJSON(w,201,map[string]any{"ok":true,"message":"Invitation sent. The recipient must complete email verification and set a password."})
