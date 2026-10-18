@@ -4,7 +4,7 @@
 
 Virtual Storage is a logical storage control plane, not a new object-storage engine. Application services address logical namespaces such as `post-media`, `private-media`, `avatars`, `exports`, and `backups`; a provider adapter maps each namespace to a physical bucket or storage account. The API never exposes provider credentials or requires a browser to know the physical bucket name.
 
-This first increment adds the provider-neutral policy layer in `internal/virtualstorage`. It validates logical namespace configuration, scopes object keys by tenant, checks MIME and object-size policy, limits signed URL lifetimes, and blocks cross-tenant private reads and deletes. It does **not** yet configure a production provider, create buckets, persist object metadata/quotas, or expose new public HTTP routes.
+The policy layer and a standard-library S3-compatible SigV4 provider now exist in `internal/virtualstorage`. When `VIRTUAL_STORAGE_ENABLED=true`, the API uses tenant-scoped physical keys for new uploads, verifies provider-observed metadata at completion, and routes private retrieval and deletion through the namespace manager. The flag defaults to `false`; legacy rows and URLs remain unchanged. This is an opt-in integration, not proof that the production CDN/origin path mapping or live R2/MinIO lifecycle has passed.
 
 ## Architecture
 
@@ -17,8 +17,8 @@ Testagram API / storage policy
           v
 Virtual Storage Manager
           | Provider interface
-          +---- R2 / S3-compatible adapter (planned integration)
-          +---- local development adapter (planned)
+          +---- S3-compatible SigV4 provider (implemented; opt-in)
+          +---- local development adapter (not yet implemented)
           v
 Private/public physical buckets and CDN
 ```
@@ -30,7 +30,7 @@ Large uploads and downloads should use short-lived signed URLs so application se
 - Tenant identity comes from verified server-side authentication, never a caller-supplied owner ID.
 - Keys are relative, normalized, bounded, and reject traversal, absolute paths, NUL and control characters.
 - Logical namespace names are allow-listed at startup.
-- Size and content-type policies are checked before a signed upload URL is issued. The completion path must still HEAD the object and verify actual size/type/checksum before marking it ready.
+- Size and content-type policies are checked before a signed upload URL is issued. Completion HEADs the object and verifies size/type against the persisted intent. The signed PUT URL itself does not enforce a maximum byte count; checksum computation/verification is still pending.
 - Private reads require requester tenant == owner tenant, unless a separate explicit sharing policy authorizes access.
 - Deletion is always owner-scoped and should be queued/retried when provider deletion fails.
 - Signed URL TTL is bounded to 1–60 minutes.
@@ -49,18 +49,18 @@ Recommended production mappings (physical names are deployment configuration, no
 | `exports` | private | deployment-specific | application/octet-stream, archive formats |
 | `backups` | operator-only | deployment-specific | application/octet-stream |
 
-Do not map public and private logical namespaces to the same physical bucket unless the provider policy can enforce equivalent isolation. The existing media signer remains the current production media path until provider integration and live end-to-end tests pass.
+Do not map public and private logical namespaces to the same physical bucket unless the provider policy can enforce equivalent isolation. The existing media signer remains the default production path while `VIRTUAL_STORAGE_ENABLED=false`. New virtual objects require the public CDN/origin to serve `tenants/{owner}/{logical-key}` physical paths.
 
 ## Release gates before production use
 
-1. Implement and review an R2/S3 provider adapter with signed PUT/GET, HEAD, DELETE, paginated LIST, and bounded retries.
+1. Verify the S3 provider's SigV4 compatibility with MinIO and R2, including signed PUT/GET, HEAD, DELETE, and paginated LIST; retries are currently supplied by the durable deletion worker rather than a general provider retry layer.
 2. Add durable object metadata, ownership, lifecycle state, quotas, idempotency, and a deletion/outbox queue in PostgreSQL.
 3. Add authenticated HTTP routes and derive tenant identity from verified JWT claims.
-4. Verify content length, actual content type, checksum and malware/moderation state after upload; do not trust client claims.
+4. Verify content length and actual content type after upload; checksum computation and malware scanning still need implementation. Do not trust client claims.
 5. Run integration tests against an S3-compatible test service, then real R2: signed PUT, HEAD, completion, public CDN fetch, private download, cross-tenant denial, expired URL, retry/delete, orphan cleanup and quota concurrency.
 6. Configure separate public/private buckets, CORS, CDN origin access, lifecycle rules, backups and alerting.
 7. Keep the feature disabled until the complete release gate is green.
 
 ## Current status
 
-The policy package and unit tests are implemented in this change. This is a foundation, not a claim that R2 is connected or that production storage is operational.
+The policy package, S3-compatible provider, unit tests, opt-in API wiring, and namespace-aware cleanup paths are implemented on the feature branch. Live provider tests, CDN path confirmation, checksum verification, and complete release-gate validation remain outstanding.
