@@ -38,19 +38,19 @@ type requestMetric struct {
 }
 
 type service struct {
-	db             *pgxpool.Pool
-	metricsMu      sync.Mutex
-	routeMetrics   map[string]*requestMetric
+	db                *pgxpool.Pool
+	metricsMu         sync.Mutex
+	routeMetrics      map[string]*requestMetric
 	capabilityMetrics map[string]*requestMetric
-	requests       atomic.Uint64
-	cacheHits      atomic.Uint64
-	cacheMisses    atomic.Uint64
-	rateLimited    atomic.Uint64
-	platformErrors atomic.Uint64
-	upstream       *http.Client
-	platform       *platformclient.Client
-	media          *media.Signer
-	virtualStorage *virtualstorage.Manager
+	requests          atomic.Uint64
+	cacheHits         atomic.Uint64
+	cacheMisses       atomic.Uint64
+	rateLimited       atomic.Uint64
+	platformErrors    atomic.Uint64
+	upstream          *http.Client
+	platform          *platformclient.Client
+	media             *media.Signer
+	virtualStorage    *virtualstorage.Manager
 }
 
 type capabilityRequest struct {
