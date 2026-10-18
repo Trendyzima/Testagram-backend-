@@ -573,8 +573,8 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var ownerID, visibility, currentStatus, externalID string
-	err = tx.QueryRow(r.Context(), `select owner_id, visibility, status, coalesce(external_media_id::text,'') from testagram_media.assets where object_key=$1 for update`, body.Key).Scan(&ownerID, &visibility, &currentStatus, &externalID)
+	var ownerID, visibility, currentStatus, externalID, storageNamespace, storageProvider string
+	err = tx.QueryRow(r.Context(), `select owner_id, visibility, status, coalesce(external_media_id::text,''), storage_namespace, storage_provider from testagram_media.assets where object_key=$1 for update`, body.Key).Scan(&ownerID, &visibility, &currentStatus, &externalID, &storageNamespace, &storageProvider)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found", id))
 		return
@@ -599,13 +599,20 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_AUDIT_FAILED", "Could not record moderation audit event", id))
 		return
 	}
+	if _, err := tx.Exec(r.Context(), `insert into testagram_media.storage_deletion_jobs
+		(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
+		values ($1,$2,$3,$4,$5,'moderation','pending') on conflict do nothing`,
+		body.Key, ownerID, visibility, storageNamespace, storageProvider); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_DELETE_QUEUE_FAILED", "Could not durably schedule moderated media deletion", id))
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not commit media quarantine", id))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.deleteMediaObject(ctx, ownerID, body.Key, visibility); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, ownerID, body.Key, visibility, storageNamespace); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
 		return
 	}
