@@ -161,12 +161,15 @@ services:
       PUBLIC_MEDIA_BUCKET: ${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
       MEDIA_USER_QUOTA_BYTES: ${MEDIA_USER_QUOTA_BYTES:-2147483648}
       MEDIA_MODERATION_TOKEN: ${MEDIA_MODERATION_TOKEN:-}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/testagram-public-media}
       VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
       platform:
         condition: service_healthy
+      object-init:
+        condition: service_completed_successfully
     expose: ["8080"]
     read_only: true
     tmpfs: ["/tmp"]
