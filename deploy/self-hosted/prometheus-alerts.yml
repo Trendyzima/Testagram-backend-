@@ -162,3 +162,32 @@ groups:
           summary: Testagram platform database pool is near capacity
           description: More than 85% of the platform service PostgreSQL pool is acquired for 5 minutes. Check platform request load and slow queries.
 
+
+  - name: testagram-observability-integrity
+    rules:
+      - alert: TestagramPrometheusSelfScrapeDown
+        expr: up{job="prometheus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus cannot scrape itself
+          description: Prometheus self-scraping has failed for two minutes. Metrics and alert evaluation may be degraded; check the Prometheus target and service logs.
+
+      - alert: TestagramApiMetricsMissing
+        expr: absent(up{job="testagram-api"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram API metrics target is missing
+          description: Prometheus has no API scrape target series. Verify the Compose service name, scrape configuration, and API container.
+
+      - alert: TestagramPlatformMetricsMissing
+        expr: absent(up{job="testagram-platform"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram platform metrics target is missing
+          description: Prometheus has no platform scrape target series. Queue, cache, and platform health metrics may be unavailable.
