@@ -725,6 +725,120 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Search upstream p95 latency",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "testagram-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(testagram_upstream_request_duration_seconds_bucket{job=\"testagram-api\",group=\"search\"}[5m])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Time spent waiting for the canonical Supabase/PostgREST response, excluding the client-to-gateway portion."
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Search upstream 5xx responses/sec",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "testagram-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(testagram_upstream_response_status_total{job=\"testagram-api\",group=\"search\",status=~\"5..\"}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Upstream HTTP 5xx responses for search. PostgreSQL statement timeouts surfaced by PostgREST commonly appear here as upstream 500 responses."
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Search upstream timeout rate",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "testagram-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 60
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(testagram_upstream_requests_total{job=\"testagram-api\",group=\"search\",outcome=\"timeout\"}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Requests whose gateway-to-upstream operation exceeded its deadline. This does not expose search terms or arbitrary capability names."
     }
   ]
 }
