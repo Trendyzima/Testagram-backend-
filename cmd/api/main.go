@@ -608,6 +608,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamResponse, err := client.Do(upstreamReq)
 	if err != nil {
+		log.Printf("capability upstream request failed request_id=%q group=%q error=%q", id, capabilityGroup(body.Capability), err)
 		writeJSON(w, http.StatusBadGateway, errorBody("DATABASE_UNAVAILABLE", "Capability backend is temporarily unavailable", id))
 		return
 	}
@@ -618,7 +619,8 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
-		// Never expose raw database/upstream errors to clients.
+		// Never expose raw database/upstream errors or user search terms to logs.
+		log.Printf("capability upstream response failed request_id=%q group=%q status=%d", id, capabilityGroup(body.Capability), upstreamResponse.StatusCode)
 		message := "Capability database request failed"
 		status := upstreamResponse.StatusCode
 		if status >= 500 {
