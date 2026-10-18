@@ -213,6 +213,10 @@ func copyBoundedUpload(w http.ResponseWriter, src io.ReadCloser, maxBytes int64,
 // This is intentionally a gateway path, not a redirect to an unrestricted PUT.
 func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
+	if r.Method == http.MethodOptions {
+		s.mediaPreflight(w, r)
+		return
+	}
 	if r.Method != http.MethodPut {
 		w.Header().Set("Allow", http.MethodPut)
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use PUT to upload media bytes", id))
