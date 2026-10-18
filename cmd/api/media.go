@@ -539,7 +539,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 			}
 			if errors.Is(verifyErr, virtualstorage.ErrObjectMismatch) || errors.Is(verifyErr, virtualstorage.ErrTooLarge) || errors.Is(verifyErr, virtualstorage.ErrForbidden) {
 				_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents set status='cleanup_pending', expires_at=now(), updated_at=now()
-					where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+					where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
 				_, _ = s.db.Exec(ctx, `insert into testagram_media.storage_deletion_jobs
 					(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
 					values ($1,$2,$3,$4,$5,'expired_upload','pending') on conflict do nothing`,
@@ -557,7 +557,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		if checksumErr := s.virtualStorage.VerifyUploadChecksum(ctx, userID, storageNamespace, body.Key, intentMaxBytes, body.ChecksumSHA256); checksumErr != nil {
 			if errors.Is(checksumErr, virtualstorage.ErrChecksumMismatch) || errors.Is(checksumErr, virtualstorage.ErrTooLarge) {
 				_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents set status='cleanup_pending', expires_at=now(), updated_at=now()
-					where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+					where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
 				_, _ = s.db.Exec(ctx, `insert into testagram_media.storage_deletion_jobs
 					(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
 					values ($1,$2,$3,$4,$5,'expired_upload','pending') on conflict do nothing`,
@@ -615,7 +615,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	if actualType != body.ContentType || size < 1 || size > intentMaxBytes || size > maxBytes {
 		_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
 			set status='cleanup_pending', expires_at=now(), updated_at=now()
-			where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+			where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
 		if storageNamespace == "legacy-media" || s.virtualStorage == nil {
 			if deleteErr := s.deleteMediaObject(r.Context(), userID, body.Key, body.Visibility); deleteErr == nil {
 				_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
@@ -1389,7 +1389,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 
 	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace
 		from testagram_media.upload_intents
-		where (expires_at <= now() and status in ('issued','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '15 minutes')
+		where (expires_at <= now() and status in ('issued','uploaded','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '15 minutes')
 		order by expires_at asc limit 50`)
 	if err != nil {
 		return err
