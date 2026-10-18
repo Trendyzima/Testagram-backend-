@@ -51,14 +51,16 @@ The current control plane can schedule work only when a healthy node has registe
 ## Current boundaries — read before production use
 
 - Valkey is used by the private platform service for cache, queues and rate limiting. The self-hosted configuration uses `--maxmemory-policy noeviction`: an `allkeys-*` eviction policy could evict queue-stream keys under memory pressure and silently discard unprocessed work. With `noeviction`, writes fail rather than evicting queue data when memory is exhausted; cache/rate-limit operations can therefore fail until capacity is restored. Alert on memory headroom and queue age, and size/scale Valkey before sustained production load. The public capability gateway and product application call sites do not yet consume those APIs, so product-level cache/queue/rate-limit behavior is not automatically active.
-- MinIO provisions separate private and public media buckets. The API can issue
-  authenticated, owner-prefixed S3 POST upload policies and five-minute private
-  download URLs when the restricted `MINIO_MEDIA_ACCESS_KEY` /
-  `MINIO_MEDIA_SECRET_KEY` identity is configured. It never returns the secret
-  signing key. Public uploads are limited to approved image/video MIME types;
-  private URLs are only issued for keys under the authenticated user's prefix.
-  The media edge permits signed POST uploads, bypasses shared caching for signed
-  private GETs, and adds CORS headers for the Testagram web origins.
+- MinIO provisions separate private and public media buckets. The API creates
+  authenticated, owner-prefixed S3-compatible signed PUT intents and five-minute
+  private download URLs when the restricted `MINIO_MEDIA_ACCESS_KEY` /
+  `MINIO_MEDIA_SECRET_KEY` identity is configured. Browser uploads use the
+  bounded `PUT /api/media/upload?key=...` gateway in both legacy and virtual
+  storage modes; the provider URL and signing credentials stay server-side.
+  Public uploads are limited to approved image/video MIME types; private URLs
+  are only issued for keys under the authenticated user's prefix. The media edge
+  bypasses shared caching for signed private GETs and adds CORS headers for the
+  Testagram web origins.
   The API now persists upload intents, verifies uploaded objects with signed
   HEAD requests, records verified metadata, and reserves a configurable per-user
   quota. The API now also supports owner-scoped deletion with a durable
@@ -118,10 +120,13 @@ part of a controlled maintenance window.
 
 The API exposes:
 
-- `POST /api/media/upload-intent`: requires a valid Supabase bearer session and
-  returns a short-lived S3-compatible POST policy. Send the returned form fields
-  and file to the returned URL using `multipart/form-data`; do not send the
-  file to the JSON API endpoint.
+- `POST /api/media/upload-intent`: requires a valid Supabase bearer session
+  and returns a short-lived intent whose `data.url` is the relative
+  `/api/media/upload?key=...` gateway path. Upload raw file bytes with
+  `PUT`, the same bearer session, and the exact intent `Content-Type`. The
+  gateway enforces the reserved byte limit while streaming and forwards the
+  bounded body to the configured object-storage adapter. Browser CORS preflight
+  uses `OPTIONS /api/media/upload`; do not upload through the JSON intent route.
 - `POST /api/media/private-download-url`: requires a valid Supabase bearer
   session and returns a five-minute signed URL only when the object key belongs
   to that user.
