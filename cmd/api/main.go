@@ -193,7 +193,7 @@ func (s *service) metricsText() string {
 		for i, bound := range requestDurationBounds {
 			fmt.Fprintf(&b, "testagram_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\n", method, route, strconv.FormatFloat(bound.Seconds(), 'f', -1, 64), m.buckets[i])
 		}
-		fmt.Fprintf(&b, "testagram_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\\n", method, route, "+Inf", m.count)
+		fmt.Fprintf(&b, "testagram_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\n", method, route, "+Inf", m.count)
 		fmt.Fprintf(&b, "testagram_http_request_duration_seconds_sum{method=%q,route=%q} %.9f\n", method, route, float64(m.durationNanos)/float64(time.Second))
 		fmt.Fprintf(&b, "testagram_http_request_duration_seconds_count{method=%q,route=%q} %d\n", method, route, m.count)
 	}
