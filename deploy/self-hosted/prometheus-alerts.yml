@@ -150,3 +150,15 @@ groups:
           summary: Testagram search requests are failing
           description: More than 5% of search capability requests returned server errors. Inspect the correlated request ID and database/search logs; the metric deliberately excludes raw query text and arbitrary capability names.
 
+      - alert: TestagramPlatformDatabasePoolSaturation
+        expr: |
+          testagram_platform_db_pool_acquired_connections{job="testagram-platform"}
+          /
+          clamp_min(testagram_platform_db_pool_max_connections{job="testagram-platform"}, 1) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram platform database pool is near capacity
+          description: More than 85% of the platform service PostgreSQL pool is acquired for 5 minutes. Check platform request load and slow queries.
+
