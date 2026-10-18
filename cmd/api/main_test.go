@@ -578,6 +578,9 @@ func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) 
 	for _, want := range []string{
 		`testagram_capability_requests_total{group="search",status="502"} 1`,
 		`testagram_capability_request_duration_seconds_count{group="search"} 1`,
+		`testagram_upstream_requests_total{group="search",outcome="upstream_5xx"} 1`,
+		`testagram_upstream_response_status_total{group="search",status="500"} 1`,
+		`testagram_upstream_request_duration_seconds_count{group="search"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("capability metrics missing %q in:\\n%s", want, body)
