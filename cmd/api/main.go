@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -29,8 +30,17 @@ import (
 const maxCapabilityBody = 64 << 10
 const maxUpstreamBody = 2 << 20
 
+type requestMetric struct {
+	count         uint64
+	durationNanos uint64
+	buckets       [6]uint64
+	statuses      map[int]uint64
+}
+
 type service struct {
 	db             *pgxpool.Pool
+	metricsMu      sync.Mutex
+	routeMetrics   map[string]*requestMetric
 	requests       atomic.Uint64
 	cacheHits      atomic.Uint64
 	cacheMisses    atomic.Uint64
@@ -53,6 +63,128 @@ func env(name, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func normalizedMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions, http.MethodHead:
+		return method
+	default:
+		return "OTHER"
+	}
+}
+
+var requestDurationBounds = [...]time.Duration{
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	5 * time.Second,
+}
+
+func (s *service) recordRequest(method, route string, status int, elapsed time.Duration) {
+	key := method + "|" + route
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	if s.routeMetrics == nil {
+		s.routeMetrics = make(map[string]*requestMetric)
+	}
+	m := s.routeMetrics[key]
+	if m == nil {
+		m = &requestMetric{statuses: make(map[int]uint64)}
+		s.routeMetrics[key] = m
+	}
+	m.count++
+	if elapsed > 0 {
+		m.durationNanos += uint64(elapsed)
+	}
+	for i, bound := range requestDurationBounds {
+		if elapsed <= bound {
+			m.buckets[i]++
+		}
+	}
+	m.statuses[status]++
+}
+
+func (s *service) metricsText() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# HELP testagram_http_requests_total Total HTTP requests handled by this process.\n# TYPE testagram_http_requests_total counter\ntestagram_http_requests_total %d\n", s.requests.Load())
+	fmt.Fprintf(&b, "# HELP testagram_platform_cache_hits_total Public capability responses served from the shared cache.\n# TYPE testagram_platform_cache_hits_total counter\ntestagram_platform_cache_hits_total %d\n", s.cacheHits.Load())
+	fmt.Fprintf(&b, "# HELP testagram_platform_cache_misses_total Public capability cache misses.\n# TYPE testagram_platform_cache_misses_total counter\ntestagram_platform_cache_misses_total %d\n", s.cacheMisses.Load())
+	fmt.Fprintf(&b, "# HELP testagram_rate_limited_requests_total Requests denied by the shared rate limiter.\n# TYPE testagram_rate_limited_requests_total counter\ntestagram_rate_limited_requests_total %d\n", s.rateLimited.Load())
+	fmt.Fprintf(&b, "# HELP testagram_platform_errors_total Shared platform API errors observed by the gateway.\n# TYPE testagram_platform_errors_total counter\ntestagram_platform_errors_total %d\n", s.platformErrors.Load())
+
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	fmt.Fprintln(&b, "# HELP testagram_http_requests_by_route_total Requests by normalized route, method, and status.")
+	fmt.Fprintln(&b, "# TYPE testagram_http_requests_by_route_total counter")
+	fmt.Fprintln(&b, "# HELP testagram_http_request_duration_seconds HTTP request duration histogram by normalized route and method.")
+	fmt.Fprintln(&b, "# TYPE testagram_http_request_duration_seconds histogram")
+
+	keys := make([]string, 0, len(s.routeMetrics))
+	for key := range s.routeMetrics {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		parts := strings.SplitN(key, "|", 2)
+		method, route := parts[0], parts[1]
+		m := s.routeMetrics[key]
+		for _, status := range sortedStatusCodes(m.statuses) {
+			fmt.Fprintf(&b, "testagram_http_requests_by_route_total{method=%q,route=%q,status=%q} %d\n",
+				method, route, strconv.Itoa(status), m.statuses[status])
+		}
+		for i, bound := range requestDurationBounds {
+			fmt.Fprintf(&b, "testagram_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\n",
+				method, route, strconv.FormatFloat(bound.Seconds(), 'f', -1, 64), m.buckets[i])
+		}
+		fmt.Fprintf(&b, "testagram_http_request_duration_seconds_bucket{method=%q,route=%q,le=%q} %d\n",
+			method, route, "+Inf", m.count)
+		fmt.Fprintf(&b, "testagram_http_request_duration_seconds_sum{method=%q,route=%q} %.9f\n",
+			method, route, float64(m.durationNanos)/float64(time.Second))
+		fmt.Fprintf(&b, "testagram_http_request_duration_seconds_count{method=%q,route=%q} %d\n",
+			method, route, m.count)
+	}
+
+	if s.db != nil {
+		stats := s.db.Stat()
+		fmt.Fprintf(&b, "# HELP testagram_db_pool_total_connections Total PostgreSQL pool connections.\n# TYPE testagram_db_pool_total_connections gauge\ntestagram_db_pool_total_connections %d\n", stats.TotalConns())
+		fmt.Fprintf(&b, "# HELP testagram_db_pool_idle_connections Idle PostgreSQL pool connections.\n# TYPE testagram_db_pool_idle_connections gauge\ntestagram_db_pool_idle_connections %d\n", stats.IdleConns())
+		fmt.Fprintf(&b, "# HELP testagram_db_pool_acquired_connections Acquired PostgreSQL pool connections.\n# TYPE testagram_db_pool_acquired_connections gauge\ntestagram_db_pool_acquired_connections %d\n", stats.AcquiredConns())
+	}
+	return b.String()
+}
+
+func sortedStatusCodes(statuses map[int]uint64) []int {
+	codes := make([]int, 0, len(statuses))
+	for code := range statuses {
+		codes = append(codes, code)
+	}
+	sort.Ints(codes)
+	return codes
 }
 
 func (s *service) routes() http.Handler {
@@ -79,12 +211,7 @@ func (s *service) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		_, _ = w.Write([]byte(
-			"# HELP testagram_http_requests_total Total HTTP requests handled by this process.\n# TYPE testagram_http_requests_total counter\ntestagram_http_requests_total " + strconv.FormatUint(s.requests.Load(), 10) + "\n" +
-				"# HELP testagram_platform_cache_hits_total Public capability responses served from the shared cache.\n# TYPE testagram_platform_cache_hits_total counter\ntestagram_platform_cache_hits_total " + strconv.FormatUint(s.cacheHits.Load(), 10) + "\n" +
-				"# HELP testagram_platform_cache_misses_total Public capability cache misses.\n# TYPE testagram_platform_cache_misses_total counter\ntestagram_platform_cache_misses_total " + strconv.FormatUint(s.cacheMisses.Load(), 10) + "\n" +
-				"# HELP testagram_rate_limited_requests_total Requests denied by the shared rate limiter.\n# TYPE testagram_rate_limited_requests_total counter\ntestagram_rate_limited_requests_total " + strconv.FormatUint(s.rateLimited.Load(), 10) + "\n" +
-				"# HELP testagram_platform_errors_total Shared platform API errors observed by the gateway.\n# TYPE testagram_platform_errors_total counter\ntestagram_platform_errors_total " + strconv.FormatUint(s.platformErrors.Load(), 10) + "\n"))
+		_, _ = w.Write([]byte(s.metricsText()))
 	})
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
@@ -106,8 +233,23 @@ func (s *service) routes() http.Handler {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
 		s.requests.Add(1)
-		mux.ServeHTTP(w, r)
+		started := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		mux.ServeHTTP(recorder, r)
+		s.recordRequest(normalizedMethod(r.Method), normalizedRoute(r.URL.Path), recorder.status, time.Since(started))
 	})
+}
+
+func normalizedRoute(path string) string {
+	switch path {
+	case "/healthz", "/readyz", "/metrics", "/api/capability",
+		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
+		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
+		"/api/media/list", "/internal/media/quarantine":
+		return path
+	default:
+		return "unmatched"
+	}
 }
 
 func (s *service) allowedOrigins() map[string]struct{} {
