@@ -29,9 +29,9 @@ func (s *service) runStorageDeletionWorker(ctx context.Context) {
 }
 
 type storageDeletionJob struct {
-	id int64
+	id                                                      int64
 	key, ownerID, visibility, namespace, reason, externalID string
-	attempts int
+	attempts                                                int
 }
 
 // processStorageDeletionBatch claims a bounded batch transactionally, then
@@ -158,6 +158,8 @@ func (s *service) performStorageDeletion(ctx context.Context, job storageDeletio
 }
 
 func minInt(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
 }
