@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -632,5 +633,31 @@ func TestMediaUploadGatewayPreflightAllowsConfiguredOrigin(t *testing.T) {
 	allowedHeaders := strings.ToLower(w.Header().Get("Access-Control-Allow-Headers"))
 	if !strings.Contains(allowedHeaders, "authorization") || !strings.Contains(allowedHeaders, "content-type") {
 		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization and content-type", allowedHeaders)
+	}
+}
+
+func TestUpstreamFailureOutcome(t *testing.T) {
+	if got := upstreamFailureOutcome(context.DeadlineExceeded, context.DeadlineExceeded); got != "timeout" {
+		t.Fatalf("deadline outcome = %q, want timeout", got)
+	}
+	if got := upstreamFailureOutcome(errors.New("connection reset"), nil); got != "transport_error" {
+		t.Fatalf("transport outcome = %q, want transport_error", got)
+	}
+}
+
+func TestUpstreamMetricLabelsAreBounded(t *testing.T) {
+	s := &service{}
+	s.recordUpstream("user-controlled-search-group", "user-controlled-outcome", 999, time.Second)
+	body := s.metricsText()
+	for _, want := range []string{
+		`testagram_upstream_requests_total{group="other",outcome="transport_error"} 1`,
+		`testagram_upstream_request_duration_seconds_count{group="other"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upstream metrics missing %q in:\\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "user-controlled-search-group") || strings.Contains(body, "user-controlled-outcome") {
+		t.Fatal("upstream metrics must not expose arbitrary label values")
 	}
 }
