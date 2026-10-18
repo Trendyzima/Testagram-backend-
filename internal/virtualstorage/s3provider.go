@@ -162,7 +162,7 @@ func (p *S3Provider) presign(ctx context.Context, method, bucket, key string, ex
 	canonicalRequest := strings.Join([]string{method, u.EscapedPath(), canonicalQuery, canonicalHeaders, signedHeaders, "UNSIGNED-PAYLOAD"}, "\n")
 	hash := sha256.Sum256([]byte(canonicalRequest))
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hex.EncodeToString(hash[:])
-	signature := hex.EncodeToString(hmacSHA256(s3SigningKey(p.secretKey, date, p.region), []byte(stringToSign)))
+	signature := hex.EncodeToString(s3HMAC(s3SigningKey(p.secretKey, date, p.region), stringToSign))
 	q.Set("X-Amz-Signature", signature)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
