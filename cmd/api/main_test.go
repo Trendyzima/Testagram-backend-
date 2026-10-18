@@ -549,3 +549,62 @@ func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 		t.Fatal("metrics leaked raw request path into a label")
 	}
 }
+
+
+func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) {
+	t.Setenv("SUPABASE_URL", "https://supabase.example.invalid")
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("database statement timeout"))
+	}))
+	defer upstream.Close()
+
+	s := &service{upstream: upstream.Client()}
+	request := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(
+		`{"capability":"testagram.search.unified","input":{"query":"timeout-test"}}`,
+	))
+	request.Header.Set("Authorization", "Bearer test-user-token")
+	response := httptest.NewRecorder()
+	s.routes().ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("search capability status = %d, want %d; body=%s", response.Code, http.StatusBadGateway, response.Body.String())
+	}
+
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsResponse := httptest.NewRecorder()
+	s.routes().ServeHTTP(metricsResponse, metricsRequest)
+	body := metricsResponse.Body.String()
+	for _, want := range []string{
+		`testagram_capability_requests_total{group="search",status="502"} 1`,
+		`testagram_capability_request_duration_seconds_count{group="search"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("capability metrics missing %q in:\\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "testagram.search.unified") || strings.Contains(body, "timeout-test") {
+		t.Fatal("metrics leaked raw capability names or user search terms")
+	}
+}
+
+func TestCapabilityGroupLabelsAreBounded(t *testing.T) {
+	cases := map[string]string{
+		"testagram.search.unified": "search",
+		"testagram.feed.home": "feed",
+		"testagram.media.upload": "media",
+		"testagram.auth.session": "auth",
+		"testagram.notifications.list": "notifications",
+		"testagram.federation.inbox": "federation",
+		"arbitrary-user-supplied-capability": "other",
+	}
+	for input, want := range cases {
+		if got := capabilityGroup(input); got != want {
+			t.Errorf("capabilityGroup(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if got := capabilityGroup("testagram.search.user-generated-suffix-123"); got != "search" {
+		t.Fatalf("user-generated suffix must map to a fixed group, got %q", got)
+	}
+}
