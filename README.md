@@ -76,6 +76,33 @@ to a user-authorized upload/signing API. Follow the deployment README's
 migration, media integration, backup, restore, and load-test gates before
 cutting over traffic.
 
+
+## Self-hosted operations dashboard
+
+The self-hosted Compose stack provisions **Grafana + Prometheus** from version-controlled files. The dashboard is defined at `deploy/self-hosted/grafana/dashboards/testagram-operations.json`; Prometheus scrapes the API, platform service and host node-exporter every 15 seconds. The dashboard includes request rate by normalized route, p95 latency, 4xx/5xx rates, shared-cache hit ratio, PostgreSQL pool utilization, queue backlog/age, and host CPU, memory, disk and network throughput.
+
+### Enable and access it safely
+
+1. Copy `deploy/self-hosted/.env.example` to `deploy/self-hosted/.env` if you have not already done so. Preserve your existing deployment values; do not overwrite a working production `.env` with the example.
+2. Set `GRAFANA_ADMIN_USER` and a unique, long `GRAFANA_ADMIN_PASSWORD` in that file. Keep the file owner-readable only (`chmod 600 deploy/self-hosted/.env`).
+3. From the repository root, validate and start the monitoring services:
+
+   ```bash
+   docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml config --quiet
+   docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml up -d prometheus grafana node-exporter
+   ```
+
+4. On the VPS, confirm Grafana listens only on loopback: `docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml ps grafana prometheus node-exporter`.
+5. From your own computer, open an SSH tunnel: `ssh -N -L 3000:127.0.0.1:3000 your-vps-user@your-vps-host`. Then open `http://127.0.0.1:3000`, sign in with the configured Grafana credentials, and open the **Testagram Operations** dashboard.
+
+Grafana is deliberately published only as `127.0.0.1:3000`; do not change this to `0.0.0.0:3000` or expose port 3000 publicly. The dashboard and datasource are provisioned read-only from Git, and Grafana state is stored in the `grafana-data` volume.
+
+### Alerting boundaries
+
+Prometheus evaluates the rules in `deploy/self-hosted/prometheus-alerts.yml`, including host disk/memory pressure, unavailable scrape targets, queue backlog/age, API 5xx rate, API p95 latency and database pool saturation. These rules create firing alerts in Prometheus; **this stack does not yet deliver email, SMS, or webhook notifications**. Configure and test an authenticated Alertmanager receiver before treating alerts as an on-call notification system. Metrics are in-process counters/histograms and reset when the API container restarts, so dashboards should use Prometheus `rate()`/histogram functions rather than raw counter values.
+
+Monitoring is not proof of production readiness. Validate the dashboard against a running staging stack, confirm all scrape targets are up, exercise a real search/upload/auth flow, and test an alert end-to-end before any production cutover.
+
 ## Production integration rules
 
 - Inject secrets through deployment secrets; never bake them into images.
