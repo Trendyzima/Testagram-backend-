@@ -18,6 +18,7 @@ var (
 	ErrForbidden        = errors.New("storage operation forbidden")
 	ErrTooLarge         = errors.New("object exceeds namespace size limit")
 	ErrNotFound         = errors.New("object not found")
+	ErrObjectMismatch    = errors.New("uploaded object does not match declared metadata")
 	tenantIDPattern     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 	namespacePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 )
@@ -148,6 +149,35 @@ func (m *Manager) DownloadURL(ctx context.Context, requesterTenant, ownerTenant,
 	return m.provider.PresignGet(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key, ns.DownloadTTL)
 }
 
+// VerifyUpload checks provider-observed metadata before an upload can be marked
+// complete. It does not trust the client-reported content type or byte count.
+func (m *Manager) VerifyUpload(ctx context.Context, tenantID, namespace, key, expectedContentType string, expectedSize int64) (ObjectInfo, error) {
+	ns, err := m.namespace(namespace)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	if !tenantIDPattern.MatchString(tenantID) || !validKey(key) {
+		return ObjectInfo{}, ErrInvalidKey
+	}
+	if expectedSize < 1 || expectedSize > ns.MaxObjectBytes {
+		return ObjectInfo{}, ErrTooLarge
+	}
+	expectedContentType = strings.ToLower(strings.TrimSpace(expectedContentType))
+	if _, ok := ns.AllowedTypes[expectedContentType]; !ok {
+		return ObjectInfo{}, ErrForbidden
+	}
+	info, err := m.provider.Head(ctx, ns.PhysicalBucket, tenantPrefix(tenantID)+key)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	actualType := strings.ToLower(strings.TrimSpace(info.ContentType))
+	if info.Size != expectedSize || info.Size < 1 || info.Size > ns.MaxObjectBytes || actualType != expectedContentType {
+		return ObjectInfo{}, ErrObjectMismatch
+	}
+	info.Key = key
+	return info, nil
+}
+
 // Delete is deliberately owner-scoped, including for public objects. Public
 // readability must never imply public write/delete authority.
 func (m *Manager) Delete(ctx context.Context, requesterTenant, ownerTenant, namespace, key string) error {
@@ -178,10 +208,17 @@ func (m *Manager) List(ctx context.Context, tenantID, namespace, prefix, cursor 
 	if err != nil {
 		return nil, "", err
 	}
-	for i := range items {
-		items[i].Key = strings.TrimPrefix(items[i].Key, tenantPrefix(tenantID))
+	scoped := make([]ObjectInfo, 0, len(items))
+	tenantScope := tenantPrefix(tenantID)
+	for _, item := range items {
+		if !strings.HasPrefix(item.Key, tenantScope) {
+			// Never trust a provider adapter to return only the requested prefix.
+			continue
+		}
+		item.Key = strings.TrimPrefix(item.Key, tenantScope)
+		scoped = append(scoped, item)
 	}
-	return items, next, nil
+	return scoped, next, nil
 }
 
 func (m *Manager) namespace(name string) (Namespace, error) {
