@@ -262,7 +262,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at
+	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at, storage_namespace
 		from testagram_media.assets where owner_id=$1 and status='ready'
 		order by created_at desc limit 100`, userID)
 	if err != nil {
@@ -272,18 +272,22 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := make([]map[string]any, 0)
 	for rows.Next() {
-		var key, visibility, contentType, originalName string
+		var key, visibility, contentType, originalName, storageNamespace string
 		var sizeBytes int64
 		var createdAt time.Time
-		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt); err != nil {
+		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt, &storageNamespace); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not read media assets", id))
 			return
 		}
 		mediaURL := ""
 		if visibility == "public" {
-			mediaURL = publicMediaURL(key)
+			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
 		} else if visibility == "private" {
-			mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
+			if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+				mediaURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
+			} else {
+				mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
+			}
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_URL_FAILED", "Could not create private media URL", id))
 				return
@@ -367,6 +371,8 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_INTENT_INVALID", "Stored upload limit is invalid", id))
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
 	var actualType, etag string
 	var size int64
 	if storageNamespace != "legacy-media" && s.virtualStorage != nil {
@@ -756,6 +762,14 @@ func productPostMediaType(contentType string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func publicMediaURLForStorage(key, ownerID, storageNamespace string) string {
+	if storageNamespace == "legacy-media" || storageNamespace == "" {
+		return publicMediaURL(key)
+	}
+	// Virtual-storage objects are physically stored below the tenant prefix.
+	return publicMediaURL("tenants/" + ownerID + "/" + strings.TrimLeft(key, "/"))
 }
 
 func publicMediaURL(key string) string {
