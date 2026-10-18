@@ -517,8 +517,6 @@ func TestDecodeSingleJSON(t *testing.T) {
 	}
 }
 
-
-
 func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 	s := &service{}
 	handler := s.routes()
