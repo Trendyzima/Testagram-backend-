@@ -607,3 +607,28 @@ func TestCapabilityGroupLabelsAreBounded(t *testing.T) {
 		t.Fatalf("user-generated suffix must map to a fixed group, got %q", got)
 	}
 }
+
+
+func TestMediaUploadGatewayPreflightAllowsConfiguredOrigin(t *testing.T) {
+	r := httptest.NewRequest(http.MethodOptions, "/api/media/upload?key=users/user-123/0123456789abcdef0123456789abcdef", nil)
+	r.Header.Set("Origin", "https://testagram.site")
+	r.Header.Set("Access-Control-Request-Method", "PUT")
+	r.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+	w := httptest.NewRecorder()
+
+	(&service{}).routes().ServeHTTP(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("upload preflight status = %d, want %d: %s", w.Code, http.StatusNoContent, w.Body.String())
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://testagram.site" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want configured origin", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "PUT") || !strings.Contains(got, "OPTIONS") {
+		t.Fatalf("Access-Control-Allow-Methods = %q, want PUT and OPTIONS", got)
+	}
+	allowedHeaders := strings.ToLower(w.Header().Get("Access-Control-Allow-Headers"))
+	if !strings.Contains(allowedHeaders, "authorization") || !strings.Contains(allowedHeaders, "content-type") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization and content-type", got)
+	}
+}
