@@ -18,6 +18,7 @@ services:
       - ../../migrations/007_media_product_bridge.sql:/docker-entrypoint-initdb.d/007_media_product_bridge.sql:ro
       - ../../migrations/008_virtual_storage_bridge.sql:/docker-entrypoint-initdb.d/008_virtual_storage_bridge.sql:ro
       - ../../migrations/009_saas_tenant_hosting.sql:/docker-entrypoint-initdb.d/009_saas_tenant_hosting.sql:ro
+      - ../../migrations/010_media_upload_claim.sql:/docker-entrypoint-initdb.d/010_media_upload_claim.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
