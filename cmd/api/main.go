@@ -90,6 +90,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
+	mux.HandleFunc("PUT /api/media/upload", s.mediaUploadGateway)
 	mux.HandleFunc("OPTIONS /api/media/complete", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/complete", s.mediaComplete)
 	mux.HandleFunc("OPTIONS /api/media/delete", s.mediaPreflight)
