@@ -158,6 +158,31 @@ groups:
           summary: Testagram search requests are failing
           description: More than 5% of search capability requests returned server errors. Inspect the correlated request ID and database/search logs; the metric deliberately excludes raw query text and arbitrary capability names.
 
+      - alert: TestagramSearchUpstreamServerErrors
+        expr: |
+          (
+            sum(rate(testagram_upstream_response_status_total{job="testagram-api",group="search",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(testagram_upstream_requests_total{job="testagram-api",group="search"}[5m])), 0.001)
+          ) > 0.05
+          and
+          sum(rate(testagram_upstream_requests_total{job="testagram-api",group="search"}[5m])) > 0.02
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram search upstream is returning server errors
+          description: More than 5% of search requests are receiving upstream 5xx responses. Investigate PostgREST/PostgreSQL logs for statement timeouts, slow plans, lock waits, and database saturation; correlate using the request ID without logging search terms.
+
+      - alert: TestagramSearchUpstreamTimeouts
+        expr: sum(rate(testagram_upstream_requests_total{job="testagram-api",group="search",outcome="timeout"}[5m])) > 0.01
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram search upstream requests are timing out
+          description: Gateway-to-upstream search calls are exceeding their deadline. Compare this with search capability p95 latency and database pool saturation; inspect slow SQL and statement-timeout settings.
+
       - alert: TestagramPlatformDatabasePoolSaturation
         expr: |
           testagram_platform_db_pool_acquired_connections{job="testagram-platform"}
