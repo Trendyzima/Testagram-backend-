@@ -15,6 +15,6 @@ create index if not exists media_upload_intents_stale_upload_idx
   where status = 'uploading';
 
 comment on column testagram_media.upload_intents.status is
-  'issued may be claimed once as uploading; uploaded means the bounded gateway stored bytes and completion may verify them; stale uploading rows are cleaned after 15 minutes.';
+  'issued may be claimed once as uploading; uploaded means the bounded gateway stored bytes and completion may verify them; stale uploading rows are cleaned after 2 hours.';
 
 commit;
