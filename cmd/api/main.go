@@ -37,11 +37,20 @@ type requestMetric struct {
 	statuses      map[int]uint64
 }
 
+type upstreamMetric struct {
+	count         uint64
+	durationNanos uint64
+	buckets       [6]uint64
+	outcomes      map[string]uint64
+	statuses      map[int]uint64
+}
+
 type service struct {
 	db                *pgxpool.Pool
 	metricsMu         sync.Mutex
 	routeMetrics      map[string]*requestMetric
 	capabilityMetrics map[string]*requestMetric
+	upstreamMetrics   map[string]*upstreamMetric
 	requests          atomic.Uint64
 	cacheHits         atomic.Uint64
 	cacheMisses       atomic.Uint64
@@ -157,6 +166,42 @@ func (s *service) recordCapability(group string, status int, elapsed time.Durati
 	m.statuses[status]++
 }
 
+func (s *service) recordUpstream(group, outcome string, status int, elapsed time.Duration) {
+	switch group {
+	case "search", "feed", "media", "auth", "notifications", "federation":
+	default:
+		group = "other"
+	}
+	switch outcome {
+	case "success", "timeout", "transport_error", "invalid_response", "upstream_4xx", "upstream_5xx":
+	default:
+		outcome = "transport_error"
+	}
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	if s.upstreamMetrics == nil {
+		s.upstreamMetrics = make(map[string]*upstreamMetric)
+	}
+	m := s.upstreamMetrics[group]
+	if m == nil {
+		m = &upstreamMetric{outcomes: make(map[string]uint64), statuses: make(map[int]uint64)}
+		s.upstreamMetrics[group] = m
+	}
+	m.count++
+	m.outcomes[outcome]++
+	if status >= 100 && status <= 599 {
+		m.statuses[status]++
+	}
+	if elapsed > 0 {
+		m.durationNanos += uint64(elapsed)
+	}
+	for i, bound := range requestDurationBounds {
+		if elapsed <= bound {
+			m.buckets[i]++
+		}
+	}
+}
+
 func (s *service) recordRequest(method, route string, status int, elapsed time.Duration) {
 	key := method + "|" + route
 	s.metricsMu.Lock()
@@ -249,6 +294,35 @@ func (s *service) metricsText() string {
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_idle_connections Idle PostgreSQL pool connections.\n# TYPE testagram_db_pool_idle_connections gauge\ntestagram_db_pool_idle_connections %d\n", stats.IdleConns())
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_acquired_connections Acquired PostgreSQL pool connections.\n# TYPE testagram_db_pool_acquired_connections gauge\ntestagram_db_pool_acquired_connections %d\n", stats.AcquiredConns())
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_max_connections Configured maximum PostgreSQL pool connections.\n# TYPE testagram_db_pool_max_connections gauge\ntestagram_db_pool_max_connections %d\n", stats.MaxConns())
+	}
+	upstreamGroups := make([]string, 0, len(s.upstreamMetrics))
+	for group := range s.upstreamMetrics {
+		upstreamGroups = append(upstreamGroups, group)
+	}
+	sort.Strings(upstreamGroups)
+	fmt.Fprintln(&b, "# HELP testagram_upstream_requests_total Requests to the canonical upstream, by bounded capability group and outcome.")
+	fmt.Fprintln(&b, "# TYPE testagram_upstream_requests_total counter")
+	fmt.Fprintln(&b, "# HELP testagram_upstream_response_status_total HTTP response statuses returned by the canonical upstream.")
+	fmt.Fprintln(&b, "# TYPE testagram_upstream_response_status_total counter")
+	fmt.Fprintln(&b, "# HELP testagram_upstream_request_duration_seconds Duration of canonical upstream requests by bounded capability group.")
+	fmt.Fprintln(&b, "# TYPE testagram_upstream_request_duration_seconds histogram")
+	for _, group := range upstreamGroups {
+		m := s.upstreamMetrics[group]
+		outcomes := make([]string, 0, len(m.outcomes))
+		for outcome := range m.outcomes { outcomes = append(outcomes, outcome) }
+		sort.Strings(outcomes)
+		for _, outcome := range outcomes {
+			fmt.Fprintf(&b, "testagram_upstream_requests_total{group=%q,outcome=%q} %d\n", group, outcome, m.outcomes[outcome])
+		}
+		for _, status := range sortedStatusCodes(m.statuses) {
+			fmt.Fprintf(&b, "testagram_upstream_response_status_total{group=%q,status=%q} %d\n", group, strconv.Itoa(status), m.statuses[status])
+		}
+		for i, bound := range requestDurationBounds {
+			fmt.Fprintf(&b, "testagram_upstream_request_duration_seconds_bucket{group=%q,le=%q} %d\n", group, strconv.FormatFloat(bound.Seconds(), 'f', -1, 64), m.buckets[i])
+		}
+		fmt.Fprintf(&b, "testagram_upstream_request_duration_seconds_bucket{group=%q,le=%q} %d\n", group, "+Inf", m.count)
+		fmt.Fprintf(&b, "testagram_upstream_request_duration_seconds_sum{group=%q} %.9f\n", group, float64(m.durationNanos)/float64(time.Second))
+		fmt.Fprintf(&b, "testagram_upstream_request_duration_seconds_count{group=%q} %d\n", group, m.count)
 	}
 	return b.String()
 }
