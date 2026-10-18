@@ -374,10 +374,16 @@ func (a *app) queryPrometheus(ctx context.Context, query string) (float64,error)
 	if resp.StatusCode!=200{return 0,fmt.Errorf("prometheus returned %d",resp.StatusCode)}
 	var result promResponse
 	if err:=json.NewDecoder(io.LimitReader(resp.Body,1<<20)).Decode(&result);err!=nil{return 0,err}
-	if result.Status!="success"||len(result.Data.Result)==0||len(result.Data.Result[0].Value)<2{return 0,nil}
-	value,ok:=result.Data.Result[0].Value[1].(string);if !ok{return 0,nil}
+	if result.Status!="success" {
+		return 0,fmt.Errorf("prometheus query did not succeed")
+	}
+	if len(result.Data.Result)==0 || len(result.Data.Result[0].Value)<2 {
+		return 0,fmt.Errorf("prometheus query returned no sample")
+	}
+	value,ok:=result.Data.Result[0].Value[1].(string)
+	if !ok{return 0,fmt.Errorf("prometheus returned a non-string sample")}
 	var n float64
-	if _,err:=fmt.Sscanf(value,"%f",&n);err!=nil{return 0,err}
+	if _,err:=fmt.Sscanf(value,"%f",&n);err!=nil{return 0,fmt.Errorf("parse prometheus sample: %w",err)}
 	return n,nil
 }
 
