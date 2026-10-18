@@ -13,6 +13,8 @@ if [[ ! -f "$env_file" ]]; then
   exit 1
 fi
 
+docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
+
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/008_virtual_storage_bridge.sql'
 
