@@ -4,6 +4,7 @@ This repository is the application-service foundation for Testagram. It is separ
 
 - supabase-for-testagram: Supabase platform and database/auth/storage services.
 - cdn-: Go media-delivery/cache data plane.
+- [Testagram data-centre](https://github.com/Trendyzima/Testagram-data-centre-): VPS assembly, pinned Supabase upstreams, node-agent and host backup/restore operations; see [the cross-repository integration contract](docs/vps-data-centre-integration.md).
 
 It must not duplicate Supabase's database, authentication, or binary media responsibilities. It provides a separately deployable API/worker layer that can scale horizontally as demand grows.
 
