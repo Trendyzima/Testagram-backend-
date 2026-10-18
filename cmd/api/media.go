@@ -1049,8 +1049,8 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
 		return
 	}
-	var visibility, currentStatus, externalID string
-	err = s.db.QueryRow(r.Context(), `select visibility, status, coalesce(external_media_id::text,'') from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &currentStatus, &externalID)
+	var visibility, currentStatus, externalID, storageNamespace, storageProvider string
+	err = s.db.QueryRow(r.Context(), `select visibility, status, coalesce(external_media_id::text,''), storage_namespace, storage_provider from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &currentStatus, &externalID, &storageNamespace, &storageProvider)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
 		return
@@ -1083,14 +1083,14 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	// exits after enqueueing, the background worker resumes the deletion.
 	if _, err := s.db.Exec(r.Context(), `insert into testagram_media.storage_deletion_jobs
 		(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
-		values ($1,$2,$3,'legacy-media','default','user_delete','pending')
-		on conflict do nothing`, body.Key, userID, visibility); err != nil {
+		values ($1,$2,$3,$4,$5,'user_delete','pending')
+		on conflict do nothing`, body.Key, userID, visibility, storageNamespace, storageProvider); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_DELETE_QUEUE_FAILED", "Could not durably schedule media deletion", id))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.deleteMediaObject(ctx, userID, body.Key, visibility); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, userID, body.Key, visibility, storageNamespace); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
 		return
 	}
@@ -1113,6 +1113,13 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility string) error {
+	return s.deleteMediaObjectWithNamespace(ctx, userID, key, visibility, "legacy-media")
+}
+
+func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
+	if storageNamespace != "" && storageNamespace != "legacy-media" && s.virtualStorage != nil {
+		return s.virtualStorage.Delete(ctx, userID, userID, storageNamespace, key)
+	}
 	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
 	if err != nil {
 		return err
