@@ -99,7 +99,7 @@ Grafana is deliberately published only as `127.0.0.1:3000`; do not change this t
 
 ### Alerting boundaries
 
-Prometheus evaluates the rules in `deploy/self-hosted/prometheus-alerts.yml`, including host disk/memory pressure, unavailable scrape targets, queue backlog/age, API 5xx rate, API p95 latency and database pool saturation. These rules create firing alerts in Prometheus; **this stack does not yet deliver email, SMS, or webhook notifications**. Configure and test an authenticated Alertmanager receiver before treating alerts as an on-call notification system. Metrics are in-process counters/histograms and reset when the API container restarts, so dashboards should use Prometheus `rate()`/histogram functions rather than raw counter values.
+Prometheus evaluates the rules in `deploy/self-hosted/prometheus-alerts.yml`, including host disk/memory pressure, unavailable scrape targets, queue backlog/age, API 5xx rate, API p95 latency, database pool saturation, and search-specific latency/error rates. These rules create firing alerts in Prometheus; **this stack does not yet deliver email, SMS, or webhook notifications**. Configure and test an authenticated Alertmanager receiver before treating alerts as an on-call notification system. Metrics are in-process counters/histograms and reset when the API container restarts, so dashboards should use Prometheus `rate()`/histogram functions rather than raw counter values.
 
 Monitoring is not proof of production readiness. Validate the dashboard against a running staging stack, confirm all scrape targets are up, exercise a real search/upload/auth flow, and test an alert end-to-end before any production cutover.
 
