@@ -2,9 +2,9 @@ package main
 
 import (
 	"encoding/hex"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +37,7 @@ func TestSessionCookieIsEncryptedAndRoundTrips(t *testing.T) {
 	cookies := w.Result().Cookies()
 	if len(cookies)!=1 { t.Fatalf("got %d cookies",len(cookies)) }
 	cookie:=cookies[0]
-	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite!=1 { t.Fatalf("unsafe session cookie attributes: %#v",cookie) }
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite!=http.SameSiteStrictMode { t.Fatalf("unsafe session cookie attributes: %#v",cookie) }
 	if strings.Contains(cookie.Value,want.AccessToken)||strings.Contains(cookie.Value,want.RefreshToken) { t.Fatal("tokens must not be visible in cookie value") }
 	req:=httptest.NewRequest("GET","https://ops.example.test/api/session",nil)
 	req.AddCookie(cookie)
@@ -86,5 +86,4 @@ func TestRecoveryRedirectUsesConfiguredConsoleOrigin(t *testing.T) {
 	a:=testApp(t)
 	if !strings.HasPrefix(a.publicURL,"https://ops.example.test"){t.Fatal("expected configured HTTPS public URL")}
 	if _,err:=url.Parse(a.publicURL+"/reset-password");err!=nil{t.Fatal(err)}
-	_ = os.Getenv("ADMIN_PUBLIC_URL")
 }
