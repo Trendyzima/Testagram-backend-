@@ -20,7 +20,8 @@ import (
 
 // S3Config contains server-side credentials only. Endpoint must be an origin,
 // not a bucket URL or URL with a path/query. SigningHost is normally empty;
-// configure it only when the S3 endpoint explicitly requires a different Host.
+// set it to the Host header forwarded by a trusted reverse proxy when that differs
+// from the public URL host.
 type S3Config struct {
 	Endpoint string
 	SigningHost string
@@ -52,10 +53,7 @@ func NewS3Provider(cfg S3Config) (*S3Provider, error) {
 	if strings.ContainsAny(cfg.SigningHost, "/?#\r\n@ ") {
 		return nil, errors.New("S3 signing host is invalid")
 	}
-	if !strings.EqualFold(cfg.SigningHost, u.Host) {
-		return nil, errors.New("S3 signing host must match the URL host for browser-compatible presigned URLs")
-	}
-	client := cfg.Client
+		client := cfg.Client
 	if client == nil { client = &http.Client{Timeout: 8 * time.Second} }
 	return &S3Provider{endpoint:u, signingHost:cfg.SigningHost, accessKey:cfg.AccessKey, secretKey:cfg.SecretKey, region:cfg.Region, client:client}, nil
 }
