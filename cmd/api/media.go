@@ -1228,7 +1228,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var intents []mediaCleanupObject
 	for intentRows.Next() {
 		var item mediaCleanupObject
-		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility); err != nil {
+		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.namespace); err != nil {
 			intentRows.Close()
 			return err
 		}
@@ -1271,7 +1271,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var assets []pendingMediaObject
 	for assetRows.Next() {
 		var item pendingMediaObject
-		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.externalID); err != nil {
+		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.externalID, &item.namespace); err != nil {
 			assetRows.Close()
 			return err
 		}
