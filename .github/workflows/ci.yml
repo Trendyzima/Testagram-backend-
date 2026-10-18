@@ -167,7 +167,10 @@ jobs:
           docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'create extension if not exists pgcrypto'
           docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
           docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
-          docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c "do \$\$ begin if not (select relrowsecurity from pg_class where oid='testagram_saas.tenants'::regclass) then raise exception 'RLS is disabled on tenants'; end if; if not exists (select 1 from pg_indexes where schemaname='testagram_saas' and indexname='saas_subscriptions_external_ref_uidx') then raise exception 'subscription idempotency index missing'; end if; end \$\$;"
+          rls_enabled="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select relrowsecurity from pg_class where oid='testagram_saas.tenants'::regclass")"
+          test "$rls_enabled" = "t"
+          index_count="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select count(*) from pg_indexes where schemaname='testagram_saas' and indexname='saas_subscriptions_external_ref_uidx'")"
+          test "$index_count" = "1"
       - name: Stop isolated PostgreSQL
         if: always()
         run: docker stop testagram-saas-schema-ci || true
