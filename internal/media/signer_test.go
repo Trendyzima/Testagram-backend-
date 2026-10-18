@@ -205,3 +205,28 @@ func TestPresignObjectDeleteIsOwnerScopedAndVisibilityScoped(t *testing.T) {
 		t.Fatal("excessive DELETE URL lifetime must be rejected")
 	}
 }
+
+
+func TestPresignObjectPutSignsKnownOwnerScopedKey(t *testing.T) {
+	signer := testSigner(t, "https://media.example.test")
+	now := time.Date(2026, 10, 17, 12, 30, 0, 0, time.UTC)
+	key := "users/user-123/0123456789abcdef0123456789abcdef"
+	got, err := signer.PresignObjectPut("user-123", key, "public", "image/png", 10*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(u.Path, "/public-media/users/user-123/") {
+		t.Fatalf("PUT URL has wrong bucket/path: %q", u.Path)
+	}
+	q := u.Query()
+	if q.Get("X-Amz-SignedHeaders") != "content-type;host" || q.Get("X-Amz-Expires") != "600" || len(q.Get("X-Amz-Signature")) != 64 {
+		t.Fatalf("PUT URL is not correctly signed: %v", q)
+	}
+	if _, err := signer.PresignObjectPut("other-user", key, "public", "image/png", 10*time.Minute, now); err == nil {
+		t.Fatal("cross-owner PUT URL must be rejected")
+	}
+}
