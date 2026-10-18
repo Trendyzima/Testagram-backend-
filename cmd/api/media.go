@@ -142,8 +142,11 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_UPLOAD_URL_FAILED", "Could not create a tenant-scoped upload URL", id))
 			return
 		}
-		intent.URL = "/api/media/upload?key=" + url.QueryEscape(intent.Key)
 	}
+	// Both legacy and virtual-storage intents use the bounded API upload route.
+	// The server selects the configured storage adapter; browser code never needs
+	// to handle or trust a provider URL.
+	intent.URL = "/api/media/upload?key=" + url.QueryEscape(intent.Key)
 	if body.Visibility == "public" {
 		intent.PublicURL = publicMediaURLForStorage(intent.Key, userID, storageNamespace)
 		if intent.PublicURL == "" {
@@ -226,8 +229,8 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.virtualStorage == nil || s.db == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "Bounded upload gateway is unavailable", id))
+	if s.db == nil || (s.virtualStorage == nil && s.media == nil) {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Bounded upload gateway is unavailable", id))
 		return
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
@@ -244,13 +247,14 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_KEY", "A valid upload intent key is required", id))
 		return
 	}
-	var ownerID, contentType, namespace, intentStatus string
+	var ownerID, contentType, namespace, visibility, intentStatus string
 	var maxBytes int64
 	var expiresAt time.Time
-	err = s.db.QueryRow(r.Context(), `select owner_id, content_type, storage_namespace, max_bytes, status, expires_at
+	err = s.db.QueryRow(r.Context(), `select owner_id, content_type, storage_namespace, visibility, max_bytes, status, expires_at
 		from testagram_media.upload_intents where object_key=$1`, key).
-		Scan(&ownerID, &contentType, &namespace, &maxBytes, &intentStatus, &expiresAt)
-	if err != nil || ownerID != userID || intentStatus != "issued" || !time.Now().Before(expiresAt) || namespace == "legacy-media" || maxBytes < 1 {
+		Scan(&ownerID, &contentType, &namespace, &visibility, &maxBytes, &intentStatus, &expiresAt)
+	if err != nil || ownerID != userID || intentStatus != "issued" || !time.Now().Before(expiresAt) || maxBytes < 1 ||
+		(namespace == "legacy-media" && s.media == nil) || (namespace != "legacy-media" && s.virtualStorage == nil) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
@@ -299,7 +303,12 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorBody("MEDIA_SPOOL_FAILED", "Could not rewind bounded upload", id))
 		return
 	}
-	target, err := s.virtualStorage.UploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
+	var target string
+	if namespace == "legacy-media" {
+		target, err = s.media.PresignObjectPut(userID, key, visibility, contentType, 10*time.Minute, time.Now())
+	} else {
+		target, err = s.virtualStorage.UploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_SIGN_FAILED", "Could not authorize storage upload", id))
 		return
@@ -503,7 +512,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider)
 	if err != nil || intentOwner != userID ||
 		(time.Now().After(intentExpires) && intentStatus != "completed") ||
-		(storageNamespace == "legacy-media" && intentStatus != "issued" && intentStatus != "completed") ||
+		(storageNamespace == "legacy-media" && intentStatus != "issued" && intentStatus != "uploaded" && intentStatus != "completed") ||
 		(storageNamespace != "legacy-media" && intentStatus != "uploaded" && intentStatus != "completed") {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return

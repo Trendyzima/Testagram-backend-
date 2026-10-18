@@ -165,6 +165,13 @@ func (s *Signer) presignObjectPut(userID, key, visibility, contentType string, l
 	return u.String(), nil
 }
 
+// PresignObjectPut creates a short-lived PUT URL for a known, owner-scoped key.
+// The bounded API gateway uses this to proxy legacy-namespace uploads without
+// exposing a direct object-store URL to the browser.
+func (s *Signer) PresignObjectPut(userID, key, visibility, contentType string, lifetime time.Duration, now time.Time) (string, error) {
+	return s.presignObjectPut(userID, key, visibility, contentType, lifetime, now)
+}
+
 // MaxBytesForContentType returns the configured maximum for an accepted MIME type.
 func (s *Signer) MaxBytesForContentType(contentType string) (int64, bool) {
 	kind, ok := allowedTypes[strings.ToLower(strings.TrimSpace(contentType))]
