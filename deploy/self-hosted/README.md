@@ -32,6 +32,19 @@ Open Grafana through the SSH tunnel described above and select **Testagram Opera
 
 CI validates both the Prometheus scrape configuration and alert-rule syntax with `promtool`. That does not prove runtime delivery: run a staging smoke test after changes and confirm expected panels receive samples.
 
+### Diagnosing unified search failures
+
+The API gateway records bounded search-group metrics without putting raw search text or arbitrary capability names into Prometheus labels. The **Testagram Operations** dashboard includes search capability latency/errors plus the upstream p95, upstream 5xx response rate, and timeout rate. This separates a slow client-to-gateway request from time spent waiting on the canonical Supabase/PostgREST endpoint.
+
+If the UI reports `canceling statement due to statement timeout`:
+
+1. Check **Search capability p95 latency** and **Search upstream p95 latency** over the failing time window.
+2. Check **Search upstream 5xx responses/sec** and the Prometheus alert `TestagramSearchUpstreamServerErrors`. A PostgREST SQL statement timeout commonly surfaces as an upstream HTTP 500; the gateway returns 502 to the client but now retains the upstream status in private metrics.
+3. Check API and platform PostgreSQL pool utilization and host CPU/memory/disk. The gateway cannot expose the SQL execution plan or exact query from metrics alone; use database-side slow-query/statement-timeout logs and the request ID to correlate safely.
+4. Never add query text, bearer tokens, user IDs, or arbitrary capability strings as metric labels. Keep those out of logs unless there is an explicit, reviewed privacy-safe diagnostic path.
+
+The upstream timeout counter covers gateway requests that exceed the configured upstream deadline. A database-side statement timeout returned as HTTP 500 is counted separately as an upstream 5xx, not mislabeled as a network timeout.
+
 **Release gate:** CI checks Alertmanager configuration syntax in both webhook-enabled and no-webhook modes. It does not test the real endpoint, message delivery, or on-call response; those require a staging notification test.
 
 ## Staff console
