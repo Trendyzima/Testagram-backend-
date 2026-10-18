@@ -277,6 +277,30 @@ services:
     restart: unless-stopped
     networks: [monitoring]
 
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        /etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager --web.listen-address=:9093
+    environment:
+      ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL:-}
+    volumes:
+      - ./alertmanager/generate-config.sh:/etc/alertmanager/generate-config.sh:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    expose: ["9093"]
+    healthcheck:
+      test: ["CMD", "/bin/alertmanager", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    networks: [monitoring, notifications]
+
   grafana:
     image: grafana/grafana:12.2.0
     environment:
@@ -304,6 +328,7 @@ networks:
     internal: true
   monitoring:
     internal: true
+  notifications:
   control-plane:
     internal: true
 
@@ -315,4 +340,5 @@ volumes:
   caddy-data:
   caddy-config:
   prometheus-data:
+  alertmanager-data:
   grafana-data:
