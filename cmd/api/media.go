@@ -625,6 +625,11 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
 		return
 	}
+	if _, err := s.db.Exec(ctx, `update testagram_media.storage_deletion_jobs set status='completed', completed_at=now(), locked_at=null, updated_at=now()
+		where object_key=$1 and reason='moderation' and status in ('pending','processing','retry')`, body.Key); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantined"}, "error": nil, "request_id": id})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantined"}, "error": nil, "request_id": id})
 }
 
