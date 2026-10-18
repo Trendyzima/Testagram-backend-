@@ -8,7 +8,16 @@ Grafana is provisioned alongside Prometheus. Use the `Testagram Operations` dash
 
 Set `GRAFANA_ADMIN_USER` and a strong `GRAFANA_ADMIN_PASSWORD` in this directory's `.env` file before bringing up the stack. Grafana binds to `127.0.0.1:3000` only; connect from an operator workstation with `ssh -N -L 3000:127.0.0.1:3000 user@your-vps-host`, then browse to `http://127.0.0.1:3000`. Do not publish Grafana to a public interface.
 
-Prometheus alert rules are evaluated, but this Compose stack does not yet configure a notification receiver. Configure and test Alertmanager/email/webhook delivery separately before relying on these alerts for on-call notification.
+Prometheus is wired to the bundled Alertmanager service. To enable outbound notifications, set `ALERTMANAGER_WEBHOOK_URL` in `deploy/self-hosted/.env` to an operator-controlled HTTP(S) webhook endpoint. Keep the URL secret, do not commit it, and verify the receiving system accepts Alertmanager's JSON payload. If the variable is blank, alerts still appear in Prometheus/Alertmanager but **no outbound notifications are sent**. This is intentional fail-closed behavior, not proof of on-call delivery.
+
+After setting the webhook URL, recreate/restart the monitoring services so Alertmanager regenerates its config:
+
+```bash
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml up -d --force-recreate alertmanager prometheus
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml logs --tail=100 alertmanager prometheus
+```
+
+Prometheus and Alertmanager web interfaces are loopback-only; use SSH tunnels if you need to inspect them remotely. Send a controlled test alert to verify the webhook receiver and confirm the receiving system delivers it. Alertmanager being healthy does not prove that a downstream webhook is reachable or that an operator received a message.
 
 ## Verify monitoring is actually working
 
@@ -23,7 +32,7 @@ Open Grafana through the SSH tunnel described above and select **Testagram Opera
 
 CI validates both the Prometheus scrape configuration and alert-rule syntax with `promtool`. That does not prove runtime delivery: run a staging smoke test after changes and confirm expected panels receive samples.
 
-**Important:** Alert rules are evaluated by Prometheus, but this stack still has no configured Alertmanager notification receiver. Until an operator configures and tests an email/webhook receiver, alerts are visible only in Prometheus and are not an on-call notification system.
+**Release gate:** CI checks Alertmanager configuration syntax in both webhook-enabled and no-webhook modes. It does not test the real endpoint, message delivery, or on-call response; those require a staging notification test.
 
 ## Staff console
 
