@@ -86,6 +86,53 @@ type capabilityMetricWriter struct {
 	group string
 }
 
+func unifiedSearchRPCBody(input map[string]any) (map[string]any, error) {
+	q, _ := input["q"].(string)
+	if len(q) > 512 {
+		return nil, errors.New("search query exceeds 512 characters")
+	}
+	kind, _ := input["kind"].(string)
+	if kind == "" {
+		kind = "all"
+	}
+	switch kind {
+	case "all", "people", "posts", "hashtags", "threads", "communities", "fediverse", "media", "latest", "top", "instances":
+	default:
+		return nil, errors.New("unsupported search kind")
+	}
+	readBoundedInt := func(key string, fallback, min, max int) (int, error) {
+		value, ok := input[key]
+		if !ok || value == nil {
+			return fallback, nil
+		}
+		parsed, err := strconv.Atoi(fmt.Sprint(value))
+		if err != nil || parsed < min || parsed > max {
+			return 0, fmt.Errorf("%s must be between %d and %d", key, min, max)
+		}
+		return parsed, nil
+	}
+	limit, err := readBoundedInt("limit", 40, 1, 100)
+	if err != nil {
+		return nil, err
+	}
+	offset, err := readBoundedInt("offset", 0, 0, 100000)
+	if err != nil {
+		return nil, err
+	}
+	sortMode, _ := input["sort"].(string)
+	if sortMode == "" {
+		sortMode = "relevance"
+	}
+	switch sortMode {
+	case "relevance", "latest", "most_liked", "most_viewed":
+	default:
+		return nil, errors.New("unsupported search sort")
+	}
+	return map[string]any{
+		"p_q": q, "p_kind": kind, "p_limit": limit, "p_offset": offset, "p_sort": sortMode,
+	}, nil
+}
+
 func capabilityGroup(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch {
@@ -646,7 +693,19 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	method := http.MethodPost
 	var upstreamBody []byte
 	var err error
-	if body.Capability == "testagram.bookmarks.add" || body.Capability == "testagram.bookmarks.remove" {
+	if body.Capability == "testagram.search.unified" {
+		rpcBody, searchErr := unifiedSearchRPCBody(body.Input)
+		if searchErr != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_SEARCH_INPUT", "Unified search parameters are invalid", id))
+			return
+		}
+		upstreamBody, err = json.Marshal(rpcBody)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorBody("ENCODE_FAILED", "Unable to encode search request", id))
+			return
+		}
+		path = "/rest/v1/rpc/testagram_search_unified"
+	} else if body.Capability == "testagram.bookmarks.add" || body.Capability == "testagram.bookmarks.remove" {
 		postID, _ := body.Input["post_id"].(string)
 		postID = strings.TrimSpace(postID)
 		if postID == "" || len(postID) > 2048 {
