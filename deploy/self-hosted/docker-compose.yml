@@ -287,7 +287,7 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
-        /etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml
+        sh /etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml
         exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager --web.listen-address=:9093
     environment:
       ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL:-}
