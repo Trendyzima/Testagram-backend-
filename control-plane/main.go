@@ -193,8 +193,13 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	if in.Image == "" || strings.ContainsAny(in.Image, " \t\r\n") || !validImageDigest(in.ImageDigest) {
+	if in.Image == "" || strings.ContainsAny(in.Image, " \t\r\n@") || !validImageDigest(in.ImageDigest) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "image and immutable sha256 imageDigest are required"})
+		return
+	}
+	approvedImages := os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")
+	if !allowedWorkloadImage(in.Image+"@"+in.ImageDigest, approvedImages) {
+		reply(w, http.StatusForbidden, map[string]string{"error": "workload image is not in VPS_ALLOWED_WORKLOAD_IMAGES"})
 		return
 	}
 	if in.CPUMillis <= 0 { in.CPUMillis = 250 }
@@ -220,6 +225,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		"coalesce(sum(memory_bytes),0)::bigint memory_reserved,coalesce(sum(storage_bytes),0)::bigint storage_reserved " +
 		"from public.vps_workloads where node_id=n.id and status in ('assigned','running')) r on true " +
 		"where n.status='online' and n.last_seen_at>now()-interval '45 seconds' " +
+		"and n.capabilities @> '{\"workloadExecution\":true}'::jsonb " +
 		"and n.cpu_cores*1000-r.cpu_reserved >= $1 and n.memory_bytes-r.memory_reserved >= $2 " +
 		"and n.free_bytes-r.storage_reserved >= $3 and ($4='' or n.arch=$4) " +
 		"order by (n.free_bytes-r.storage_reserved) desc limit 1 for update of n skip locked"
@@ -349,6 +355,19 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = s.db.Exec(ctx, "update testagram_hosting.deployments set status=$2,updated_at=now() where workload_id=$1::uuid", id, status)
 	reply(w, http.StatusOK, map[string]any{"ok": true, "status": status})
+}
+
+
+func allowedWorkloadImage(image, configured string) bool {
+	if strings.TrimSpace(configured) == "" || strings.TrimSpace(image) == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(configured, ",") {
+		if strings.TrimSpace(candidate) == image {
+			return true
+		}
+	}
+	return false
 }
 
 func validImageDigest(v string) bool { if len(v) != 71 || !strings.HasPrefix(v, "sha256:") { return false }; for _, c := range v[7:] { if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) { return false } }; return true }
