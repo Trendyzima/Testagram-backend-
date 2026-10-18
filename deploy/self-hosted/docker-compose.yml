@@ -77,6 +77,8 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
       VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:?Set VPS_INTERNAL_TOKEN in .env}
       VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:?Set VPS_NODE_BOOTSTRAP_TOKEN in .env}
+      # Empty means the control plane refuses all workload scheduling.
+      VPS_ALLOWED_WORKLOAD_IMAGES: ${VPS_ALLOWED_WORKLOAD_IMAGES:-}
       VPS_CONTROL_PLANE_ADDR: ":8787"
       TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
       TESTAGRAM_DOMAIN: ${TESTAGRAM_DOMAIN:-}
