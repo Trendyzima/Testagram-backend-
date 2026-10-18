@@ -501,7 +501,7 @@ func TestDecodeSingleJSON(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "object", body: `{"capability":"testagram.health.read"}`},
-		{name: "leading and trailing whitespace", body: " \n {"ok":true} \t\n"},
+		{name: "leading and trailing whitespace", body: " \n {\"ok\":true} \t\n"},
 		{name: "second JSON value", body: `{"ok":true} {"admin":true}`, wantErr: true},
 		{name: "trailing garbage", body: `{"ok":true} nope`, wantErr: true},
 		{name: "empty", body: "", wantErr: true},
