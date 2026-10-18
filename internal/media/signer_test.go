@@ -64,7 +64,7 @@ func TestUploadIntentPUTSignatureMatchesCanonicalRequest(t *testing.T) {
 	gotSignature := q.Get("X-Amz-Signature")
 	q.Del("X-Amz-Signature")
 	scope := q.Get("X-Amz-Date")[:8] + "/" + signer.region + "/s3/aws4_request"
-	canonicalHeaders := "content-type:image/webp\n" + "host:" + signer.signingHost
+	canonicalHeaders := "content-type:image/webp\n" + "host:" + signer.signingHost + "\n"
 	canonicalRequest := strings.Join([]string{"PUT", u.EscapedPath(), q.Encode(), canonicalHeaders, "content-type;host", "UNSIGNED-PAYLOAD"}, "\n")
 	requestHash := sha256.Sum256([]byte(canonicalRequest))
 	stringToSign := "AWS4-HMAC-SHA256\n" + q.Get("X-Amz-Date") + "\n" + scope + "\n" + hex.EncodeToString(requestHash[:])
