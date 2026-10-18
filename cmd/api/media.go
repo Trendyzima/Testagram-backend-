@@ -129,7 +129,9 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	storageNamespace, storageProvider := "legacy-media", "default"
 	if s.virtualStorage != nil {
 		storageNamespace = "media-private"
-		if body.Visibility == "public" { storageNamespace = "media-public" }
+		if body.Visibility == "public" {
+			storageNamespace = "media-public"
+		}
 		storageProvider = "s3-default"
 		intent.URL, err = s.virtualStorage.UploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes)
 		if err != nil {
@@ -420,7 +422,9 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		client := s.upstream
-		if client == nil { client = &http.Client{Timeout: 4 * time.Second} }
+		if client == nil {
+			client = &http.Client{Timeout: 4 * time.Second}
+		}
 		resp, requestErr := client.Do(req)
 		if requestErr != nil {
 			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Media storage could not be reached", id))
@@ -1154,7 +1158,9 @@ func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility
 
 func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
 	if storageNamespace != "" && storageNamespace != "legacy-media" {
-		if s.virtualStorage == nil { return errors.New("virtual storage provider is required for this namespace") }
+		if s.virtualStorage == nil {
+			return errors.New("virtual storage provider is required for this namespace")
+		}
 		return s.virtualStorage.Delete(ctx, userID, userID, storageNamespace, key)
 	}
 	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
