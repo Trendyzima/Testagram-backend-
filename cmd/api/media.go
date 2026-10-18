@@ -1410,7 +1410,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	intentRows.Close()
 	for _, item := range intents {
 		tag, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
-			where object_key=$1 and status in ('issued','uploading','cleanup_pending')`, item.key)
+			where object_key=$1 and status in ('issued','uploading','uploaded','cleanup_pending')`, item.key)
 		if err != nil {
 			return err
 		}
