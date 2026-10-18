@@ -88,6 +88,10 @@ jobs:
             echo "A private data/monitoring port is published to the host."
             exit 1
           fi
+          if ! grep -A3 -E 'published: "3000"' /tmp/testagram-compose.yml | grep -q 'host_ip: 127.0.0.1'; then
+            echo "Grafana must bind to loopback only, not a public interface."
+            exit 1
+          fi
       - name: Validate Caddy tenant TLS configuration
         working-directory: deploy/self-hosted
         run: |
@@ -97,6 +101,8 @@ jobs:
             -e MEDIA_DOMAIN=media.testagram.site \
             -e ACME_EMAIL=ops@example.com \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          grep -q '@internal_observability path /metrics /readyz' Caddyfile
+          grep -q 'respond @internal_observability 404' Caddyfile
       - name: Smoke-test fresh PostgreSQL migrations
         working-directory: deploy/self-hosted
         run: |
@@ -117,6 +123,7 @@ jobs:
           grep -q 'REPLACE_WITH_LONG_RANDOM_PLATFORM_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_VPS_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_NODE_BOOTSTRAP_TOKEN' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_GRAFANA_PASSWORD' deploy/self-hosted/.env.example
 
   autonomy-validation:
     name: Autonomous recovery scripts
