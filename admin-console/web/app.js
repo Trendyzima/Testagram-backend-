@@ -2,6 +2,7 @@ const byId = (id) => document.getElementById(id);
 const views = ["login", "signup", "recover", "update-password"];
 let currentUser = null;
 let resetAccessToken = "";
+let overviewRefreshing = false;
 
 function notice(message, kind = "info") {
   const node = byId("notice");
@@ -98,6 +99,8 @@ function metricValue(metrics, key) {
   return item && item.available ? Number(item.value) : null;
 }
 async function refreshOverview() {
+  if (overviewRefreshing) return;
+  overviewRefreshing = true;
   byId("refresh").disabled = true;
   byId("api-status-title").textContent = "Checking service health…";
   try {
@@ -121,12 +124,15 @@ async function refreshOverview() {
     const acquired = metricValue(m, "db_acquired");
     const max = metricValue(m, "db_max");
     setMetric("metric-db", acquired === null || max === null ? "N/A" : Math.round(acquired) + " / " + Math.round(max), acquired !== null && max !== null);
+    const pending = metricValue(m, "queue_pending");
+    setMetric("metric-queue", pending === null ? "N/A" : Math.max(0, Math.round(pending)).toLocaleString(), pending !== null);
     if (data.grafana_url) byId("grafana-link").href = data.grafana_url;
   } catch (error) {
     byId("api-status-title").textContent = "Metrics unavailable";
     byId("api-status-dot").className = "status-indicator bad";
     byId("last-checked").textContent = error.message;
   } finally {
+    overviewRefreshing = false;
     byId("refresh").disabled = false;
   }
 }
@@ -184,7 +190,7 @@ async function signOut() {
 byId("sign-out").addEventListener("click", signOut);
 byId("pending-sign-out").addEventListener("click", signOut);
 byId("refresh").addEventListener("click", refreshOverview);
-byId("invite-form").addEventListener("submit", async (event) => {
+// Refresh live operational signals every 30 seconds only while an approved staff member\n// is viewing the dashboard. Pause polling in hidden tabs to avoid needless load.\nwindow.setInterval(() => {\n  const dashboard = byId("dashboard-screen");\n  if (currentUser && dashboard && !dashboard.classList.contains("hidden") && document.visibilityState === "visible") {\n    refreshOverview();\n  }\n}, 30000);\nbyId("invite-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget; busy(form, true);
   try {
