@@ -195,7 +195,7 @@ func (m *Manager) namespace(name string) (Namespace, error) {
 func tenantPrefix(tenant string) string { return "tenants/" + tenant + "/" }
 
 func validKey(key string) bool {
-	if key == "" || len(key) > 1024 || strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\\x00\r\n") {
+	if key == "" || len(key) > 1024 || strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\x00\r\n") {
 		return false
 	}
 	clean := path.Clean(key)
