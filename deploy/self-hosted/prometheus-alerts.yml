@@ -79,3 +79,45 @@ groups:
         annotations:
           summary: A Testagram service metrics target is down
           description: Check service health and container logs; this alert does not replace readiness probes.
+
+      - alert: TestagramApiHigh5xxRate
+        expr: |
+          (
+            sum(rate(testagram_http_requests_by_route_total{job="testagram-api",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(testagram_http_requests_by_route_total{job="testagram-api"}[5m])), 0.001)
+          ) > 0.05
+          and
+          sum(rate(testagram_http_requests_by_route_total{job="testagram-api"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram API 5xx rate is elevated
+          description: More than 5% of API requests are failing with server errors. Inspect the API logs using the request ID and correlate upstream, database, and platform health.
+
+      - alert: TestagramApiP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(testagram_http_request_duration_seconds_bucket{job="testagram-api"}[5m]))
+          ) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram API p95 latency is high
+          description: API p95 request latency exceeded 1.5 seconds for 10 minutes. Check database pool pressure, upstream timeouts, and host saturation.
+
+      - alert: TestagramDatabasePoolSaturation
+        expr: |
+          testagram_db_pool_acquired_connections{job="testagram-api"}
+          /
+          clamp_min(testagram_db_pool_max_connections{job="testagram-api"}, 1) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram API database pool is near capacity
+          description: More than 85% of the configured PostgreSQL connection pool is acquired for 5 minutes. Inspect slow queries and connection wait time before increasing pool sizes.
+
