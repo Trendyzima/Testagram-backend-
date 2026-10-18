@@ -810,7 +810,7 @@ func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, owne
 	}
 	payload := map[string]any{
 		"owner_id": ownerID, "post_id": nil, "thread_id": nil,
-		"storage_key": key, "bucket": env("MEDIA_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media")),
+		"storage_key": key, "bucket": env("R2_PUBLIC_BUCKET", env("MEDIA_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
 		"original_name": originalName, "mime_type": contentType, "media_type": mediaType,
 		"byte_size": sizeBytes, "status": "uploaded", "media_url": publicURL,
 	}
