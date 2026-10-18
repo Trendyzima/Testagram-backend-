@@ -58,6 +58,16 @@ func NewS3Provider(cfg S3Config) (*S3Provider, error) {
 	return &S3Provider{endpoint:u, signingHost:cfg.SigningHost, accessKey:cfg.AccessKey, secretKey:cfg.SecretKey, region:cfg.Region, client:client}, nil
 }
 
+// do disables redirects so signed query credentials are never forwarded to a
+// redirect target. A redirect is returned to the caller as a non-success status.
+func (p *S3Provider) do(req *http.Request) (*http.Response, error) {
+	client := *p.client
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return client.Do(req)
+}
+
 func (p *S3Provider) PresignPut(ctx context.Context, bucket, key, contentType string, maxBytes int64, ttl time.Duration) (string, error) {
 	if maxBytes < 1 { return "", errors.New("maximum upload size must be positive") }
 	if strings.TrimSpace(contentType) == "" { return "", errors.New("content type is required") }
@@ -71,7 +81,7 @@ func (p *S3Provider) Head(ctx context.Context, bucket, key string) (ObjectInfo, 
 	if err != nil { return ObjectInfo{}, err }
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u, nil)
 	if err != nil { return ObjectInfo{}, err }
-	resp, err := p.client.Do(req)
+	resp, err := p.do(req)
 	if err != nil { return ObjectInfo{}, err }
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound { return ObjectInfo{}, ErrNotFound }
@@ -83,7 +93,7 @@ func (p *S3Provider) Delete(ctx context.Context, bucket, key string) error {
 	if err != nil { return err }
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
 	if err != nil { return err }
-	resp, err := p.client.Do(req)
+	resp, err := p.do(req)
 	if err != nil { return err }
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
@@ -99,7 +109,7 @@ func (p *S3Provider) List(ctx context.Context, bucket, prefix, cursor string, li
 	if err != nil { return nil, "", err }
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil { return nil, "", err }
-	resp, err := p.client.Do(req)
+	resp, err := p.do(req)
 	if err != nil { return nil, "", err }
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, "", fmt.Errorf("S3 LIST failed with status %d", resp.StatusCode) }
