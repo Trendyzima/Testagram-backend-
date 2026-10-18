@@ -103,6 +103,14 @@ Prometheus evaluates the rules in `deploy/self-hosted/prometheus-alerts.yml`, in
 
 Monitoring is not proof of production readiness. Validate the dashboard against a running staging stack, confirm all scrape targets are up, exercise a real search/upload/auth flow, and test an alert end-to-end before any production cutover.
 
+## Staff operations web console
+
+The repository now contains a separate, deployable Go staff console at `admin-console/`. The self-hosted Compose stack routes `https://ops.testagram.site` through Caddy to this console. It provides sign-in, account request, password recovery, server-verified staff roles, an owner-only staff invitation form, and an operational overview backed by internal Prometheus queries and the API readiness endpoint.
+
+Read [the staff-console deployment guide](admin-console/README.md) before enabling it. Configure Supabase Auth and redirect allowlists, generate a unique `ADMIN_SESSION_KEY` with `openssl rand -hex 32`, point DNS at the VPS, and provision the first owner through a trusted Supabase Auth admin operation. Public sign-up never grants staff access. The service-role key is server-only and is optional unless using the console's invite form.
+
+The existing Grafana dashboard remains available at `127.0.0.1:3000` through an SSH tunnel. The new console does not expose Grafana, Prometheus, the private platform API, or the hosting control-plane to the public internet. It is an observability-first staff workspace, not yet a full production control plane for deployments, moderation or destructive operations.
+
 ## Production integration rules
 
 - Inject secrets through deployment secrets; never bake them into images.
