@@ -31,9 +31,10 @@ type privateMediaDownloadRequest struct {
 }
 
 type mediaCompleteRequest struct {
-	Key         string `json:"key"`
-	Visibility  string `json:"visibility"`
-	ContentType string `json:"content_type"`
+	Key          string `json:"key"`
+	Visibility   string `json:"visibility"`
+	ContentType  string `json:"content_type"`
+	ChecksumSHA256 string `json:"checksum_sha256"`
 }
 
 type mediaAsset struct {
@@ -409,6 +410,32 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Virtual storage could not verify the uploaded object; retry completion", id))
+			return
+		}
+		if strings.TrimSpace(body.ChecksumSHA256) == "" {
+			writeJSON(w, http.StatusBadRequest, errorBody("MEDIA_CHECKSUM_REQUIRED", "checksum_sha256 is required and must be the SHA-256 of the uploaded bytes", id))
+			return
+		}
+		if checksumErr := s.virtualStorage.VerifyUploadChecksum(ctx, userID, storageNamespace, body.Key, intentMaxBytes, body.ChecksumSHA256); checksumErr != nil {
+			if errors.Is(checksumErr, virtualstorage.ErrChecksumMismatch) || errors.Is(checksumErr, virtualstorage.ErrTooLarge) {
+				_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents set status='cleanup_pending', expires_at=now(), updated_at=now()
+					where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+				_, _ = s.db.Exec(ctx, `insert into testagram_media.storage_deletion_jobs
+					(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
+					values ($1,$2,$3,$4,$5,'expired_upload','pending') on conflict do nothing`,
+					body.Key, userID, body.Visibility, storageNamespace, storageProvider)
+				writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISMATCH", "Uploaded bytes do not match checksum_sha256; cleanup was queued", id))
+				return
+			}
+			if errors.Is(checksumErr, virtualstorage.ErrNotFound) {
+				writeJSON(w, http.StatusConflict, errorBody("MEDIA_UPLOAD_NOT_FOUND", "Upload is not present in object storage yet", id))
+				return
+			}
+			if errors.Is(checksumErr, virtualstorage.ErrChecksumUnavailable) {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_CHECKSUM_UNAVAILABLE", "The configured storage provider cannot verify SHA-256", id))
+				return
+			}
+			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_CHECKSUM_FAILED", "Could not verify uploaded bytes; retry completion", id))
 			return
 		}
 		actualType, size, etag = info.ContentType, info.Size, info.ETag
