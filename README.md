@@ -14,7 +14,7 @@ The initial Go service provides:
 
 - GET /healthz: process liveness only; does not depend on the database.
 - GET /readyz: readiness check with a bounded PostgreSQL ping; returns 503 if the database is not ready.
-- GET /metrics: minimal Prometheus text-format request counter.
+- GET /metrics: Prometheus metrics for normalized route request rates/latency/status, bounded capability groups, canonical-upstream latency/status/failure outcomes, shared cache/rate-limit behavior, and PostgreSQL pool pressure.
 - POST /api/capability: Testagram capability gateway compatible with the current web client contract.
 - Bounded PostgreSQL connection pool (maximum 20 per instance by default).
 - Request timeouts, header limit, and graceful shutdown.
