@@ -516,4 +516,3 @@ func TestDecodeSingleJSON(t *testing.T) {
 		})
 	}
 }
-
