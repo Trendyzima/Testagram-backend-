@@ -199,6 +199,15 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": intent, "error": nil, "request_id": id})
 }
 
+// copyBoundedUpload enforces a hard byte cap during reads, including
+// requests that omit Content-Length and arrive with chunked transfer encoding.
+func copyBoundedUpload(w http.ResponseWriter, src io.ReadCloser, maxBytes int64, dst io.Writer) (int64, error) {
+	if maxBytes < 1 {
+		return 0, errors.New("upload byte limit must be positive")
+	}
+	return io.Copy(dst, http.MaxBytesReader(w, src, maxBytes))
+}
+
 // mediaUploadGateway enforces the intent's byte limit while bytes arrive at
 // this API, then forwards the bounded spool to the private S3-compatible URL.
 // This is intentionally a gateway path, not a redirect to an unrestricted PUT.
@@ -247,9 +256,6 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_TOO_LARGE", "Upload exceeds the reserved byte limit", id))
 		return
 	}
-	// MaxBytesReader rejects oversized fixed-length and chunked requests while
-	// streaming; the extra byte distinguishes exact-limit uploads from overflow.
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	tmp, err := os.CreateTemp("", "testagram-upload-*")
 	if err != nil {
 		writeJSON(w, http.StatusInsufficientStorage, errorBody("MEDIA_SPOOL_UNAVAILABLE", "Could not allocate bounded upload spool", id))
@@ -258,7 +264,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	defer tmp.Close()
-	n, copyErr := io.Copy(tmp, r.Body)
+	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, tmp)
 	if copyErr != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(copyErr, &maxErr) {
