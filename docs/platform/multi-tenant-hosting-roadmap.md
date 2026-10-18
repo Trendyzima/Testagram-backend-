@@ -15,6 +15,14 @@ This is a staged platform roadmap, not a claim that a public multi-tenant rental
 5. **Platform operations:** per-tenant resource limits, abuse controls, deployment queue, usage dashboards, alerting, support audit, maintenance windows and tenant suspension.
 6. **Billing:** plans and entitlements, a durable usage ledger, verified/idempotent payment webhooks, invoices/credits and a graceful past-due lifecycle. No payment provider is assumed or activated by this migration.
 
+## Existing VPS migration procedure
+
+1. Take a database backup and verify that it can be read before applying schema changes.
+2. Update the checkout to the reviewed release commit and confirm `deploy/self-hosted/.env` is present with protected permissions.
+3. Run `bash deploy/self-hosted/apply-virtual-storage-migration.sh` to apply migration 008, then `bash deploy/self-hosted/apply-saas-migration.sh` to apply migration 009.
+4. Check the migration output and confirm the expected schemas/tables exist. Do not turn on public signup, billing or `VIRTUAL_STORAGE_ENABLED` as a side effect of running these scripts.
+5. Keep a rollback/restore plan available; schema additions are designed to be additive, but recovery must be tested against the actual database and object data.
+
 ## Multi-tenant schema in migration 009
 
 - `tenants` and `tenant_members`: ownership and role membership.
