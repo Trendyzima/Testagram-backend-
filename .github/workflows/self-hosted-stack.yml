@@ -108,6 +108,7 @@ jobs:
             -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             -e API_DOMAIN=api.testagram.site \
             -e MEDIA_DOMAIN=media.testagram.site \
+            -e ADMIN_DOMAIN=ops.example.invalid \
             -e ACME_EMAIL=ops@example.com \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           grep -q '@internal_observability path /metrics /readyz' Caddyfile
