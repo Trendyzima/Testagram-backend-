@@ -174,6 +174,7 @@ func (s *service) metricsText() string {
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_total_connections Total PostgreSQL pool connections.\n# TYPE testagram_db_pool_total_connections gauge\ntestagram_db_pool_total_connections %d\n", stats.TotalConns())
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_idle_connections Idle PostgreSQL pool connections.\n# TYPE testagram_db_pool_idle_connections gauge\ntestagram_db_pool_idle_connections %d\n", stats.IdleConns())
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_acquired_connections Acquired PostgreSQL pool connections.\n# TYPE testagram_db_pool_acquired_connections gauge\ntestagram_db_pool_acquired_connections %d\n", stats.AcquiredConns())
+		fmt.Fprintf(&b, "# HELP testagram_db_pool_max_connections Configured maximum PostgreSQL pool connections.\n# TYPE testagram_db_pool_max_connections gauge\ntestagram_db_pool_max_connections %d\n", stats.MaxConns())
 	}
 	return b.String()
 }
