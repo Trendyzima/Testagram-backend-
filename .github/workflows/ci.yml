@@ -33,9 +33,9 @@ jobs:
         run: go vet ./...
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api
-      - name: Check formatting in API command package
+      - name: Check formatting in API and admin console packages
         run: |
-          unformatted="$(gofmt -l cmd)"
+          unformatted="$(gofmt -l cmd admin-console)"
           if [[ -n "$unformatted" ]]; then
             printf '%s\n' "$unformatted"
             gofmt -d cmd
@@ -101,7 +101,11 @@ jobs:
           VPS_NODE_BOOTSTRAP_TOKEN: ci-only-node-token-not-for-production
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
         run: |
+          ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          ADMIN_PUBLIC_URL=https://ops.example.invalid
+          ADMIN_DOMAIN=ops.example.invalid
           docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
+          docker build -f admin-console/Dockerfile -t testagram-admin-console-ci .
           docker build -f deploy/self-hosted/minio-tools/Dockerfile -t testagram-minio-tools-ci deploy/self-hosted/minio-tools
           python -m json.tool deploy/self-hosted/grafana/dashboards/testagram-operations.json >/dev/null
           docker run --rm -v "$PWD/deploy/self-hosted/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$PWD/deploy/self-hosted/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
