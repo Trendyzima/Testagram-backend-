@@ -484,7 +484,6 @@ func (s *service) bookmarkList(w http.ResponseWriter, r *http.Request, id, baseU
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items}, "error": nil, "request_id": id})
 }
 
-
 // decodeSingleJSON rejects trailing values and non-whitespace bytes after the first
 // JSON value. Accepting concatenated JSON documents can cause different layers to
 // interpret the same request body differently.
