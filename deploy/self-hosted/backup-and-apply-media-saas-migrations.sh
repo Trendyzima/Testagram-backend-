@@ -35,8 +35,8 @@ chmod 600 "$backup" "$checksum"
 echo "Verified backup archive: $backup"
 echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
 echo "Next: migrations 008 and 009 will be applied to the configured database."
-read -r -p "Type APPLY-008-009 to continue: " confirm
-if [[ "$confirm" != "APPLY-008-009" ]]; then
+read -r -p "Type APPLY-008-010 to continue: " confirm
+if [[ "$confirm" != "APPLY-008-010" ]]; then
   echo "Cancelled. Backup retained; no migrations were applied."
   exit 0
 fi
@@ -45,6 +45,9 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/008_virtual_storage_bridge.sql'
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/009_saas_tenant_hosting.sql'
+
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/010_media_upload_claim.sql'
 
 echo "Migrations 008 and 009 applied. Backup: $backup"
 echo "IMPORTANT: this does not enable virtual storage or prove application-level isolation. Run the deployment verification and restore drill before enabling it."
