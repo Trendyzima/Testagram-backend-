@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -31,9 +32,10 @@ type privateMediaDownloadRequest struct {
 }
 
 type mediaCompleteRequest struct {
-	Key         string `json:"key"`
-	Visibility  string `json:"visibility"`
-	ContentType string `json:"content_type"`
+	Key            string `json:"key"`
+	Visibility     string `json:"visibility"`
+	ContentType    string `json:"content_type"`
+	ChecksumSHA256 string `json:"checksum_sha256"`
 }
 
 type mediaAsset struct {
@@ -133,11 +135,14 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 			storageNamespace = "media-public"
 		}
 		storageProvider = "s3-default"
-		intent.URL, err = s.virtualStorage.UploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes)
+		// Keep the provider URL server-side. Clients upload through the bounded
+		// API gateway, which enforces the intent size while bytes are arriving.
+		_, err = s.virtualStorage.UploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_UPLOAD_URL_FAILED", "Could not create a tenant-scoped upload URL", id))
 			return
 		}
+		intent.URL = "/api/media/upload?key=" + url.QueryEscape(intent.Key)
 	}
 	if body.Visibility == "public" {
 		intent.PublicURL = publicMediaURLForStorage(intent.Key, userID, storageNamespace)
@@ -192,6 +197,144 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": intent, "error": nil, "request_id": id})
+}
+
+// copyBoundedUpload enforces a hard byte cap during reads, including
+// requests that omit Content-Length and arrive with chunked transfer encoding.
+func copyBoundedUpload(w http.ResponseWriter, src io.ReadCloser, maxBytes int64, dst io.Writer) (int64, error) {
+	if maxBytes < 1 {
+		return 0, errors.New("upload byte limit must be positive")
+	}
+	return io.Copy(dst, http.MaxBytesReader(w, src, maxBytes))
+}
+
+// mediaUploadGateway enforces the intent's byte limit while bytes arrive at
+// this API, then forwards the bounded spool to the private S3-compatible URL.
+// This is intentionally a gateway path, not a redirect to an unrestricted PUT.
+func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if r.Method == http.MethodOptions {
+		s.mediaPreflight(w, r)
+		return
+	}
+	if r.Method != http.MethodPut {
+		w.Header().Set("Allow", http.MethodPut)
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use PUT to upload media bytes", id))
+		return
+	}
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.virtualStorage == nil || s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "Bounded upload gateway is unavailable", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	if key == "" || len(key) > 1024 || strings.ContainsAny(key, "\\\x00\r\n") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_KEY", "A valid upload intent key is required", id))
+		return
+	}
+	var ownerID, contentType, namespace, intentStatus string
+	var maxBytes int64
+	var expiresAt time.Time
+	err = s.db.QueryRow(r.Context(), `select owner_id, content_type, storage_namespace, max_bytes, status, expires_at
+		from testagram_media.upload_intents where object_key=$1`, key).
+		Scan(&ownerID, &contentType, &namespace, &maxBytes, &intentStatus, &expiresAt)
+	if err != nil || ownerID != userID || intentStatus != "issued" || !time.Now().Before(expiresAt) || namespace == "legacy-media" || maxBytes < 1 {
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
+		return
+	}
+	if got := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])); got != contentType {
+		writeJSON(w, http.StatusUnsupportedMediaType, errorBody("MEDIA_CONTENT_TYPE_MISMATCH", "Content-Type must match the upload intent", id))
+		return
+	}
+	if r.ContentLength > maxBytes {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_TOO_LARGE", "Upload exceeds the reserved byte limit", id))
+		return
+	}
+	// Atomically claim before reading or spooling any request bytes. Only one
+	// concurrent/replayed PUT can transition an intent from issued to uploading.
+	claim, claimErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploading', updated_at=now() where object_key=$1 and owner_id=$2 and status='issued' and expires_at > now() and storage_namespace=$3 and max_bytes=$4", key, userID, namespace, maxBytes)
+	if claimErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_CLAIM_FAILED", "Could not safely claim upload intent", id))
+		return
+	}
+	if claim.RowsAffected() != 1 {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_INTENT_ALREADY_USED", "Upload intent is expired, already in use, or already consumed", id))
+		return
+	}
+	tmp, err := os.CreateTemp("", "testagram-upload-*")
+	if err != nil {
+		writeJSON(w, http.StatusInsufficientStorage, errorBody("MEDIA_SPOOL_UNAVAILABLE", "Could not allocate bounded upload spool", id))
+		return
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	defer tmp.Close()
+	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, tmp)
+	if copyErr != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(copyErr, &maxErr) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_TOO_LARGE", "Upload exceeded the reserved byte limit while streaming", id))
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, errorBody("MEDIA_UPLOAD_INCOMPLETE", "Upload stream did not complete", id))
+		return
+	}
+	if n != maxBytes {
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_SIZE_MISMATCH", "Uploaded byte count must exactly match the reserved size", id))
+		return
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorBody("MEDIA_SPOOL_FAILED", "Could not rewind bounded upload", id))
+		return
+	}
+	target, err := s.virtualStorage.UploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_SIGN_FAILED", "Could not authorize storage upload", id))
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPut, target, tmp)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_REQUEST_FAILED", "Could not prepare storage upload", id))
+		return
+	}
+	req.ContentLength = n
+	req.Header.Set("Content-Type", contentType)
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage could not accept the upload", id))
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage rejected the bounded upload", id))
+		return
+	}
+	completed, stateErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploaded', updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading' and expires_at > now()", key, userID)
+	if stateErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_STATE_FAILED", "Object uploaded but intent state could not be saved; stale-upload cleanup will reconcile it", id))
+		return
+	}
+	if completed.RowsAffected() != 1 {
+		_, _ = s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='cleanup_pending', expires_at=now(), updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading'", key, userID)
+		_, _ = s.db.Exec(r.Context(), "insert into testagram_media.storage_deletion_jobs (object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status) select object_key, owner_id, visibility, storage_namespace, storage_provider, 'expired_upload', 'pending' from testagram_media.upload_intents where object_key=$1 and owner_id=$2 on conflict do nothing", key, userID)
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_INTENT_EXPIRED", "Upload completed after its intent expired; cleanup was queued", id))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +502,9 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
 		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider)
 	if err != nil || intentOwner != userID ||
-		(time.Now().After(intentExpires) && intentStatus != "completed") || (intentStatus != "issued" && intentStatus != "completed") {
+		(time.Now().After(intentExpires) && intentStatus != "completed") ||
+		(storageNamespace == "legacy-media" && intentStatus != "issued" && intentStatus != "completed") ||
+		(storageNamespace != "legacy-media" && intentStatus != "uploaded" && intentStatus != "completed") {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
@@ -400,7 +545,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 			}
 			if errors.Is(verifyErr, virtualstorage.ErrObjectMismatch) || errors.Is(verifyErr, virtualstorage.ErrTooLarge) || errors.Is(verifyErr, virtualstorage.ErrForbidden) {
 				_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents set status='cleanup_pending', expires_at=now(), updated_at=now()
-					where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+					where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
 				_, _ = s.db.Exec(ctx, `insert into testagram_media.storage_deletion_jobs
 					(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
 					values ($1,$2,$3,$4,$5,'expired_upload','pending') on conflict do nothing`,
@@ -409,6 +554,32 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Virtual storage could not verify the uploaded object; retry completion", id))
+			return
+		}
+		if strings.TrimSpace(body.ChecksumSHA256) == "" {
+			writeJSON(w, http.StatusBadRequest, errorBody("MEDIA_CHECKSUM_REQUIRED", "checksum_sha256 is required and must be the SHA-256 of the uploaded bytes", id))
+			return
+		}
+		if checksumErr := s.virtualStorage.VerifyUploadChecksum(ctx, userID, storageNamespace, body.Key, intentMaxBytes, body.ChecksumSHA256); checksumErr != nil {
+			if errors.Is(checksumErr, virtualstorage.ErrChecksumMismatch) || errors.Is(checksumErr, virtualstorage.ErrTooLarge) {
+				_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents set status='cleanup_pending', expires_at=now(), updated_at=now()
+					where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
+				_, _ = s.db.Exec(ctx, `insert into testagram_media.storage_deletion_jobs
+					(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
+					values ($1,$2,$3,$4,$5,'expired_upload','pending') on conflict do nothing`,
+					body.Key, userID, body.Visibility, storageNamespace, storageProvider)
+				writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISMATCH", "Uploaded bytes do not match checksum_sha256; cleanup was queued", id))
+				return
+			}
+			if errors.Is(checksumErr, virtualstorage.ErrNotFound) {
+				writeJSON(w, http.StatusConflict, errorBody("MEDIA_UPLOAD_NOT_FOUND", "Upload is not present in object storage yet", id))
+				return
+			}
+			if errors.Is(checksumErr, virtualstorage.ErrChecksumUnavailable) {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_CHECKSUM_UNAVAILABLE", "The configured storage provider cannot verify SHA-256", id))
+				return
+			}
+			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_CHECKSUM_FAILED", "Could not verify uploaded bytes; retry completion", id))
 			return
 		}
 		actualType, size, etag = info.ContentType, info.Size, info.ETag
@@ -450,7 +621,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	if actualType != body.ContentType || size < 1 || size > intentMaxBytes || size > maxBytes {
 		_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
 			set status='cleanup_pending', expires_at=now(), updated_at=now()
-			where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+			where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
 		if storageNamespace == "legacy-media" || s.virtualStorage == nil {
 			if deleteErr := s.deleteMediaObject(r.Context(), userID, body.Key, body.Visibility); deleteErr == nil {
 				_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
@@ -496,7 +667,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err := s.db.Exec(ctx, `update testagram_media.upload_intents set status='completed', updated_at=now()
-		where object_key=$1 and owner_id=$2 and status in ('issued','completed')`, body.Key, userID); err != nil {
+		where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','completed')`, body.Key, userID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Media was verified but upload completion state could not be saved", id))
 		return
 	}
@@ -1224,7 +1395,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 
 	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace
 		from testagram_media.upload_intents
-		where expires_at <= now() and status in ('issued','cleanup_pending')
+		where (expires_at <= now() and status in ('issued','uploaded','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '2 hours')
 		order by expires_at asc limit 50`)
 	if err != nil {
 		return err
@@ -1245,7 +1416,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	intentRows.Close()
 	for _, item := range intents {
 		tag, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
-			where object_key=$1 and status in ('issued','cleanup_pending')`, item.key)
+			where object_key=$1 and status in ('issued','uploading','uploaded','cleanup_pending')`, item.key)
 		if err != nil {
 			return err
 		}
