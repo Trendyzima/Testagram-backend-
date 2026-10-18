@@ -516,3 +516,32 @@ func TestDecodeSingleJSON(t *testing.T) {
 		})
 	}
 }
+
+
+func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
+	s := &service{}
+	handler := s.routes()
+
+	for _, path := range []string{"/readyz", "/unknown/private-user-id"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	r = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	body := w.Body.String()
+	for _, want := range []string{
+		"testagram_http_requests_by_route_total{method=\"GET\",route=\"/readyz\",status=\"503\"} 1",
+		"testagram_http_request_duration_seconds_bucket{method=\"GET\",route=\"/readyz\",le=\"+Inf\"} 1",
+		"testagram_http_request_duration_seconds_count{method=\"GET\",route=\"/readyz\"} 1",
+		"route=\"unmatched\",status=\"404\"",
+	} {
+		if !strings.Contains(body, want) { t.Errorf("metrics missing %q in:\\n%s", want, body) }
+	}
+	if strings.Contains(body, "/unknown/private-user-id") { t.Fatal("metrics leaked raw request path into a label") }
+}
