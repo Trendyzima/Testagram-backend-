@@ -73,6 +73,49 @@ func (p *S3Provider) PresignPut(ctx context.Context, bucket, key, contentType st
 	if strings.TrimSpace(contentType) == "" { return "", errors.New("content type is required") }
 	return p.presign(ctx, http.MethodPut, bucket, key, url.Values{}, map[string]string{"content-type":strings.ToLower(strings.TrimSpace(contentType))}, ttl)
 }
+// SHA256 streams the stored object through a bounded reader. It deliberately
+// does not use ETag: multipart uploads and provider implementations do not
+// guarantee that an ETag is a content checksum.
+func (p *S3Provider) SHA256(ctx context.Context, bucket, key string, maxBytes int64) (string, error) {
+	if maxBytes < 1 {
+		return "", errors.New("maximum checksum size must be positive")
+	}
+	u, err := p.presign(ctx, http.MethodGet, bucket, key, url.Values{}, nil, time.Minute)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := p.do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", ErrNotFound
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("S3 GET for checksum failed with status %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxBytes {
+		return "", ErrTooLarge
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if n > maxBytes {
+		return "", ErrTooLarge
+	}
+	if resp.ContentLength >= 0 && n != resp.ContentLength {
+		return "", errors.New("S3 object body length differs from Content-Length")
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 func (p *S3Provider) PresignGet(ctx context.Context, bucket, key string, ttl time.Duration) (string, error) {
 	return p.presign(ctx, http.MethodGet, bucket, key, url.Values{}, nil, ttl)
 }
