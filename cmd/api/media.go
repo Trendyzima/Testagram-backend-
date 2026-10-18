@@ -124,6 +124,17 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
 		return
 	}
+	storageNamespace, storageProvider := "legacy-media", "default"
+	if s.virtualStorage != nil {
+		storageNamespace = "media-private"
+		if body.Visibility == "public" { storageNamespace = "media-public" }
+		storageProvider = "s3-default"
+		intent.URL, err = s.virtualStorage.UploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_UPLOAD_URL_FAILED", "Could not create a tenant-scoped upload URL", id))
+			return
+		}
+	}
 	if body.Visibility == "public" {
 		intent.PublicURL = publicMediaURL(intent.Key)
 		if intent.PublicURL == "" {
@@ -165,9 +176,9 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = tx.Exec(r.Context(), `insert into testagram_media.upload_intents
-		(object_key, owner_id, visibility, content_type, original_name, max_bytes, expires_at, status)
-		values ($1,$2,$3,$4,$5,$6,$7,'issued')`,
-		intent.Key, userID, body.Visibility, body.ContentType, body.Name, body.SizeBytes, intent.ExpiresAt)
+		(object_key, owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider)
+		values ($1,$2,$3,$4,$5,$6,$7,'issued',$8,$9)`,
+		intent.Key, userID, body.Visibility, body.ContentType, body.Name, body.SizeBytes, intent.ExpiresAt, storageNamespace, storageProvider)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_PERSIST_FAILED", "Could not safely register the upload intent", id))
 		return
@@ -207,8 +218,8 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
 		return
 	}
-	var visibility, assetStatus string
-	if err := s.db.QueryRow(r.Context(), `select visibility, status from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus); err != nil {
+	var visibility, assetStatus, storageNamespace string
+	if err := s.db.QueryRow(r.Context(), `select visibility, status, storage_namespace from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus, &storageNamespace); err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
 	}
@@ -216,7 +227,12 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
 	}
-	signedURL, err := s.media.PresignPrivateDownload(userID, body.Key, 5*time.Minute, time.Now())
+	var signedURL string
+	if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+		signedURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
+	} else {
+		signedURL, err = s.media.PresignPrivateDownload(userID, body.Key, 5*time.Minute, time.Now())
+	}
 	if err != nil {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_ACCESS_DENIED", "This private media object is not available to this account", id))
 		return
