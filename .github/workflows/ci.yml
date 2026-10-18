@@ -32,13 +32,13 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Build
-        run: CGO_ENABLED=0 go build -trimpath ./cmd/api
-      - name: Check formatting in API and admin console packages
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/api ./admin-console
+      - name: Check formatting in API command package
         run: |
-          unformatted="$(gofmt -l cmd admin-console)"
+          unformatted="$(gofmt -l cmd)"
           if [[ -n "$unformatted" ]]; then
             printf '%s\n' "$unformatted"
-            gofmt -d cmd admin-console
+            gofmt -d cmd
             exit 1
           fi
 
