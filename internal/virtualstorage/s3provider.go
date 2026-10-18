@@ -179,7 +179,7 @@ func awsCanonicalQuery(q url.Values) string {
 	}
 	return strings.Join(parts, "&")
 }
-func awsEscape(s string) string { return strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(url.QueryEscape(s), "+", "%20"), "%7E", "~"), "%2A", "*") }
+func awsEscape(s string) string { return strings.ReplaceAll(strings.ReplaceAll(url.QueryEscape(s), "+", "%20"), "%7E", "~") }
 func escapeS3Path(p string) string {
 	parts := strings.Split(p, "/")
 	for i := range parts { parts[i] = url.PathEscape(parts[i]) }
