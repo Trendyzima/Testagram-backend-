@@ -316,7 +316,9 @@ func (s *service) metricsText() string {
 	for _, group := range upstreamGroups {
 		m := s.upstreamMetrics[group]
 		outcomes := make([]string, 0, len(m.outcomes))
-		for outcome := range m.outcomes { outcomes = append(outcomes, outcome) }
+		for outcome := range m.outcomes {
+			outcomes = append(outcomes, outcome)
+		}
 		sort.Strings(outcomes)
 		for _, outcome := range outcomes {
 			fmt.Fprintf(&b, "testagram_upstream_requests_total{group=%q,outcome=%q} %d\n", group, outcome, m.outcomes[outcome])
