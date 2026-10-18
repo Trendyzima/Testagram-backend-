@@ -121,7 +121,7 @@ func (s *service) performStorageDeletion(ctx context.Context, job storageDeletio
 	if err := s.deleteMediaObjectWithNamespace(ctx, job.ownerID, job.key, job.visibility, job.namespace); err != nil {
 		return err
 	}
-	if job.reason == "user_delete" {
+	if job.reason == "user_delete" || job.reason == "moderation" {
 		var externalID string
 		err := s.db.QueryRow(ctx, `select coalesce(external_media_id::text,'')
 			from testagram_media.assets where object_key=$1 and owner_id=$2`, job.key, job.ownerID).Scan(&externalID)
@@ -137,9 +137,20 @@ func (s *service) performStorageDeletion(ctx context.Context, job storageDeletio
 		if err := s.deleteProductMedia(ctx, externalID); err != nil {
 			return err
 		}
+		finalStatus := "deleted"
+		allowedStatus := "deletion_pending"
+		if job.reason == "moderation" {
+			finalStatus, allowedStatus = "quarantined", "quarantine_pending"
+		}
 		if _, err := s.db.Exec(ctx, `update testagram_media.assets
-			set status='deleted', updated_at=now()
-			where object_key=$1 and owner_id=$2 and status='deletion_pending'`, job.key, job.ownerID); err != nil {
+			set status=$3, updated_at=now()
+			where object_key=$1 and owner_id=$2 and status=$4`, job.key, job.ownerID, finalStatus, allowedStatus); err != nil {
+			return err
+		}
+	}
+	if job.reason == "expired_upload" {
+		if _, err := s.db.Exec(ctx, `update testagram_media.upload_intents set status='expired', updated_at=now()
+			where object_key=$1 and owner_id=$2 and status='cleanup_pending'`, job.key, job.ownerID); err != nil {
 			return err
 		}
 	}
