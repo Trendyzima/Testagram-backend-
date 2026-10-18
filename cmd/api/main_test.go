@@ -608,7 +608,6 @@ func TestCapabilityGroupLabelsAreBounded(t *testing.T) {
 	}
 }
 
-
 func TestMediaUploadGatewayPreflightAllowsConfiguredOrigin(t *testing.T) {
 	r := httptest.NewRequest(http.MethodOptions, "/api/media/upload?key=users/user-123/0123456789abcdef0123456789abcdef", nil)
 	r.Header.Set("Origin", "https://testagram.site")
