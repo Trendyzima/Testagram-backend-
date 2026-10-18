@@ -23,6 +23,11 @@ The initial Go service provides:
 
 This is a foundation, not a claim of production readiness or a 5-million-concurrent-user capacity result. Product endpoints should be added only after the existing Testagram contracts and database schema have been audited.
 
+## Cross-repository integration
+
+- [XClone + Server E hybrid integration contract](docs/server-e-hybrid-integration.md): staged API/media routing while preserving Cloudflare, Firebase, Redis and Upstash.
+- [VPS data-centre integration contract](docs/vps-data-centre-integration.md): workload policy, release gates and repository ownership.
+
 ## Testagram compatibility gateway
 
 `POST /api/capability` implements the same capability-dispatch envelope used by the existing Testagram web client. It forwards the user's Bearer JWT and the publishable API key to the canonical Supabase `capability_dispatch_v2` RPC; it does not use a service-role key to bypass row-level security. It also preserves the bookmark RPC compatibility paths, applies strict origin allow-listing, caps request/response bodies, applies an 8-second upstream deadline, and returns request IDs on gateway errors. `GET /healthz`, `GET /readyz`, and `GET /metrics` remain available.
