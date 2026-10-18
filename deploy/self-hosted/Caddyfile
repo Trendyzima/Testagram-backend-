@@ -30,6 +30,17 @@
   reverse_proxy media-cache:8081
 }
 
+{$ADMIN_DOMAIN} {
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    -Server
+  }
+  reverse_proxy admin-console:8090
+}
+
 # Tenant subdomains fall through to the private hosting control plane.
 # On-demand TLS is guarded by the control-plane callback, which only permits
 # DNS-verified and activated hostnames. Named API/media sites above stay specific.

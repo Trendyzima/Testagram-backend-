@@ -183,6 +183,38 @@ services:
     restart: unless-stopped
     networks: [edge, data, monitoring]
 
+  admin-console:
+    build:
+      context: ../..
+      dockerfile: admin-console/Dockerfile
+    environment:
+      ADMIN_ADDR: ":8090"
+      ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:-https://ops.testagram.site}
+      ADMIN_SESSION_KEY: ${ADMIN_SESSION_KEY:?Set ADMIN_SESSION_KEY to 64 hex characters in .env}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      PROMETHEUS_URL: http://prometheus:9090
+      API_HEALTH_URL: http://api:8080/readyz
+      GRAFANA_URL: ${GRAFANA_URL:-http://127.0.0.1:3000}
+    depends_on:
+      api:
+        condition: service_started
+      prometheus:
+        condition: service_started
+    expose: ["8090"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [edge, monitoring]
+
   media-cache:
     image: nginx:1.28-alpine
     volumes:
@@ -203,6 +235,7 @@ services:
     environment:
       API_DOMAIN: ${API_DOMAIN:-api.testagram.site}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.testagram.site}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-ops.testagram.site}
       ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
     ports:
       - "80:80"
@@ -212,7 +245,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [api, media-cache, control-plane]
+    depends_on: [api, media-cache, control-plane, admin-console]
     restart: unless-stopped
     networks: [edge, control-plane]
 
