@@ -550,7 +550,6 @@ func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 	}
 }
 
-
 func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) {
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
 
@@ -591,12 +590,12 @@ func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) 
 
 func TestCapabilityGroupLabelsAreBounded(t *testing.T) {
 	cases := map[string]string{
-		"testagram.search.unified": "search",
-		"testagram.feed.home": "feed",
-		"testagram.media.upload": "media",
-		"testagram.auth.session": "auth",
-		"testagram.notifications.list": "notifications",
-		"testagram.federation.inbox": "federation",
+		"testagram.search.unified":           "search",
+		"testagram.feed.home":                "feed",
+		"testagram.media.upload":             "media",
+		"testagram.auth.session":             "auth",
+		"testagram.notifications.list":       "notifications",
+		"testagram.federation.inbox":         "federation",
 		"arbitrary-user-supplied-capability": "other",
 	}
 	for input, want := range cases {
