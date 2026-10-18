@@ -173,6 +173,16 @@ func upstreamFailureOutcome(requestErr, contextErr error) string {
 	return "transport_error"
 }
 
+func upstreamBodyFailureOutcome(readErr, contextErr error, oversized bool) string {
+	if errors.Is(readErr, context.DeadlineExceeded) || errors.Is(contextErr, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	if readErr != nil || oversized {
+		return "invalid_response"
+	}
+	return "success"
+}
+
 func (s *service) recordUpstream(group, outcome string, status int, elapsed time.Duration) {
 	switch group {
 	case "search", "feed", "media", "auth", "notifications", "federation":
@@ -710,8 +720,12 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	upstreamStatus = upstreamResponse.StatusCode
 	raw, err := io.ReadAll(io.LimitReader(upstreamResponse.Body, maxUpstreamBody+1))
 	if err != nil || len(raw) > maxUpstreamBody {
-		upstreamOutcome = "invalid_response"
-		writeJSON(w, http.StatusBadGateway, errorBody("UPSTREAM_RESPONSE_INVALID", "Capability backend returned an invalid response", id))
+		upstreamOutcome = upstreamBodyFailureOutcome(err, ctx.Err(), len(raw) > maxUpstreamBody)
+		if upstreamOutcome == "timeout" {
+			writeJSON(w, http.StatusGatewayTimeout, errorBody("UPSTREAM_TIMEOUT", "Capability backend took too long to respond", id))
+		} else {
+			writeJSON(w, http.StatusBadGateway, errorBody("UPSTREAM_RESPONSE_INVALID", "Capability backend returned an invalid response", id))
+		}
 		return
 	}
 	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
