@@ -72,13 +72,13 @@ groups:
           summary: Testagram host metrics are unavailable
           description: Prometheus cannot scrape node-exporter; host capacity alerts may be stale.
       - alert: TestagramServiceMetricsTargetDown
-        expr: up{job=~"testagram-api|testagram-platform"} == 0
+        expr: up{job=~"testagram-api|testagram-platform|testagram-grafana"} == 0
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: A Testagram service metrics target is down
-          description: Check service health and container logs; this alert does not replace readiness probes.
+          description: Check service health, dashboard availability and container logs; this alert does not replace readiness probes.
 
       - alert: TestagramApiHigh5xxRate
         expr: |
