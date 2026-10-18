@@ -97,6 +97,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
+	mux.HandleFunc("OPTIONS /api/media/list", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/list", s.mediaList)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
@@ -542,24 +544,30 @@ func main() {
 		log.Printf("internal platform integration disabled: PLATFORM_URL and PLATFORM_INTERNAL_TOKEN must both be configured")
 	}
 	var mediaSigner *media.Signer
-	mediaAccessKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_ACCESS_KEY"))
-	mediaSecretKey := strings.TrimSpace(os.Getenv("MINIO_MEDIA_SECRET_KEY"))
+	// MEDIA_S3_* is the documented deployment contract. R2_* and legacy MINIO_*
+	// variables remain accepted to avoid breaking existing self-hosted installs.
+	mediaAccessKey := env("MEDIA_S3_ACCESS_KEY", env("R2_ACCESS_KEY_ID", env("MINIO_MEDIA_ACCESS_KEY", "")))
+	mediaSecretKey := env("MEDIA_S3_SECRET_KEY", env("R2_SECRET_ACCESS_KEY", env("MINIO_MEDIA_SECRET_KEY", "")))
 	if mediaAccessKey != "" || mediaSecretKey != "" {
 		if mediaAccessKey == "" || mediaSecretKey == "" {
-			log.Fatal("MINIO_MEDIA_ACCESS_KEY and MINIO_MEDIA_SECRET_KEY must be configured together")
+			log.Fatal("MEDIA_S3_ACCESS_KEY and MEDIA_S3_SECRET_KEY must be configured together")
+		}
+		endpoint := env("MEDIA_S3_ENDPOINT", env("R2_S3_ENDPOINT", env("MINIO_PUBLIC_ENDPOINT", "")))
+		if endpoint == "" {
+			log.Fatal("MEDIA_S3_ENDPOINT must be configured when media storage credentials are set")
 		}
 		mediaSigner, err = media.NewSigner(media.Config{
-			Endpoint:    env("MINIO_PUBLIC_ENDPOINT", "https://"+env("MEDIA_DOMAIN", "media.testagram.site")),
-			SigningHost: env("MINIO_SIGNING_HOST", "object-storage:9000"),
+			Endpoint:    endpoint,
+			SigningHost: env("MEDIA_S3_SIGNING_HOST", env("R2_SIGNING_HOST", env("MINIO_SIGNING_HOST", ""))),
 			AccessKey:   mediaAccessKey, SecretKey: mediaSecretKey,
-			Region:        env("MINIO_REGION", "us-east-1"),
-			PrivateBucket: env("MINIO_BUCKET", "testagram-private-media"),
-			PublicBucket:  env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
+			Region:        env("MEDIA_S3_REGION", env("R2_REGION", env("MINIO_REGION", "auto"))),
+			PrivateBucket: env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))),
+			PublicBucket:  env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
 		})
 		if err != nil {
-			log.Fatalf("configure MinIO media signer: %v", err)
+			log.Fatalf("configure S3-compatible media signer: %v", err)
 		}
-		log.Printf("MinIO media upload and private download signing enabled")
+		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
 	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner}
 	server := &http.Server{

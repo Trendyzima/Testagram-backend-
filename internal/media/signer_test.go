@@ -1,9 +1,8 @@
 package media
 
 import (
-	"encoding/base64"
+	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
@@ -23,51 +22,64 @@ func testSigner(t *testing.T, endpoint string) *Signer {
 	return signer
 }
 
-func TestUploadIntentSignsOwnerScopedSizeLimitedPolicy(t *testing.T) {
+func TestUploadIntentSignsOwnerScopedPUTURL(t *testing.T) {
 	signer := testSigner(t, "https://media.example.test")
 	now := time.Date(2026, 10, 17, 12, 30, 0, 0, time.UTC)
 	intent, err := signer.CreateUploadIntent("user-123", "image/webp", "private", 1024, now)
 	if err != nil { t.Fatal(err) }
-	if intent.Method != "POST" || intent.Bucket != "private-media" || intent.PublicURL != "" {
+	if intent.Method != "PUT" || intent.Bucket != "private-media" || intent.PublicURL != "" {
 		t.Fatalf("unexpected private upload intent: %+v", intent)
 	}
-	if _, exists := intent.Fields["bucket"]; exists {
-		t.Fatal("bucket must be selected by the POST action URL, not an extra form field")
+	if len(intent.Fields) != 0 {
+		t.Fatalf("PUT upload must not require multipart form fields: %#v", intent.Fields)
 	}
 	if !strings.HasPrefix(intent.Key, "users/user-123/") || !objectKeyPattern.MatchString(intent.Key) {
 		t.Fatalf("object key is not owner scoped: %q", intent.Key)
 	}
-	if !strings.HasPrefix(intent.URL, "https://media.example.test/private-media") {
+	if !strings.HasPrefix(intent.URL, "https://media.example.test/private-media/") {
 		t.Fatalf("unexpected upload URL: %q", intent.URL)
 	}
-	if strings.Contains(intent.URL, "test-secret-never-returned") || strings.Contains(strings.Join(mapValues(intent.Fields), ","), "test-secret-never-returned") {
+	if strings.Contains(intent.URL, "test-secret-never-returned") {
 		t.Fatal("secret key leaked into upload intent")
 	}
-	policyBytes, err := base64.StdEncoding.DecodeString(intent.Fields["policy"])
+	u, err := url.Parse(intent.URL)
 	if err != nil { t.Fatal(err) }
-	var policy struct {
-		Expiration string `json:"expiration"`
-		Conditions []any `json:"conditions"`
+	q := u.Query()
+	if q.Get("X-Amz-SignedHeaders") != "content-type;host" || len(q.Get("X-Amz-Signature")) != 64 {
+		t.Fatalf("upload URL is not signed for Content-Type: %v", q)
 	}
-	if err := json.Unmarshal(policyBytes, &policy); err != nil { t.Fatal(err) }
-	if policy.Expiration == "" || len(policy.Conditions) < 7 {
-		t.Fatalf("policy missing constraints: %+v", policy)
-	}
-	expected := hex.EncodeToString(hmacSHA256(signingKey(signer.secretKey, now.Format("20060102"), signer.region), []byte(intent.Fields["policy"])))
-	if intent.Fields["x-amz-signature"] != expected {
-		t.Fatalf("policy signature mismatch: got %q want %q", intent.Fields["x-amz-signature"], expected)
+	if q.Get("X-Amz-Expires") != "600" {
+		t.Fatalf("unexpected upload expiry: %v", q)
 	}
 }
 
-func TestPublicUploadIntentOnlyReturnsPublicURLForPublicVisibility(t *testing.T) {
+func TestUploadIntentPUTSignatureMatchesCanonicalRequest(t *testing.T) {
+	signer := testSigner(t, "https://media.example.test")
+	now := time.Date(2026, 10, 17, 12, 30, 0, 0, time.UTC)
+	intent, err := signer.CreateUploadIntent("user-123", "image/webp", "private", 1024, now)
+	if err != nil { t.Fatal(err) }
+	u, err := url.Parse(intent.URL)
+	if err != nil { t.Fatal(err) }
+	q := u.Query()
+	gotSignature := q.Get("X-Amz-Signature")
+	q.Del("X-Amz-Signature")
+	scope := q.Get("X-Amz-Date")[:8] + "/" + signer.region + "/s3/aws4_request"
+	canonicalHeaders := "content-type:image/webp\n" + "host:" + signer.signingHost + "\n"
+	canonicalRequest := strings.Join([]string{"PUT", u.EscapedPath(), q.Encode(), canonicalHeaders, "content-type;host", "UNSIGNED-PAYLOAD"}, "\n")
+	requestHash := sha256.Sum256([]byte(canonicalRequest))
+	stringToSign := "AWS4-HMAC-SHA256\n" + q.Get("X-Amz-Date") + "\n" + scope + "\n" + hex.EncodeToString(requestHash[:])
+	wantSignature := hex.EncodeToString(hmacSHA256(signingKey(signer.secretKey, q.Get("X-Amz-Date")[:8], signer.region), []byte(stringToSign)))
+	if gotSignature != wantSignature {
+		t.Fatalf("PUT signature mismatch: got %q want %q", gotSignature, wantSignature)
+	}
+}
+
+func TestPublicUploadIntentKeepsCDNURLOutOfStorageSigner(t *testing.T) {
 	signer := testSigner(t, "https://media.example.test")
 	intent, err := signer.CreateUploadIntent("user-123", "video/mp4", "public", 1<<20, time.Now())
 	if err != nil { t.Fatal(err) }
-	if intent.Bucket != "public-media" || intent.PublicURL == "" {
-		t.Fatalf("public URL missing: %+v", intent)
-	}
-	if !strings.Contains(intent.PublicURL, "/public-media/users/user-123/") {
-		t.Fatalf("public URL is not owner-scoped: %q", intent.PublicURL)
+	if intent.Bucket != "public-media" || intent.PublicURL != "" {
+		t.Fatalf("signer must return storage coordinates only; CDN URL is composed by API: %+v", intent)
 	}
 }
 

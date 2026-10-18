@@ -43,6 +43,8 @@ type mediaAsset struct {
 	ETag         string    `json:"etag,omitempty"`
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
+	PublicURL    string    `json:"public_url,omitempty"`
+	MediaType    string    `json:"media_type,omitempty"`
 }
 
 func sanitizeOriginalName(name string) (string, error) {
@@ -121,6 +123,13 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
 		return
+	}
+	if body.Visibility == "public" {
+		intent.PublicURL = publicMediaURL(intent.Key)
+		if intent.PublicURL == "" {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
+			return
+		}
 	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
@@ -215,6 +224,76 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"url": signedURL, "expires_in_seconds": 300}, "error": nil, "request_id": id})
 }
 
+// mediaList returns only ready assets owned by the authenticated user. Private
+// items receive short-lived, owner-scoped URLs; raw private object URLs are never
+// exposed by the public CDN contract.
+func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.media == nil || s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media storage or metadata database is unavailable", id))
+		return
+	}
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
+	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at
+		from testagram_media.assets where owner_id=$1 and status='ready'
+		order by created_at desc limit 100`, userID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not list media assets", id))
+		return
+	}
+	defer rows.Close()
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		var key, visibility, contentType, originalName string
+		var sizeBytes int64
+		var createdAt time.Time
+		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not read media assets", id))
+			return
+		}
+		mediaURL := ""
+		if visibility == "public" {
+			mediaURL = publicMediaURL(key)
+		} else if visibility == "private" {
+			mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_URL_FAILED", "Could not create private media URL", id))
+				return
+			}
+		} else {
+			continue
+		}
+		mediaType := "file"
+		if strings.HasPrefix(contentType, "image/") {
+			mediaType = "image"
+		} else if strings.HasPrefix(contentType, "video/") {
+			mediaType = "video"
+		}
+		items = append(items, map[string]any{
+			"id": key, "name": originalName, "path": key, "url": mediaURL,
+			"type": mediaType, "size": sizeBytes, "updatedAt": createdAt.UTC().Format(time.RFC3339),
+			"visibility": visibility, "content_type": contentType,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not list media assets", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items}, "error": nil, "request_id": id})
+}
+
 // mediaComplete verifies the actual object through a signed HEAD request before
 // persisting metadata. Client-supplied size and ETag are deliberately not trusted.
 func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
@@ -238,24 +317,34 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	var body mediaCompleteRequest
 	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key, visibility and content type are required", id))
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
 		return
 	}
-	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
-	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
-		return
-	}
-	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
 	var intentOwner, intentVisibility, intentType, intentName, intentStatus string
 	var intentMaxBytes int64
 	var intentExpires time.Time
 	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
 		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus)
-	if err != nil || intentOwner != userID || intentVisibility != body.Visibility || intentType != body.ContentType ||
+	if err != nil || intentOwner != userID ||
 		(time.Now().After(intentExpires) && intentStatus != "completed") || (intentStatus != "issued" && intentStatus != "completed") {
-		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not match this account and object", id))
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
+		return
+	}
+	if strings.TrimSpace(body.Visibility) == "" {
+		body.Visibility = intentVisibility
+	}
+	if strings.TrimSpace(body.ContentType) == "" {
+		body.ContentType = intentType
+	}
+	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+	if intentVisibility != body.Visibility || intentType != body.ContentType {
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
+		return
+	}
+	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
+	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
 	}
 	if intentMaxBytes < 1 || intentMaxBytes > maxBytes {
@@ -295,7 +384,16 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	actualType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
 	size := resp.ContentLength
 	if actualType != body.ContentType || size < 1 || size > intentMaxBytes || size > maxBytes {
-		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_OBJECT_INVALID", "Uploaded object type or size does not satisfy media policy", id))
+		// Make invalid objects eligible for the janitor before attempting immediate
+		// deletion. A storage timeout must not leave an untracked object indefinitely.
+		_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents
+			set status='cleanup_pending', expires_at=now(), updated_at=now()
+			where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')`, body.Key, userID)
+		if deleteErr := s.deleteMediaObject(ctx, userID, body.Key, body.Visibility); deleteErr == nil {
+			_, _ = s.db.Exec(ctx, `update testagram_media.upload_intents
+				set status='expired', updated_at=now() where object_key=$1 and owner_id=$2 and status='cleanup_pending'`, body.Key, userID)
+		}
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_OBJECT_INVALID", "Uploaded object type or size does not satisfy media policy; cleanup was scheduled", id))
 		return
 	}
 	etag := strings.Trim(resp.Header.Get("ETag"), "\"")
@@ -322,6 +420,18 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	asset.Key = body.Key
+	if strings.HasPrefix(body.ContentType, "image/") {
+		asset.MediaType = "image"
+	} else if strings.HasPrefix(body.ContentType, "video/") {
+		asset.MediaType = "video"
+	}
+	if body.Visibility == "public" {
+		asset.PublicURL = publicMediaURL(body.Key)
+		if asset.PublicURL == "" {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
+			return
+		}
+	}
 	if _, err := s.db.Exec(ctx, `update testagram_media.upload_intents set status='completed', updated_at=now()
 		where object_key=$1 and owner_id=$2 and status in ('issued','completed')`, body.Key, userID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Media was verified but upload completion state could not be saved", id))
@@ -624,12 +734,15 @@ func productPostMediaType(contentType string) (string, bool) {
 }
 
 func publicMediaURL(key string) string {
-	base, err := url.Parse(strings.TrimRight(env("MINIO_PUBLIC_ENDPOINT", "https://media.testagram.site"), "/"))
-	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" {
+	base, err := url.Parse(strings.TrimRight(env("MEDIA_PUBLIC_BASE_URL", "https://media.testagram.site/v1"), "/"))
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.RawQuery != "" || base.Fragment != "" {
 		return ""
 	}
-	bucket := env("PUBLIC_MEDIA_BUCKET", "testagram-public-media")
-	base.Path = strings.TrimRight(base.Path, "/") + "/" + bucket + "/" + strings.TrimLeft(key, "/")
+	key = strings.TrimLeft(key, "/")
+	if key == "" || strings.Contains(key, "..") || strings.ContainsAny(key, "\r\n\x00") {
+		return ""
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/" + key
 	base.RawPath = ""
 	return base.String()
 }
@@ -697,7 +810,7 @@ func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, owne
 	}
 	payload := map[string]any{
 		"owner_id": ownerID, "post_id": nil, "thread_id": nil,
-		"storage_key": key, "bucket": env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"),
+		"storage_key": key, "bucket": env("R2_PUBLIC_BUCKET", env("MEDIA_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
 		"original_name": originalName, "mime_type": contentType, "media_type": mediaType,
 		"byte_size": sizeBytes, "status": "uploaded", "media_url": publicURL,
 	}
