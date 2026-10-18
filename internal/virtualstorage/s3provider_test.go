@@ -41,6 +41,41 @@ func TestS3ProviderListParsesContinuationAndMetadata(t *testing.T) {
 	if len(items)!=1 || items[0].Key!="tenants/u1/a.jpg" || items[0].Size!=12 || items[0].ETag!="opaque" || cursor!="next" { t.Fatalf("unexpected list result: %+v cursor=%q",items,cursor) }
 }
 
+func TestNewS3ProviderAllowsTrustedReverseProxySigningHost(t *testing.T) {
+	p, err := NewS3Provider(S3Config{Endpoint:"https://media.example.test", SigningHost:"object-storage:9000", AccessKey:"access", SecretKey:"secret"})
+	if err != nil { t.Fatalf("expected reverse-proxy signing host to be accepted: %v", err) }
+	put, err := p.PresignPut(context.Background(), "private-media", "tenants/u1/a.jpg", "image/jpeg", 12, time.Minute)
+	if err != nil { t.Fatal(err) }
+	u, err := url.Parse(put)
+	if err != nil { t.Fatal(err) }
+	if u.Host != "media.example.test" || u.Query().Get("X-Amz-Signature") == "" { t.Fatalf("invalid public URL: %s", put) }
+}
+
+func TestS3ProviderDoesNotFollowSignedRedirects(t *testing.T) {
+	targetHit := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/capture", http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	p, err := NewS3Provider(S3Config{Endpoint: source.URL, AccessKey: "access", SecretKey: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Head(context.Background(), "private-media", "tenants/u1/a.jpg"); err == nil {
+		t.Fatal("expected redirect response to fail the signed HEAD operation")
+	}
+	if targetHit {
+		t.Fatal("signed object-store request followed a redirect to another host")
+	}
+}
+
 func TestNewS3ProviderRejectsInvalidConfiguration(t *testing.T) {
 	for _, cfg := range []S3Config{
 		{Endpoint:"file:///tmp",AccessKey:"a",SecretKey:"b"},

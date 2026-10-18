@@ -387,7 +387,11 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var actualType, etag string
 	var size int64
-	if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+	if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This upload intent requires the virtual storage provider", id))
+		return
+	}
+	if storageNamespace != "legacy-media" {
 		info, verifyErr := s.virtualStorage.VerifyUpload(ctx, userID, storageNamespace, body.Key, body.ContentType, intentMaxBytes)
 		if verifyErr != nil {
 			if errors.Is(verifyErr, virtualstorage.ErrNotFound) {
@@ -729,11 +733,11 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var visibility, contentType, originalName, assetStatus, externalID string
+	var visibility, contentType, originalName, assetStatus, externalID, storageNamespace string
 	var sizeBytes int64
-	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, coalesce(external_media_id::text,'')
+	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, coalesce(external_media_id::text,''), storage_namespace
 		from testagram_media.assets where object_key=$1 and owner_id=$2 for update`, body.Key, userID).
-		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &externalID)
+		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &externalID, &storageNamespace)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
 		return
@@ -751,7 +755,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_SIZE_NOT_ATTACHABLE", "Post media must be between 1 byte and 20 MiB", id))
 		return
 	}
-	publicURL := publicMediaURL(body.Key)
+	publicURL := publicMediaURLForStorage(body.Key, userID, storageNamespace)
 	if publicURL == "" {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
 		return
@@ -1228,7 +1232,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var intents []mediaCleanupObject
 	for intentRows.Next() {
 		var item mediaCleanupObject
-		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility); err != nil {
+		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.namespace); err != nil {
 			intentRows.Close()
 			return err
 		}
@@ -1271,7 +1275,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var assets []pendingMediaObject
 	for assetRows.Next() {
 		var item pendingMediaObject
-		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.externalID); err != nil {
+		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.externalID, &item.namespace); err != nil {
 			assetRows.Close()
 			return err
 		}

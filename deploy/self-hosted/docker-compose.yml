@@ -16,6 +16,8 @@ services:
       - ../../migrations/005_media_assets.sql:/docker-entrypoint-initdb.d/005_media_assets.sql:ro
       - ../../migrations/006_media_lifecycle.sql:/docker-entrypoint-initdb.d/006_media_lifecycle.sql:ro
       - ../../migrations/007_media_product_bridge.sql:/docker-entrypoint-initdb.d/007_media_product_bridge.sql:ro
+      - ../../migrations/008_virtual_storage_bridge.sql:/docker-entrypoint-initdb.d/008_virtual_storage_bridge.sql:ro
+      - ../../migrations/009_saas_tenant_hosting.sql:/docker-entrypoint-initdb.d/009_saas_tenant_hosting.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -95,7 +97,7 @@ services:
     networks: [data, control-plane]
 
   object-storage:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
     command: server /data --address ":9000" --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
@@ -106,7 +108,9 @@ services:
     networks: [data]
 
   object-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    build:
+      context: ./minio-tools
+      dockerfile: Dockerfile
     depends_on:
       object-storage:
         condition: service_started
@@ -160,11 +164,15 @@ services:
       PUBLIC_MEDIA_BUCKET: ${PUBLIC_MEDIA_BUCKET:-testagram-public-media}
       MEDIA_USER_QUOTA_BYTES: ${MEDIA_USER_QUOTA_BYTES:-2147483648}
       MEDIA_MODERATION_TOKEN: ${MEDIA_MODERATION_TOKEN:-}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/testagram-public-media}
+      VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy
       platform:
         condition: service_healthy
+      object-init:
+        condition: service_completed_successfully
     expose: ["8080"]
     read_only: true
     tmpfs: ["/tmp"]
