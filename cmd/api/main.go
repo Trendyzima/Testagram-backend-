@@ -22,6 +22,7 @@ import (
 
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -38,6 +39,7 @@ type service struct {
 	upstream       *http.Client
 	platform       *platformclient.Client
 	media          *media.Signer
+	virtualStorage *virtualstorage.Manager
 }
 
 type capabilityRequest struct {
@@ -586,7 +588,35 @@ func main() {
 		}
 		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner}
+	var virtualStorageManager *virtualstorage.Manager
+	if strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true") {
+		if mediaSigner == nil {
+			log.Fatal("VIRTUAL_STORAGE_ENABLED requires the S3-compatible media credentials and endpoint")
+		}
+		provider, providerErr := virtualstorage.NewS3Provider(virtualstorage.S3Config{
+			Endpoint:    env("MEDIA_S3_ENDPOINT", env("R2_S3_ENDPOINT", env("MINIO_PUBLIC_ENDPOINT", ""))),
+			SigningHost: env("MEDIA_S3_SIGNING_HOST", env("R2_SIGNING_HOST", env("MINIO_SIGNING_HOST", ""))),
+			AccessKey:   mediaAccessKey, SecretKey: mediaSecretKey,
+			Region: env("MEDIA_S3_REGION", env("R2_REGION", env("MINIO_REGION", "auto"))),
+			Client: &http.Client{Timeout: 8 * time.Second},
+		})
+		if providerErr != nil {
+			log.Fatalf("configure virtual storage provider: %v", providerErr)
+		}
+		allowedTypes := map[string]struct{}{
+			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "image/gif": {}, "image/avif": {},
+			"video/mp4": {}, "video/webm": {},
+		}
+		virtualStorageManager, err = virtualstorage.New(provider, []virtualstorage.Namespace{
+			{Name: "media-private", PhysicalBucket: env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))), MaxObjectBytes: 500 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
+			{Name: "media-public", PhysicalBucket: env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))), Public: true, MaxObjectBytes: 20 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
+		})
+		if err != nil {
+			log.Fatalf("configure virtual storage namespaces: %v", err)
+		}
+		log.Printf("virtual storage policy manager enabled; new uploads use tenant-scoped object keys")
+	}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
@@ -602,6 +632,7 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
+	go svc.runStorageDeletionWorker(signalCtx)
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
