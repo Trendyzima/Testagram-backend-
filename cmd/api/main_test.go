@@ -518,6 +518,7 @@ func TestDecodeSingleJSON(t *testing.T) {
 }
 
 
+
 func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 	s := &service{}
 	handler := s.routes()
@@ -527,6 +528,7 @@ func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 	}
+
 	r := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
@@ -541,7 +543,11 @@ func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 		"testagram_http_request_duration_seconds_count{method=\"GET\",route=\"/readyz\"} 1",
 		"route=\"unmatched\",status=\"404\"",
 	} {
-		if !strings.Contains(body, want) { t.Errorf("metrics missing %q in:\\n%s", want, body) }
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics missing %q in:\n%s", want, body)
+		}
 	}
-	if strings.Contains(body, "/unknown/private-user-id") { t.Fatal("metrics leaked raw request path into a label") }
+	if strings.Contains(body, "/unknown/private-user-id") {
+		t.Fatal("metrics leaked raw request path into a label")
+	}
 }
