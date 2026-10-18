@@ -57,6 +57,14 @@ type capabilityRequest struct {
 	Input      map[string]any `json:"input"`
 }
 
+func env(name, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
 	status      int
