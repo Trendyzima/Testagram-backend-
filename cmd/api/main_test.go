@@ -661,3 +661,40 @@ func TestUpstreamMetricLabelsAreBounded(t *testing.T) {
 		t.Fatal("upstream metrics must not expose arbitrary label values")
 	}
 }
+
+func TestUnifiedSearchRPCBodyBoundsAndMapsInput(t *testing.T) {
+	body, err := unifiedSearchRPCBody(map[string]any{
+		"q": "kenya", "kind": "hashtags", "limit": float64(20), "offset": float64(40), "sort": "latest",
+	})
+	if err != nil {
+		t.Fatalf("unifiedSearchRPCBody returned error: %v", err)
+	}
+	if body["p_q"] != "kenya" || body["p_kind"] != "hashtags" || body["p_sort"] != "latest" {
+		t.Fatalf("unexpected mapped search parameters: %#v", body)
+	}
+	if body["p_limit"] != 20 || body["p_offset"] != 40 {
+		t.Fatalf("unexpected bounded page values: %#v", body)
+	}
+}
+
+func TestUnifiedSearchRPCBodyRejectsUnboundedInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]any
+	}{
+		{name: "query too long", input: map[string]any{"q": strings.Repeat("x", 513)}},
+		{name: "unsupported kind", input: map[string]any{"kind": "secrets"}},
+		{name: "limit zero", input: map[string]any{"limit": float64(0)}},
+		{name: "limit too large", input: map[string]any{"limit": float64(101)}},
+		{name: "negative offset", input: map[string]any{"offset": float64(-1)}},
+		{name: "offset too large", input: map[string]any{"offset": float64(100001)}},
+		{name: "unsupported sort", input: map[string]any{"sort": "arbitrary-column"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := unifiedSearchRPCBody(tt.input); err == nil {
+				t.Fatal("expected invalid search input to be rejected")
+			}
+		})
+	}
+}
