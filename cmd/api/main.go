@@ -38,18 +38,19 @@ type requestMetric struct {
 }
 
 type service struct {
-	db             *pgxpool.Pool
-	metricsMu      sync.Mutex
-	routeMetrics   map[string]*requestMetric
-	requests       atomic.Uint64
-	cacheHits      atomic.Uint64
-	cacheMisses    atomic.Uint64
-	rateLimited    atomic.Uint64
-	platformErrors atomic.Uint64
-	upstream       *http.Client
-	platform       *platformclient.Client
-	media          *media.Signer
-	virtualStorage *virtualstorage.Manager
+	db                *pgxpool.Pool
+	metricsMu         sync.Mutex
+	routeMetrics      map[string]*requestMetric
+	capabilityMetrics map[string]*requestMetric
+	requests          atomic.Uint64
+	cacheHits         atomic.Uint64
+	cacheMisses       atomic.Uint64
+	rateLimited       atomic.Uint64
+	platformErrors    atomic.Uint64
+	upstream          *http.Client
+	platform          *platformclient.Client
+	media             *media.Signer
+	virtualStorage    *virtualstorage.Manager
 }
 
 type capabilityRequest struct {
@@ -69,6 +70,31 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
+}
+
+type capabilityMetricWriter struct {
+	statusRecorder
+	group string
+}
+
+func capabilityGroup(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case strings.Contains(name, "search"):
+		return "search"
+	case strings.Contains(name, "feed"):
+		return "feed"
+	case strings.Contains(name, "media"):
+		return "media"
+	case strings.Contains(name, "auth"), strings.Contains(name, "session"):
+		return "auth"
+	case strings.Contains(name, "notification"):
+		return "notifications"
+	case strings.Contains(name, "federat"):
+		return "federation"
+	default:
+		return "other"
+	}
 }
 
 func (w *statusRecorder) WriteHeader(status int) {
@@ -103,6 +129,32 @@ var requestDurationBounds = [...]time.Duration{
 	500 * time.Millisecond,
 	time.Second,
 	5 * time.Second,
+}
+
+func (s *service) recordCapability(group string, status int, elapsed time.Duration) {
+	if group == "" {
+		group = "other"
+	}
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	if s.capabilityMetrics == nil {
+		s.capabilityMetrics = make(map[string]*requestMetric)
+	}
+	m := s.capabilityMetrics[group]
+	if m == nil {
+		m = &requestMetric{statuses: make(map[int]uint64)}
+		s.capabilityMetrics[group] = m
+	}
+	m.count++
+	if elapsed > 0 {
+		m.durationNanos += uint64(elapsed)
+	}
+	for i, bound := range requestDurationBounds {
+		if elapsed <= bound {
+			m.buckets[i]++
+		}
+	}
+	m.statuses[status]++
 }
 
 func (s *service) recordRequest(method, route string, status int, elapsed time.Duration) {
@@ -169,11 +221,34 @@ func (s *service) metricsText() string {
 			method, route, m.count)
 	}
 
+	capabilityGroups := make([]string, 0, len(s.capabilityMetrics))
+	for group := range s.capabilityMetrics {
+		capabilityGroups = append(capabilityGroups, group)
+	}
+	sort.Strings(capabilityGroups)
+	fmt.Fprintln(&b, "# HELP testagram_capability_requests_total Capability gateway requests by bounded capability group and response status.")
+	fmt.Fprintln(&b, "# TYPE testagram_capability_requests_total counter")
+	fmt.Fprintln(&b, "# HELP testagram_capability_request_duration_seconds Capability gateway request duration histogram by bounded capability group.")
+	fmt.Fprintln(&b, "# TYPE testagram_capability_request_duration_seconds histogram")
+	for _, group := range capabilityGroups {
+		m := s.capabilityMetrics[group]
+		for _, status := range sortedStatusCodes(m.statuses) {
+			fmt.Fprintf(&b, "testagram_capability_requests_total{group=%q,status=%q} %d\n", group, strconv.Itoa(status), m.statuses[status])
+		}
+		for i, bound := range requestDurationBounds {
+			fmt.Fprintf(&b, "testagram_capability_request_duration_seconds_bucket{group=%q,le=%q} %d\n", group, strconv.FormatFloat(bound.Seconds(), 'f', -1, 64), m.buckets[i])
+		}
+		fmt.Fprintf(&b, "testagram_capability_request_duration_seconds_bucket{group=%q,le=%q} %d\n", group, "+Inf", m.count)
+		fmt.Fprintf(&b, "testagram_capability_request_duration_seconds_sum{group=%q} %.9f\n", group, float64(m.durationNanos)/float64(time.Second))
+		fmt.Fprintf(&b, "testagram_capability_request_duration_seconds_count{group=%q} %d\n", group, m.count)
+	}
+
 	if s.db != nil {
 		stats := s.db.Stat()
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_total_connections Total PostgreSQL pool connections.\n# TYPE testagram_db_pool_total_connections gauge\ntestagram_db_pool_total_connections %d\n", stats.TotalConns())
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_idle_connections Idle PostgreSQL pool connections.\n# TYPE testagram_db_pool_idle_connections gauge\ntestagram_db_pool_idle_connections %d\n", stats.IdleConns())
 		fmt.Fprintf(&b, "# HELP testagram_db_pool_acquired_connections Acquired PostgreSQL pool connections.\n# TYPE testagram_db_pool_acquired_connections gauge\ntestagram_db_pool_acquired_connections %d\n", stats.AcquiredConns())
+		fmt.Fprintf(&b, "# HELP testagram_db_pool_max_connections Configured maximum PostgreSQL pool connections.\n# TYPE testagram_db_pool_max_connections gauge\ntestagram_db_pool_max_connections %d\n", stats.MaxConns())
 	}
 	return b.String()
 }
@@ -359,6 +434,16 @@ func writeRawCapability(w http.ResponseWriter, r *http.Request, id string, raw [
 }
 
 func (s *service) capability(w http.ResponseWriter, r *http.Request) {
+	var observation *capabilityMetricWriter
+	if r.Method != http.MethodOptions {
+		observation = &capabilityMetricWriter{
+			statusRecorder: statusRecorder{ResponseWriter: w, status: http.StatusOK},
+			group:          "other",
+		}
+		w = observation
+		started := time.Now()
+		defer func() { s.recordCapability(observation.group, observation.status, time.Since(started)) }()
+	}
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
 		return
@@ -385,6 +470,9 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if body.Capability == "" || len(body.Capability) > 160 || strings.ContainsAny(body.Capability, "\r\n") {
 		writeJSON(w, http.StatusBadRequest, errorBody("CAPABILITY_REQUIRED", "Capability name is required", id))
 		return
+	}
+	if observation != nil {
+		observation.group = capabilityGroup(body.Capability)
 	}
 	if body.Input == nil {
 		body.Input = map[string]any{}
@@ -520,6 +608,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamResponse, err := client.Do(upstreamReq)
 	if err != nil {
+		log.Printf("capability upstream request failed request_id=%q group=%q error=%q", id, capabilityGroup(body.Capability), err)
 		writeJSON(w, http.StatusBadGateway, errorBody("DATABASE_UNAVAILABLE", "Capability backend is temporarily unavailable", id))
 		return
 	}
@@ -530,7 +619,8 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
-		// Never expose raw database/upstream errors to clients.
+		// Never expose raw database/upstream errors or user search terms to logs.
+		log.Printf("capability upstream response failed request_id=%q group=%q status=%d", id, capabilityGroup(body.Capability), upstreamResponse.StatusCode)
 		message := "Capability database request failed"
 		status := upstreamResponse.StatusCode
 		if status >= 500 {

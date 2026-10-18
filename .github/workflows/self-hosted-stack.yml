@@ -88,6 +88,19 @@ jobs:
             echo "A private data/monitoring port is published to the host."
             exit 1
           fi
+          python - <<'PY'
+          import yaml
+          with open("/tmp/testagram-compose.yml", encoding="utf-8") as handle:
+              compose = yaml.safe_load(handle)
+          services = compose.get("services", {})
+          grafana_ports = services.get("grafana", {}).get("ports", [])
+          if not any(str(port.get("published")) == "3000" and port.get("target") == 3000 and port.get("host_ip") == "127.0.0.1" for port in grafana_ports):
+              raise SystemExit("Grafana must publish port 3000 on 127.0.0.1 only.")
+          for service_name, service in services.items():
+              for port in service.get("ports", []):
+                  if str(port.get("published")) == "3000" and port.get("host_ip") != "127.0.0.1":
+                      raise SystemExit(f"Grafana port 3000 is exposed beyond loopback by service {service_name}.")
+          PY
       - name: Validate Caddy tenant TLS configuration
         working-directory: deploy/self-hosted
         run: |
@@ -97,6 +110,8 @@ jobs:
             -e MEDIA_DOMAIN=media.testagram.site \
             -e ACME_EMAIL=ops@example.com \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          grep -q '@internal_observability path /metrics /readyz' Caddyfile
+          grep -q 'respond @internal_observability 404' Caddyfile
       - name: Smoke-test fresh PostgreSQL migrations
         working-directory: deploy/self-hosted
         run: |
@@ -117,6 +132,7 @@ jobs:
           grep -q 'REPLACE_WITH_LONG_RANDOM_PLATFORM_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_VPS_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_NODE_BOOTSTRAP_TOKEN' deploy/self-hosted/.env.example
+          grep -q 'REPLACE_WITH_LONG_RANDOM_GRAFANA_PASSWORD' deploy/self-hosted/.env.example
 
   autonomy-validation:
     name: Autonomous recovery scripts

@@ -114,6 +114,14 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "testagram_platform_rate_limit_checks_total %d\n", s.rateChecks.Load())
 	fmt.Fprintf(w, "testagram_platform_queue_monitor_errors_total %d\n", s.queueMonitorErrors.Load())
 
+	if s.db != nil {
+		stats := s.db.Stat()
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_total_connections Total PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_total_connections gauge\ntestagram_platform_db_pool_total_connections %d\n", stats.TotalConns())
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_idle_connections Idle PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_idle_connections gauge\ntestagram_platform_db_pool_idle_connections %d\n", stats.IdleConns())
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_acquired_connections Acquired PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_acquired_connections gauge\ntestagram_platform_db_pool_acquired_connections %d\n", stats.AcquiredConns())
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_max_connections Configured maximum PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_max_connections gauge\ntestagram_platform_db_pool_max_connections %d\n", stats.MaxConns())
+	}
+
 	// Queue names/groups are explicit configuration, avoiding a costly or
 	// unbounded Redis key scan on every Prometheus scrape.
 	monitors := parseQueueMonitorConfigs(os.Getenv("PLATFORM_MONITORED_QUEUE_GROUPS"))
