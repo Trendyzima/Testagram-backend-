@@ -438,7 +438,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodOptions {
 		observation = &capabilityMetricWriter{
 			statusRecorder: statusRecorder{ResponseWriter: w, status: http.StatusOK},
-			group: "other",
+			group:          "other",
 		}
 		w = observation
 		started := time.Now()
