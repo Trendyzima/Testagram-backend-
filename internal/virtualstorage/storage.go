@@ -4,6 +4,7 @@ package virtualstorage
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path"
@@ -19,6 +20,8 @@ var (
 	ErrTooLarge         = errors.New("object exceeds namespace size limit")
 	ErrNotFound         = errors.New("object not found")
 	ErrObjectMismatch    = errors.New("uploaded object does not match declared metadata")
+	ErrChecksumMismatch  = errors.New("uploaded object SHA-256 does not match expected checksum")
+	ErrChecksumUnavailable = errors.New("storage provider cannot calculate a content SHA-256")
 	tenantIDPattern     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 	namespacePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 )
@@ -176,6 +179,43 @@ func (m *Manager) VerifyUpload(ctx context.Context, tenantID, namespace, key, ex
 	}
 	info.Key = key
 	return info, nil
+}
+
+// VerifyUploadChecksum compares a client-declared SHA-256 with the hash of the
+// actual stored bytes. The provider must stream with a hard byte bound; ETags
+// are not accepted as substitutes for SHA-256.
+func (m *Manager) VerifyUploadChecksum(ctx context.Context, tenantID, namespace, key string, maxBytes int64, expectedSHA256 string) error {
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if len(expectedSHA256) != 64 {
+		return errors.New("expected SHA-256 must be 64 hexadecimal characters")
+	}
+	if _, err := hex.DecodeString(expectedSHA256); err != nil {
+		return errors.New("expected SHA-256 must be 64 hexadecimal characters")
+	}
+	ns, err := m.namespace(namespace)
+	if err != nil {
+		return err
+	}
+	if !tenantIDPattern.MatchString(tenantID) || !validKey(key) {
+		return ErrInvalidKey
+	}
+	if maxBytes < 1 || maxBytes > ns.MaxObjectBytes {
+		return ErrTooLarge
+	}
+	checksummer, ok := m.provider.(interface {
+		SHA256(context.Context, string, string, int64) (string, error)
+	})
+	if !ok {
+		return ErrChecksumUnavailable
+	}
+	actual, err := checksummer.SHA256(ctx, ns.PhysicalBucket, tenantPrefix(tenantID)+key, maxBytes)
+	if err != nil {
+		return err
+	}
+	if !hmac.Equal([]byte(actual), []byte(expectedSHA256)) {
+		return ErrChecksumMismatch
+	}
+	return nil
 }
 
 // Delete is deliberately owner-scoped, including for public objects. Public
