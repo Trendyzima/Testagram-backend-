@@ -661,3 +661,25 @@ func TestUpstreamMetricLabelsAreBounded(t *testing.T) {
 		t.Fatal("upstream metrics must not expose arbitrary label values")
 	}
 }
+
+func TestUpstreamBodyFailureOutcome(t *testing.T) {
+	tests := []struct {
+		name     string
+		readErr  error
+		ctxErr   error
+		oversize bool
+		want     string
+	}{
+		{name: "body deadline", readErr: context.DeadlineExceeded, want: "timeout"},
+		{name: "request deadline while reading body", ctxErr: context.DeadlineExceeded, want: "timeout"},
+		{name: "oversized body", oversize: true, want: "invalid_response"},
+		{name: "malformed body", readErr: errors.New("unexpected EOF"), want: "invalid_response"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := upstreamBodyFailureOutcome(tt.readErr, tt.ctxErr, tt.oversize); got != tt.want {
+				t.Fatalf("upstreamBodyFailureOutcome() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
