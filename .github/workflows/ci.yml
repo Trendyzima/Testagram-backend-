@@ -117,7 +117,7 @@ jobs:
             -e MINIO_ROOT_USER=testagram-ci \
             -e MINIO_ROOT_PASSWORD=testagram-ci-password \
             -e MINIO_SITE_REGION=us-east-1 \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --address ":9000"
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data --address ":9000"
       - name: Wait for MinIO health
         run: |
           for attempt in $(seq 1 30); do
