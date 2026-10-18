@@ -2,6 +2,8 @@ package virtualstorage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -85,3 +87,25 @@ func TestNewS3ProviderRejectsInvalidConfiguration(t *testing.T) {
 		if _, err := NewS3Provider(cfg); err==nil { t.Errorf("expected invalid config rejected: %+v",cfg) }
 	}
 }
+
+func TestS3ProviderSHA256StreamsActualBytesAndEnforcesBound(t *testing.T) {
+	payload := []byte("testagram-media-payload")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET for checksum, got %s", r.Method)
+		}
+		w.Header().Set("Content-Length", "23")
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	p, err := NewS3Provider(S3Config{Endpoint: server.URL, AccessKey: "access", SecretKey: "secret"})
+	if err != nil { t.Fatal(err) }
+	sum := sha256.Sum256(payload)
+	got, err := p.SHA256(context.Background(), "private-media", "tenants/u1/a.jpg", 64)
+	if err != nil { t.Fatal(err) }
+	if got != hex.EncodeToString(sum[:]) { t.Fatalf("SHA-256 mismatch: got %s", got) }
+	if _, err := p.SHA256(context.Background(), "private-media", "tenants/u1/a.jpg", 8); err != ErrTooLarge {
+		t.Fatalf("expected bounded reader to reject oversized body, got %v", err)
+	}
+}
+
