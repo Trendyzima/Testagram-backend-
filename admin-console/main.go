@@ -107,7 +107,7 @@ func newApp() (*app, error) {
 		grafanaURL: env("GRAFANA_URL", "http://127.0.0.1:3000"),
 		cookieSecure: secure,
 		aead: aead,
-		client: &http.Client{Timeout: 3 * time.Second},
+		client: &http.Client{Timeout: 8 * time.Second},
 	}, nil
 }
 
