@@ -235,6 +235,7 @@ services:
     environment:
       API_DOMAIN: ${API_DOMAIN:-api.testagram.site}
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.testagram.site}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-ops.testagram.site}
       ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
     ports:
       - "80:80"
