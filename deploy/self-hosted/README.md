@@ -10,6 +10,21 @@ Set `GRAFANA_ADMIN_USER` and a strong `GRAFANA_ADMIN_PASSWORD` in this directory
 
 Prometheus alert rules are evaluated, but this Compose stack does not yet configure a notification receiver. Configure and test Alertmanager/email/webhook delivery separately before relying on these alerts for on-call notification.
 
+## Verify monitoring is actually working
+
+After starting the self-hosted stack, check container health and scrape targets rather than assuming a visible dashboard means metrics are current:
+
+```bash
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml ps
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml logs --tail=150 prometheus grafana
+```
+
+Open Grafana through the SSH tunnel described above and select **Testagram Operations**. In Prometheus, the `up` query should return `1` for `testagram-api`, `testagram-platform`, `testagram-grafana`, `testagram-node`, and `prometheus`. A target value of `0` means Prometheus can see the target but cannot scrape it; a missing series usually means the target or scrape configuration is absent. Check **Status → Targets** and **Alerts** in Prometheus when a panel is empty.
+
+CI validates both the Prometheus scrape configuration and alert-rule syntax with `promtool`. That does not prove runtime delivery: run a staging smoke test after changes and confirm expected panels receive samples.
+
+**Important:** Alert rules are evaluated by Prometheus, but this stack still has no configured Alertmanager notification receiver. Until an operator configures and tests an email/webhook receiver, alerts are visible only in Prometheus and are not an on-call notification system.
+
 ## Staff console
 
 The stack now has an optional-to-configure, HTTPS-routed staff console on `ADMIN_DOMAIN` (default `ops.testagram.site`). Set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `ADMIN_PUBLIC_URL`, and a fresh 64-hex-character `ADMIN_SESSION_KEY` in `.env`. The invite feature additionally requires `SUPABASE_SERVICE_ROLE_KEY`; keep it server-only. Configure Supabase Auth allowed redirects for the console root and `/reset-password`, provision the first owner's `app_metadata.staff_role=owner` using a trusted admin operation, and point DNS at the VPS.
