@@ -350,7 +350,7 @@ func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	input.Email=strings.TrimSpace(input.Email)
 	switch input.Role {case "administrator","engineer","operations","support","moderator":default:writeJSON(w,400,map[string]string{"error":"Unsupported staff role"});return}
 	if input.Email==""||len(input.Email)>320||!strings.Contains(input.Email,"@"){writeJSON(w,400,map[string]string{"error":"Enter a valid email address"});return}
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
+	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second);defer cancel()
 	redirect:=a.publicURL+"/"
 	var invited authUser
 	_,err:=a.adminAuthRequest(ctx,http.MethodPost,"/auth/v1/invite?redirect_to="+url.QueryEscape(redirect),map[string]any{"email":input.Email},&invited)
