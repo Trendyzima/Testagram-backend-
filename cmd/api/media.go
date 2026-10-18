@@ -135,11 +135,14 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 			storageNamespace = "media-public"
 		}
 		storageProvider = "s3-default"
-		intent.URL, err = s.virtualStorage.UploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes)
+		// Keep the provider URL server-side. Clients upload through the bounded
+		// API gateway, which enforces the intent size while bytes are arriving.
+		_, err = s.virtualStorage.UploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_UPLOAD_URL_FAILED", "Could not create a tenant-scoped upload URL", id))
 			return
 		}
+		intent.URL = "/api/media/upload?key=" + url.QueryEscape(intent.Key)
 	}
 	if body.Visibility == "public" {
 		intent.PublicURL = publicMediaURLForStorage(intent.Key, userID, storageNamespace)
