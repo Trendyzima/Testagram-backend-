@@ -552,7 +552,6 @@ func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 
 
 func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) {
-	t.Setenv("SUPABASE_URL", "https://supabase.example.invalid")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -560,6 +559,7 @@ func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) 
 		_, _ = w.Write([]byte("database statement timeout"))
 	}))
 	defer upstream.Close()
+	t.Setenv("SUPABASE_URL", upstream.URL)
 
 	s := &service{upstream: upstream.Client()}
 	request := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(
