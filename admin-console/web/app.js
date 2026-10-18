@@ -196,9 +196,18 @@ byId("invite-form").addEventListener("submit", async (event) => {
 });
 
 const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
-if (hash.get("type") === "recovery" && hash.get("access_token")) {
+const authType = hash.get("type") || "";
+if ((authType === "recovery" || authType === "invite") && hash.get("access_token")) {
   resetAccessToken = hash.get("access_token");
   showView("update-password");
   history.replaceState(null, "", "/reset-password");
+} else if (authType === "signup") {
+  history.replaceState(null, "", "/");
+  showView("login");
+  notice("Email confirmation received. You can now sign in; staff access still requires an approved role.", "success");
+} else if (authType === "invite") {
+  history.replaceState(null, "", "/");
+  showView("login");
+  notice("Invitation link detected. Please request a new invitation if this link has expired.", "info");
 }
 loadSession();
