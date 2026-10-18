@@ -190,7 +190,15 @@ async function signOut() {
 byId("sign-out").addEventListener("click", signOut);
 byId("pending-sign-out").addEventListener("click", signOut);
 byId("refresh").addEventListener("click", refreshOverview);
-// Refresh live operational signals every 30 seconds only while an approved staff member\n// is viewing the dashboard. Pause polling in hidden tabs to avoid needless load.\nwindow.setInterval(() => {\n  const dashboard = byId("dashboard-screen");\n  if (currentUser && dashboard && !dashboard.classList.contains("hidden") && document.visibilityState === "visible") {\n    refreshOverview();\n  }\n}, 30000);\nbyId("invite-form").addEventListener("submit", async (event) => {
+// Refresh live operational signals every 30 seconds only while an approved staff member
+// is viewing the dashboard. Pause polling in hidden tabs to avoid needless load.
+window.setInterval(() => {
+  const dashboard = byId("dashboard-screen");
+  if (currentUser && dashboard && !dashboard.classList.contains("hidden") && document.visibilityState === "visible") {
+    refreshOverview();
+  }
+}, 30000);
+byId("invite-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget; busy(form, true);
   try {
