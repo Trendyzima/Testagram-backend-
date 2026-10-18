@@ -63,6 +63,14 @@ groups:
         annotations:
           summary: Testagram queue monitoring is failing
           description: The platform cannot collect one or more configured queue metrics. Verify queue names, consumer groups, and Valkey health.
+      - alert: TestagramAlertmanagerDown
+        expr: up{job="testagram-alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram alert notification service is unavailable
+          description: Prometheus cannot scrape Alertmanager. Alerts may still be evaluated but notification delivery is unavailable; check the Alertmanager container and its configuration.
       - alert: TestagramNodeExporterDown
         expr: up{job="testagram-node"} == 0
         for: 2m
