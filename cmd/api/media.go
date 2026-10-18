@@ -1389,7 +1389,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 
 	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace
 		from testagram_media.upload_intents
-		where (expires_at <= now() and status in ('issued','uploaded','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '15 minutes')
+		where (expires_at <= now() and status in ('issued','uploaded','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '2 hours')
 		order by expires_at asc limit 50`)
 	if err != nil {
 		return err
