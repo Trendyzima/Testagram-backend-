@@ -100,7 +100,6 @@ func TestCapabilityGatewayForwardsUserJWTAndPayload(t *testing.T) {
 	}
 }
 
-
 func TestUnifiedSearchGatewayCallsCanonicalRPCWithBoundedParameters(t *testing.T) {
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
 	t.Setenv("SUPABASE_URL", "")
