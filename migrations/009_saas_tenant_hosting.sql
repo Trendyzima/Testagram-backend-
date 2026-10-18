@@ -7,7 +7,7 @@ create schema if not exists testagram_saas;
 
 create table if not exists testagram_saas.tenants (
   id uuid primary key default gen_random_uuid(),
-  slug text not null unique check (slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?,
+  slug text not null unique check (slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'),
   display_name text not null check (length(trim(display_name)) between 1 and 120),
   tenant_kind text not null default 'organization' check (tenant_kind in ('personal','organization')),
   status text not null default 'provisioning' check (status in ('provisioning','trial','active','suspended','closing','closed')),
