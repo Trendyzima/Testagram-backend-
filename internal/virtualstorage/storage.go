@@ -4,6 +4,7 @@ package virtualstorage
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -212,7 +213,7 @@ func (m *Manager) VerifyUploadChecksum(ctx context.Context, tenantID, namespace,
 	if err != nil {
 		return err
 	}
-	if !hmac.Equal([]byte(actual), []byte(expectedSHA256)) {
+	if !subtle.ConstantTimeCompare([]byte(actual), []byte(expectedSHA256)) == 1 {
 		return ErrChecksumMismatch
 	}
 	return nil
