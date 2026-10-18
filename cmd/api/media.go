@@ -142,7 +142,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_UPLOAD_URL_FAILED", "Could not create a tenant-scoped upload URL", id))
 			return
 		}
-			}
+		}
 	// Both legacy and virtual-storage intents use the bounded API upload route.
 	// The server selects the configured storage adapter; browser code never needs
 	// to handle or trust a provider URL.
