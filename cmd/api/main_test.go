@@ -493,3 +493,26 @@ func TestProductPostMediaSizeMatchesDatabaseConstraint(t *testing.T) {
 		t.Fatalf("max product post media bytes=%d, want %d", maxProductPostMediaBytes, 20<<20)
 	}
 }
+
+func TestDecodeSingleJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{name: "object", body: `{"capability":"testagram.health.read"}`},
+		{name: "leading and trailing whitespace", body: " \n {\"ok\":true} \t\n"},
+		{name: "second JSON value", body: `{"ok":true} {"admin":true}`, wantErr: true},
+		{name: "trailing garbage", body: `{"ok":true} nope`, wantErr: true},
+		{name: "empty", body: "", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got map[string]any
+			err := decodeSingleJSON(strings.NewReader(tc.body), &got)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("decodeSingleJSON() error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
