@@ -240,7 +240,6 @@ func (s *service) routes() http.Handler {
 	})
 }
 
-
 func normalizedRoute(path string) string {
 	switch path {
 	case "/healthz", "/readyz", "/metrics", "/api/capability",
