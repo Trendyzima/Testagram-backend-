@@ -387,7 +387,11 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var actualType, etag string
 	var size int64
-	if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+	if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This upload intent requires the virtual storage provider", id))
+		return
+	}
+	if storageNamespace != "legacy-media" {
 		info, verifyErr := s.virtualStorage.VerifyUpload(ctx, userID, storageNamespace, body.Key, body.ContentType, intentMaxBytes)
 		if verifyErr != nil {
 			if errors.Is(verifyErr, virtualstorage.ErrNotFound) {
