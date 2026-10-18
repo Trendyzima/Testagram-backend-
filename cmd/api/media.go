@@ -175,7 +175,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	var usedBytes int64
 	err = tx.QueryRow(r.Context(), `select
 		coalesce((select sum(size_bytes) from testagram_media.assets where owner_id=$1 and status='ready'),0) +
-		coalesce((select sum(max_bytes) from testagram_media.upload_intents where owner_id=$1 and status='issued' and expires_at > now()),0)`, userID).Scan(&usedBytes)
+		coalesce((select sum(max_bytes) from testagram_media.upload_intents where owner_id=$1 and status in ('issued','uploading','uploaded') and expires_at > now()),0)`, userID).Scan(&usedBytes)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_QUOTA_CHECK_FAILED", "Could not calculate media quota usage", id))
 		return
