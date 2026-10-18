@@ -230,7 +230,11 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var signedURL string
-	if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+	if storageNamespace != "legacy-media" {
+		if s.virtualStorage == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This media object requires the virtual storage provider", id))
+			return
+		}
 		signedURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
 	} else {
 		signedURL, err = s.media.PresignPrivateDownload(userID, body.Key, 5*time.Minute, time.Now())
@@ -282,10 +286,14 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mediaURL := ""
+		if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "Some media objects require the virtual storage provider", id))
+			return
+		}
 		if visibility == "public" {
 			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
 		} else if visibility == "private" {
-			if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+			if storageNamespace != "legacy-media" {
 				mediaURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
 			} else {
 				mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
@@ -1145,7 +1153,8 @@ func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility
 }
 
 func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
-	if storageNamespace != "" && storageNamespace != "legacy-media" && s.virtualStorage != nil {
+	if storageNamespace != "" && storageNamespace != "legacy-media" {
+		if s.virtualStorage == nil { return errors.New("virtual storage provider is required for this namespace") }
 		return s.virtualStorage.Delete(ctx, userID, userID, storageNamespace, key)
 	}
 	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
