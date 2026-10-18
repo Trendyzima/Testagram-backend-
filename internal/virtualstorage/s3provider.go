@@ -52,6 +52,9 @@ func NewS3Provider(cfg S3Config) (*S3Provider, error) {
 	if strings.ContainsAny(cfg.SigningHost, "/?#\r\n@ ") {
 		return nil, errors.New("S3 signing host is invalid")
 	}
+	if !strings.EqualFold(cfg.SigningHost, u.Host) {
+		return nil, errors.New("S3 signing host must match the URL host for browser-compatible presigned URLs")
+	}
 	client := cfg.Client
 	if client == nil { client = &http.Client{Timeout: 8 * time.Second} }
 	return &S3Provider{endpoint:u, signingHost:cfg.SigningHost, accessKey:cfg.AccessKey, secretKey:cfg.SecretKey, region:cfg.Region, client:client}, nil
@@ -195,7 +198,13 @@ func parseHTTPTime(value string) time.Time {
 	return time.Time{}
 }
 func validBucketName(bucket string) bool {
-	if len(bucket) < 3 || len(bucket) > 63 || strings.ContainsAny(bucket, "/\\?#\r\n") { return false }
-	for _, c := range bucket { if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.') { return false } }
+	if len(bucket) < 3 || len(bucket) > 63 || strings.HasPrefix(bucket, ".") || strings.HasSuffix(bucket, ".") ||
+		strings.HasPrefix(bucket, "-") || strings.HasSuffix(bucket, "-") || strings.Contains(bucket, "..") ||
+		strings.Contains(bucket, ".-") || strings.Contains(bucket, "-.") || strings.ContainsAny(bucket, "/\\?#\r\n") {
+		return false
+	}
+	for _, c := range bucket {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.') { return false }
+	}
 	return true
 }
