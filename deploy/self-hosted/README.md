@@ -2,6 +2,14 @@
 
 Local-first PostgreSQL, Valkey, object storage, API gateway, media cache, HTTPS edge and monitoring for owned hardware.
 
+## Operator dashboard
+
+Grafana is provisioned alongside Prometheus. Use the `Testagram Operations` dashboard for API request rate, latency and error rates, cache performance, database pool pressure, configured queue backlog/age, and host CPU/memory/disk/network metrics.
+
+Set `GRAFANA_ADMIN_USER` and a strong `GRAFANA_ADMIN_PASSWORD` in this directory's `.env` file before bringing up the stack. Grafana binds to `127.0.0.1:3000` only; connect from an operator workstation with `ssh -N -L 3000:127.0.0.1:3000 user@your-vps-host`, then browse to `http://127.0.0.1:3000`. Do not publish Grafana to a public interface.
+
+Prometheus alert rules are evaluated, but this Compose stack does not yet configure a notification receiver. Configure and test Alertmanager/email/webhook delivery separately before relying on these alerts for on-call notification.
+
 ## Private platform service
 
 The stack includes `platform:8095` for internal cache, rate limiting, queues, feature configuration and audit/event APIs. Its port is not published to the host; it is reachable only on the private Docker networks. The `PLATFORM_INTERNAL_TOKEN` in `.env` is required and must never be exposed to browser or mobile clients. Prometheus scrapes platform metrics on a separate internal monitoring network.
