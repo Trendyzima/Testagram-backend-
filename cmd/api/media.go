@@ -1165,7 +1165,7 @@ func (s *service) runMediaJanitor(ctx context.Context) {
 }
 
 type mediaCleanupObject struct {
-	key, ownerID, visibility, externalID string
+	key, ownerID, visibility, namespace, externalID string
 }
 
 func (s *service) cleanupMediaBatch(ctx context.Context) error {
@@ -1175,7 +1175,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility
+	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace
 		from testagram_media.upload_intents
 		where expires_at <= now() and status in ('issued','cleanup_pending')
 		order by expires_at asc limit 50`)
@@ -1206,7 +1206,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 			// Completion/cancellation may have won the race after selection.
 			continue
 		}
-		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
+		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
 			continue
 		}
 		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='expired', updated_at=now()
@@ -1215,7 +1215,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 		}
 	}
 
-	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status, coalesce(external_media_id::text,'')
+	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status, coalesce(external_media_id::text,''), storage_namespace
 		from testagram_media.assets where status in ('deletion_pending','quarantine_pending')
 		order by updated_at asc limit 50`)
 	if err != nil {
@@ -1240,7 +1240,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	}
 	assetRows.Close()
 	for _, item := range assets {
-		if err := s.deleteMediaObject(batchCtx, item.ownerID, item.key, item.visibility); err != nil {
+		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
 			continue
 		}
 		if err := s.deleteProductMedia(batchCtx, item.externalID); err != nil {
