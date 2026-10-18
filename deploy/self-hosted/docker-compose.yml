@@ -107,7 +107,9 @@ services:
     networks: [data]
 
   object-init:
-    image: ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z
+    build:
+      context: ./minio-tools
+      dockerfile: Dockerfile
     depends_on:
       object-storage:
         condition: service_started
