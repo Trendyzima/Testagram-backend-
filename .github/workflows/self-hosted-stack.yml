@@ -88,10 +88,19 @@ jobs:
             echo "A private data/monitoring port is published to the host."
             exit 1
           fi
-          if ! grep -A3 -E 'published: "3000"' /tmp/testagram-compose.yml | grep -q 'host_ip: 127.0.0.1'; then
-            echo "Grafana must bind to loopback only, not a public interface."
-            exit 1
-          fi
+          python - <<'PY'
+          import yaml
+          with open("/tmp/testagram-compose.yml", encoding="utf-8") as handle:
+              compose = yaml.safe_load(handle)
+          services = compose.get("services", {})
+          grafana_ports = services.get("grafana", {}).get("ports", [])
+          if not any(str(port.get("published")) == "3000" and port.get("target") == 3000 and port.get("host_ip") == "127.0.0.1" for port in grafana_ports):
+              raise SystemExit("Grafana must publish port 3000 on 127.0.0.1 only.")
+          for service_name, service in services.items():
+              for port in service.get("ports", []):
+                  if str(port.get("published")) == "3000" and port.get("host_ip") != "127.0.0.1":
+                      raise SystemExit(f"Grafana port 3000 is exposed beyond loopback by service {service_name}.")
+          PY
       - name: Validate Caddy tenant TLS configuration
         working-directory: deploy/self-hosted
         run: |
