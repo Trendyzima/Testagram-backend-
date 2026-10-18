@@ -193,7 +193,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	if in.Image == "" || strings.ContainsAny(in.Image, " \t\r\n") || !validImageDigest(in.ImageDigest) {
+	if in.Image == "" || strings.ContainsAny(in.Image, " \t\r\n@") || !validImageDigest(in.ImageDigest) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "image and immutable sha256 imageDigest are required"})
 		return
 	}
@@ -202,7 +202,6 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusForbidden, map[string]string{"error": "workload image is not in VPS_ALLOWED_WORKLOAD_IMAGES"})
 		return
 	}
-	if strings.Contains(in.Image, "@") {
 	if in.CPUMillis <= 0 { in.CPUMillis = 250 }
 	if in.MemoryBytes <= 0 { in.MemoryBytes = 268435456 }
 	if in.StorageBytes <= 0 { in.StorageBytes = 268435456 }
