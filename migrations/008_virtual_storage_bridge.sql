@@ -60,7 +60,7 @@ create table if not exists testagram_media.storage_deletion_jobs (
   last_error_code text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  completed_at timestamptz,
+  completed_at timestamptz
 );
 
 -- Only active jobs are unique: a later delete request can be enqueued after a
