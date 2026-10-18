@@ -38,7 +38,7 @@ jobs:
           unformatted="$(gofmt -l cmd admin-console)"
           if [[ -n "$unformatted" ]]; then
             printf '%s\n' "$unformatted"
-            gofmt -d cmd
+            gofmt -d cmd admin-console
             exit 1
           fi
 
@@ -101,9 +101,9 @@ jobs:
           VPS_NODE_BOOTSTRAP_TOKEN: ci-only-node-token-not-for-production
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
         run: |
-          ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-          ADMIN_PUBLIC_URL=https://ops.example.invalid
-          ADMIN_DOMAIN=ops.example.invalid
+          export ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          export ADMIN_PUBLIC_URL=https://ops.example.invalid
+          export ADMIN_DOMAIN=ops.example.invalid
           docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
           docker build -f admin-console/Dockerfile -t testagram-admin-console-ci .
           docker build -f deploy/self-hosted/minio-tools/Dockerfile -t testagram-minio-tools-ci deploy/self-hosted/minio-tools
