@@ -124,7 +124,7 @@ func (s *service) allowedOrigins() map[string]struct{} {
 func (s *service) cors(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	w.Header().Set("Vary", "Origin")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "authorization, apikey, content-type, x-client-info, x-request-id, accept")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if origin == "" {
