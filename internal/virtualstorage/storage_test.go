@@ -11,6 +11,9 @@ type fakeProvider struct {
 	bucket, key, contentType string
 	size                     int64
 	deleted                  bool
+	headInfo                 ObjectInfo
+	headErr                  error
+	listItems                []ObjectInfo
 }
 
 func (f *fakeProvider) PresignPut(_ context.Context, bucket, key, contentType string, size int64, _ time.Duration) (string, error) {
@@ -21,13 +24,23 @@ func (f *fakeProvider) PresignGet(_ context.Context, bucket, key string, _ time.
 	f.bucket, f.key = bucket, key
 	return "https://storage.example/signed-get", nil
 }
-func (f *fakeProvider) Head(context.Context, string, string) (ObjectInfo, error) { return ObjectInfo{}, ErrNotFound }
+func (f *fakeProvider) Head(_ context.Context, bucket, key string) (ObjectInfo, error) {
+	f.bucket, f.key = bucket, key
+	if f.headErr != nil {
+		return ObjectInfo{}, f.headErr
+	}
+	if f.headInfo.Key == "" {
+		return ObjectInfo{}, ErrNotFound
+	}
+	return f.headInfo, nil
+}
 func (f *fakeProvider) Delete(_ context.Context, bucket, key string) error {
 	f.bucket, f.key, f.deleted = bucket, key, true
 	return nil
 }
-func (f *fakeProvider) List(context.Context, string, string, string, int) ([]ObjectInfo, string, error) {
-	return nil, "", nil
+func (f *fakeProvider) List(_ context.Context, bucket, prefix, cursor string, limit int) ([]ObjectInfo, string, error) {
+	f.bucket, f.key = bucket, prefix
+	return f.listItems, "next-cursor", nil
 }
 
 func testManager(t *testing.T, provider Provider) *Manager {
@@ -63,6 +76,38 @@ func TestUploadRejectsPathTraversal(t *testing.T) {
 		if _, err := m.UploadURL(context.Background(), "user-123", "post-media", key, "image/jpeg", 10); !errors.Is(err, ErrInvalidKey) {
 			t.Errorf("key %q error = %v, want ErrInvalidKey", key, err)
 		}
+	}
+}
+
+func TestVerifyUploadChecksProviderObservedMetadata(t *testing.T) {
+	p := &fakeProvider{headInfo: ObjectInfo{
+		Key: "tenants/user-123/post/image.jpg", Size: 100, ContentType: "image/jpeg",
+	}}
+	m := testManager(t, p)
+	info, err := m.VerifyUpload(context.Background(), "user-123", "post-media", "post/image.jpg", "image/jpeg", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Key != "post/image.jpg" || p.key != "tenants/user-123/post/image.jpg" {
+		t.Fatalf("verified object was not tenant-scoped: info=%+v provider=%+v", info, p)
+	}
+	if _, err := m.VerifyUpload(context.Background(), "user-123", "post-media", "post/image.jpg", "image/jpeg", 99); !errors.Is(err, ErrObjectMismatch) {
+		t.Fatalf("size mismatch error = %v, want ErrObjectMismatch", err)
+	}
+}
+
+func TestListFiltersUnexpectedProviderTenantKeys(t *testing.T) {
+	p := &fakeProvider{listItems: []ObjectInfo{
+		{Key: "tenants/user-123/post/one.jpg", Size: 10},
+		{Key: "tenants/other-user/private.jpg", Size: 20},
+	}}
+	m := testManager(t, p)
+	items, cursor, err := m.List(context.Background(), "user-123", "post-media", "", "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Key != "post/one.jpg" || cursor != "next-cursor" {
+		t.Fatalf("unexpected scoped list: items=%+v cursor=%q", items, cursor)
 	}
 }
 
