@@ -38,7 +38,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Scrape targets up (of 3)",
+      "title": "Scrape targets up (of 4)",
       "datasource": {
         "type": "prometheus",
         "uid": "testagram-prometheus"
@@ -51,7 +51,7 @@
       },
       "targets": [
         {
-          "expr": "sum(up{job=~\"testagram-api|testagram-platform|testagram-node\"})",
+          "expr": "sum(up{job=~\"testagram-api|testagram-platform|testagram-node|testagram-grafana\"})",
           "refId": "A"
         }
       ],
@@ -74,7 +74,7 @@
               },
               {
                 "color": "green",
-                "value": 3
+                "value": 4
               }
             ]
           }
