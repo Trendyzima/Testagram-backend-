@@ -113,8 +113,8 @@ jobs:
           docker run --rm -v "$PWD/deploy/self-hosted/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$PWD/deploy/self-hosted/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
           docker run --rm -v "$PWD/deploy/self-hosted/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 check rules /etc/prometheus/alerts.yml
           sh -n deploy/self-hosted/alertmanager/generate-config.sh
-          docker run --rm -e ALERTMANAGER_WEBHOOK_URL=https://hooks.example.invalid/test -v "$PWD/deploy/self-hosted/alertmanager/generate-config.sh:/etc/alertmanager/generate-config.sh:ro" --entrypoint /bin/sh prom/alertmanager:v0.28.1 -ec '/etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml && /bin/amtool check-config /tmp/alertmanager.yml'
-          docker run --rm -e ALERTMANAGER_WEBHOOK_URL= -v "$PWD/deploy/self-hosted/alertmanager/generate-config.sh:/etc/alertmanager/generate-config.sh:ro" --entrypoint /bin/sh prom/alertmanager:v0.28.1 -ec '/etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml && /bin/amtool check-config /tmp/alertmanager.yml'
+          docker run --rm -e ALERTMANAGER_WEBHOOK_URL=https://hooks.example.invalid/test -v "$PWD/deploy/self-hosted/alertmanager/generate-config.sh:/etc/alertmanager/generate-config.sh:ro" --entrypoint /bin/sh prom/alertmanager:v0.28.1 -ec 'sh /etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml && /bin/amtool check-config /tmp/alertmanager.yml'
+          docker run --rm -e ALERTMANAGER_WEBHOOK_URL= -v "$PWD/deploy/self-hosted/alertmanager/generate-config.sh:/etc/alertmanager/generate-config.sh:ro" --entrypoint /bin/sh prom/alertmanager:v0.28.1 -ec 'sh /etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml && /bin/amtool check-config /tmp/alertmanager.yml'
 
   virtual-storage-integration:
     name: Virtual storage MinIO lifecycle
