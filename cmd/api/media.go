@@ -1040,6 +1040,15 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Persist the cleanup job before touching object storage. If this process
+	// exits after enqueueing, the background worker resumes the deletion.
+	if _, err := s.db.Exec(r.Context(), `insert into testagram_media.storage_deletion_jobs
+		(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
+		values ($1,$2,$3,'legacy-media','default','user_delete','pending')
+		on conflict do nothing`, body.Key, userID, visibility); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_DELETE_QUEUE_FAILED", "Could not durably schedule media deletion", id))
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if err := s.deleteMediaObject(ctx, userID, body.Key, visibility); err != nil {
@@ -1052,6 +1061,12 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.db.Exec(ctx, `update testagram_media.assets set status='deleted', updated_at=now()
 		where object_key=$1 and owner_id=$2 and status='deletion_pending'`, body.Key, userID); err != nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
+		return
+	}
+	if _, err := s.db.Exec(ctx, `update testagram_media.storage_deletion_jobs
+		set status='completed', completed_at=now(), updated_at=now(), locked_at=null
+		where object_key=$1 and reason='user_delete' and status in ('pending','processing','retry')`, body.Key); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
 		return
 	}
