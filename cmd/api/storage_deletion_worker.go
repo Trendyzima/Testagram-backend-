@@ -30,7 +30,7 @@ func (s *service) runStorageDeletionWorker(ctx context.Context) {
 
 type storageDeletionJob struct {
 	id int64
-	key, ownerID, visibility, reason, externalID string
+	key, ownerID, visibility, namespace, reason, externalID string
 	attempts int
 }
 
@@ -67,14 +67,14 @@ func (s *service) processStorageDeletionBatch(ctx context.Context) error {
 	set status='processing', locked_at=now(), attempts=j.attempts+1, updated_at=now()
 	from picked
 	where j.id=picked.id
-	returning j.id, j.object_key, j.owner_id, j.visibility, j.reason, j.attempts`)
+	returning j.id, j.object_key, j.owner_id, j.visibility, j.storage_namespace, j.reason, j.attempts`)
 	if err != nil {
 		return err
 	}
 	jobs := make([]storageDeletionJob, 0, 20)
 	for rows.Next() {
 		var job storageDeletionJob
-		if err := rows.Scan(&job.id, &job.key, &job.ownerID, &job.visibility, &job.reason, &job.attempts); err != nil {
+		if err := rows.Scan(&job.id, &job.key, &job.ownerID, &job.visibility, &job.namespace, &job.reason, &job.attempts); err != nil {
 			rows.Close()
 			return err
 		}
@@ -118,7 +118,7 @@ func (s *service) processStorageDeletionBatch(ctx context.Context) error {
 }
 
 func (s *service) performStorageDeletion(ctx context.Context, job storageDeletionJob) error {
-	if err := s.deleteMediaObject(ctx, job.ownerID, job.key, job.visibility); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, job.ownerID, job.key, job.visibility, job.namespace); err != nil {
 		return err
 	}
 	if job.reason == "user_delete" {
