@@ -51,7 +51,7 @@
       },
       "targets": [
         {
-          "expr": "sum(up{job=~\"prometheus|testagram-api|testagram-platform|testagram-node|testagram-grafana\"})",
+          "expr": "sum(up{job=~\"prometheus|testagram-api|testagram-platform|testagram-node|testagram-grafana|testagram-alertmanager\"})",
           "refId": "A"
         }
       ],
