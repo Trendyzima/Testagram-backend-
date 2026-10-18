@@ -61,8 +61,15 @@ create table if not exists testagram_media.storage_deletion_jobs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
-  unique (object_key, reason)
 );
+
+-- Only active jobs are unique: a later delete request can be enqueued after a
+-- prior job completed, while concurrent duplicate requests remain idempotent.
+alter table testagram_media.storage_deletion_jobs
+  drop constraint if exists storage_deletion_jobs_object_key_reason_key;
+create unique index if not exists storage_deletion_jobs_active_unique_idx
+  on testagram_media.storage_deletion_jobs(object_key, reason)
+  where status in ('pending','processing','retry');
 
 create index if not exists storage_deletion_jobs_ready_idx
   on testagram_media.storage_deletion_jobs(available_at, id)
