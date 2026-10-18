@@ -8,7 +8,9 @@ This service adds a browser-accessible operations workspace at `https://ops.test
 - Server-encrypted, HttpOnly, SameSite=Strict session cookie; browser JavaScript never receives access/refresh tokens.
 - Server-side role verification from Supabase Auth `app_metadata.staff_role`. Roles in user-editable `user_metadata` are ignored.
 - Owner-only staff invitations. Invite roles: `administrator`, `engineer`, `operations`, `support`, and `moderator`. The `owner` role cannot be granted by the invite form.
-- Operational overview using the internal Prometheus API and the API readiness endpoint.
+- Operational overview using the internal Prometheus API and the API readiness endpoint, including API/platform availability, request rate, 5xx rate, p95 latency, database-pool use, and pending queue depth when metrics are available.
+- Dashboard metrics refresh every 30 seconds while the approved staff dashboard is visible; polling pauses in hidden tabs, and a manual refresh remains available.
+- Missing Prometheus samples are shown as unavailable instead of being incorrectly presented as a real zero. The Grafana target-up summary counts the five configured scrape jobs.
 - Links to the backend repository and private Grafana dashboard.
 
 ## Configure before deploying

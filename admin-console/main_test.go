@@ -87,3 +87,33 @@ func TestRecoveryRedirectUsesConfiguredConsoleOrigin(t *testing.T) {
 	if !strings.HasPrefix(a.publicURL,"https://ops.example.test"){t.Fatal("expected configured HTTPS public URL")}
 	if _,err:=url.Parse(a.publicURL+"/reset-password");err!=nil{t.Fatal(err)}
 }
+
+func TestQueryPrometheusDistinguishesMissingSamplesFromZero(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want float64
+		wantErr bool
+	}{
+		{name: "real zero is available", body: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,"0"]}]}}`, want: 0},
+		{name: "positive sample", body: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,"12.5"]}]}}`, want: 12.5},
+		{name: "empty vector is unavailable", body: `{"status":"success","data":{"resultType":"vector","result":[]}}`, wantErr: true},
+		{name: "query error is unavailable", body: `{"status":"error","error":"bad query"}`, wantErr: true},
+		{name: "malformed sample is unavailable", body: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,{}]}]}}`, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			a := testApp(t)
+			a.prometheusURL = server.URL
+			a.client = server.Client()
+			got, err := a.queryPrometheus(t.Context(), "up")
+			if (err != nil) != tc.wantErr { t.Fatalf("queryPrometheus() error = %v, wantErr %v", err, tc.wantErr) }
+			if err == nil && got != tc.want { t.Fatalf("queryPrometheus() = %v, want %v", got, tc.want) }
+		})
+	}
+}

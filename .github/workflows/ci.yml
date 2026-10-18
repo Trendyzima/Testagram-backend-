@@ -33,6 +33,8 @@ jobs:
         run: go vet ./...
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api ./admin-console
+      - name: Validate staff console JavaScript syntax
+        run: node --check admin-console/web/app.js
       - name: Check formatting in API command package
         run: |
           unformatted="$(gofmt -l cmd)"
