@@ -225,7 +225,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
-	if key == "" || len(key) > 1024 || strings.ContainsAny(key, "\\ \r\n") {
+	if key == "" || len(key) > 1024 || strings.ContainsAny(key, "\\\x00\r\n") {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_KEY", "A valid upload intent key is required", id))
 		return
 	}
