@@ -121,3 +121,32 @@ groups:
           summary: Testagram API database pool is near capacity
           description: More than 85% of the configured PostgreSQL connection pool is acquired for 5 minutes. Inspect slow queries and connection wait time before increasing pool sizes.
 
+      - alert: TestagramSearchCapabilityLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(testagram_capability_request_duration_seconds_bucket{job="testagram-api",group="search"}[5m]))
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram unified search is slow
+          description: Search capability p95 latency exceeded three seconds. Correlate with database statement timeouts, API upstream latency, and PostgreSQL load.
+
+      - alert: TestagramSearchCapabilityErrors
+        expr: |
+          (
+            sum(rate(testagram_capability_requests_total{job="testagram-api",group="search",status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(testagram_capability_requests_total{job="testagram-api",group="search"}[5m])), 0.001)
+          ) > 0.05
+          and
+          sum(rate(testagram_capability_requests_total{job="testagram-api",group="search"}[5m])) > 0.02
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram search requests are failing
+          description: More than 5% of search capability requests returned server errors. Inspect the correlated request ID and database/search logs; the metric deliberately excludes raw query text and arbitrary capability names.
+
