@@ -629,6 +629,6 @@ func TestMediaUploadGatewayPreflightAllowsConfiguredOrigin(t *testing.T) {
 	}
 	allowedHeaders := strings.ToLower(w.Header().Get("Access-Control-Allow-Headers"))
 	if !strings.Contains(allowedHeaders, "authorization") || !strings.Contains(allowedHeaders, "content-type") {
-		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization and content-type", got)
+		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization and content-type", allowedHeaders)
 	}
 }
