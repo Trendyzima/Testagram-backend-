@@ -166,6 +166,13 @@ func (s *service) recordCapability(group string, status int, elapsed time.Durati
 	m.statuses[status]++
 }
 
+func upstreamFailureOutcome(requestErr, contextErr error) string {
+	if errors.Is(requestErr, context.DeadlineExceeded) || errors.Is(contextErr, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "transport_error"
+}
+
 func (s *service) recordUpstream(group, outcome string, status int, elapsed time.Duration) {
 	switch group {
 	case "search", "feed", "media", "auth", "notifications", "federation":
@@ -692,9 +699,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	}()
 	upstreamResponse, err := client.Do(upstreamReq)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			upstreamOutcome = "timeout"
-		}
+		upstreamOutcome = upstreamFailureOutcome(err, ctx.Err())
 		log.Printf("capability upstream request failed request_id=%q group=%q error=%q", id, upstreamGroup, err)
 		writeJSON(w, http.StatusBadGateway, errorBody("DATABASE_UNAVAILABLE", "Capability backend is temporarily unavailable", id))
 		return
