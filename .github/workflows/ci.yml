@@ -140,3 +140,34 @@ jobs:
       - name: Stop isolated MinIO service
         if: always()
         run: docker stop testagram-minio-ci || true
+
+  saas-schema-integration:
+    name: SaaS tenancy migration integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-saas-schema-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-saas-schema-ci pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs testagram-saas-schema-ci
+          exit 1
+      - name: Apply migration twice and assert schema invariants
+        run: |
+          set -euo pipefail
+          docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'create extension if not exists pgcrypto'
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c "do \$\$ begin if not (select relrowsecurity from pg_class where oid='testagram_saas.tenants'::regclass) then raise exception 'RLS is disabled on tenants'; end if; if not exists (select 1 from pg_indexes where schemaname='testagram_saas' and indexname='saas_subscriptions_external_ref_uidx') then raise exception 'subscription idempotency index missing'; end if; end \$\$;"
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-saas-schema-ci || true
