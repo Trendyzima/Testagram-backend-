@@ -10,6 +10,19 @@ Set `GRAFANA_ADMIN_USER` and a strong `GRAFANA_ADMIN_PASSWORD` in this directory
 
 Prometheus alert rules are evaluated, but this Compose stack does not yet configure a notification receiver. Configure and test Alertmanager/email/webhook delivery separately before relying on these alerts for on-call notification.
 
+## Staff console
+
+The stack now has an optional-to-configure, HTTPS-routed staff console on `ADMIN_DOMAIN` (default `ops.testagram.site`). Set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `ADMIN_PUBLIC_URL`, and a fresh 64-hex-character `ADMIN_SESSION_KEY` in `.env`. The invite feature additionally requires `SUPABASE_SERVICE_ROLE_KEY`; keep it server-only. Configure Supabase Auth allowed redirects for the console root and `/reset-password`, provision the first owner's `app_metadata.staff_role=owner` using a trusted admin operation, and point DNS at the VPS.
+
+After configuration, run:
+
+```bash
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml config --quiet
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml up -d --build admin-console caddy
+```
+
+Visit `https://ops.testagram.site`. The console's monitoring APIs are protected by server-side Auth role checks; user-editable metadata cannot grant staff access. New sign-ups remain pending until an owner-approved role is assigned. Grafana remains loopback-only and should be accessed through an SSH tunnel as described above. Full instructions and release gates are in [admin-console/README.md](../../admin-console/README.md).
+
 ## Private platform service
 
 The stack includes `platform:8095` for internal cache, rate limiting, queues, feature configuration and audit/event APIs. Its port is not published to the host; it is reachable only on the private Docker networks. The `PLATFORM_INTERNAL_TOKEN` in `.env` is required and must never be exposed to browser or mobile clients. Prometheus scrapes platform metrics on a separate internal monitoring network.
