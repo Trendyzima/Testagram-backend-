@@ -23,9 +23,9 @@ Apply `migrations/008_virtual_storage_bridge.sql`. Record a logical namespace an
 
 ### 2. Provider contract and adapter
 
-Implement the `virtualstorage.Provider` contract behind a concrete S3-compatible adapter. Required operations:
+Implemented the standard-library `virtualstorage.S3Provider` contract with SigV4 presigned PUT/GET/HEAD/DELETE and paginated LIST. The API can construct a policy manager when `VIRTUAL_STORAGE_ENABLED=true`; the default remains disabled. New upload intents, completion verification, private retrieval/list URLs, namespace-aware deletion, janitor cleanup and moderation now use the manager for non-legacy rows. Required provider guarantees and release gates remain:
 
-- signed PUT with enforceable size/content-type constraints where supported;
+- signed PUT with content type bound into the signature; size is rechecked against the persisted intent at completion (the presigned URL itself does not enforce a maximum byte count);
 - signed GET with bounded TTL;
 - provider-observed HEAD metadata;
 - DELETE with idempotent not-found handling;
@@ -62,7 +62,7 @@ Never make a database transaction wait on a remote object-store request.
 - Concurrency tests for quota reservation and idempotent completion/deletion.
 - Failure injection for provider timeouts, repeated deletes, worker restarts and PostgreSQL restarts.
 - Backup/restore test proving both metadata and object bytes can be recovered.
-- Keep the new path feature-gated; do not switch production traffic until all gates pass.
+- Keep `VIRTUAL_STORAGE_ENABLED=false` in production until all gates pass. Public CDN/origin routing must serve the tenant-prefixed physical path `tenants/{owner}/{logical-key}` for new virtual objects; confirm this path mapping in the deployed CDN/origin before enabling the flag. Legacy objects remain at their existing paths.
 
 ## Later: storage-node pooling
 
