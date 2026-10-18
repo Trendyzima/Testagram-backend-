@@ -154,7 +154,7 @@ func (s *Signer) presignObjectPut(userID, key, visibility, contentType string, l
 	q.Set("X-Amz-Expires", strconv.FormatInt(int64(lifetime/time.Second), 10))
 	q.Set("X-Amz-SignedHeaders", "content-type;host")
 	u.RawQuery = q.Encode()
-	canonicalHeaders := "content-type:" + contentType + "\n" + "host:" + s.signingHost
+	canonicalHeaders := "content-type:" + contentType + "\n" + "host:" + s.signingHost + "\n"
 	canonicalRequest := strings.Join([]string{"PUT", u.EscapedPath(), u.RawQuery, canonicalHeaders, "content-type;host", "UNSIGNED-PAYLOAD"}, "\n")
 	requestHash := sha256.Sum256([]byte(canonicalRequest))
 	stringToSign := "AWS4-HMAC-SHA256\n" + amzDate + "\n" + scope + "\n" + hex.EncodeToString(requestHash[:])
