@@ -38,7 +38,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Scrape targets up",
+      "title": "Scrape targets up (of 3)",
       "datasource": {
         "type": "prometheus",
         "uid": "testagram-prometheus"
@@ -69,8 +69,12 @@
                 "value": 0
               },
               {
+                "color": "yellow",
+                "value": 1
+              },
+              {
                 "color": "green",
-                "value": 2
+                "value": 3
               }
             ]
           }
