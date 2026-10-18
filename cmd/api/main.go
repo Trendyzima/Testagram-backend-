@@ -187,6 +187,72 @@ func sortedStatusCodes(statuses map[int]uint64) []int {
 	return codes
 }
 
+func (s *service) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if s.db == nil {
+			http.Error(w, "database not configured", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.db.Ping(ctx); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready\n"))
+	})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = w.Write([]byte(s.metricsText()))
+	})
+	mux.HandleFunc("OPTIONS /api/capability", s.capability)
+	mux.HandleFunc("POST /api/capability", s.capability)
+	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
+	mux.HandleFunc("PUT /api/media/upload", s.mediaUploadGateway)
+	mux.HandleFunc("OPTIONS /api/media/complete", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/complete", s.mediaComplete)
+	mux.HandleFunc("OPTIONS /api/media/delete", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/delete", s.mediaDelete)
+	mux.HandleFunc("OPTIONS /api/media/attach", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/attach", s.mediaAttach)
+	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
+	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
+	mux.HandleFunc("OPTIONS /api/media/list", s.mediaPreflight)
+	mux.HandleFunc("POST /api/media/list", s.mediaList)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := requestID(r)
+		w.Header().Set("X-Request-ID", id)
+		s.requests.Add(1)
+		started := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		mux.ServeHTTP(recorder, r)
+		s.recordRequest(normalizedMethod(r.Method), normalizedRoute(r.URL.Path), recorder.status, time.Since(started))
+	})
+}
+
+
+func normalizedRoute(path string) string {
+	switch path {
+	case "/healthz", "/readyz", "/metrics", "/api/capability",
+		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
+		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
+		"/api/media/list", "/internal/media/quarantine":
+		return path
+	default:
+		return "unmatched"
+	}
+}
+
 func (s *service) allowedOrigins() map[string]struct{} {
 	origins := strings.Split(env("ALLOWED_ORIGINS", "https://testagram.site,https://www.testagram.site,http://localhost:5173,http://127.0.0.1:5173"), ",")
 	allowed := make(map[string]struct{}, len(origins))
