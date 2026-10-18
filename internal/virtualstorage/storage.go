@@ -213,7 +213,7 @@ func (m *Manager) VerifyUploadChecksum(ctx context.Context, tenantID, namespace,
 	if err != nil {
 		return err
 	}
-	if !subtle.ConstantTimeCompare([]byte(actual), []byte(expectedSHA256)) == 1 {
+	if subtle.ConstantTimeCompare([]byte(actual), []byte(expectedSHA256)) != 1 {
 		return ErrChecksumMismatch
 	}
 	return nil
