@@ -32,9 +32,9 @@ type privateMediaDownloadRequest struct {
 }
 
 type mediaCompleteRequest struct {
-	Key          string `json:"key"`
-	Visibility   string `json:"visibility"`
-	ContentType  string `json:"content_type"`
+	Key            string `json:"key"`
+	Visibility     string `json:"visibility"`
+	ContentType    string `json:"content_type"`
 	ChecksumSHA256 string `json:"checksum_sha256"`
 }
 
@@ -233,7 +233,9 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
 		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 { code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable" }
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
 		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
