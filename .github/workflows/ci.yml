@@ -99,7 +99,9 @@ jobs:
           PLATFORM_INTERNAL_TOKEN: ci-only-platform-token-not-for-production
           VPS_INTERNAL_TOKEN: ci-only-vps-token-not-for-production
           VPS_NODE_BOOTSTRAP_TOKEN: ci-only-node-token-not-for-production
-        run: docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
+        run: |
+          docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
+          docker build -f deploy/self-hosted/minio-tools/Dockerfile -t testagram-minio-tools-ci deploy/self-hosted/minio-tools
 
   virtual-storage-integration:
     name: Virtual storage MinIO lifecycle
