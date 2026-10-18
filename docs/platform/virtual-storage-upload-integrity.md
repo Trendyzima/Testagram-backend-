@@ -19,7 +19,7 @@ This change intentionally makes the virtual-storage completion contract stricter
 
 The API atomically changes a virtual-storage intent from `issued` to `uploading` **before it reads the request body**. A second or replayed PUT receives `409 MEDIA_INTENT_ALREADY_USED` and cannot overwrite the object while the first transfer is in progress. After the storage provider accepts the complete bounded body, the intent becomes `uploaded`; completion accepts that state and verifies the stored object plus its SHA-256 before marking the intent `completed`.
 
-If a process crashes or a transfer never finishes, an `uploading` claim is considered stale after 15 minutes and the media janitor schedules/removes any partial object. Failed uploads do not automatically reopen the same intent: clients should request a new intent. Migration `010_media_upload_claim.sql` adds these states; the operator backup/apply script includes migration 010 and requires an explicit `APPLY-008-010` confirmation.
+If a process crashes or a transfer never finishes, an `uploading` claim is considered stale after 2 hours and the media janitor schedules/removes any partial object. Failed uploads do not automatically reopen the same intent: clients should request a new intent. Migration `010_media_upload_claim.sql` adds these states; the operator backup/apply script includes migration 010 and requires an explicit `APPLY-008-010` confirmation.
 
 ## Bounded upload gateway
 
