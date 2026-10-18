@@ -683,19 +683,36 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if client == nil {
 		client = &http.Client{Timeout: 8 * time.Second}
 	}
+	upstreamGroup := capabilityGroup(body.Capability)
+	upstreamStarted := time.Now()
+	upstreamOutcome := "transport_error"
+	upstreamStatus := 0
+	defer func() {
+		s.recordUpstream(upstreamGroup, upstreamOutcome, upstreamStatus, time.Since(upstreamStarted))
+	}()
 	upstreamResponse, err := client.Do(upstreamReq)
 	if err != nil {
-		log.Printf("capability upstream request failed request_id=%q group=%q error=%q", id, capabilityGroup(body.Capability), err)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			upstreamOutcome = "timeout"
+		}
+		log.Printf("capability upstream request failed request_id=%q group=%q error=%q", id, upstreamGroup, err)
 		writeJSON(w, http.StatusBadGateway, errorBody("DATABASE_UNAVAILABLE", "Capability backend is temporarily unavailable", id))
 		return
 	}
 	defer upstreamResponse.Body.Close()
+	upstreamStatus = upstreamResponse.StatusCode
 	raw, err := io.ReadAll(io.LimitReader(upstreamResponse.Body, maxUpstreamBody+1))
 	if err != nil || len(raw) > maxUpstreamBody {
+		upstreamOutcome = "invalid_response"
 		writeJSON(w, http.StatusBadGateway, errorBody("UPSTREAM_RESPONSE_INVALID", "Capability backend returned an invalid response", id))
 		return
 	}
 	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
+		if upstreamResponse.StatusCode >= 500 {
+			upstreamOutcome = "upstream_5xx"
+		} else {
+			upstreamOutcome = "upstream_4xx"
+		}
 		// Never expose raw database/upstream errors or user search terms to logs.
 		log.Printf("capability upstream response failed request_id=%q group=%q status=%d", id, capabilityGroup(body.Capability), upstreamResponse.StatusCode)
 		message := "Capability database request failed"
@@ -710,6 +727,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
+	upstreamOutcome = "success"
 	if cacheKey != "" && len(raw) <= 128<<10 && json.Valid(raw) {
 		ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 		if err := s.platform.Set(ctx, cacheKey, string(raw), cacheTTL); err != nil {
