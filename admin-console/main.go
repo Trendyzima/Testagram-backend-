@@ -223,11 +223,11 @@ func (a *app) setSession(w http.ResponseWriter, s session) error {
 }
 
 func (a *app) clearSession(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name:"__Host-testagram-staff", Value:"", Path:"/", HttpOnly:true, Secure:a.cookieSecure, SameSite:http.SameSiteStrictMode, MaxAge:-1})
+	http.SetCookie(w, &http.Cookie{Name:"testagram-staff", Value:"", Path:"/", HttpOnly:true, Secure:a.cookieSecure, SameSite:http.SameSiteStrictMode, MaxAge:-1})
 }
 
 func (a *app) readSession(r *http.Request) (session, error) {
-	cookie, err := r.Cookie("__Host-testagram-staff"); if err != nil { return session{}, err }
+	cookie, err := r.Cookie("testagram-staff"); if err != nil { return session{}, err }
 	sealed, err := hex.DecodeString(cookie.Value); if err != nil { return session{}, err }
 	n := a.aead.NonceSize()
 	if len(sealed) <= n { return session{}, errors.New("invalid session") }
