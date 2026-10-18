@@ -298,7 +298,7 @@ services:
       - "127.0.0.1:9093:9093"
     expose: ["9093"]
     healthcheck:
-      test: ["CMD", "/bin/alertmanager", "--version"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9093/-/ready"]
       interval: 30s
       timeout: 5s
       retries: 3
