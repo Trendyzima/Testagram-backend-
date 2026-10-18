@@ -233,9 +233,8 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCapabilityBody)
 	defer r.Body.Close()
 	var body capabilityRequest
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_JSON", "Request body must be valid JSON within 64 KiB", id))
+	if err := decodeSingleJSON(r.Body, &body); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_JSON", "Request body must contain exactly one valid JSON value within 64 KiB", id))
 		return
 	}
 	if body.Capability == "" || len(body.Capability) > 160 || strings.ContainsAny(body.Capability, "\r\n") {
@@ -483,6 +482,25 @@ func (s *service) bookmarkList(w http.ResponseWriter, r *http.Request, id, baseU
 		items = items[:100]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items}, "error": nil, "request_id": id})
+}
+
+
+// decodeSingleJSON rejects trailing values and non-whitespace bytes after the first
+// JSON value. Accepting concatenated JSON documents can cause different layers to
+// interpret the same request body differently.
+func decodeSingleJSON(r io.Reader, dst any) error {
+	decoder := json.NewDecoder(r)
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func mustJSON(value any) []byte {
