@@ -388,6 +388,12 @@ jobs:
         if: always()
         run: docker stop testagram-saas-schema-ci || true
  -count=1 -v
+      - name: Run source-to-destination reconciliation after recovery
+        env:
+          SOURCE_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+          DESTINATION_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5433/postgres?sslmode=disable
+          RECONCILE_ORIGIN: testagram-vps
+        run: go run ./cmd/replication-reconcile
       - name: Stop isolated databases
         if: always()
         run: |
