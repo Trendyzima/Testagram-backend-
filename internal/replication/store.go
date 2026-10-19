@@ -104,12 +104,13 @@ func (s *Store) ClaimBatch(ctx context.Context, limit int, lease time.Duration) 
 		)
 		UPDATE platform_replication_outbox AS o
 		SET lease_until = now() + ($2 * interval '1 second'),
+		    lease_token = gen_random_uuid(),
 		    attempts = attempts + 1
 		FROM picked
 		WHERE o.event_id = picked.event_id
 		RETURNING o.event_id::text, o.origin, o.entity_type, o.entity_id,
 		          o.entity_version, o.schema_version, o.event_type,
-		          o.occurred_at, o.payload::text`, limit, int64(lease/time.Second))
+		          o.occurred_at, o.payload::text, o.lease_token::text`, limit, int64(lease/time.Second))
 	if err != nil {
 		return nil, fmt.Errorf("claim replication events: %w", err)
 	}
@@ -119,7 +120,7 @@ func (s *Store) ClaimBatch(ctx context.Context, limit int, lease time.Duration) 
 		var e Event
 		var payload string
 		if err := rows.Scan(&e.ID, &e.Origin, &e.EntityType, &e.EntityID,
-			&e.EntityVersion, &e.SchemaVersion, &e.EventType, &e.OccurredAt, &payload); err != nil {
+			&e.EntityVersion, &e.SchemaVersion, &e.EventType, &e.OccurredAt, &payload, &e.LeaseToken); err != nil {
 			return nil, fmt.Errorf("scan replication event: %w", err)
 		}
 		e.Payload = []byte(payload)
@@ -131,11 +132,11 @@ func (s *Store) ClaimBatch(ctx context.Context, limit int, lease time.Duration) 
 	return events, nil
 }
 
-func (s *Store) MarkDelivered(ctx context.Context, eventID string) error {
+func (s *Store) MarkDelivered(ctx context.Context, eventID, leaseToken string) error {
 	tag, err := s.db.Exec(ctx, `
 		UPDATE platform_replication_outbox
-		SET delivered_at = now(), lease_until = NULL, last_error_code = NULL
-		WHERE event_id = $1::uuid AND delivered_at IS NULL AND lease_until > now()`, eventID)
+		SET delivered_at = now(), lease_until = NULL, lease_token = NULL, last_error_code = NULL
+		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND lease_until > now()`, eventID)
 	if err != nil {
 		return fmt.Errorf("mark replication event delivered: %w", err)
 	}
@@ -147,7 +148,7 @@ func (s *Store) MarkDelivered(ctx context.Context, eventID string) error {
 
 // Retry releases a lease and applies bounded exponential backoff. Store only a
 // stable error code, never raw response bodies, credentials, or private payloads.
-func (s *Store) Retry(ctx context.Context, eventID, errorCode string) error {
+func (s *Store) Retry(ctx context.Context, eventID, leaseToken, errorCode string) error {
 	if len(errorCode) > 64 || errorCode == "" {
 		return errors.New("replication error code must be 1-64 characters")
 	}
@@ -159,11 +160,11 @@ func (s *Store) Retry(ctx context.Context, eventID, errorCode string) error {
 	}
 	tag, err := s.db.Exec(ctx, `
 		UPDATE platform_replication_outbox
-		SET lease_until = NULL,
+		SET lease_until = NULL, lease_token = NULL,
 		    available_at = now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::integer) * interval '1 second',
 		    last_error_code = $2
-		WHERE event_id = $1::uuid AND delivered_at IS NULL AND lease_until IS NOT NULL`,
-		eventID, errorCode)
+		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND lease_until IS NOT NULL`,
+		eventID, leaseToken, errorCode)
 	if err != nil {
 		return fmt.Errorf("schedule replication retry: %w", err)
 	}
