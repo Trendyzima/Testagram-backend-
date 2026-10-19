@@ -168,6 +168,12 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
     EXECUTE 'REVOKE ALL ON public.platform_replication_source_versions FROM authenticated';
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    EXECUTE 'GRANT SELECT ON public.platform_replication_health TO service_role';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE ON public.platform_replication_source_versions TO service_role';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.next_testagram_replication_version(TEXT, TEXT) TO service_role';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.enqueue_testagram_public_media_event(TEXT, TEXT, JSONB) TO service_role';
+  END IF;
 END;
 $acl$;
 
