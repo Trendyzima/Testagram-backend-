@@ -503,7 +503,6 @@ func (s *service) routes() http.Handler {
 	})
 }
 
-
 func (s *service) publicReplicationProjection(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	origin := r.PathValue("origin")
