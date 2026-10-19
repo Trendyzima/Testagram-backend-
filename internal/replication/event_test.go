@@ -93,6 +93,7 @@ func TestNormalizeSensitivePayloadKeyVariants(t *testing.T) {
 		"phone number":    "phone_number",
 		"customerEmail":   "customer_email",
 		"apiKey":          "api_key",
+		"x-api-key":       "x_api_key",
 	}
 	for input, want := range cases {
 		if got := normalizeSensitivePayloadKey(input); got != want {
