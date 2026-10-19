@@ -184,7 +184,7 @@ func (s *Store) RecordInbox(ctx context.Context, event Event) (bool, error) {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (event_id) DO NOTHING`,
 		event.ID, event.Origin, event.EntityType, event.EntityID,
-		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:])
+		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:], []byte(event.Payload))
 	if err != nil {
 		return false, fmt.Errorf("record replication inbox event: %w", err)
 	}
@@ -230,12 +230,12 @@ func (s *Store) ApplyInboxTx(ctx context.Context, event Event, apply ApplyFunc) 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO platform_replication_inbox
 		  (event_id, origin, entity_type, entity_id, entity_version,
-		   schema_version, event_type, payload_hash, outcome)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, 'received')
+		   schema_version, event_type, payload_hash, payload, outcome)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'received')
 		ON CONFLICT (event_id) DO NOTHING
 		RETURNING event_id::text`,
 		event.ID, event.Origin, event.EntityType, event.EntityID,
-		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:]).Scan(&insertedID)
+		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:], []byte(event.Payload)).Scan(&insertedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existingHash []byte
 		if readErr := tx.QueryRow(ctx, `SELECT payload_hash FROM platform_replication_inbox WHERE event_id = $1::uuid`, event.ID).Scan(&existingHash); readErr != nil {
