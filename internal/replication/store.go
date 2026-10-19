@@ -180,15 +180,25 @@ func (s *Store) RecordInbox(ctx context.Context, event Event) (bool, error) {
 	tag, err := s.db.Exec(ctx, `
 		INSERT INTO platform_replication_inbox
 		  (event_id, origin, entity_type, entity_id, entity_version,
-		   schema_version, event_type, payload_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		   schema_version, event_type, payload_hash, payload, outcome)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'received')
 		ON CONFLICT (event_id) DO NOTHING`,
 		event.ID, event.Origin, event.EntityType, event.EntityID,
 		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:], []byte(event.Payload))
 	if err != nil {
 		return false, fmt.Errorf("record replication inbox event: %w", err)
 	}
-	return tag.RowsAffected() == 1, nil
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+	var existingHash []byte
+	if err := s.db.QueryRow(ctx, `SELECT payload_hash FROM platform_replication_inbox WHERE event_id = $1::uuid`, event.ID).Scan(&existingHash); err != nil {
+		return false, fmt.Errorf("read existing replication receipt: %w", err)
+	}
+	if !hmac.Equal(existingHash, hash[:]) {
+		return false, errors.New("replication event id reused with different payload")
+	}
+	return false, nil
 }
 
 // WithTx lets domain handlers write the business row and outbox event atomically.
