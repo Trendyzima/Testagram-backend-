@@ -23,6 +23,7 @@ import (
 
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/replication"
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -60,6 +61,7 @@ type service struct {
 	platform          *platformclient.Client
 	media             *media.Signer
 	virtualStorage    *virtualstorage.Manager
+	replicationReceiver http.Handler
 }
 
 type capabilityRequest struct {
@@ -443,6 +445,9 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/media/attach", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/attach", s.mediaAttach)
 	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
+	if s.replicationReceiver != nil {
+		mux.Handle("POST /internal/replication/events", s.replicationReceiver)
+	}
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
 	mux.HandleFunc("OPTIONS /api/media/list", s.mediaPreflight)
@@ -463,7 +468,7 @@ func normalizedRoute(path string) string {
 	case "/healthz", "/readyz", "/metrics", "/api/capability",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
 		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
-		"/api/media/list", "/internal/media/quarantine":
+		"/api/media/list", "/internal/media/quarantine", "/internal/replication/events":
 		return path
 	default:
 		return "unmatched"
@@ -1024,7 +1029,41 @@ func main() {
 		}
 		log.Printf("virtual storage policy manager enabled; new uploads use tenant-scoped object keys")
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager}
+	var replicationStore *replication.Store
+	var replicationReceiver http.Handler
+	replicationKey := strings.TrimSpace(os.Getenv("REPLICATION_PEER_KEY"))
+	replicationPeerOrigin := strings.TrimSpace(os.Getenv("REPLICATION_PEER_ORIGIN"))
+	replicationPeerURL := strings.TrimSpace(os.Getenv("REPLICATION_PEER_URL"))
+	replicationOrigin := strings.TrimSpace(os.Getenv("REPLICATION_ORIGIN"))
+	if replicationKey != "" || replicationPeerOrigin != "" || replicationPeerURL != "" || replicationOrigin != "" {
+		if replicationKey == "" || len([]byte(replicationKey)) < 32 {
+			log.Fatal("replication configuration requires REPLICATION_PEER_KEY with at least 32 characters")
+		}
+		replicationStore, err = replication.NewStore(db)
+		if err != nil {
+			log.Fatalf("configure replication store: %v", err)
+		}
+		if replicationPeerOrigin != "" {
+			receiver, receiverErr := replication.NewQueueReceiver(replicationStore, map[string][]byte{
+				replicationPeerOrigin: []byte(replicationKey),
+			})
+			if receiverErr != nil {
+				log.Fatalf("configure replication receiver: %v", receiverErr)
+			}
+			replicationReceiver = receiver
+			log.Printf("authenticated replication inbox enabled")
+		}
+		if replicationPeerURL != "" {
+			if replicationOrigin == "" {
+				log.Fatal("REPLICATION_ORIGIN is required when REPLICATION_PEER_URL is set")
+			}
+			if !strings.HasPrefix(replicationPeerURL, "https://") {
+				log.Fatal("REPLICATION_PEER_URL must use HTTPS")
+			}
+			log.Printf("durable replication relay enabled")
+		}
+	}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
@@ -1041,6 +1080,29 @@ func main() {
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
 	go svc.runStorageDeletionWorker(signalCtx)
+	if replicationStore != nil && replicationPeerURL != "" {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			}}
+			for {
+				select {
+				case <-signalCtx.Done():
+					return
+				case <-ticker.C:
+					ctx, cancel := context.WithTimeout(signalCtx, 10*time.Second)
+					err := replicationStore.RelayOnce(ctx, client, replicationPeerURL, replicationOrigin, []byte(replicationKey), 50)
+					cancel()
+					if err != nil {
+						// Avoid logging peer response bodies, event payloads, or key material.
+						log.Printf("replication relay batch encountered retryable failures")
+					}
+				}
+			}
+		}()
+	}
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
