@@ -108,7 +108,7 @@ func validateProjection(event Event) (map[string]any, bool, error) {
 		if kind == "account" {
 			if raw, ok := projection["avatar_url"].(string); ok && raw != "" {
 				parsed, parseErr := url.Parse(raw)
-				if parseErr != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+				if parseErr != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 					return nil, false, fmt.Errorf("%w: avatar_url must be a stable HTTPS URL without query or fragment", ErrProjectionRejected)
 				}
 			}
@@ -127,7 +127,7 @@ func validateProjection(event Event) (map[string]any, bool, error) {
 			objectKey, keyOK := projection["object_key"].(string)
 			checksum, checksumOK := projection["checksum_sha256"].(string)
 			contentType, typeOK := projection["content_type"].(string)
-			if !keyOK || objectKey == "" || strings.Contains(objectKey, "://") || strings.HasPrefix(objectKey, "/") || strings.Contains(objectKey, "..") || len(objectKey) > 1024 {
+			if !keyOK || objectKey == "" || strings.Contains(objectKey, "://") || strings.HasPrefix(objectKey, "/") || strings.Contains(objectKey, "..") || strings.ContainsAny(objectKey, "\\?#") || len(objectKey) > 1024 {
 				return nil, false, fmt.Errorf("%w: public media object_key must be a relative object key", ErrProjectionRejected)
 			}
 			if !checksumOK || !sha256HexPattern.MatchString(checksum) {
