@@ -119,7 +119,7 @@ func sensitivePayloadKey(key string) bool {
 	// normalization), credentials_blob, and nested provider secret fields.
 	// Allowlist-based projection validation remains the primary control.
 	for _, fragment := range []string{
-		"authorization", "access_token", "refresh_token", "token",
+		"authorization", "access_token", "refresh_token", "token", "bearer", "jwt",
 		"service_role", "secret", "private_key", "password", "passwd",
 		"email", "phone", "credential", "cookie", "session", "api_key",
 		"signed_url", "presigned_url", "upload_url",
