@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,6 +17,8 @@ import (
 var (
 	ErrLeaseNotHeld = errors.New("replication outbox lease is not held")
 	ErrDuplicateVersion = errors.New("replication entity version already exists")
+	ErrStaleEvent = errors.New("replication event version is stale")
+	ErrEntityTombstoned = errors.New("replication entity is tombstoned")
 )
 
 // Store is the durable PostgreSQL boundary for replication. Redis/Valkey is
@@ -358,6 +361,29 @@ func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFun
 			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox SET outcome='rejected', error_code='invalid_event' WHERE event_id=$1::uuid`, id)
 			continue
 		}
+		versionErr := AdvanceEntityVersion(ctx, tx, event)
+		if errors.Is(versionErr, ErrStaleEvent) || errors.Is(versionErr, ErrEntityTombstoned) {
+			outcome, code := "stale", "stale_version"
+			if errors.Is(versionErr, ErrEntityTombstoned) {
+				outcome, code = "rejected", "entity_tombstoned"
+			}
+			_, updateErr := tx.Exec(ctx, `
+				UPDATE platform_replication_inbox
+				SET applied_at=now(), outcome=$2, error_code=$3
+				WHERE event_id=$1::uuid AND applied_at IS NULL`, id, outcome, code)
+			if updateErr != nil {
+				_ = tx.Rollback(ctx)
+				return applied, fmt.Errorf("mark stale replication event: %w", updateErr)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return applied, fmt.Errorf("commit stale replication receipt: %w", err)
+			}
+			continue
+		}
+		if versionErr != nil {
+			_ = tx.Rollback(ctx)
+			return applied, fmt.Errorf("advance replication entity version: %w", versionErr)
+		}
 		if err := apply(ctx, tx, event); err != nil {
 			_ = tx.Rollback(ctx)
 			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox
@@ -384,4 +410,65 @@ func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFun
 		applied++
 	}
 	return applied, nil
+}
+
+
+func isTombstoneEvent(eventType string) bool {
+	value := strings.ToLower(eventType)
+	return strings.HasSuffix(value, ".deleted") || strings.HasSuffix(value, ".tombstoned")
+}
+
+// AdvanceEntityVersion rejects stale events and prevents a delayed update from
+// resurrecting an entity after a durable deletion tombstone. Call in the same
+// transaction as the inbox projection.
+func AdvanceEntityVersion(ctx context.Context, tx pgx.Tx, event Event) error {
+	if tx == nil {
+		return errors.New("replication transaction is required")
+	}
+	tombstone := isTombstoneEvent(event.EventType)
+	for attempt := 0; attempt < 3; attempt++ {
+		var current int64
+		var alreadyTombstoned bool
+		err := tx.QueryRow(ctx, `
+			SELECT current_version, tombstoned
+			FROM platform_replication_entity_versions
+			WHERE origin=$1 AND entity_type=$2 AND entity_id=$3
+			FOR UPDATE`, event.Origin, event.EntityType, event.EntityID).Scan(&current, &alreadyTombstoned)
+		if errors.Is(err, pgx.ErrNoRows) {
+			tag, insertErr := tx.Exec(ctx, `
+				INSERT INTO platform_replication_entity_versions
+				  (origin, entity_type, entity_id, current_version, tombstoned)
+				VALUES ($1, $2, $3, $4, $5)
+				ON CONFLICT (origin, entity_type, entity_id) DO NOTHING`,
+				event.Origin, event.EntityType, event.EntityID, event.EntityVersion, tombstone)
+			if insertErr != nil {
+				return fmt.Errorf("insert replication entity version: %w", insertErr)
+			}
+			if tag.RowsAffected() == 1 {
+				return nil
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read replication entity version: %w", err)
+		}
+		if alreadyTombstoned && !tombstone {
+			return ErrEntityTombstoned
+		}
+		if event.EntityVersion <= current {
+			return ErrStaleEvent
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE platform_replication_entity_versions
+			SET current_version=$4,
+			    tombstoned=(tombstoned OR $5),
+			    updated_at=now()
+			WHERE origin=$1 AND entity_type=$2 AND entity_id=$3`,
+			event.Origin, event.EntityType, event.EntityID, event.EntityVersion, tombstone)
+		if err != nil {
+			return fmt.Errorf("update replication entity version: %w", err)
+		}
+		return nil
+	}
+	return errors.New("could not serialize replication entity version update")
 }
