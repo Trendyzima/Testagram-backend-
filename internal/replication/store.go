@@ -274,6 +274,27 @@ func (s *Store) ApplyInboxTx(ctx context.Context, event Event, apply ApplyFunc) 
 	if err != nil {
 		return false, fmt.Errorf("insert replication inbox receipt: %w", err)
 	}
+	versionErr := AdvanceEntityVersion(ctx, tx, event)
+	if errors.Is(versionErr, ErrStaleEvent) || errors.Is(versionErr, ErrEntityTombstoned) {
+		outcome, code := "stale", "stale_version"
+		if errors.Is(versionErr, ErrEntityTombstoned) {
+			outcome, code = "rejected", "entity_tombstoned"
+		}
+		_, updateErr := tx.Exec(ctx, `
+			UPDATE platform_replication_inbox
+			SET applied_at=now(), outcome=$2, error_code=$3
+			WHERE event_id=$1::uuid AND outcome='received'`, event.ID, outcome, code)
+		if updateErr != nil {
+			return false, fmt.Errorf("mark stale replication event: %w", updateErr)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit stale replication receipt: %w", err)
+		}
+		return false, nil
+	}
+	if versionErr != nil {
+		return false, fmt.Errorf("advance replication entity version: %w", versionErr)
+	}
 	if err := apply(ctx, tx, event); err != nil {
 		return false, fmt.Errorf("apply replication event: %w", err)
 	}
