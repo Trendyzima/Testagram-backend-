@@ -203,6 +203,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w,http.StatusBadRequest,errorBody("INVALID_JSON","Request body is invalid",requestID(r))); return true
 	}
 	if s.db == nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("AUTH_STORE_UNAVAILABLE","Authentication store is unavailable",requestID(r))); return true }
+	if (action == "signup" || action == "login") && len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))) < 32 { writeJSON(w,http.StatusServiceUnavailable,errorBody("AUTH_NOT_CONFIGURED","Independent authentication is not configured",requestID(r))); return true }
 	ctx,cancel := context.WithTimeout(r.Context(),5*time.Second); defer cancel()
 	ip := authClientIP(r)
 	switch action {
