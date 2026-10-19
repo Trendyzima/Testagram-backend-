@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"net/mail"
-	"crypto/tls"
 	"net/smtp"
 	"net/url"
 	"os"
