@@ -35,6 +35,10 @@ func TestEventRejectsSensitivePayloadFields(t *testing.T) {
 		`{"profile":{"phone":"+10000000000"}}`,
 		`{"password_hash":"hash"}`,
 		`{"api_key":"secret"}`,
+		`{"email_address":"person@example.invalid"}`,
+		`{"phone_number":"+10000000000"}`,
+		`{"oauth_token":"secret"}`,
+		`{"provider_credentials":{"client_secret":"secret"}}`,
 		`{"avatar_url":"https://cdn.example/avatar?token=secret"}`,
 		`{"download_url":"https://cdn.example/file?signature=secret"}`,
 	} {
