@@ -32,17 +32,16 @@ var projectionFields = map[string]map[string]bool{
 	},
 }
 
-func (ProjectionApplier) Apply(ctx context.Context, tx pgx.Tx, event Event) error {
-	if tx == nil {
-		return errors.New("projection transaction is required")
-	}
+var ErrProjectionRejected = errors.New("replication projection rejected")
+
+func validateProjection(event Event) (map[string]any, bool, error) {
 	if err := event.Validate(); err != nil {
-		return err
+		return nil, false, fmt.Errorf("%w: %v", ErrProjectionRejected, err)
 	}
 	kind := strings.ToLower(event.EntityType)
 	allowed, ok := projectionFields[kind]
 	if !ok {
-		return fmt.Errorf("unsupported replicated entity type %q", kind)
+		return nil, false, fmt.Errorf("%w: unsupported replicated entity type %q", ErrProjectionRejected, kind)
 	}
 	deleted := isTombstoneEvent(event.EventType)
 	var projection map[string]any
@@ -50,36 +49,47 @@ func (ProjectionApplier) Apply(ctx context.Context, tx pgx.Tx, event Event) erro
 		projection = map[string]any{}
 	} else {
 		if err := json.Unmarshal(event.Payload, &projection); err != nil || projection == nil {
-			return errors.New("projection payload must be a JSON object")
+			return nil, false, fmt.Errorf("%w: projection payload must be a JSON object", ErrProjectionRejected)
 		}
 		for key := range projection {
 			if !allowed[key] {
-				return fmt.Errorf("field %q is not allowed in %s projection", key, kind)
+				return nil, false, fmt.Errorf("%w: field %q is not allowed in %s projection", ErrProjectionRejected, key, kind)
 			}
 		}
 		if hasPrivateProjectionData(projection) {
-			return errors.New("projection contains private or credential-like data")
+			return nil, false, fmt.Errorf("%w: projection contains private or credential-like data", ErrProjectionRejected)
 		}
 		if id, ok := projection["id"].(string); ok && id != event.EntityID {
-			return errors.New("projection id does not match event entity_id")
+			return nil, false, fmt.Errorf("%w: projection id does not match event entity_id", ErrProjectionRejected)
 		}
 		if kind == "post" {
 			visibility, _ := projection["visibility"].(string)
 			if visibility != "public" {
-				return errors.New("only explicitly public posts may be projected")
+				return nil, false, fmt.Errorf("%w: only explicitly public posts may be projected", ErrProjectionRejected)
 			}
 		}
 		if kind == "media" {
 			visibility, _ := projection["visibility"].(string)
 			if visibility != "public" {
-				return errors.New("only explicitly public media metadata may be projected")
+				return nil, false, fmt.Errorf("%w: only explicitly public media metadata may be projected", ErrProjectionRejected)
 			}
 			for _, key := range []string{"object_key", "checksum_sha256", "content_type"} {
 				if _, exists := projection[key]; !exists {
-					return fmt.Errorf("public media projection requires %s", key)
+					return nil, false, fmt.Errorf("%w: public media projection requires %s", ErrProjectionRejected, key)
 				}
 			}
 		}
+	}
+	return projection, deleted, nil
+}
+
+func (ProjectionApplier) Apply(ctx context.Context, tx pgx.Tx, event Event) error {
+	if tx == nil {
+		return errors.New("projection transaction is required")
+	}
+	projection, deleted, err := validateProjection(event)
+	if err != nil {
+		return err
 	}
 	payload, err := json.Marshal(projection)
 	if err != nil {
@@ -96,7 +106,7 @@ func (ProjectionApplier) Apply(ctx context.Context, tx pgx.Tx, event Event) erro
 		    tombstoned=EXCLUDED.tombstoned,
 		    updated_at=now()
 		WHERE platform_replication_projection.entity_version < EXCLUDED.entity_version`,
-		event.Origin, kind, event.EntityID, event.EntityVersion, event.SchemaVersion, payload, deleted)
+		event.Origin, strings.ToLower(event.EntityType), event.EntityID, event.EntityVersion, event.SchemaVersion, payload, deleted)
 	if err != nil {
 		return fmt.Errorf("upsert public replication projection: %w", err)
 	}
