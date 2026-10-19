@@ -30,6 +30,7 @@ type Event struct {
 	EventType     string          `json:"event_type"`
 	OccurredAt    time.Time       `json:"occurred_at"`
 	Payload       json.RawMessage `json:"payload"`
+	LeaseToken    string          `json:"-"`
 }
 
 func (e Event) Validate() error {
