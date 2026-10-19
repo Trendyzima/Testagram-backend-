@@ -76,8 +76,23 @@ CREATE TABLE IF NOT EXISTS platform_replication_entity_versions (
     PRIMARY KEY (origin, entity_type, entity_id)
 );
 
--- Queue payloads and leases are internal service data, not public SQL API data.
+-- Queue payloads and projections are private service data. Revoke grants
+-- explicitly when running in Supabase; keep the migration compatible with plain
+-- PostgreSQL installations where those predefined roles may not exist.
 REVOKE ALL ON platform_replication_outbox, platform_replication_inbox, platform_replication_entity_versions, platform_replication_projection FROM PUBLIC;
-GRANT SELECT, INSERT, UPDATE ON platform_replication_projection TO service_role;
+DO $replication_acl$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    EXECUTE 'REVOKE ALL ON platform_replication_outbox, platform_replication_inbox, platform_replication_entity_versions, platform_replication_projection FROM anon';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    EXECUTE 'REVOKE ALL ON platform_replication_outbox, platform_replication_inbox, platform_replication_entity_versions, platform_replication_projection FROM authenticated';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON platform_replication_outbox, platform_replication_inbox TO service_role';
+    EXECUTE 'GRANT SELECT, INSERT, UPDATE ON platform_replication_entity_versions, platform_replication_projection TO service_role';
+  END IF;
+END
+$replication_acl$;
 
 COMMIT;
