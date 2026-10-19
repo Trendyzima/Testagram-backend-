@@ -449,8 +449,10 @@ func (s *service) routes() http.Handler {
 			if err == nil {
 				fmt.Fprintf(&output, "testagram_replication_outbox_pending %d\n", outboxPending)
 				fmt.Fprintf(&output, "testagram_replication_outbox_oldest_seconds %d\n", oldestOutboxSeconds)
+				fmt.Fprintf(&output, "testagram_replication_outbox_failed_total %d\n", outboxFailed)
 				fmt.Fprintf(&output, "testagram_replication_inbox_pending %d\n", inboxPending)
 				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_total %d\n", inboxRejected)
+				fmt.Fprintf(&output, "testagram_replication_inbox_stale_total %d\n", inboxStale)
 			}
 		}
 		_, _ = w.Write([]byte(output.String()))
