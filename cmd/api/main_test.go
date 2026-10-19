@@ -25,6 +25,26 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestPublicReplicationProjectionValidatesIdentityAndRequiresDatabase(t *testing.T) {
+	s := &service{}
+	handler := s.routes()
+
+	bad := httptest.NewRecorder()
+	handler.ServeHTTP(bad, httptest.NewRequest(http.MethodGet, "/api/replication/public/unknown/post/post-123", nil))
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("invalid projection origin status = %d, want %d", bad.Code, http.StatusBadRequest)
+	}
+
+	unavailable := httptest.NewRecorder()
+	handler.ServeHTTP(unavailable, httptest.NewRequest(http.MethodGet, "/api/replication/public/xclone/post/post-123", nil))
+	if unavailable.Code != http.StatusServiceUnavailable {
+		t.Fatalf("projection read without database status = %d, want %d", unavailable.Code, http.StatusServiceUnavailable)
+	}
+	if got := normalizedRoute("/api/replication/public/xclone/post/post-123"); got != "/api/replication/public/{origin}/{entity_type}/{entity_id}" {
+		t.Fatalf("projection route metric label = %q", got)
+	}
+}
+
 func TestReadyzFailsClosedWithoutDatabase(t *testing.T) {
 	s := &service{}
 	r := httptest.NewRequest(http.MethodGet, "/readyz", nil)
