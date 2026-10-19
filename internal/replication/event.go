@@ -15,42 +15,8 @@ import (
 const MaxPayloadBytes = 1 << 20
 
 var (
-	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}// Package replication defines the versioned event envelope shared by the
-// independently operated Testagram and XClone backends.
-package replication
-
-import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"net/url"
-	"regexp"
-	"strings"
-	"time"
-)
-
-const MaxPayloadBytes = 1 << 20
-
-var (
-)
-	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}// Package replication defines the versioned event envelope shared by the
-// independently operated Testagram and XClone backends.
-package replication
-
-import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"net/url"
-	"regexp"
-	"strings"
-	"time"
-)
-
-const MaxPayloadBytes = 1 << 20
-
-var (
-)
+	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 	sensitiveKeyCamelCasePattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 	sensitiveKeySeparatorPattern = regexp.MustCompile(`[^A-Za-z0-9]+`)
 )
@@ -143,7 +109,7 @@ func bytesContainSensitiveKey(raw []byte) bool {
 }
 
 func normalizeSensitivePayloadKey(key string) string {
-	key = sensitiveKeyCamelCasePattern.ReplaceAllString(key, "$1_$2")
+	key = sensitiveKeyCamelCasePattern.ReplaceAllString(key, "${1}_${2}")
 	key = sensitiveKeySeparatorPattern.ReplaceAllString(key, "_")
 	return strings.Trim(strings.ToLower(key), "_")
 }
