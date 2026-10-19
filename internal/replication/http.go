@@ -182,7 +182,7 @@ func (s *Store) RelayOnce(ctx context.Context, client *http.Client, endpoint, lo
 	}
 	if !identityPattern.MatchString(localOrigin) { return errors.New("invalid local origin") }
 	if len(peerKey) < 32 { return errors.New("peer key must be at least 32 bytes") }
-	events, err := s.ClaimBatch(ctx, batchSize, 30*time.Second)
+	events, err := s.ClaimBatch(ctx, batchSize, 10*time.Minute)
 	if err != nil { return err }
 	var firstErr error
 	for _, event := range events {
