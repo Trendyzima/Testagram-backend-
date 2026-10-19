@@ -49,20 +49,20 @@ type upstreamMetric struct {
 }
 
 type service struct {
-	db                *pgxpool.Pool
-	metricsMu         sync.Mutex
-	routeMetrics      map[string]*requestMetric
-	capabilityMetrics map[string]*requestMetric
-	upstreamMetrics   map[string]*upstreamMetric
-	requests          atomic.Uint64
-	cacheHits         atomic.Uint64
-	cacheMisses       atomic.Uint64
-	rateLimited       atomic.Uint64
-	platformErrors    atomic.Uint64
-	upstream          *http.Client
-	platform          *platformclient.Client
-	media             *media.Signer
-	virtualStorage    *virtualstorage.Manager
+	db                  *pgxpool.Pool
+	metricsMu           sync.Mutex
+	routeMetrics        map[string]*requestMetric
+	capabilityMetrics   map[string]*requestMetric
+	upstreamMetrics     map[string]*upstreamMetric
+	requests            atomic.Uint64
+	cacheHits           atomic.Uint64
+	cacheMisses         atomic.Uint64
+	rateLimited         atomic.Uint64
+	platformErrors      atomic.Uint64
+	upstream            *http.Client
+	platform            *platformclient.Client
+	media               *media.Signer
+	virtualStorage      *virtualstorage.Manager
 	replicationReceiver http.Handler
 }
 
@@ -555,7 +555,6 @@ func normalizedRoute(path string) string {
 	switch path {
 	case "/healthz", "/readyz", "/metrics", "/api/capability",
 		"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password",
-		"/api/auth/signup", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
 		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
 		"/api/media/list", "/internal/media/quarantine", "/internal/replication/events":
@@ -1017,7 +1016,6 @@ func mustJSON(value any) []byte {
 	}
 	return encoded
 }
-
 
 func runReplicationApplyWorker(ctx context.Context, store *replication.Store) {
 	ticker := time.NewTicker(5 * time.Second)
