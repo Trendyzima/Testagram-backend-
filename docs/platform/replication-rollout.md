@@ -1,47 +1,33 @@
 # Dual-backend replication rollout (implementation status)
 
-This change introduces the first executable replication primitives, not an enabled
-cross-backend sync path.
+This branch now contains an executable, opt-in replication path for **public account-profile and post projections**. It is still not a complete mirror of every product domain, a production failover system, or proof of disaster recovery.
 
-## Included in this change
+## Implemented in code
 
-- A versioned event envelope and validation in `internal/replication`.
-- PostgreSQL outbox leasing with `FOR UPDATE SKIP LOCKED`, bounded retries, and
-  an idempotent inbox receipt table.
-- Additive outbox/inbox tables in the Testagram migration and the XClone Supabase
-  migration.
-- A shared JSON Schema and a runnable XClone contract validator.
-- Replication queue tables are not granted to public SQL roles.
+- Shared versioned event envelope and privacy validation in Go and TypeScript.
+- Transactional XClone outbox producers attached to `public.profiles` and `public.posts` writes.
+- Per-entity source versions, advisory-lock serialization, destination version ledger, and deletion/privacy tombstones.
+- Bounded idempotent snapshot seeding for existing eligible public profiles/posts.
+- HMAC-authenticated receiver, replay-window checks, body-size limits, lease-token acknowledgements, bounded retries, and terminal dead-letter handling.
+- Durable inbox projection workers on both backends. They write to a separate allowlisted public-data mirror, not authoritative product tables.
+- Testagram backlog/age/dead-letter metrics, an authenticated XClone projector function, and an opt-in scheduled workflow gated off by default.
+- Contract validation and focused Go tests.
 
-## Apply the schema safely
+## Still incomplete
 
-1. Take and verify a current database backup.
-2. On the Testagram database, review and apply
-   `migrations/20261019_dual_backend_replication.sql` using the deployment's
-   migration process (or `psql -v ON_ERROR_STOP=1 -f ...` in a controlled
-   maintenance session).
-3. On the XClone Supabase project, deploy the additive migration through the
-   repository's normal Supabase migration process.
-4. Verify that `platform_replication_outbox` and
-   `platform_replication_inbox` exist and are not readable by browser roles.
-5. Keep replication disabled until both database migrations are applied and
-   the peer-authentication, receiver, projection, replay, and reconciliation
-   gates have passed.
+- Media metadata and binary/object replication are not wired; neither are polls, communities, follows, messages, notifications, moderation, and other product domains.
+- Testagram's current capability gateway still forwards product reads/writes to Supabase. Its local Go outbox helper is available for future local transactional writes, but Testagram is not yet an independent authoritative source for all product data.
+- The projection mirror is not yet used as a replacement for the existing product query paths. Do not switch user-facing reads to it until schema-specific integration and authorization tests pass.
+- Production migrations have not been applied here; no live synchronization, stop-one-backend test, restore drill, or measured RPO/RTO has been verified.
 
-The migration does not modify existing product tables or copy existing content.
-It does not turn on replication or alter existing media routing.
+## Safe rollout sequence
 
-## Required next integration steps
+1. Take off-host backups and perform a restore drill before touching production.
+2. Review and apply the additive Testagram migration and both XClone migrations using the normal deployment pipeline.
+3. Run `seed_platform_replication_public_snapshot(100)` repeatedly with service-role credentials until it returns zero; inspect counts and verify no private/community content is included.
+4. Configure the HMAC peer secret and the separate relay/projector tokens through the secret manager. Keep `REPLICATION_WORKERS_ENABLED` disabled until endpoint and database checks pass.
+5. Run duplicate/reordered/stale/tombstone tests, invalid-signature and expired-timestamp tests, media authorization checks, retry/dead-letter recovery, and source/destination reconciliation.
+6. Enable the scheduled worker only after those gates pass, then alert on pending age, backlog growth, and terminal failures.
+7. Wire each remaining domain through an atomic source outbox producer and schema-specific destination projector before claiming full parity.
 
-- Emit an outbox event in the same transaction as each authoritative entity write.
-- Add a mutually authenticated peer transport and receiver with request-size and
-  timestamp/replay bounds.
-- Apply inbox receipt and the domain projection in one transaction; reject stale
-  entity versions and preserve tombstones for deletes, blocks, and moderation.
-- Add durable relay scheduling, dead-letter/replay tooling, lag metrics, and
-  reconciliation against source-of-truth records.
-- Add conformance tests against both live implementations and stop-one-backend
-  fault-isolation tests.
-
-Until those steps are implemented and verified, the outbox is a foundation only:
-it must not be described as live replication or disaster recovery.
+The code preserves existing product tables and legacy media routes. No production migration or runtime cutover is performed by these pull requests.
