@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS platform_replication_outbox (
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     lease_until TIMESTAMPTZ,
+    lease_token UUID,
     delivered_at TIMESTAMPTZ,
     last_error_code TEXT,
     CONSTRAINT replication_outbox_entity_version_unique
