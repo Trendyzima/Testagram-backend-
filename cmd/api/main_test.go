@@ -100,6 +100,44 @@ func TestCapabilityGatewayForwardsUserJWTAndPayload(t *testing.T) {
 	}
 }
 
+func TestUnifiedSearchGatewayCallsCanonicalRPCWithBoundedParameters(t *testing.T) {
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
+	t.Setenv("SUPABASE_URL", "")
+	observed := make(chan bool, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		observed <- r.URL.Path == "/rest/v1/rpc/testagram_search_unified" &&
+			r.Header.Get("Authorization") == "Bearer user-session-token" &&
+			r.Header.Get("apikey") == "test-publishable-key" &&
+			body["p_q"] == "kenya" && body["p_kind"] == "hashtags" &&
+			body["p_limit"] == float64(20) && body["p_offset"] == float64(40) &&
+			body["p_sort"] == "latest"
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"users":[],"hashtags":[],"posts":[],"threads":[],"communities":[],"replies":[],"fediverse":[],"instances":[]}`))
+	}))
+	defer upstream.Close()
+	t.Setenv("SUPABASE_URL", upstream.URL)
+
+	s := &service{upstream: upstream.Client()}
+	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.search.unified","input":{"q":"kenya","kind":"hashtags","limit":20,"offset":40,"sort":"latest"}}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer user-session-token")
+	r.Header.Set("Origin", "https://testagram.site")
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("unified search gateway status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !<-observed {
+		t.Fatal("gateway did not call the canonical unified-search RPC with the authenticated, bounded request")
+	}
+	if !strings.Contains(w.Body.String(), `"hashtags":[]`) {
+		t.Fatalf("gateway did not return the canonical search payload: %s", w.Body.String())
+	}
+}
+
 func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.health.read","input":{}}`))
 	r.Header.Set("Origin", "https://evil.example")
