@@ -72,3 +72,19 @@ The existing `/api/capability` gateway can route these capability names to the l
 **The feature flag defaults to false and must remain false until validation and client compatibility tests pass.** Local writes require a PostgreSQL connection and an HS256 bearer token that can be verified with `SUPABASE_JWT_SECRET`; asymmetric JWTs are deliberately rejected by this first implementation. If the deployment uses an asymmetric Supabase signing key, do not enable the flag until a proper JWKS verifier is implemented. A local profile must be created before that account can create local posts. These new local tables are not automatically backfilled from Supabase; do not switch existing users over without a verified, resumable migration and conflict policy.
 
 CI now includes an isolated PostgreSQL test that applies the migrations and verifies account/post outbox writes, privacy tombstones, and exclusion of private accounts. This validates schema behavior in CI only; it does not establish production migration, historical backfill, client cutover, or peer-outage recovery.
+
+
+## Reconciliation command and peer-outage exercise
+
+Run the read-only reconciler from an operator environment that can reach both databases:
+
+```sh
+SOURCE_DATABASE_URL='postgres://…' \
+DESTINATION_DATABASE_URL='postgres://…' \
+RECONCILE_ORIGIN='testagram-vps' \
+go run ./cmd/replication-reconcile
+```
+
+It compares each source entity's latest outbox version and tombstone state with the destination projection, checks source pending/dead-letter counts and destination inbox pending/rejected/stale counts, emits a JSON report, and exits non-zero if drift or backlog remains. Treat database URLs as secrets; the command does not print them or payloads.
+
+The two-database CI exercise creates local account/post records while delivery is unavailable, verifies events remain durable and retryable, then restores an authenticated TLS receiver and verifies the relay applies both projections and acknowledges the source events. This validates the code path in disposable CI databases, not a production network partition or a real backup restore.
