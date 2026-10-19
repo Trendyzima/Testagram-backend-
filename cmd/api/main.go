@@ -433,11 +433,12 @@ func (s *service) routes() http.Handler {
 		if s.db != nil {
 			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 			defer cancel()
-			var outboxPending, oldestOutboxSeconds, inboxPending, inboxRejected int64
+			var outboxPending, oldestOutboxSeconds, outboxFailed, inboxPending, inboxRejected int64
 			err := s.db.QueryRow(ctx, `
-				SELECT count(*) FILTER (WHERE delivered_at IS NULL),
-				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE delivered_at IS NULL)))::bigint, 0)
-				FROM platform_replication_outbox`).Scan(&outboxPending, &oldestOutboxSeconds)
+				SELECT count(*) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL),
+				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL)))::bigint, 0),
+				       count(*) FILTER (WHERE failed_at IS NOT NULL)
+				FROM platform_replication_outbox`).Scan(&outboxPending, &oldestOutboxSeconds, &outboxFailed)
 			if err == nil {
 				err = s.db.QueryRow(ctx, `
 					SELECT count(*) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry')),
