@@ -93,6 +93,12 @@ BEGIN
     VALUES(gen_random_uuid(),'testagram-vps','account',NEW.user_id::text,v,1,
       CASE WHEN TG_OP='INSERT' OR NOT old_public THEN 'account.created' ELSE 'account.updated' END,now(),payload);
   END IF;
+  -- Re-evaluate every public post when account privacy/status changes. The post
+  -- trigger sees the committed account state and emits tombstones if needed.
+  IF TG_OP='UPDATE' AND old_public IS DISTINCT FROM new_public THEN
+    UPDATE testagram_local.posts SET updated_at=now()
+    WHERE author_id=NEW.user_id AND visibility='public' AND deleted_at IS NULL;
+  END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END;
