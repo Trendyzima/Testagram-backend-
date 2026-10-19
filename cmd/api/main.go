@@ -685,10 +685,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	supabaseURL := strings.TrimRight(env("SUPABASE_URL", ""), "/")
 	publishableKey := env("SUPABASE_PUBLISHABLE_KEY", env("SUPABASE_ANON_KEY", ""))
-	if supabaseURL == "" || publishableKey == "" {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("BACKEND_NOT_CONFIGURED", "Capability gateway is not configured", id))
-		return
-	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxCapabilityBody)
 	defer r.Body.Close()
@@ -742,6 +738,13 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	}
 	if !public && !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
+		return
+	}
+	if s.localProductCapability(w, r, id, body) {
+		return
+	}
+	if supabaseURL == "" || publishableKey == "" {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("BACKEND_NOT_CONFIGURED", "Capability gateway is not configured", id))
 		return
 	}
 
