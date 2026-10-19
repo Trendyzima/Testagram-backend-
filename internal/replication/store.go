@@ -177,11 +177,11 @@ func (s *Store) RecordInbox(ctx context.Context, event Event) (bool, error) {
 	if err := event.Validate(); err != nil {
 		return false, err
 	}
-	hash := sha256.Sum256(event.Payload)
 	envelope, err := json.Marshal(event)
 	if err != nil {
 		return false, fmt.Errorf("marshal replication event: %w", err)
 	}
+	hash := sha256.Sum256(envelope)
 	tag, err := s.db.Exec(ctx, `
 		INSERT INTO platform_replication_inbox
 		  (event_id, origin, entity_type, entity_id, entity_version,
@@ -234,7 +234,11 @@ func (s *Store) ApplyInboxTx(ctx context.Context, event Event, apply ApplyFunc) 
 	if apply == nil {
 		return false, errors.New("event apply function is required")
 	}
-	hash := sha256.Sum256(event.Payload)
+	envelope, err := json.Marshal(event)
+	if err != nil {
+		return false, fmt.Errorf("marshal replication event: %w", err)
+	}
+	hash := sha256.Sum256(envelope)
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin replication apply transaction: %w", err)
@@ -250,7 +254,7 @@ func (s *Store) ApplyInboxTx(ctx context.Context, event Event, apply ApplyFunc) 
 		ON CONFLICT (event_id) DO NOTHING
 		RETURNING event_id::text`,
 		event.ID, event.Origin, event.EntityType, event.EntityID,
-		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:], []byte(event.Payload)).Scan(&insertedID)
+		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:], envelope).Scan(&insertedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existingHash []byte
 		if readErr := tx.QueryRow(ctx, `SELECT payload_hash FROM platform_replication_inbox WHERE event_id = $1::uuid`, event.ID).Scan(&existingHash); readErr != nil {
