@@ -106,3 +106,25 @@ func TestNewQueueReceiverRejectsShortPeerKeys(t *testing.T) {
 		t.Fatal("expected short peer key to be rejected")
 	}
 }
+
+func TestReceiverRejectsNonPostMethod(t *testing.T) {
+	key := bytes.Repeat([]byte{0x41}, 32)
+	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
+	if err != nil { t.Fatal(err) }
+	req := httptest.NewRequest(http.MethodGet, "/internal/replication/events", nil)
+	recorder := httptest.NewRecorder()
+	receiver.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("got status %d, want 405", recorder.Code)
+	}
+	if recorder.Header().Get("Allow") != http.MethodPost {
+		t.Fatalf("Allow header = %q, want POST", recorder.Header().Get("Allow"))
+	}
+}
+
+func TestNewReceiverRequiresDomainProjector(t *testing.T) {
+	key := bytes.Repeat([]byte{0x41}, 32)
+	if _, err := NewReceiver(&Store{}, map[string][]byte{"xclone": key}, nil); err == nil {
+		t.Fatal("expected synchronous receiver to require a projector")
+	}
+}
