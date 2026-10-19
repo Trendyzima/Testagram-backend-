@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -279,4 +280,96 @@ func (s *Store) ApplyInboxTx(ctx context.Context, event Event, apply ApplyFunc) 
 		return false, fmt.Errorf("commit replication projection: %w", err)
 	}
 	return true, nil
+}
+
+ 
+// ApplyPendingBatch applies queued inbox events one transaction per event. The
+// domain callback must enforce entity-version ordering and tombstone semantics.
+// Failed projections remain retryable and do not block unrelated events.
+func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFunc) (int, error) {
+	if limit < 1 || limit > 100 {
+		return 0, errors.New("inbox batch size must be between 1 and 100")
+	}
+	if apply == nil {
+		return 0, errors.New("event apply function is required")
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT event_id::text
+		FROM platform_replication_inbox
+		WHERE applied_at IS NULL AND outcome IN ('received', 'retry')
+		ORDER BY received_at, event_id
+		LIMIT $1`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("list pending replication events: %w", err)
+	}
+	ids := make([]string, 0, limit)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan pending replication event: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		return 0, fmt.Errorf("iterate pending replication events: %w", rowsErr)
+	}
+
+	applied := 0
+	for _, id := range ids {
+		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return applied, fmt.Errorf("begin inbox apply transaction: %w", err)
+		}
+		var raw string
+		err = tx.QueryRow(ctx, `
+			SELECT payload::text
+			FROM platform_replication_inbox
+			WHERE event_id = $1::uuid AND applied_at IS NULL
+			  AND outcome IN ('received', 'retry')
+			FOR UPDATE SKIP LOCKED`, id).Scan(&raw)
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return applied, fmt.Errorf("lock pending replication event: %w", err)
+		}
+		var event Event
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			_ = tx.Rollback(ctx)
+			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox SET outcome='rejected', error_code='invalid_payload' WHERE event_id=$1::uuid`, id)
+			continue
+		}
+		if err := event.Validate(); err != nil {
+			_ = tx.Rollback(ctx)
+			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox SET outcome='rejected', error_code='invalid_event' WHERE event_id=$1::uuid`, id)
+			continue
+		}
+		if err := apply(ctx, tx, event); err != nil {
+			_ = tx.Rollback(ctx)
+			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox SET outcome='retry', error_code='apply_failed' WHERE event_id=$1::uuid AND applied_at IS NULL`, id)
+			return applied, fmt.Errorf("apply queued replication event: %w", err)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE platform_replication_inbox
+			SET applied_at=now(), outcome='applied', error_code=NULL
+			WHERE event_id=$1::uuid AND applied_at IS NULL`, id)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return applied, fmt.Errorf("mark queued event applied: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return applied, fmt.Errorf("commit queued event projection: %w", err)
+		}
+		applied++
+	}
+	return applied, nil
 }
