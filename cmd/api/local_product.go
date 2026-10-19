@@ -19,7 +19,7 @@ func localProductEnabled() bool { return strings.EqualFold(env("TESTAGRAM_LOCAL_
 func localCapabilityName(name string) bool { switch name { case "testagram.profile.update", "testagram.posts.create", "testagram.posts.update", "testagram.posts.delete": return true }; return false }
 func localJWTSubject(authorization string) (string, error) {
  parts := strings.Fields(authorization); if len(parts)!=2 || !strings.EqualFold(parts[0],"Bearer") { return "", errors.New("bearer token required") }
- secret:=env("SUPABASE_JWT_SECRET",""); if secret=="" { return "",errors.New("local JWT verification is not configured") }
+ secret:=env("SUPABASE_JWT_SECRET",env("TESTAGRAM_AUTH_JWT_SECRET","")); if secret=="" { return "",errors.New("local JWT verification is not configured") }
  segments:=strings.Split(parts[1],"."); if len(segments)!=3 { return "",errors.New("invalid token") }
  hb,err:=base64.RawURLEncoding.DecodeString(segments[0]); if err!=nil { return "",errors.New("invalid token header") }; var header map[string]any; if json.Unmarshal(hb,&header)!=nil || header["alg"]!="HS256" { return "",errors.New("only HS256 local verification is configured") }
  sig,err:=base64.RawURLEncoding.DecodeString(segments[2]); if err!=nil { return "",errors.New("invalid token signature") }; mac:=hmac.New(sha256.New,[]byte(secret)); _,_=mac.Write([]byte(segments[0]+"."+segments[1])); if !hmac.Equal(sig,mac.Sum(nil)) { return "",errors.New("invalid token signature") }
