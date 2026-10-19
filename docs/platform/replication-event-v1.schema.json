@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://testagram.site/contracts/replication-event-v1.schema.json",
+  "title": "Dual backend replication event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "origin", "entity_type", "entity_id", "entity_version", "schema_version", "event_type", "occurred_at", "payload"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "origin": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "entity_type": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "entity_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "entity_version": {"type": "integer", "minimum": 1},
+    "schema_version": {"type": "integer", "minimum": 1},
+    "event_type": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {"type": "object"}
+  }
+}
