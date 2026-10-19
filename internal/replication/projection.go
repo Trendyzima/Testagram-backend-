@@ -36,43 +36,7 @@ var projectionFields = map[string]map[string]bool{
 
 var ErrProjectionRejected = errors.New("replication projection rejected")
 
-var sha256HexPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}package replication
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"net/url"
-	"regexp"
-	"strings"
-
-	"github.com/jackc/pgx/v5"
-)
-
-// ProjectionApplier stores a deliberately limited public-data projection. It
-// is not a replacement for the destination's authoritative account or post
-// tables; private fields must never be replicated through this generic path.
-type ProjectionApplier struct{}
-
-var projectionFields = map[string]map[string]bool{
-	"account": {
-		"id": true, "username": true, "display_name": true, "bio": true,
-		"avatar_key": true, "avatar_url": true, "website": true,
-	},
-	"post": {
-		"id": true, "author_id": true, "text": true, "content": true,
-		"visibility": true, "created_at": true, "updated_at": true,
-		"media_ids": true, "language": true,
-	},
-	"media": {
-		"id": true, "owner_id": true, "object_key": true, "content_type": true,
-		"size_bytes": true, "checksum_sha256": true, "visibility": true,
-		"created_at": true,
-	},
-}
-
-)
+var sha256HexPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
 func validateProjection(event Event) (map[string]any, bool, error) {
 	if err := event.Validate(); err != nil {
