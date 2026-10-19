@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS testagram_local.posts (
   deleted_at TIMESTAMPTZ,
   public_projection_tombstoned BOOLEAN NOT NULL DEFAULT FALSE
 );
+ALTER TABLE testagram_local.posts ADD COLUMN IF NOT EXISTS public_projection_tombstoned BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS testagram_local_posts_author_created
   ON testagram_local.posts(author_id, created_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS testagram_local_posts_public_created
