@@ -432,8 +432,12 @@ func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFun
 				continue
 			}
 			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox
-			SET outcome='retry', error_code='apply_failed', attempts=attempts+1,
-			    available_at=now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::INTEGER) * interval '1 second'
+			SET outcome=CASE WHEN attempts >= 19 THEN 'rejected' ELSE 'retry' END,
+			    applied_at=CASE WHEN attempts >= 19 THEN now() ELSE applied_at END,
+			    error_code=CASE WHEN attempts >= 19 THEN 'retry_exhausted' ELSE 'apply_failed' END,
+			    attempts=attempts+1,
+			    available_at=CASE WHEN attempts >= 19 THEN available_at
+			      ELSE now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::INTEGER) * interval '1 second' END
 			WHERE event_id=$1::uuid AND applied_at IS NULL`, id)
 			return applied, fmt.Errorf("apply queued replication event: %w", err)
 		}
