@@ -136,7 +136,7 @@ func (s *Store) MarkDelivered(ctx context.Context, eventID, leaseToken string) e
 	tag, err := s.db.Exec(ctx, `
 		UPDATE platform_replication_outbox
 		SET delivered_at = now(), lease_until = NULL, lease_token = NULL, last_error_code = NULL
-		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND lease_until > now()`, eventID)
+		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND lease_until > now()`, eventID, leaseToken)
 	if err != nil {
 		return fmt.Errorf("mark replication event delivered: %w", err)
 	}
@@ -162,7 +162,7 @@ func (s *Store) Retry(ctx context.Context, eventID, leaseToken, errorCode string
 		UPDATE platform_replication_outbox
 		SET lease_until = NULL, lease_token = NULL,
 		    available_at = now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::integer) * interval '1 second',
-		    last_error_code = $2
+		    last_error_code = $3
 		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND lease_until IS NOT NULL`,
 		eventID, leaseToken, errorCode)
 	if err != nil {
