@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strings"
@@ -101,7 +102,7 @@ func validateProjection(event Event) (map[string]any, bool, error) {
 				return nil, false, fmt.Errorf("%w: unsupported public media content_type", ErrProjectionRejected)
 			}
 			size, sizeOK := projection["size_bytes"].(float64)
-			if !sizeOK || size < 1 || size > 500*1024*1024 {
+			if !sizeOK || math.Trunc(size) != size || size < 1 || size > 500*1024*1024 {
 				return nil, false, fmt.Errorf("%w: media size_bytes is out of bounds", ErrProjectionRejected)
 			}
 		}

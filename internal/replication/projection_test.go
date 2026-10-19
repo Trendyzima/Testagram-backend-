@@ -27,6 +27,7 @@ func TestProjectionPayloadAllowlist(t *testing.T) {
 		{"id mismatch", "account", "account.profile.updated", `{"id":"other","username":"a"}`, true},
 		{"public media metadata", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","size_bytes":2048,"checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, false},
 		{"media missing checksum", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","size_bytes":2048}`, true},
+		{"fractional media size", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","size_bytes":2048.5,"checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, true},
 		{"deleted tombstone", "post", "post.deleted", `{}`, false},
 		{"unsupported entity", "session", "session.created", `{}`, true},
 		{"mismatched event type", "account", "post.deleted", `{}`, true},
