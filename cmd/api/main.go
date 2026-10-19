@@ -428,7 +428,30 @@ func (s *service) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		_, _ = w.Write([]byte(s.metricsText()))
+		var output strings.Builder
+		output.WriteString(s.metricsText())
+		if s.db != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+			defer cancel()
+			var outboxPending, oldestOutboxSeconds, inboxPending, inboxRejected int64
+			err := s.db.QueryRow(ctx, `
+				SELECT count(*) FILTER (WHERE delivered_at IS NULL),
+				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE delivered_at IS NULL)))::bigint, 0)
+				FROM platform_replication_outbox`).Scan(&outboxPending, &oldestOutboxSeconds)
+			if err == nil {
+				err = s.db.QueryRow(ctx, `
+					SELECT count(*) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry')),
+					       count(*) FILTER (WHERE outcome IN ('rejected','stale'))
+					FROM platform_replication_inbox`).Scan(&inboxPending, &inboxRejected)
+			}
+			if err == nil {
+				fmt.Fprintf(&output, "testagram_replication_outbox_pending %d\n", outboxPending)
+				fmt.Fprintf(&output, "testagram_replication_outbox_oldest_seconds %d\n", oldestOutboxSeconds)
+				fmt.Fprintf(&output, "testagram_replication_inbox_pending %d\n", inboxPending)
+				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_total %d\n", inboxRejected)
+			}
+		}
+		_, _ = w.Write([]byte(output.String()))
 	})
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
