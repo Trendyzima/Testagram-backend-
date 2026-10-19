@@ -43,8 +43,7 @@ func (e Event) Validate() error {
 		"origin": e.Origin, "entity_type": e.EntityType,
 		"entity_id": e.EntityID, "event_type": e.EventType,
 	} {
-		value = strings.TrimSpace(value)
-		if !identityPattern.MatchString(value) {
+		if value != strings.TrimSpace(value) || !identityPattern.MatchString(value) {
 			return fmt.Errorf("%s is invalid", label)
 		}
 	}
@@ -59,6 +58,10 @@ func (e Event) Validate() error {
 	}
 	if len(e.Payload) == 0 || len(e.Payload) > MaxPayloadBytes || !json.Valid(e.Payload) {
 		return errors.New("payload must be valid JSON no larger than 1 MiB")
+	}
+	var payloadObject map[string]any
+	if err := json.Unmarshal(e.Payload, &payloadObject); err != nil || payloadObject == nil {
+		return errors.New("payload must be a JSON object")
 	}
 	if bytesContainSensitiveKey(e.Payload) {
 		return errors.New("payload must not contain credential or signed-url fields")
