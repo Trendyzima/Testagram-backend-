@@ -46,6 +46,10 @@ func TestEventRejectsSensitivePayloadFields(t *testing.T) {
 		`{"PasswordHash":"hash"}`,
 		`{"private.key":"secret"}`,
 		`{"serviceRoleKey":"secret"}`,
+		`{"serviceRole":"must-not-cross"}`,
+		`{"bearer":"credential"}`,
+		`{"jwt":"credential"}`,
+		`{"passwd":"secret"}`,
 		`{"signedURL":"https://cdn.example/file"}`,
 		`{"metadata":[{"nestedSecret":{"serviceRoleKey":"secret"}}]}`,
 	} {
