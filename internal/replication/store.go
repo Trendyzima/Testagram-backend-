@@ -336,6 +336,19 @@ func (s *Store) ApplyInboxTx(ctx context.Context, event Event, apply ApplyFunc) 
 		return false, fmt.Errorf("advance replication entity version: %w", versionErr)
 	}
 	if err := apply(ctx, tx, event); err != nil {
+		if errors.Is(err, ErrProjectionRejected) {
+			_, markErr := tx.Exec(ctx, `
+				UPDATE platform_replication_inbox
+				SET applied_at=now(), outcome='rejected', error_code='projection_rejected'
+				WHERE event_id=$1::uuid AND outcome='received'`, event.ID)
+			if markErr != nil {
+				return false, fmt.Errorf("mark rejected replication projection: %w", markErr)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return false, fmt.Errorf("commit rejected replication receipt: %w", err)
+			}
+			return false, nil
+		}
 		return false, fmt.Errorf("apply replication event: %w", err)
 	}
 	tag, err := tx.Exec(ctx, `
