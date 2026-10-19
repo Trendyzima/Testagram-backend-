@@ -13,8 +13,8 @@ import (
  "github.com/jackc/pgx/v5"
 )
 var localUUIDPattern = regexp.MustCompile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
-type localProfileInput struct { Username string; DisplayName string; Bio string; Website string; AvatarKey string; Discoverable *bool; Protected *bool }
-type localPostInput struct { ID string; Text string; Visibility string; MediaIDs []string; Language string }
+type localProfileInput struct { Username string `json:"username"`; DisplayName string `json:"display_name"`; Bio string `json:"bio"`; Website string `json:"website"`; AvatarKey string `json:"avatar_key"`; Discoverable *bool `json:"discoverable_by_username"`; Protected *bool `json:"protected_account"` }
+type localPostInput struct { ID string `json:"id"`; Text string `json:"text"`; Visibility string `json:"visibility"`; MediaIDs []string `json:"media_ids"`; Language string `json:"language"` }
 func localProductEnabled() bool { return strings.EqualFold(env("TESTAGRAM_LOCAL_PRODUCT_WRITES_ENABLED", "false"), "true") }
 func localCapabilityName(name string) bool { switch name { case "testagram.profile.update", "testagram.posts.create", "testagram.posts.update", "testagram.posts.delete": return true }; return false }
 func localJWTSubject(authorization string) (string, error) {
