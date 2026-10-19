@@ -296,6 +296,14 @@ jobs:
               RAISE EXCEPTION 'account privacy change did not tombstone public posts';
             END IF;
           END $ci$;
+          UPDATE testagram_local.accounts SET protected_account=FALSE WHERE user_id='123e4567-e89b-42d3-a456-426614174000';
+          UPDATE testagram_local.posts SET text='attempted resurrection' WHERE id='123e4567-e89b-42d3-a456-426614174001';
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM public.platform_replication_outbox WHERE entity_type='post' AND entity_id='123e4567-e89b-42d3-a456-426614174001') <> 2 THEN
+              RAISE EXCEPTION 'a terminal public tombstone must not be resurrected under the same post ID';
+            END IF;
+          END $ci$;
           INSERT INTO testagram_local.accounts(user_id,username,protected_account)
           VALUES ('123e4567-e89b-42d3-a456-426614174002','ci_private_user',TRUE);
           DO $ci$
