@@ -67,3 +67,13 @@ This is intentionally a safe mirror rather than automatic product-table parity.
 Do not enable production event producers until each product write is connected
 to an atomic outbox event, each destination projector is mapped to its actual
 domain schema, and cross-account/privacy tests pass.
+
+
+The `/metrics` endpoint exposes replication outbox pending count, oldest pending
+age, terminal outbox failures, inbox pending count, rejected projections, and
+stale-event count when the replication migration is installed. Alert on growing
+oldest-pending age, sustained inbox backlog, and any increase in terminal
+failures. Permanent 4xx responses and malformed local events are dead-lettered;
+transient peer/network failures use bounded exponential backoff, with terminal
+failure after 20 attempts. Replay dead-lettered events only after correcting the
+cause and checking the destination's inbox receipt.
