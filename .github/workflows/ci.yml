@@ -309,6 +309,83 @@ jobs:
         if: always()
         run: docker stop testagram-local-product-ci || true
 
+  replication-peer-outage-integration:
+    name: Replication peer outage and recovery integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated source and destination PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-source-ci -e POSTGRES_PASSWORD=ci-only-password -p 5432:5432 postgres:17-alpine
+          docker run -d --rm --name testagram-destination-ci -e POSTGRES_PASSWORD=ci-only-password -p 5433:5432 postgres:17-alpine
+      - name: Wait for both databases
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-source-ci pg_isready -U postgres >/dev/null 2>&1 && docker exec testagram-destination-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-source-ci
+          docker logs testagram-destination-ci
+          exit 1
+      - name: Apply source and destination schemas
+        run: |
+          set -euo pipefail
+          for migration in \
+            migrations/005_media_assets.sql \
+            migrations/006_media_lifecycle.sql \
+            migrations/007_media_product_bridge.sql \
+            migrations/008_virtual_storage_bridge.sql \
+            migrations/20261019_dual_backend_replication.sql \
+            migrations/20261019_testagram_media_replication_producers.sql \
+            migrations/20261019_testagram_local_accounts_posts.sql; do
+            docker exec -i testagram-source-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+            docker exec -i testagram-destination-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+      - name: Exercise durable writes during peer outage and replay after recovery
+        env:
+          TESTAGRAM_REPLICATION_INTEGRATION: "1"
+          SOURCE_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+          DESTINATION_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5433/postgres?sslmode=disable
+        run: go test ./internal/replication -run '^TestPeerOutageRecoveryIntegration    name: SaaS tenancy migration integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-saas-schema-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-saas-schema-ci pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs testagram-saas-schema-ci
+          exit 1
+      - name: Apply migration twice and assert schema invariants
+        run: |
+          set -euo pipefail
+          docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'create extension if not exists pgcrypto'
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          rls_enabled="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select relrowsecurity from pg_class where oid='testagram_saas.tenants'::regclass")"
+          test "$rls_enabled" = "t"
+          index_count="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select count(*) from pg_indexes where schemaname='testagram_saas' and indexname='saas_subscriptions_external_ref_uidx'")"
+          test "$index_count" = "1"
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-saas-schema-ci || true
+ -count=1 -v
+      - name: Stop isolated databases
+        if: always()
+        run: |
+          docker stop testagram-source-ci || true
+          docker stop testagram-destination-ci || true
+
   saas-schema-integration:
     name: SaaS tenancy migration integration
     runs-on: ubuntu-latest
