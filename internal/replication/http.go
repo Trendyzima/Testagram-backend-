@@ -187,21 +187,21 @@ func (s *Store) RelayOnce(ctx context.Context, client *http.Client, endpoint, lo
 	var firstErr error
 	for _, event := range events {
 		if event.Origin != localOrigin {
-			_ = s.Retry(ctx, event.ID, event.LeaseToken, "origin_mismatch")
+			_ = s.Fail(ctx, event.ID, event.LeaseToken, "origin_mismatch")
 			if firstErr == nil { firstErr = errors.New("outbox event origin does not match local origin") }
 			continue
 		}
 		body, marshalErr := json.Marshal(event)
 		if marshalErr != nil {
 			if firstErr == nil { firstErr = marshalErr }
-			_ = s.Retry(ctx, event.ID, event.LeaseToken, "marshal_failed")
+			_ = s.Fail(ctx, event.ID, event.LeaseToken, "marshal_failed")
 			continue
 		}
 		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if reqErr != nil {
 			if firstErr == nil { firstErr = reqErr }
-			_ = s.Retry(ctx, event.ID, event.LeaseToken, "request_failed")
+			_ = s.Fail(ctx, event.ID, event.LeaseToken, "request_failed")
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -219,7 +219,16 @@ func (s *Store) RelayOnce(ctx context.Context, client *http.Client, endpoint, lo
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if err := s.MarkDelivered(ctx, event.ID, event.LeaseToken); err != nil && firstErr == nil { firstErr = err }
 		} else {
-			_ = s.Retry(ctx, event.ID, event.LeaseToken, "peer_http_"+strconv.Itoa(resp.StatusCode))
+			code := "peer_http_" + strconv.Itoa(resp.StatusCode)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+				resp.StatusCode != http.StatusUnauthorized &&
+				resp.StatusCode != http.StatusRequestTimeout &&
+				resp.StatusCode != http.StatusTooManyRequests &&
+				resp.StatusCode != 425 {
+				_ = s.Fail(ctx, event.ID, event.LeaseToken, code)
+			} else {
+				_ = s.Retry(ctx, event.ID, event.LeaseToken, code)
+			}
 			if firstErr == nil { firstErr = fmt.Errorf("replication peer returned HTTP %d", resp.StatusCode) }
 		}
 	}
