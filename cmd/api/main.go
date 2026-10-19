@@ -1092,7 +1092,7 @@ func main() {
 				case <-signalCtx.Done():
 					return
 				case <-ticker.C:
-					ctx, cancel := context.WithTimeout(signalCtx, 10*time.Second)
+					ctx, cancel := context.WithTimeout(signalCtx, 8*time.Minute)
 					err := replicationStore.RelayOnce(ctx, client, replicationPeerURL, replicationOrigin, []byte(replicationKey), 50)
 					cancel()
 					if err != nil {
