@@ -71,7 +71,7 @@ The existing `/api/capability` gateway can route these capability names to the l
 
 **The feature flag defaults to false and must remain false until validation and client compatibility tests pass.** Local writes require a PostgreSQL connection and an HS256 bearer token that can be verified with `SUPABASE_JWT_SECRET`; asymmetric JWTs are deliberately rejected by this first implementation. If the deployment uses an asymmetric Supabase signing key, do not enable the flag until a proper JWKS verifier is implemented. A local profile must be created before that account can create local posts. These new local tables are not automatically backfilled from Supabase; do not switch existing users over without a verified, resumable migration and conflict policy.
 
-CI now includes an isolated PostgreSQL test that applies the migrations and verifies account/post outbox writes, privacy tombstones, and exclusion of private accounts. This validates schema behavior in CI only; it does not establish production migration, historical backfill, client cutover, or peer-outage recovery.
+CI now includes an isolated PostgreSQL test that applies the migrations and verifies account/post outbox writes, privacy tombstones, and exclusion of private accounts. Public-projection tombstones are terminal for a given entity ID; if a post was public and later became private or its author became protected, republishing it requires a new post ID. This prevents delayed old events from resurrecting content after a privacy transition. This validates schema behavior in CI only; it does not establish production migration, historical backfill, client cutover, or peer-outage recovery.
 
 
 ## Reconciliation command and peer-outage exercise
