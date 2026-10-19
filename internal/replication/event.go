@@ -14,23 +14,55 @@ import (
 const MaxPayloadBytes = 1 << 20
 
 var (
-	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
-	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	uuidPattern     = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}// Package replication defines the durable, provider-neutral event envelope used
+// to synchronize independently operated Testagram and XClone deployments.
+package replication
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const MaxPayloadBytes = 1 << 20
+
+var (
+)
+	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}// Package replication defines the durable, provider-neutral event envelope used
+// to synchronize independently operated Testagram and XClone deployments.
+package replication
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const MaxPayloadBytes = 1 << 20
+
+var (
+)
 )
 
 // Event is an immutable, versioned fact. Payload should contain only the minimum
 // data needed to replicate the entity; secrets, bearer tokens, and signed URLs
 // must never be placed in it.
 type Event struct {
-	ID           string          `json:"id"`
-	Origin       string          `json:"origin"`
-	EntityType   string          `json:"entity_type"`
-	EntityID     string          `json:"entity_id"`
+	ID            string          `json:"id"`
+	Origin        string          `json:"origin"`
+	EntityType    string          `json:"entity_type"`
+	EntityID      string          `json:"entity_id"`
 	EntityVersion int64           `json:"entity_version"`
 	SchemaVersion int             `json:"schema_version"`
-	EventType    string          `json:"event_type"`
-	OccurredAt   time.Time       `json:"occurred_at"`
-	Payload      json.RawMessage `json:"payload"`
+	EventType     string          `json:"event_type"`
+	OccurredAt    time.Time       `json:"occurred_at"`
+	Payload       json.RawMessage `json:"payload"`
 }
 
 // Validate enforces bounded identifiers and rejects malformed or oversized
