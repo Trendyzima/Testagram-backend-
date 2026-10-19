@@ -1,5 +1,5 @@
-// Package replication defines the durable, provider-neutral event envelope used
-// to synchronize independently operated Testagram and XClone deployments.
+// Package replication defines the versioned event envelope shared by the
+// independently operated Testagram and XClone backends.
 package replication
 
 import (
@@ -14,45 +14,12 @@ import (
 const MaxPayloadBytes = 1 << 20
 
 var (
-	uuidPattern     = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}// Package replication defines the durable, provider-neutral event envelope used
-// to synchronize independently operated Testagram and XClone deployments.
-package replication
-
-import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"regexp"
-	"strings"
-	"time"
+	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 )
 
-const MaxPayloadBytes = 1 << 20
-
-var (
-)
-	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}// Package replication defines the durable, provider-neutral event envelope used
-// to synchronize independently operated Testagram and XClone deployments.
-package replication
-
-import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"regexp"
-	"strings"
-	"time"
-)
-
-const MaxPayloadBytes = 1 << 20
-
-var (
-)
-)
-
-// Event is an immutable, versioned fact. Payload should contain only the minimum
-// data needed to replicate the entity; secrets, bearer tokens, and signed URLs
-// must never be placed in it.
+// Event is an immutable, versioned fact. Payloads must be minimal and must not
+// contain credentials, bearer tokens, or signed URLs.
 type Event struct {
 	ID            string          `json:"id"`
 	Origin        string          `json:"origin"`
@@ -65,8 +32,6 @@ type Event struct {
 	Payload       json.RawMessage `json:"payload"`
 }
 
-// Validate enforces bounded identifiers and rejects malformed or oversized
-// payloads before they enter the durable outbox.
 func (e Event) Validate() error {
 	if !uuidPattern.MatchString(e.ID) {
 		return errors.New("event id must be a UUID")
@@ -91,8 +56,8 @@ func (e Event) Validate() error {
 	if len(e.Payload) == 0 || len(e.Payload) > MaxPayloadBytes || !json.Valid(e.Payload) {
 		return errors.New("payload must be valid JSON no larger than 1 MiB")
 	}
-	var payloadObject map[string]any
-	if err := json.Unmarshal(e.Payload, &payloadObject); err != nil || payloadObject == nil {
+	var object map[string]any
+	if err := json.Unmarshal(e.Payload, &object); err != nil || object == nil {
 		return errors.New("payload must be a JSON object")
 	}
 	if bytesContainSensitiveKey(e.Payload) {
@@ -101,8 +66,6 @@ func (e Event) Validate() error {
 	return nil
 }
 
-// bytesContainSensitiveKey catches common accidental secret fields. This is a
-// guardrail, not a replacement for an allow-listed event payload per entity.
 func bytesContainSensitiveKey(raw []byte) bool {
 	var value any
 	if json.Unmarshal(raw, &value) != nil {
@@ -119,10 +82,16 @@ func bytesContainSensitiveKey(raw []byte) bool {
 					"secret_key", "password", "signed_url", "presigned_url", "upload_url":
 					return true
 				}
-				if walk(child) { return true }
+				if walk(child) {
+					return true
+				}
 			}
 		case []any:
-			for _, child := range x { if walk(child) { return true } }
+			for _, child := range x {
+				if walk(child) {
+					return true
+				}
+			}
 		}
 		return false
 	}
