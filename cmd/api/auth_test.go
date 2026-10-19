@@ -40,6 +40,22 @@ func TestAuthJWTRequiresDedicatedSecret(t *testing.T) {
 	}
 }
 
+func TestAuthJWTIsAcceptedByLocalTokenVerifier(t *testing.T) {
+	oldAuth, hadAuth := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
+	oldSupabase, hadSupabase := os.LookupEnv("SUPABASE_JWT_SECRET")
+	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("a", 40))
+	_ = os.Unsetenv("SUPABASE_JWT_SECRET")
+	t.Cleanup(func() {
+		if hadAuth { _ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", oldAuth) } else { _ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET") }
+		if hadSupabase { _ = os.Setenv("SUPABASE_JWT_SECRET", oldSupabase) } else { _ = os.Unsetenv("SUPABASE_JWT_SECRET") }
+	})
+	const userID = "123e4567-e89b-42d3-a456-426614174000"
+	token, err := authSignJWT(userID, "user@example.com", 1)
+	if err != nil { t.Fatal(err) }
+	got, err := localJWTSubject("Bearer " + token)
+	if err != nil || got != userID { t.Fatalf("locally issued token rejected: subject=%q error=%v", got, err) }
+}
+
 func TestAuthTokenHashIsNotRawToken(t *testing.T) {
 	token := "example-recovery-token"
 	got := authTokenHash(token)
