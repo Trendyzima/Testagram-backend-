@@ -51,12 +51,12 @@ AS $$
 DECLARE
   entity_version BIGINT;
 BEGIN
-  entity_version := public.next_testagram_replication_version('media', p_object_key);
+  entity_version := public.next_testagram_replication_version('media', md5(p_object_key));
   INSERT INTO public.platform_replication_outbox
     (event_id, origin, entity_type, entity_id, entity_version, schema_version,
      event_type, occurred_at, payload)
   VALUES
-    (gen_random_uuid(), 'testagram-vps', 'media', p_object_key, entity_version, 1,
+    (gen_random_uuid(), 'testagram-vps', 'media', md5(p_object_key), entity_version, 1,
      p_event_type, now(), COALESCE(p_payload, '{}'::jsonb));
 END;
 $$;
@@ -103,7 +103,7 @@ BEGIN
     PERFORM public.enqueue_testagram_public_media_event(object_key_value, 'media.deleted', '{}'::jsonb);
   ELSIF is_public THEN
     payload := jsonb_build_object(
-      'id', object_key_value,
+      'id', md5(object_key_value),
       'owner_id', new_row->>'owner_id',
       'object_key', object_key_value,
       'content_type', new_row->>'content_type',
