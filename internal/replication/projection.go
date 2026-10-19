@@ -83,6 +83,9 @@ func validateProjection(event Event) (map[string]any, bool, error) {
 	if !ok {
 		return nil, false, fmt.Errorf("%w: unsupported replicated entity type %q", ErrProjectionRejected, kind)
 	}
+	if !strings.HasPrefix(strings.ToLower(event.EventType), kind+".") {
+		return nil, false, fmt.Errorf("%w: event type does not match entity type", ErrProjectionRejected)
+	}
 	deleted := isTombstoneEvent(event.EventType)
 	var projection map[string]any
 	if deleted {
