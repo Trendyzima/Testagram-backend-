@@ -195,7 +195,7 @@ jobs:
           VALUES
             ('users/test-user/0123456789abcdef0123456789abcdef', 'test-user', 'public', 'image/jpeg', 1024, repeat('a',64), 'ready'),
             ('users/test-user/1123456789abcdef0123456789abcdef', 'test-user', 'private', 'image/jpeg', 1024, repeat('b',64), 'ready');
-          DO $
+          DO $ci$
           BEGIN
             IF (SELECT count(*) FROM public.platform_replication_outbox WHERE entity_type='media') <> 1 THEN
               RAISE EXCEPTION 'only complete public media should produce an event';
@@ -214,11 +214,11 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'public media event is missing verified metadata';
             END IF;
-          END $;
+          END $ci$;
           UPDATE testagram_media.assets
           SET visibility='private'
           WHERE object_key='users/test-user/0123456789abcdef0123456789abcdef';
-          DO $
+          DO $ci$
           BEGIN
             IF (SELECT count(*) FROM public.platform_replication_outbox WHERE entity_type='media') <> 2 THEN
               RAISE EXCEPTION 'public-to-private transition must append a tombstone';
@@ -232,7 +232,7 @@ jobs:
             IF (SELECT outbox_pending FROM public.platform_replication_health) <> 2 THEN
               RAISE EXCEPTION 'replication health view must report pending outbox events';
             END IF;
-          END $;
+          END $ci$;
           SQL
       - name: Stop isolated PostgreSQL
         if: always()
