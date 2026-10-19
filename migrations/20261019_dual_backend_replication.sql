@@ -51,7 +51,19 @@ CREATE INDEX IF NOT EXISTS platform_replication_inbox_pending_idx
     ON platform_replication_inbox (available_at, received_at)
     WHERE applied_at IS NULL AND outcome IN ('received', 'retry');
 
+-- Tracks the highest accepted version per source-owned entity. Tombstones prevent
+-- a delayed create/update from resurrecting an entity after deletion.
+CREATE TABLE IF NOT EXISTS platform_replication_entity_versions (
+    origin TEXT NOT NULL CHECK (length(origin) BETWEEN 1 AND 128),
+    entity_type TEXT NOT NULL CHECK (length(entity_type) BETWEEN 1 AND 128),
+    entity_id TEXT NOT NULL CHECK (length(entity_id) BETWEEN 1 AND 128),
+    current_version BIGINT NOT NULL CHECK (current_version > 0),
+    tombstoned BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (origin, entity_type, entity_id)
+);
+
 -- Queue payloads and leases are internal service data, not public SQL API data.
-REVOKE ALL ON platform_replication_outbox, platform_replication_inbox FROM PUBLIC;
+REVOKE ALL ON platform_replication_outbox, platform_replication_inbox, platform_replication_entity_versions FROM PUBLIC;
 
 COMMIT;
