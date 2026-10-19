@@ -25,10 +25,12 @@ func TestProjectionPayloadAllowlist(t *testing.T) {
 		{"email forbidden", "account", "account.profile.updated", `{"id":"entity-1","username":"a","email":"a@example.com"}`, true},
 		{"unknown field", "account", "account.profile.updated", `{"id":"entity-1","password_hash":"x"}`, true},
 		{"id mismatch", "account", "account.profile.updated", `{"id":"other","username":"a"}`, true},
-		{"public media metadata", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","checksum_sha256":"abcd"}`, false},
-		{"media missing checksum", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp"}`, true},
+		{"public media metadata", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","size_bytes":2048,"checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, false},
+		{"media missing checksum", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","size_bytes":2048}`, true},
 		{"deleted tombstone", "post", "post.deleted", `{}`, false},
 		{"unsupported entity", "session", "session.created", `{}`, true},
+		{"signed avatar URL", "account", "account.profile.updated", `{"id":"entity-1","avatar_url":"https://cdn.example/avatar?token=secret"}`, true},
+		{"unsafe object key", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"https://bucket/a","content_type":"image/webp","size_bytes":2048,"checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
