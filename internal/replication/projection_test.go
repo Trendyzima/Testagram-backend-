@@ -16,8 +16,10 @@ func projectionEvent(kind, eventType string, payload string) Event {
 }
 
 func TestProjectionPayloadAllowlist(t *testing.T) {
-	applier := ProjectionApplier{}
-	tests := []struct{name, kind, eventType, payload string; wantErr bool}{
+	tests := []struct {
+		name, kind, eventType, payload string
+		wantErr bool
+	}{
 		{"public post", "post", "post.created", `{"id":"entity-1","author_id":"user-1","text":"hello","visibility":"public"}`, false},
 		{"private post", "post", "post.created", `{"id":"entity-1","visibility":"followers"}`, true},
 		{"email forbidden", "account", "account.profile.updated", `{"id":"entity-1","username":"a","email":"a@example.com"}`, true},
@@ -26,36 +28,33 @@ func TestProjectionPayloadAllowlist(t *testing.T) {
 		{"public media metadata", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","checksum_sha256":"abcd"}`, false},
 		{"media missing checksum", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp"}`, true},
 		{"deleted tombstone", "post", "post.deleted", `{}`, false},
+		{"unsupported entity", "session", "session.created", `{}`, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event := projectionEvent(tt.kind, tt.eventType, tt.payload)
-			// Exercise the same schema gate without needing a database by testing
-			// the allowlist and privacy helpers directly.
-			var payload map[string]any
-			if !isTombstoneEvent(event.EventType) {
-				if err := json.Unmarshal(event.Payload, &payload); err != nil { t.Fatal(err) }
-				allowed := projectionFields[tt.kind]
-				err := error(nil)
-				for key := range payload { if !allowed[key] { err = errProjectionTest; break } }
-				if err == nil && hasPrivateProjectionData(payload) { err = errProjectionTest }
-				if err == nil {
-					if id, ok := payload["id"].(string); ok && id != event.EntityID { err = errProjectionTest }
-				}
-				if err == nil && tt.kind == "post" {
-					visibility, _ := payload["visibility"].(string)
-					if visibility != "public" { err = errProjectionTest }
-				}
-				if err == nil && tt.kind == "media" {
-					visibility, _ := payload["visibility"].(string)
-					if visibility != "public" || payload["object_key"] == nil || payload["content_type"] == nil || payload["checksum_sha256"] == nil { err = errProjectionTest }
-				}
-				if (err != nil) != tt.wantErr { t.Fatalf("wantErr=%v, got %v", tt.wantErr, err) }
+			_, _, err := validateProjection(event)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("wantErr=%v, got %v", tt.wantErr, err)
+			}
+			if tt.wantErr && err != nil && !isProjectionRejection(err) {
+				t.Fatalf("expected permanent projection rejection, got %v", err)
 			}
 		})
 	}
 }
 
-var errProjectionTest = &projectionTestError{}
-type projectionTestError struct{}
-func (*projectionTestError) Error() string { return "projection rejected" }
+func isProjectionRejection(err error) bool {
+	return err != nil && (err == ErrProjectionRejected || containsError(err, ErrProjectionRejected))
+}
+
+func containsError(err, target error) bool {
+	for err != nil {
+		if err == target { return true }
+		type unwrapper interface { Unwrap() error }
+		u, ok := err.(unwrapper)
+		if !ok { return false }
+		err = u.Unwrap()
+	}
+	return false
+}
