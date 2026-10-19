@@ -925,6 +925,32 @@ func mustJSON(value any) []byte {
 	return encoded
 }
 
+
+func runReplicationApplyWorker(ctx context.Context, store *replication.Store) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	applier := replication.ProjectionApplier{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			applied, err := store.ApplyPendingBatch(batchCtx, 25, applier.Apply)
+			cancel()
+			if err != nil {
+				// Error messages contain operation context only; payloads and secrets
+				// are intentionally never logged.
+				log.Printf("replication inbox projector failed: %v", err)
+				continue
+			}
+			if applied > 0 {
+				log.Printf("replication inbox projector applied %d public projections", applied)
+			}
+		}
+	}
+}
+
 func main() {
 	addr := env("LISTEN_ADDR", ":8080")
 	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
@@ -1031,6 +1057,7 @@ func main() {
 	}
 	var replicationStore *replication.Store
 	var replicationReceiver http.Handler
+	replicationApplyEnabled := strings.EqualFold(env("REPLICATION_APPLY_ENABLED", "false"), "true")
 	replicationKey := strings.TrimSpace(os.Getenv("REPLICATION_PEER_KEY"))
 	replicationPeerOrigin := strings.TrimSpace(os.Getenv("REPLICATION_PEER_ORIGIN"))
 	replicationPeerURL := strings.TrimSpace(os.Getenv("REPLICATION_PEER_URL"))
@@ -1080,6 +1107,13 @@ func main() {
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
 	go svc.runStorageDeletionWorker(signalCtx)
+	if replicationApplyEnabled {
+		if replicationStore == nil {
+			log.Fatal("REPLICATION_APPLY_ENABLED requires replication configuration and database access")
+		}
+		log.Printf("replication public-projection worker enabled")
+		go runReplicationApplyWorker(signalCtx, replicationStore)
+	}
 	if replicationStore != nil && replicationPeerURL != "" {
 		go func() {
 			ticker := time.NewTicker(5 * time.Second)
