@@ -305,6 +305,7 @@ func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFun
 		SELECT event_id::text
 		FROM platform_replication_inbox
 		WHERE applied_at IS NULL AND outcome IN ('received', 'retry')
+		  AND available_at <= now()
 		ORDER BY received_at, event_id
 		LIMIT $1`, limit)
 	if err != nil {
@@ -336,7 +337,7 @@ func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFun
 			SELECT payload::text
 			FROM platform_replication_inbox
 			WHERE event_id = $1::uuid AND applied_at IS NULL
-			  AND outcome IN ('received', 'retry')
+			  AND outcome IN ('received', 'retry') AND available_at <= now()
 			FOR UPDATE SKIP LOCKED`, id).Scan(&raw)
 		if errors.Is(err, pgx.ErrNoRows) {
 			_ = tx.Rollback(ctx)
@@ -359,7 +360,10 @@ func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFun
 		}
 		if err := apply(ctx, tx, event); err != nil {
 			_ = tx.Rollback(ctx)
-			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox SET outcome='retry', error_code='apply_failed' WHERE event_id=$1::uuid AND applied_at IS NULL`, id)
+			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox
+			SET outcome='retry', error_code='apply_failed', attempts=attempts+1,
+			    available_at=now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::INTEGER) * interval '1 second'
+			WHERE event_id=$1::uuid AND applied_at IS NULL`, id)
 			return applied, fmt.Errorf("apply queued replication event: %w", err)
 		}
 		tag, err := tx.Exec(ctx, `
