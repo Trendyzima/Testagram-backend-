@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -71,4 +73,29 @@ func TestAuthEmailAndUsernameValidation(t *testing.T) {
 	}
 	if !authUsernamePattern.MatchString("Test_User_7") { t.Fatal("valid username rejected") }
 	if authUsernamePattern.MatchString("x") { t.Fatal("short username accepted") }
+}
+
+func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
+	// Go 1.22+ ServeMux panics at registration time for duplicate method/path
+	// patterns. Keep route construction covered so an auth endpoint cannot
+	// prevent the entire API process from starting.
+	handler := (&service{}).routes()
+	if handler == nil {
+		t.Fatal("routes returned a nil handler")
+	}
+	for _, path := range []string{
+		"/api/auth/signup",
+		"/api/auth/resend-verification",
+		"/api/auth/verify-email",
+		"/api/auth/login",
+		"/api/auth/forgot-password",
+		"/api/auth/reset-password",
+	} {
+		req := httptest.NewRequest(http.MethodOptions, path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("OPTIONS %s: got status %d, want %d", path, rec.Code, http.StatusNoContent)
+		}
+	}
 }
