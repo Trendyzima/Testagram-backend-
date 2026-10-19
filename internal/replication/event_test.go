@@ -41,6 +41,13 @@ func TestEventRejectsSensitivePayloadFields(t *testing.T) {
 		`{"provider_credentials":{"client_secret":"secret"}}`,
 		`{"avatar_url":"https://cdn.example/avatar?token=secret"}`,
 		`{"download_url":"https://cdn.example/file?signature=secret"}`,
+		`{"accessToken":"secret"}`,
+		`{"refresh-token":"secret"}`,
+		`{"PasswordHash":"hash"}`,
+		`{"private.key":"secret"}`,
+		`{"serviceRoleKey":"secret"}`,
+		`{"signedURL":"https://cdn.example/file"}`,
+		`{"metadata":[{"nestedSecret":{"serviceRoleKey":"secret"}}]}`,
 	} {
 		event := validEvent()
 		event.Payload = json.RawMessage(payload)
