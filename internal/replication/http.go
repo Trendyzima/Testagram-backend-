@@ -40,9 +40,20 @@ type Receiver struct {
 }
 
 func NewReceiver(store *Store, peerKeys map[string][]byte, apply ApplyFunc) (*Receiver, error) {
+	if apply == nil { return nil, errors.New("event apply function is required") }
+	return newReceiver(store, peerKeys, apply)
+}
+
+// NewQueueReceiver authenticates peer events and durably stores them in the
+// inbox for a separately configured domain consumer. It does not claim that
+// an event has been applied to product data.
+func NewQueueReceiver(store *Store, peerKeys map[string][]byte) (*Receiver, error) {
+	return newReceiver(store, peerKeys, nil)
+}
+
+func newReceiver(store *Store, peerKeys map[string][]byte, apply ApplyFunc) (*Receiver, error) {
 	if store == nil { return nil, errors.New("replication store is required") }
 	if len(peerKeys) == 0 { return nil, errors.New("at least one peer key is required") }
-	if apply == nil { return nil, errors.New("event apply function is required") }
 	keys := make(map[string][]byte, len(peerKeys))
 	for origin, key := range peerKeys {
 		if !identityPattern.MatchString(origin) { return nil, fmt.Errorf("invalid peer origin %q", origin) }
@@ -102,6 +113,21 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if err := event.Validate(); err != nil {
 		http.Error(w, "invalid event envelope", http.StatusBadRequest)
+		return
+	}
+	if r.apply == nil {
+		inserted, err := r.store.RecordInbox(req.Context(), event)
+		if err != nil {
+			http.Error(w, "replication event could not be stored", http.StatusServiceUnavailable)
+			return
+		}
+		if inserted {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"queued"}`))
+		} else {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"duplicate"}`))
+		}
 		return
 	}
 	applied, err := r.store.ApplyInboxTx(req.Context(), event, r.apply)
