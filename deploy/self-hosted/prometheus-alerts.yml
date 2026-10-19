@@ -221,8 +221,7 @@ groups:
           summary: Testagram replication has dead-lettered events
           description: One or more source events permanently failed delivery. Inspect error codes and replay only after fixing the underlying cause.
       - alert: TestagramReplicationInboxRejected
-        expr: increase(testagram_replication_inbox_rejected_24h{job="testagram-api"}[10m]) > 0
-        for: 0m
+        expr: testagram_replication_inbox_rejected_24h{job="testagram-api"} > 0
         labels:
           severity: warning
         annotations:
