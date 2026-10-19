@@ -420,6 +420,15 @@ func (s *Store) ApplyPendingBatch(ctx context.Context, limit int, apply ApplyFun
 		}
 		if err := apply(ctx, tx, event); err != nil {
 			_ = tx.Rollback(ctx)
+			if errors.Is(err, ErrProjectionRejected) {
+				_, markErr := s.db.Exec(ctx, `UPDATE platform_replication_inbox
+					SET outcome='rejected', applied_at=now(), error_code='projection_rejected'
+					WHERE event_id=$1::uuid AND applied_at IS NULL`, id)
+				if markErr != nil {
+					return applied, fmt.Errorf("mark rejected replication projection: %w", markErr)
+				}
+				continue
+			}
 			_, _ = s.db.Exec(ctx, `UPDATE platform_replication_inbox
 			SET outcome='retry', error_code='apply_failed', attempts=attempts+1,
 			    available_at=now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::INTEGER) * interval '1 second'
