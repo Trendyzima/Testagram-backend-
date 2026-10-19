@@ -35,6 +35,8 @@ func TestEventRejectsSensitivePayloadFields(t *testing.T) {
 		`{"profile":{"phone":"+10000000000"}}`,
 		`{"password_hash":"hash"}`,
 		`{"api_key":"secret"}`,
+		`{"avatar_url":"https://cdn.example/avatar?token=secret"}`,
+		`{"download_url":"https://cdn.example/file?signature=secret"}`,
 	} {
 		event := validEvent()
 		event.Payload = json.RawMessage(payload)
