@@ -58,3 +58,16 @@ func TestEventRejectsInvalidEnvelope(t *testing.T) {
 		})
 	}
 }
+
+func TestTombstoneEventClassification(t *testing.T) {
+	for _, eventType := range []string{"post.deleted", "account.tombstoned", "POST.DELETED"} {
+		if !isTombstoneEvent(eventType) {
+			t.Errorf("%q should be classified as a tombstone", eventType)
+		}
+	}
+	for _, eventType := range []string{"post.created", "post.updated", "user.blocked"} {
+		if isTombstoneEvent(eventType) {
+			t.Errorf("%q must not be classified as a tombstone", eventType)
+		}
+	}
+}
