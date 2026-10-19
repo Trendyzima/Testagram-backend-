@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -78,6 +79,14 @@ func bytesContainSensitiveKey(raw []byte) bool {
 		case map[string]any:
 			for k, child := range x {
 				key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(k, "-", "_"), " ", "_"))
+				if strings.HasSuffix(key, "_url") {
+					if raw, ok := child.(string); ok && raw != "" {
+						parsed, err := url.Parse(raw)
+						if err != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
+							return true
+						}
+					}
+				}
 				switch key {
 				case "authorization", "access_token", "refresh_token", "service_role_key",
 					"secret_key", "private_key", "password", "password_hash", "email", "phone",
