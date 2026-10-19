@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +36,44 @@ var projectionFields = map[string]map[string]bool{
 
 var ErrProjectionRejected = errors.New("replication projection rejected")
 
+var sha256HexPattern = regexp.MustCompile(`^[0-9a-fA-F]{64}package replication
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"regexp"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// ProjectionApplier stores a deliberately limited public-data projection. It
+// is not a replacement for the destination's authoritative account or post
+// tables; private fields must never be replicated through this generic path.
+type ProjectionApplier struct{}
+
+var projectionFields = map[string]map[string]bool{
+	"account": {
+		"id": true, "username": true, "display_name": true, "bio": true,
+		"avatar_key": true, "avatar_url": true, "website": true,
+	},
+	"post": {
+		"id": true, "author_id": true, "text": true, "content": true,
+		"visibility": true, "created_at": true, "updated_at": true,
+		"media_ids": true, "language": true,
+	},
+	"media": {
+		"id": true, "owner_id": true, "object_key": true, "content_type": true,
+		"size_bytes": true, "checksum_sha256": true, "visibility": true,
+		"created_at": true,
+	},
+}
+
+)
+
 func validateProjection(event Event) (map[string]any, bool, error) {
 	if err := event.Validate(); err != nil {
 		return nil, false, fmt.Errorf("%w: %v", ErrProjectionRejected, err)
@@ -62,6 +102,14 @@ func validateProjection(event Event) (map[string]any, bool, error) {
 		if id, ok := projection["id"].(string); ok && id != event.EntityID {
 			return nil, false, fmt.Errorf("%w: projection id does not match event entity_id", ErrProjectionRejected)
 		}
+		if kind == "account" {
+			if raw, ok := projection["avatar_url"].(string); ok && raw != "" {
+				parsed, parseErr := url.Parse(raw)
+				if parseErr != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+					return nil, false, fmt.Errorf("%w: avatar_url must be a stable HTTPS URL without query or fragment", ErrProjectionRejected)
+				}
+			}
+		}
 		if kind == "post" {
 			visibility, _ := projection["visibility"].(string)
 			if visibility != "public" {
@@ -73,10 +121,20 @@ func validateProjection(event Event) (map[string]any, bool, error) {
 			if visibility != "public" {
 				return nil, false, fmt.Errorf("%w: only explicitly public media metadata may be projected", ErrProjectionRejected)
 			}
-			for _, key := range []string{"object_key", "checksum_sha256", "content_type"} {
-				if _, exists := projection[key]; !exists {
-					return nil, false, fmt.Errorf("%w: public media projection requires %s", ErrProjectionRejected, key)
-				}
+			objectKey, keyOK := projection["object_key"].(string)
+			checksum, checksumOK := projection["checksum_sha256"].(string)
+			contentType, typeOK := projection["content_type"].(string)
+			if !keyOK || objectKey == "" || strings.Contains(objectKey, "://") || strings.HasPrefix(objectKey, "/") || strings.Contains(objectKey, "..") || len(objectKey) > 1024 {
+				return nil, false, fmt.Errorf("%w: public media object_key must be a relative object key", ErrProjectionRejected)
+			}
+			if !checksumOK || !sha256HexPattern.MatchString(checksum) {
+				return nil, false, fmt.Errorf("%w: checksum_sha256 must be a SHA-256 hex digest", ErrProjectionRejected)
+			}
+			if !typeOK || (contentType != "image/jpeg" && contentType != "image/png" && contentType != "image/webp" && contentType != "image/gif" && contentType != "image/avif" && contentType != "video/mp4" && contentType != "video/webm") {
+				return nil, false, fmt.Errorf("%w: unsupported public media content_type", ErrProjectionRejected)
+			}
+			if size, ok := projection["size_bytes"].(float64); ok && (size < 1 || size > 500*1024*1024) {
+				return nil, false, fmt.Errorf("%w: media size_bytes is out of bounds", ErrProjectionRejected)
 			}
 		}
 	}
