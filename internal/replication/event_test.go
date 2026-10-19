@@ -2,6 +2,7 @@ package replication
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,6 +47,10 @@ func TestEventRejectsSensitivePayloadFields(t *testing.T) {
 		`{"PasswordHash":"hash"}`,
 		`{"private.key":"secret"}`,
 		`{"serviceRoleKey":"secret"}`,
+		`{"serviceRole":"must-not-cross"}`,
+		`{"bearer":"credential"}`,
+		`{"jwt":"credential"}`,
+		`{"passwd":"secret"}`,
 		`{"signedURL":"https://cdn.example/file"}`,
 		`{"metadata":[{"nestedSecret":{"serviceRoleKey":"secret"}}]}`,
 	} {
@@ -62,6 +67,8 @@ func TestEventRejectsInvalidEnvelope(t *testing.T) {
 		"invalid event id": func(e *Event) { e.ID = "not-a-uuid" },
 		"zero entity version": func(e *Event) { e.EntityVersion = 0 },
 		"zero schema version": func(e *Event) { e.SchemaVersion = 0 },
+		"unsupported schema version": func(e *Event) { e.SchemaVersion = 2 },
+		"event type mismatch": func(e *Event) { e.EventType = "account.created" },
 		"invalid payload": func(e *Event) { e.Payload = json.RawMessage(`{"broken"`) },
 		"missing timestamp": func(e *Event) { e.OccurredAt = time.Time{} },
 	}
@@ -86,5 +93,13 @@ func TestTombstoneEventClassification(t *testing.T) {
 		if isTombstoneEvent(eventType) {
 			t.Errorf("%q must not be classified as a tombstone", eventType)
 		}
+	}
+}
+
+func TestEventRejectsEnvelopeLargerThanTransportLimit(t *testing.T) {
+	event := validEvent()
+	event.Payload = json.RawMessage(`{"blob":"` + strings.Repeat("x", MaxPayloadBytes-100) + `"}`)
+	if err := event.Validate(); err == nil {
+		t.Fatal("expected event envelope over the transport limit to be rejected")
 	}
 }

@@ -22,7 +22,7 @@ const (
 	HeaderOrigin    = "X-Replication-Origin"
 	HeaderTimestamp = "X-Replication-Timestamp"
 	HeaderSignature = "X-Replication-Signature"
-	defaultBodyLimit = 1 << 20
+	defaultBodyLimit = MaxEventBytes
 )
 
 // ApplyFunc must apply the event's domain projection using tx. It must not

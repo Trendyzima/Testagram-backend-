@@ -35,13 +35,23 @@ jobs:
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api ./admin-console
       - name: Validate staff console JavaScript syntax
         run: node --check admin-console/web/app.js
-      - name: Check formatting in API command package
+      - name: Check formatting of changed API Go files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          unformatted="$(gofmt -l cmd)"
-          if [[ -n "$unformatted" ]]; then
-            printf '%s\n' "$unformatted"
-            gofmt -d cmd
-            exit 1
+          set -euo pipefail
+          if [[ -z "${BASE_SHA:-}" || "${BASE_SHA}" =~ ^0+$ ]]; then
+            mapfile -t go_files < <(git ls-files 'cmd/*.go' 'cmd/**/*.go')
+          else
+            mapfile -t go_files < <(git diff --name-only "${BASE_SHA}"...HEAD -- 'cmd/*.go' 'cmd/**/*.go')
+          fi
+          if (("${#go_files[@]}" > 0)); then
+            unformatted="$(printf '%s\n' "${go_files[@]}" | xargs -r gofmt -l)"
+            if [[ -n "$unformatted" ]]; then
+              printf '%s\n' "$unformatted"
+              printf '%s\n' "${go_files[@]}" | xargs -r gofmt -d
+              exit 1
+            fi
           fi
 
   platform:

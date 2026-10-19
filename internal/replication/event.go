@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-const MaxPayloadBytes = 1 << 20
+const (
+	MaxPayloadBytes = 1 << 20
+	MaxEventBytes   = 1 << 20
+)
 
 var (
 	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
@@ -51,8 +54,11 @@ func (e Event) Validate() error {
 	if e.EntityVersion < 1 {
 		return errors.New("entity_version must be positive")
 	}
-	if e.SchemaVersion < 1 {
-		return errors.New("schema_version must be positive")
+	if e.SchemaVersion != 1 {
+		return errors.New("unsupported schema_version; only version 1 is accepted")
+	}
+	if !strings.HasPrefix(strings.ToLower(e.EventType), strings.ToLower(e.EntityType)+".") {
+		return errors.New("event_type must be prefixed by entity_type")
 	}
 	if e.OccurredAt.IsZero() {
 		return errors.New("occurred_at is required")
@@ -66,6 +72,10 @@ func (e Event) Validate() error {
 	}
 	if bytesContainSensitiveKey(e.Payload) {
 		return errors.New("payload must not contain credential or signed-url fields")
+	}
+	encoded, err := json.Marshal(e)
+	if err != nil || len(encoded) > MaxEventBytes {
+		return errors.New("event envelope must not exceed 1 MiB")
 	}
 	return nil
 }
@@ -119,7 +129,7 @@ func sensitivePayloadKey(key string) bool {
 	// normalization), credentials_blob, and nested provider secret fields.
 	// Allowlist-based projection validation remains the primary control.
 	for _, fragment := range []string{
-		"authorization", "access_token", "refresh_token", "token",
+		"authorization", "access_token", "refresh_token", "token", "bearer", "jwt",
 		"service_role", "secret", "private_key", "password", "passwd",
 		"email", "phone", "credential", "cookie", "session", "api_key",
 		"signed_url", "presigned_url", "upload_url",
