@@ -81,3 +81,22 @@ func TestTombstoneEventClassification(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeSensitivePayloadKeyVariants(t *testing.T) {
+	cases := map[string]string{
+		"accessToken":     "access_token",
+		"refresh-token":   "refresh_token",
+		"PasswordHash":    "password_hash",
+		"private.key":     "private_key",
+		"serviceRoleKey":  "service_role_key",
+		"signedURL":       "signed_url",
+		"phone number":    "phone_number",
+		"customerEmail":   "customer_email",
+	}
+	for input, want := range cases {
+		if got := normalizeSensitivePayloadKey(input); got != want {
+			t.Errorf("normalizeSensitivePayloadKey(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
