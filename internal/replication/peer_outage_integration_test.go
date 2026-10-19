@@ -2,7 +2,6 @@ package replication
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -39,19 +38,19 @@ func TestPeerOutageRecoveryIntegration(t *testing.T) {
 	}
 
 	key:=[]byte("ci-only-replication-key-32-bytes-minimum")
+	receiver,err:=NewReceiver(destination,map[string][]byte{"testagram-vps":key},(ProjectionApplier{}).Apply)
+	if err!=nil { t.Fatal(err) }
+	peer:=httptest.NewTLSServer(receiver); defer peer.Close()
 	closed:=httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter,*http.Request){}))
 	deadEndpoint:=closed.URL
 	closed.Close()
-	client:=&http.Client{Timeout:time.Second,Transport:&http.Transport{TLSClientConfig:&tls.Config{InsecureSkipVerify:true}}} // test server only
+	client:=peer.Client()
 	if err:=source.RelayOnce(ctx,client,deadEndpoint,"testagram-vps",key,20); err==nil { t.Fatal("relay should report peer outage") }
 	if err:=sourceDB.QueryRow(ctx,"SELECT count(*) FROM platform_replication_outbox WHERE entity_id IN ($1,$2) AND delivered_at IS NULL AND failed_at IS NULL",accountID,postID).Scan(&pending); err!=nil || pending<2 {
 		t.Fatalf("peer outage must retain retryable events; pending=%d err=%v",pending,err)
 	}
 	if _,err:=sourceDB.Exec(ctx,"UPDATE platform_replication_outbox SET available_at=now(),lease_until=NULL,lease_token=NULL WHERE entity_id IN ($1,$2) AND delivered_at IS NULL AND failed_at IS NULL",accountID,postID); err!=nil { t.Fatal(err) }
 
-	receiver,err:=NewReceiver(destination,map[string][]byte{"testagram-vps":key},(ProjectionApplier{}).Apply)
-	if err!=nil { t.Fatal(err) }
-	peer:=httptest.NewTLSServer(receiver); defer peer.Close()
 	if err:=source.RelayOnce(ctx,client,peer.URL,"testagram-vps",key,20); err!=nil { t.Fatalf("relay after peer recovery: %v",err) }
 	var projected int
 	if err:=destinationDB.QueryRow(ctx,"SELECT count(*) FROM platform_replication_projection WHERE origin='testagram-vps' AND entity_id IN ($1,$2) AND tombstoned=FALSE",accountID,postID).Scan(&projected); err!=nil || projected!=2 {
