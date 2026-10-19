@@ -238,6 +238,77 @@ jobs:
         if: always()
         run: docker stop testagram-replication-ci || true
 
+  local-product-outbox-integration:
+    name: Local account and post transactional outbox integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-local-product-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-local-product-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-local-product-ci
+          exit 1
+      - name: Apply isolated media and replication migrations
+        run: |
+          set -euo pipefail
+          for migration in \
+            migrations/005_media_assets.sql \
+            migrations/006_media_lifecycle.sql \
+            migrations/007_media_product_bridge.sql \
+            migrations/008_virtual_storage_bridge.sql \
+            migrations/20261019_dual_backend_replication.sql \
+            migrations/20261019_testagram_media_replication_producers.sql \
+            migrations/20261019_testagram_local_accounts_posts.sql; do
+            docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+      - name: Verify account/post atomic events and privacy tombstones
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_local.accounts(user_id,username,display_name)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','ci_public_user','CI User');
+          INSERT INTO testagram_local.posts(id,author_id,text,visibility)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174000','public test post','public');
+          DO $ci$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND event_type='account.created' AND entity_id='123e4567-e89b-42d3-a456-426614174000') THEN
+              RAISE EXCEPTION 'account write did not atomically emit a public account event';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='post' AND event_type='post.created' AND entity_id='123e4567-e89b-42d3-a456-426614174001' AND payload->>'text'='public test post') THEN
+              RAISE EXCEPTION 'post write did not atomically emit a public post event';
+            END IF;
+          END $ci$;
+          UPDATE testagram_local.accounts SET protected_account=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174000';
+          DO $ci$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND event_type='account.deleted' AND entity_id='123e4567-e89b-42d3-a456-426614174000' AND payload='{}'::jsonb) THEN
+              RAISE EXCEPTION 'account privacy change did not emit tombstone';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='post' AND event_type='post.deleted' AND entity_id='123e4567-e89b-42d3-a456-426614174001' AND payload='{}'::jsonb) THEN
+              RAISE EXCEPTION 'account privacy change did not tombstone public posts';
+            END IF;
+          END $ci$;
+          INSERT INTO testagram_local.accounts(user_id,username,protected_account)
+          VALUES ('123e4567-e89b-42d3-a456-426614174002','ci_private_user',TRUE);
+          DO $ci$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND entity_id='123e4567-e89b-42d3-a456-426614174002') THEN
+              RAISE EXCEPTION 'private account must not be projected';
+            END IF;
+          END $ci$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-local-product-ci || true
+
   saas-schema-integration:
     name: SaaS tenancy migration integration
     runs-on: ubuntu-latest
