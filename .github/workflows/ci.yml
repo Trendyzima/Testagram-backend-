@@ -266,7 +266,8 @@ jobs:
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261019_dual_backend_replication.sql \
             migrations/20261019_testagram_media_replication_producers.sql \
-            migrations/20261019_testagram_local_accounts_posts.sql; do
+            migrations/20261019_testagram_local_accounts_posts.sql \\
+            migrations/20261019_testagram_independent_auth.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
@@ -308,6 +309,52 @@ jobs:
       - name: Stop isolated PostgreSQL
         if: always()
         run: docker stop testagram-local-product-ci || true
+
+  independent-auth-schema-integration:
+    name: Independent authentication schema integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-auth-ci -e POSTGRES_PASSWORD=ci-only-password -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-auth-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-auth-ci
+          exit 1
+      - name: Apply schema and verify constraints
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.identities(email,username,password_hash)
+          VALUES ('ci@example.test','ci_user','test-hash');
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.identities WHERE email_normalized='ci@example.test') <> 1 THEN
+              RAISE EXCEPTION 'normalized email lookup failed';
+            END IF;
+            IF (SELECT count(*) FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name IN ('verification_token_hash','reset_token_hash','token_version')) <> 3 THEN
+              RAISE EXCEPTION 'verification, reset, or token-version columns missing';
+            END IF;
+          END $ci$;
+          DO $duplicate$
+          BEGIN
+            BEGIN
+              INSERT INTO testagram_auth.identities(email,username,password_hash)
+              VALUES ('CI@EXAMPLE.TEST','another_user','test-hash');
+              RAISE EXCEPTION 'case-insensitive duplicate email was accepted';
+            EXCEPTION WHEN unique_violation THEN NULL;
+            END;
+          END $duplicate$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-auth-ci || true
 
   saas-schema-integration:
     name: SaaS tenancy migration integration
