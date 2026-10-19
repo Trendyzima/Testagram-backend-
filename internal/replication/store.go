@@ -107,7 +107,7 @@ func (s *Store) ClaimBatch(ctx context.Context, limit int, lease time.Duration) 
 		WITH picked AS (
 			SELECT event_id
 			FROM platform_replication_outbox
-			WHERE delivered_at IS NULL
+			WHERE delivered_at IS NULL AND failed_at IS NULL
 			  AND available_at <= now()
 			  AND (lease_until IS NULL OR lease_until < now())
 			ORDER BY created_at, event_id
@@ -148,7 +148,7 @@ func (s *Store) MarkDelivered(ctx context.Context, eventID, leaseToken string) e
 	tag, err := s.db.Exec(ctx, `
 		UPDATE platform_replication_outbox
 		SET delivered_at = now(), lease_until = NULL, lease_token = NULL, last_error_code = NULL
-		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND lease_until > now()`, eventID, leaseToken)
+		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND failed_at IS NULL AND lease_until > now()`, eventID, leaseToken)
 	if err != nil {
 		return fmt.Errorf("mark replication event delivered: %w", err)
 	}
@@ -173,9 +173,11 @@ func (s *Store) Retry(ctx context.Context, eventID, leaseToken, errorCode string
 	tag, err := s.db.Exec(ctx, `
 		UPDATE platform_replication_outbox
 		SET lease_until = NULL, lease_token = NULL,
-		    available_at = now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::integer) * interval '1 second',
+		    failed_at = CASE WHEN attempts >= 20 THEN now() ELSE failed_at END,
+		    available_at = CASE WHEN attempts >= 20 THEN available_at
+		      ELSE now() + LEAST(3600, (5 * power(2, LEAST(attempts, 10)))::integer) * interval '1 second' END,
 		    last_error_code = $3
-		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND lease_until IS NOT NULL`,
+		WHERE event_id = $1::uuid AND lease_token = $2::uuid AND delivered_at IS NULL AND failed_at IS NULL AND lease_until IS NOT NULL`,
 		eventID, leaseToken, errorCode)
 	if err != nil {
 		return fmt.Errorf("schedule replication retry: %w", err)
