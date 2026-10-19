@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS platform_replication_inbox (
 );
 
 CREATE INDEX IF NOT EXISTS platform_replication_inbox_pending_idx
-    ON platform_replication_inbox (received_at)
+    ON platform_replication_inbox (available_at, received_at)
     WHERE applied_at IS NULL AND outcome IN ('received', 'retry');
 
 -- Queue payloads and leases are internal service data, not public SQL API data.
