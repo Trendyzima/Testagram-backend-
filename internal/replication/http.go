@@ -186,6 +186,11 @@ func (s *Store) RelayOnce(ctx context.Context, client *http.Client, endpoint, lo
 	if err != nil { return err }
 	var firstErr error
 	for _, event := range events {
+		if event.Origin != localOrigin {
+			_ = s.Retry(ctx, event.ID, "origin_mismatch")
+			if firstErr == nil { firstErr = errors.New("outbox event origin does not match local origin") }
+			continue
+		}
 		body, marshalErr := json.Marshal(event)
 		if marshalErr != nil {
 			if firstErr == nil { firstErr = marshalErr }
