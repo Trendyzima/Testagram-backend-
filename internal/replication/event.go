@@ -15,8 +15,44 @@ import (
 const MaxPayloadBytes = 1 << 20
 
 var (
-	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
-	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}// Package replication defines the versioned event envelope shared by the
+// independently operated Testagram and XClone backends.
+package replication
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const MaxPayloadBytes = 1 << 20
+
+var (
+)
+	identityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}// Package replication defines the versioned event envelope shared by the
+// independently operated Testagram and XClone backends.
+package replication
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const MaxPayloadBytes = 1 << 20
+
+var (
+)
+	sensitiveKeyCamelCasePattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+	sensitiveKeySeparatorPattern = regexp.MustCompile(`[^A-Za-z0-9]+`)
 )
 
 // Event is an immutable, versioned fact. Payloads must be minimal and must not
@@ -78,7 +114,7 @@ func bytesContainSensitiveKey(raw []byte) bool {
 		switch x := v.(type) {
 		case map[string]any:
 			for k, child := range x {
-				key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(k, "-", "_"), " ", "_"))
+				key := normalizeSensitivePayloadKey(k)
 				if strings.HasSuffix(key, "_url") {
 					if raw, ok := child.(string); ok && raw != "" {
 						parsed, err := url.Parse(raw)
@@ -104,6 +140,12 @@ func bytesContainSensitiveKey(raw []byte) bool {
 		return false
 	}
 	return walk(value)
+}
+
+func normalizeSensitivePayloadKey(key string) string {
+	key = sensitiveKeyCamelCasePattern.ReplaceAllString(key, "$1_$2")
+	key = sensitiveKeySeparatorPattern.ReplaceAllString(key, "_")
+	return strings.Trim(strings.ToLower(key), "_")
 }
 
 func sensitivePayloadKey(key string) bool {
