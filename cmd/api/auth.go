@@ -325,14 +325,20 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w,http.StatusAccepted,map[string]any{"ok":true,"message":"If the account exists, password recovery instructions will be sent."}); return true
 	case "reset-password":
 		token := strings.TrimSpace(in.Token)
+		if len(token)<32 || len(token)>128 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_TOKEN","Reset token is invalid or expired",requestID(r))); return true }
+		tokenHash := authTokenHash(token)
+		var tokenValid bool
+		if err := s.db.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_auth.identities WHERE reset_token_hash=$1 AND reset_expires_at>now() AND email_verified_at IS NOT NULL)`,tokenHash).Scan(&tokenValid); err != nil {
+			writeJSON(w,http.StatusServiceUnavailable,errorBody("AUTH_STORE_UNAVAILABLE","Unable to validate reset token",requestID(r))); return true
+		}
+		if !tokenValid { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_TOKEN","Reset token is invalid or expired",requestID(r))); return true }
 		hash, err := authPasswordHash(in.Password)
 		if err != nil { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PASSWORD","Password must be 12–128 bytes",requestID(r))); return true }
-		if len(token)<32 || len(token)>128 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_TOKEN","Reset token is invalid or expired",requestID(r))); return true }
 		tag, err := s.db.Exec(ctx,`
 			UPDATE testagram_auth.identities SET password_hash=$2,reset_token_hash=NULL,reset_expires_at=NULL,
 				password_changed_at=now(),token_version=token_version+1,updated_at=now()
 			WHERE reset_token_hash=$1 AND reset_expires_at>now() AND email_verified_at IS NOT NULL
-		`,authTokenHash(token),hash)
+		`,tokenHash,hash)
 		if err != nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("AUTH_STORE_UNAVAILABLE","Unable to reset password",requestID(r))); return true }
 		if tag.RowsAffected()==0 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_TOKEN","Reset token is invalid or expired",requestID(r))); return true }
 		writeJSON(w,http.StatusOK,map[string]any{"ok":true,"message":"Password reset. Sign in with your new password."}); return true
