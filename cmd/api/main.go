@@ -537,7 +537,7 @@ func (s *service) publicReplicationProjection(w http.ResponseWriter, r *http.Req
 
 var replicationReadIdentity = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
-func mustJSON(value string) string {
+func replicationJSONString(value string) string {
 	raw, _ := json.Marshal(value)
 	return string(raw)
 }
