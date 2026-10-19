@@ -109,7 +109,7 @@ func bytesContainSensitiveKey(raw []byte) bool {
 }
 
 func normalizeSensitivePayloadKey(key string) string {
-	key = sensitiveKeyCamelCasePattern.ReplaceAllString(key, "$1_$2")
+	key = sensitiveKeyCamelCasePattern.ReplaceAllString(key, "${1}_${2}")
 	key = sensitiveKeySeparatorPattern.ReplaceAllString(key, "_")
 	return strings.Trim(strings.ToLower(key), "_")
 }
