@@ -49,6 +49,10 @@ func TestPeerOutageRecoveryIntegration(t *testing.T) {
 	if err:=sourceDB.QueryRow(ctx,"SELECT count(*) FROM platform_replication_outbox WHERE entity_id IN ($1,$2) AND delivered_at IS NULL AND failed_at IS NULL",accountID,postID).Scan(&pending); err!=nil || pending<2 {
 		t.Fatalf("peer outage must retain retryable events; pending=%d err=%v",pending,err)
 	}
+	var localPostText string
+	if err:=sourceDB.QueryRow(ctx,"SELECT text FROM testagram_local.posts WHERE id=$1::uuid AND author_id=$2::uuid AND deleted_at IS NULL",postID,accountID).Scan(&localPostText); err!=nil || localPostText!="outage recovery post" {
+		t.Fatalf("source must continue serving its own post during peer outage; text=%q err=%v",localPostText,err)
+	}
 	if _,err:=sourceDB.Exec(ctx,"UPDATE platform_replication_outbox SET available_at=now(),lease_until=NULL,lease_token=NULL WHERE entity_id IN ($1,$2) AND delivered_at IS NULL AND failed_at IS NULL",accountID,postID); err!=nil { t.Fatal(err) }
 
 	if err:=source.RelayOnce(ctx,client,peer.URL,"testagram-vps",key,20); err!=nil { t.Fatalf("relay after peer recovery: %v",err) }
