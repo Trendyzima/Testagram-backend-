@@ -128,3 +128,37 @@ func TestNewReceiverRequiresDomainProjector(t *testing.T) {
 		t.Fatal("expected synchronous receiver to require a projector")
 	}
 }
+
+func TestQueueReceiverRejectsOversizedBodyBeforeDatabaseAccess(t *testing.T) {
+	key := bytes.Repeat([]byte{0x31}, 32)
+	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
+	if err != nil { t.Fatal(err) }
+	body := bytes.Repeat([]byte("a"), defaultBodyLimit+1)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewReader(body))
+	req.Header.Set(HeaderOrigin, "xclone")
+	req.Header.Set(HeaderTimestamp, timestamp)
+	req.Header.Set(HeaderSignature, SignRequest(key, timestamp, body))
+	recorder := httptest.NewRecorder()
+	receiver.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("got status %d, want 413", recorder.Code)
+	}
+}
+
+func TestQueueReceiverRejectsUnknownEnvelopeFieldsBeforeDatabaseAccess(t *testing.T) {
+	key := bytes.Repeat([]byte{0x31}, 32)
+	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
+	if err != nil { t.Fatal(err) }
+	body := []byte(`{"id":"018f1f3a-7b2c-7abc-8def-0123456789ab","origin":"xclone","entity_type":"post","entity_id":"post:1","entity_version":1,"schema_version":1,"event_type":"post.created","occurred_at":"2026-10-19T00:00:00Z","payload":{"visibility":"public"},"unexpected":true}`)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewReader(body))
+	req.Header.Set(HeaderOrigin, "xclone")
+	req.Header.Set(HeaderTimestamp, timestamp)
+	req.Header.Set(HeaderSignature, SignRequest(key, timestamp, body))
+	recorder := httptest.NewRecorder()
+	receiver.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d, want 400", recorder.Code)
+	}
+}
