@@ -196,6 +196,38 @@ groups:
           description: More than 85% of the platform service PostgreSQL pool is acquired for 5 minutes. Check platform request load and slow queries.
 
 
+      - alert: TestagramReplicationOutboxBacklogAgeHigh
+        expr: testagram_replication_outbox_oldest_seconds{job="testagram-api"} > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram replication outbox is delayed
+          description: The oldest undelivered replication event is older than two minutes. Check peer reachability, relay logs, and lease/retry state.
+      - alert: TestagramReplicationInboxBacklogAgeHigh
+        expr: testagram_replication_inbox_oldest_seconds{job="testagram-api"} > 120
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram replication inbox is delayed
+          description: The oldest unapplied replication event is older than two minutes. Check the projection worker, database errors, and retry scheduling.
+      - alert: TestagramReplicationOutboxDeadLetters
+        expr: testagram_replication_outbox_failed_total{job="testagram-api"} > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Testagram replication has dead-lettered events
+          description: One or more source events permanently failed delivery. Inspect error codes and replay only after fixing the underlying cause.
+      - alert: TestagramReplicationInboxRejected
+        expr: testagram_replication_inbox_rejected_24h{job="testagram-api"} > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Testagram rejected a replication projection
+          description: A new event was rejected by the receiver projection policy. Inspect the event contract and allowlist; do not weaken privacy validation to force it through.
+
   - name: testagram-observability-integrity
     rules:
       - alert: TestagramPrometheusSelfScrapeDown

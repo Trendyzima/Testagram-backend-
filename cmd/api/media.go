@@ -641,12 +641,18 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var asset mediaAsset
+	checksumForMetadata := ""
+	if storageNamespace != "legacy-media" {
+		// The checksum has already been verified against the stored object above.
+		// Persist only the digest, never a signed URL or provider credentials.
+		checksumForMetadata = strings.ToLower(strings.TrimSpace(body.ChecksumSHA256))
+	}
 	err = s.db.QueryRow(r.Context(), `insert into testagram_media.assets
-		(object_key, owner_id, visibility, content_type, original_name, size_bytes, etag, status, storage_namespace, storage_provider)
-		values ($1,$2,$3,$4,$5,$6,$7,'ready',$8,$9)
+		(object_key, owner_id, visibility, content_type, original_name, size_bytes, etag, status, storage_namespace, storage_provider, checksum_sha256)
+		values ($1,$2,$3,$4,$5,$6,$7,'ready',$8,$9,$10)
 		on conflict (object_key) do nothing
 		returning object_key, visibility, content_type, original_name, size_bytes, etag, status, created_at`,
-		body.Key, userID, body.Visibility, actualType, intentName, size, etag, storageNamespace, storageProvider).
+		body.Key, userID, body.Visibility, actualType, intentName, size, etag, storageNamespace, storageProvider, checksumForMetadata).
 		Scan(&asset.Key, &asset.Visibility, &asset.ContentType, &asset.OriginalName, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
 	if err != nil {
 		var ownerID string
