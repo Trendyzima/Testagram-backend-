@@ -154,6 +154,90 @@ jobs:
         if: always()
         run: docker stop testagram-minio-ci || true
 
+  replication-media-schema-integration:
+    name: Replication media outbox PostgreSQL integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-replication-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-replication-ci pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs testagram-replication-ci
+          exit 1
+      - name: Apply media and replication migrations
+        run: |
+          set -euo pipefail
+          for migration in \
+            migrations/005_media_assets.sql \
+            migrations/006_media_lifecycle.sql \
+            migrations/007_media_product_bridge.sql \
+            migrations/008_virtual_storage_bridge.sql \
+            migrations/20261019_dual_backend_replication.sql \
+            migrations/20261019_testagram_media_replication_producers.sql; do
+            docker exec -i testagram-replication-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+      - name: Verify public-only producer, checksum payload, tombstones and health counters
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-replication-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_media.assets
+            (object_key, owner_id, visibility, content_type, size_bytes, checksum_sha256, status)
+          VALUES
+            ('users/test-user/0123456789abcdef0123456789abcdef', 'test-user', 'public', 'image/jpeg', 1024, repeat('a',64), 'ready'),
+            ('users/test-user/1123456789abcdef0123456789abcdef', 'test-user', 'private', 'image/jpeg', 1024, repeat('b',64), 'ready');
+          DO $
+          BEGIN
+            IF (SELECT count(*) FROM public.platform_replication_outbox WHERE entity_type='media') <> 1 THEN
+              RAISE EXCEPTION 'only complete public media should produce an event';
+            END IF;
+            IF EXISTS (
+              SELECT 1 FROM public.platform_replication_outbox
+              WHERE entity_type='media' AND (payload ? 'signed_url' OR payload ? 'presigned_url' OR payload ? 'download_url')
+            ) THEN
+              RAISE EXCEPTION 'signed URL fields must never be replicated';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM public.platform_replication_outbox
+              WHERE entity_type='media' AND event_type='media.created'
+                AND payload->>'checksum_sha256'=repeat('a',64)
+                AND payload->>'visibility'='public'
+            ) THEN
+              RAISE EXCEPTION 'public media event is missing verified metadata';
+            END IF;
+          END $;
+          UPDATE testagram_media.assets
+          SET visibility='private'
+          WHERE object_key='users/test-user/0123456789abcdef0123456789abcdef';
+          DO $
+          BEGIN
+            IF (SELECT count(*) FROM public.platform_replication_outbox WHERE entity_type='media') <> 2 THEN
+              RAISE EXCEPTION 'public-to-private transition must append a tombstone';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM public.platform_replication_outbox
+              WHERE entity_type='media' AND event_type='media.deleted' AND payload='{}'::jsonb
+            ) THEN
+              RAISE EXCEPTION 'privacy transition must emit an empty tombstone';
+            END IF;
+            IF (SELECT outbox_pending FROM public.platform_replication_health) <> 2 THEN
+              RAISE EXCEPTION 'replication health view must report pending outbox events';
+            END IF;
+          END $;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-replication-ci || true
+
   saas-schema-integration:
     name: SaaS tenancy migration integration
     runs-on: ubuntu-latest
