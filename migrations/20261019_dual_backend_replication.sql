@@ -92,7 +92,7 @@ BEGIN
     EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON platform_replication_outbox, platform_replication_inbox TO service_role';
     EXECUTE 'GRANT SELECT, INSERT, UPDATE ON platform_replication_entity_versions, platform_replication_projection TO service_role';
   END IF;
-END
+END;
 $replication_acl$;
 
 COMMIT;
