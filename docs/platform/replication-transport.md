@@ -11,7 +11,7 @@ Configure both sides with a unique origin string and a shared secret of at least
 - `REPLICATION_ORIGIN=testagram-vps`
 - `REPLICATION_PEER_ORIGIN=xclone`
 - `REPLICATION_PEER_KEY=<shared-random-secret>`
-- `REPLICATION_PEER_URL=https://<peer-host>/internal/replication/events` (enables outbound relay)
+- `REPLICATION_PEER_URL=https://<xclone-project>.supabase.co/functions/v1/replication-receiver` (enables outbound relay)
 
 The API exposes `POST /internal/replication/events` only when peer origin/key are
 configured. It validates HMAC-SHA256 over `timestamp + "." + exact request bytes`,
