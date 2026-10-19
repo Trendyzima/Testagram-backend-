@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"os"
 	"os/signal"
 	"sort"
@@ -25,6 +26,7 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -476,6 +478,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/media/attach", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/attach", s.mediaAttach)
 	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
+	mux.HandleFunc("GET /api/replication/public/{origin}/{entity_type}/{entity_id}", s.publicReplicationProjection)
 	if s.replicationReceiver != nil {
 		mux.Handle("POST /internal/replication/events", s.replicationReceiver)
 	}
@@ -494,7 +497,55 @@ func (s *service) routes() http.Handler {
 	})
 }
 
+
+func (s *service) publicReplicationProjection(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	origin := r.PathValue("origin")
+	entityType := r.PathValue("entity_type")
+	entityID := r.PathValue("entity_id")
+	if (origin != "xclone" && origin != "testagram-vps") ||
+		(entityType != "account" && entityType != "post" && entityType != "media") ||
+		!replicationReadIdentity.MatchString(entityID) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid public projection identity"})
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "projection database unavailable"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+	defer cancel()
+	var payload string
+	var version int64
+	var updatedAt time.Time
+	err := s.db.QueryRow(ctx, `
+		SELECT payload::text, entity_version, updated_at
+		FROM platform_replication_projection
+		WHERE origin=$1 AND entity_type=$2 AND entity_id=$3 AND tombstoned=FALSE
+	`, origin, entityType, entityID).Scan(&payload, &version, &updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "projection query failed"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write([]byte(`{"ok":true,"data":{"origin":` + mustJSON(origin) + `,"entity_type":` + mustJSON(entityType) + `,"entity_id":` + mustJSON(entityID) + `,"version":` + strconv.FormatInt(version, 10) + `,"updated_at":` + mustJSON(updatedAt.UTC().Format(time.RFC3339Nano)) + `,"payload":` + payload + `}}`))
+}
+
+var replicationReadIdentity = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+
+func mustJSON(value string) string {
+	raw, _ := json.Marshal(value)
+	return string(raw)
+}
+
 func normalizedRoute(path string) string {
+	if strings.HasPrefix(path, "/api/replication/public/") {
+		return "/api/replication/public/{origin}/{entity_type}/{entity_id}"
+	}
 	switch path {
 	case "/healthz", "/readyz", "/metrics", "/api/capability",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
