@@ -242,7 +242,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		var userID,email,username string
 		err := s.db.QueryRow(ctx,`
 			UPDATE testagram_auth.identities
-			SET email_verified_at=COALESCE(email_verified_at,now()), verification_token_hash=NULL, verification_expires_at=NULL, updated_at=now()
+			SET email_verified_at=COALESCE(email_verified_at,now()), updated_at=now()
 			WHERE verification_token_hash=$1 AND verification_expires_at>now()
 			RETURNING user_id::text,email,username
 		`,authTokenHash(token)).Scan(&userID,&email,&username)
@@ -257,7 +257,8 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			VALUES($1::uuid,$2,$2)
 			ON CONFLICT(user_id) DO NOTHING
 		`,userID,username)
-		if err != nil { writeJSON(w,http.StatusConflict,errorBody("PROFILE_CREATE_FAILED","Email verified but profile could not be initialized",requestID(r))); return true }
+		if err != nil { writeJSON(w,http.StatusConflict,errorBody("PROFILE_CREATE_FAILED","Email verified but profile could not be initialized; retry verification after resolving the username conflict",requestID(r))); return true }
+		_, _ = s.db.Exec(ctx, `UPDATE testagram_auth.identities SET verification_token_hash=NULL,verification_expires_at=NULL,updated_at=now() WHERE user_id=$1::uuid`, userID)
 		writeJSON(w,http.StatusOK,map[string]any{"ok":true,"message":"Email verified. You can now sign in."}); return true
 	case "login":
 		email, err := authEmail(in.Email)
