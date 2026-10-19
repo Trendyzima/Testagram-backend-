@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS testagram_local.posts (
   language TEXT NOT NULL DEFAULT '' CHECK (length(language) <= 32),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  public_projection_tombstoned BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS testagram_local_posts_author_created
   ON testagram_local.posts(author_id, created_at DESC) WHERE deleted_at IS NULL;
@@ -95,14 +96,36 @@ BEGIN
   END IF;
   -- Re-evaluate every public post when account privacy/status changes. The post
   -- trigger sees the committed account state and emits tombstones if needed.
-  IF TG_OP='UPDATE' AND old_public IS DISTINCT FROM new_public THEN
-    UPDATE testagram_local.posts SET updated_at=now()
+  IF TG_OP='UPDATE' AND old_public AND NOT new_public THEN
+    UPDATE testagram_local.posts SET updated_at=now(), public_projection_tombstoned=TRUE
     WHERE author_id=NEW.user_id AND visibility='public' AND deleted_at IS NULL;
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION testagram_local.guard_public_post_tombstone()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, testagram_local
+AS $
+BEGIN
+  IF OLD.public_projection_tombstoned AND NEW.visibility='public' AND NEW.deleted_at IS NULL
+     AND (OLD.visibility<>'public' OR OLD.deleted_at IS NOT NULL OR NOT OLD.public_projection_tombstoned) THEN
+    RAISE EXCEPTION 'a public post tombstone is terminal; create a new post identity to republish';
+  END IF;
+  IF OLD.visibility='public' AND OLD.deleted_at IS NULL
+     AND (NEW.visibility<>'public' OR NEW.deleted_at IS NOT NULL) THEN
+    NEW.public_projection_tombstoned := TRUE;
+  END IF;
+  RETURN NEW;
+END;
+$;
+
+DROP TRIGGER IF EXISTS testagram_local_post_tombstone_guard ON testagram_local.posts;
+CREATE TRIGGER testagram_local_post_tombstone_guard
+BEFORE UPDATE ON testagram_local.posts
+FOR EACH ROW EXECUTE FUNCTION testagram_local.guard_public_post_tombstone();
 
 CREATE OR REPLACE FUNCTION testagram_local.emit_public_post_event()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
@@ -111,12 +134,12 @@ AS $$
 DECLARE author_public BOOLEAN := FALSE; old_public BOOLEAN := FALSE; new_public BOOLEAN := FALSE; v BIGINT; payload JSONB;
 BEGIN
   IF TG_OP <> 'INSERT' THEN
-    old_public := OLD.visibility='public' AND OLD.deleted_at IS NULL;
+    old_public := OLD.visibility='public' AND OLD.deleted_at IS NULL AND NOT OLD.public_projection_tombstoned;
   END IF;
   IF TG_OP <> 'DELETE' THEN
     SELECT account_status='active' AND discoverable_by_username AND NOT protected_account
       INTO author_public FROM testagram_local.accounts WHERE user_id=NEW.author_id;
-    new_public := NEW.visibility='public' AND NEW.deleted_at IS NULL AND COALESCE(author_public,FALSE);
+    new_public := NEW.visibility='public' AND NEW.deleted_at IS NULL AND NOT NEW.public_projection_tombstoned AND COALESCE(author_public,FALSE);
   END IF;
   IF old_public AND NOT new_public THEN
     v := public.next_testagram_replication_version('post', OLD.id::text);
@@ -151,6 +174,7 @@ REVOKE ALL ON testagram_local.accounts, testagram_local.posts, public.platform_r
 REVOKE ALL ON FUNCTION public.next_testagram_replication_version(TEXT,TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION testagram_local.emit_public_account_event() FROM PUBLIC;
 REVOKE ALL ON FUNCTION testagram_local.emit_public_post_event() FROM PUBLIC;
+REVOKE ALL ON FUNCTION testagram_local.guard_public_post_tombstone() FROM PUBLIC;
 
 DO $acl$
 BEGIN
