@@ -187,21 +187,21 @@ func (s *Store) RelayOnce(ctx context.Context, client *http.Client, endpoint, lo
 	var firstErr error
 	for _, event := range events {
 		if event.Origin != localOrigin {
-			_ = s.Retry(ctx, event.ID, "origin_mismatch")
+			_ = s.Retry(ctx, event.ID, event.LeaseToken, "origin_mismatch")
 			if firstErr == nil { firstErr = errors.New("outbox event origin does not match local origin") }
 			continue
 		}
 		body, marshalErr := json.Marshal(event)
 		if marshalErr != nil {
 			if firstErr == nil { firstErr = marshalErr }
-			_ = s.Retry(ctx, event.ID, "marshal_failed")
+			_ = s.Retry(ctx, event.ID, event.LeaseToken, "marshal_failed")
 			continue
 		}
 		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if reqErr != nil {
 			if firstErr == nil { firstErr = reqErr }
-			_ = s.Retry(ctx, event.ID, "request_failed")
+			_ = s.Retry(ctx, event.ID, event.LeaseToken, "request_failed")
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -210,16 +210,16 @@ func (s *Store) RelayOnce(ctx context.Context, client *http.Client, endpoint, lo
 		req.Header.Set(HeaderSignature, SignRequest(peerKey, timestamp, body))
 		resp, sendErr := client.Do(req)
 		if sendErr != nil {
-			_ = s.Retry(ctx, event.ID, "peer_unreachable")
+			_ = s.Retry(ctx, event.ID, event.LeaseToken, "peer_unreachable")
 			if firstErr == nil { firstErr = sendErr }
 			continue
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			if err := s.MarkDelivered(ctx, event.ID); err != nil && firstErr == nil { firstErr = err }
+			if err := s.MarkDelivered(ctx, event.ID, event.LeaseToken); err != nil && firstErr == nil { firstErr = err }
 		} else {
-			_ = s.Retry(ctx, event.ID, "peer_http_"+strconv.Itoa(resp.StatusCode))
+			_ = s.Retry(ctx, event.ID, event.LeaseToken, "peer_http_"+strconv.Itoa(resp.StatusCode))
 			if firstErr == nil { firstErr = fmt.Errorf("replication peer returned HTTP %d", resp.StatusCode) }
 		}
 	}
