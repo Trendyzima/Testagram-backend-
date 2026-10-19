@@ -5,6 +5,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,38 +18,57 @@ func TestSignRequestBindsTimestampAndBody(t *testing.T) {
 	body := []byte(`{"event":"test"}`)
 	sig := SignRequest(key, "1792368000", body)
 	provided, err := hex.DecodeString(sig[len("sha256="):])
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte("1792368000."))
 	_, _ = mac.Write(body)
-	if !hmac.Equal(provided, mac.Sum(nil)) { t.Fatal("signature does not match HMAC-SHA256") }
-	if SignRequest(key, "1792368001", body) == sig { t.Fatal("signature must bind timestamp") }
-	if SignRequest(key, "1792368000", []byte(`{"event":"changed"}`)) == sig { t.Fatal("signature must bind body") }
+	if !hmac.Equal(provided, mac.Sum(nil)) {
+		t.Fatal("signature does not match HMAC-SHA256")
+	}
+	if SignRequest(key, "1792368001", body) == sig {
+		t.Fatal("signature must bind timestamp")
+	}
+	if SignRequest(key, "1792368000", []byte(`{"event":"changed"}`)) == sig {
+		t.Fatal("signature must bind body")
+	}
 }
 
 func TestTimestampSkewHelper(t *testing.T) {
 	now := time.Unix(1792368000, 0)
-	if absDuration(now.Sub(time.Unix(1792368000, 0))) > 5*time.Minute { t.Fatal("current timestamp rejected") }
-	if absDuration(now.Sub(time.Unix(1792367000, 0))) <= 5*time.Minute { t.Fatal("old timestamp should be rejected") }
+	if absDuration(now.Sub(time.Unix(1792368000, 0))) > 5*time.Minute {
+		t.Fatal("current timestamp rejected")
+	}
+	if absDuration(now.Sub(time.Unix(1792367000, 0))) <= 5*time.Minute {
+		t.Fatal("old timestamp should be rejected")
+	}
 }
 
 func TestQueueReceiverRejectsUnknownOriginBeforeDatabaseAccess(t *testing.T) {
 	key := bytes.Repeat([]byte{0x31}, 32)
 	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
-	if err != nil { t.Fatal(err) }
-	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewReader(body))
 	req.Header.Set(HeaderOrigin, "unknown-peer")
 	req.Header.Set(HeaderTimestamp, "1792368000")
-	req.Header.Set(HeaderSignature, SignRequest(key, "1792368000", []byte(`{}`)))
+	req.Header.Set(HeaderSignature, SignRequest(key, "1792368000", body))
 	recorder := httptest.NewRecorder()
 	receiver.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusUnauthorized { t.Fatalf("got status %d, want 401", recorder.Code) }
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("got status %d, want 401", recorder.Code)
+	}
 }
 
 func TestQueueReceiverRejectsExpiredTimestampBeforeDatabaseAccess(t *testing.T) {
 	key := bytes.Repeat([]byte{0x31}, 32)
 	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := []byte(`{}`)
 	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewReader(body))
 	req.Header.Set(HeaderOrigin, "xclone")
@@ -53,13 +76,17 @@ func TestQueueReceiverRejectsExpiredTimestampBeforeDatabaseAccess(t *testing.T) 
 	req.Header.Set(HeaderSignature, SignRequest(key, "1000000000", body))
 	recorder := httptest.NewRecorder()
 	receiver.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusUnauthorized { t.Fatalf("got status %d, want 401", recorder.Code) }
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("got status %d, want 401", recorder.Code)
+	}
 }
 
 func TestQueueReceiverRejectsBadSignatureBeforeDatabaseAccess(t *testing.T) {
 	key := bytes.Repeat([]byte{0x31}, 32)
 	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := []byte(`{}`)
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewReader(body))
@@ -68,10 +95,14 @@ func TestQueueReceiverRejectsBadSignatureBeforeDatabaseAccess(t *testing.T) {
 	req.Header.Set(HeaderSignature, "sha256="+strings.Repeat("0", 64))
 	recorder := httptest.NewRecorder()
 	receiver.ServeHTTP(recorder, req)
-	if recorder.Code != http.StatusUnauthorized { t.Fatalf("got status %d, want 401", recorder.Code) }
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("got status %d, want 401", recorder.Code)
+	}
 }
 
-func TestNewReceiverRejectsShortPeerKeys(t *testing.T) {
+func TestNewQueueReceiverRejectsShortPeerKeys(t *testing.T) {
 	_, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": []byte("too-short")})
-	if err == nil { t.Fatal("expected short peer key to be rejected") }
+	if err == nil {
+		t.Fatal("expected short peer key to be rejected")
+	}
 }
