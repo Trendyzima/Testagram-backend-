@@ -433,7 +433,7 @@ func (s *service) routes() http.Handler {
 		if s.db != nil {
 			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 			defer cancel()
-			var outboxPending, oldestOutboxSeconds, outboxFailed, inboxPending, inboxRejected int64
+			var outboxPending, oldestOutboxSeconds, outboxFailed, inboxPending, inboxRejected, inboxStale int64
 			err := s.db.QueryRow(ctx, `
 				SELECT count(*) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL),
 				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL)))::bigint, 0),
@@ -442,8 +442,9 @@ func (s *service) routes() http.Handler {
 			if err == nil {
 				err = s.db.QueryRow(ctx, `
 					SELECT count(*) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry')),
-					       count(*) FILTER (WHERE outcome IN ('rejected','stale'))
-					FROM platform_replication_inbox`).Scan(&inboxPending, &inboxRejected)
+					       count(*) FILTER (WHERE outcome = 'rejected'),
+					       count(*) FILTER (WHERE outcome = 'stale')
+					FROM platform_replication_inbox`).Scan(&inboxPending, &inboxRejected, &inboxStale)
 			}
 			if err == nil {
 				fmt.Fprintf(&output, "testagram_replication_outbox_pending %d\n", outboxPending)
