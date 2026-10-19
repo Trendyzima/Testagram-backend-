@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS platform_replication_outbox (
     lease_until TIMESTAMPTZ,
     lease_token UUID,
     delivered_at TIMESTAMPTZ,
+    failed_at TIMESTAMPTZ,
     last_error_code TEXT,
     CONSTRAINT replication_outbox_entity_version_unique
       UNIQUE (origin, entity_type, entity_id, entity_version)
