@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -19,8 +20,8 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -235,6 +236,29 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w,http.StatusServiceUnavailable,errorBody("EMAIL_UNAVAILABLE","Account created but verification email could not be delivered. Configure email delivery and request another verification.",requestID(r))); return true
 		}
 		writeJSON(w,http.StatusAccepted,map[string]any{"ok":true,"message":"Check your email to verify your Testagram account."}); return true
+	case "resend-verification":
+		email, emailErr := authEmail(in.Email)
+		if emailErr == nil {
+			allowed, rateErr := s.authRateAllowed(ctx, "verify-resend-ip", ip, 5)
+			if rateErr == nil && allowed {
+				token, tokenErr := authRandomToken()
+				if tokenErr == nil {
+					var savedEmail string
+					updateErr := s.db.QueryRow(ctx, `
+						UPDATE testagram_auth.identities
+						SET verification_token_hash=$2,verification_expires_at=now()+interval '24 hours',updated_at=now()
+						WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
+					`, email, authTokenHash(token)).Scan(&savedEmail)
+					if updateErr == nil {
+						base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+						link := base + "/verify-email?token=" + url.QueryEscape(token)
+						_ = s.authSendEmail(ctx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
+					}
+				}
+			}
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok":true,"message":"If the address has an unverified Testagram account, a verification email will be sent."})
+		return true
 	case "verify-email":
 		token := strings.TrimSpace(in.Token)
 		if token == "" { token = strings.TrimSpace(r.URL.Query().Get("token")) }
