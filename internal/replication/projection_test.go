@@ -29,6 +29,7 @@ func TestProjectionPayloadAllowlist(t *testing.T) {
 		{"media missing checksum", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"public/a","content_type":"image/webp","size_bytes":2048}`, true},
 		{"deleted tombstone", "post", "post.deleted", `{}`, false},
 		{"unsupported entity", "session", "session.created", `{}`, true},
+		{"mismatched event type", "account", "post.deleted", `{}`, true},
 		{"signed avatar URL", "account", "account.profile.updated", `{"id":"entity-1","avatar_url":"https://cdn.example/avatar?token=secret"}`, true},
 		{"unsafe object key", "media", "media.created", `{"id":"entity-1","visibility":"public","object_key":"https://bucket/a","content_type":"image/webp","size_bytes":2048,"checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, true},
 	}
