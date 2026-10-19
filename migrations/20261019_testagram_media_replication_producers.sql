@@ -139,6 +139,27 @@ REVOKE ALL ON FUNCTION public.next_testagram_replication_version(TEXT, TEXT) FRO
 REVOKE ALL ON FUNCTION public.enqueue_testagram_public_media_event(TEXT, TEXT, JSONB) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.replicate_testagram_media_after_write() FROM PUBLIC;
 
+-- Low-cardinality operational surface for Prometheus exporters and runbooks.
+-- It intentionally exposes counts/ages only, never payloads or identifiers.
+CREATE OR REPLACE VIEW public.platform_replication_health AS
+SELECT
+  (SELECT count(*) FROM public.platform_replication_outbox
+    WHERE delivered_at IS NULL AND failed_at IS NULL) AS outbox_pending,
+  (SELECT COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at))), 0)::BIGINT
+    FROM public.platform_replication_outbox
+    WHERE delivered_at IS NULL AND failed_at IS NULL) AS outbox_oldest_pending_seconds,
+  (SELECT count(*) FROM public.platform_replication_outbox
+    WHERE failed_at IS NOT NULL) AS outbox_dead_letter,
+  (SELECT count(*) FROM public.platform_replication_inbox
+    WHERE applied_at IS NULL AND outcome IN ('received','retry')) AS inbox_pending,
+  (SELECT COALESCE(EXTRACT(EPOCH FROM (now() - min(received_at))), 0)::BIGINT
+    FROM public.platform_replication_inbox
+    WHERE applied_at IS NULL AND outcome IN ('received','retry')) AS inbox_oldest_pending_seconds,
+  (SELECT count(*) FROM public.platform_replication_inbox
+    WHERE outcome = 'rejected' AND received_at >= now() - interval '24 hours') AS inbox_rejected_24h;
+
+REVOKE ALL ON public.platform_replication_health FROM PUBLIC;
+
 DO $acl$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
