@@ -87,10 +87,7 @@ func bytesContainSensitiveKey(raw []byte) bool {
 						}
 					}
 				}
-				switch key {
-				case "authorization", "access_token", "refresh_token", "service_role_key",
-					"secret_key", "private_key", "password", "password_hash", "email", "phone",
-					"cookie", "session", "api_key", "signed_url", "presigned_url", "upload_url":
+				if sensitivePayloadKey(key) {
 					return true
 				}
 				if walk(child) {
@@ -107,4 +104,21 @@ func bytesContainSensitiveKey(raw []byte) bool {
 		return false
 	}
 	return walk(value)
+}
+
+func sensitivePayloadKey(key string) bool {
+	// Match variants such as email_address, phone_number, accessToken (after
+	// normalization), credentials_blob, and nested provider secret fields.
+	// Allowlist-based projection validation remains the primary control.
+	for _, fragment := range []string{
+		"authorization", "access_token", "refresh_token", "token",
+		"service_role", "secret", "private_key", "password", "passwd",
+		"email", "phone", "credential", "cookie", "session", "api_key",
+		"signed_url", "presigned_url", "upload_url",
+	} {
+		if strings.Contains(key, fragment) {
+			return true
+		}
+	}
+	return false
 }
