@@ -133,7 +133,8 @@ func validateProjection(event Event) (map[string]any, bool, error) {
 			if !typeOK || (contentType != "image/jpeg" && contentType != "image/png" && contentType != "image/webp" && contentType != "image/gif" && contentType != "image/avif" && contentType != "video/mp4" && contentType != "video/webm") {
 				return nil, false, fmt.Errorf("%w: unsupported public media content_type", ErrProjectionRejected)
 			}
-			if size, ok := projection["size_bytes"].(float64); ok && (size < 1 || size > 500*1024*1024) {
+			size, sizeOK := projection["size_bytes"].(float64)
+			if !sizeOK || size < 1 || size > 500*1024*1024 {
 				return nil, false, fmt.Errorf("%w: media size_bytes is out of bounds", ErrProjectionRejected)
 			}
 		}
