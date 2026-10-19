@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -19,6 +20,7 @@ var (
 	ErrDuplicateVersion = errors.New("replication entity version already exists")
 	ErrStaleEvent = errors.New("replication event version is stale")
 	ErrEntityTombstoned = errors.New("replication entity is tombstoned")
+	ErrEventConflict = errors.New("replication event id conflicts with an existing event")
 )
 
 // Store is the durable PostgreSQL boundary for replication. Redis/Valkey is
@@ -41,7 +43,7 @@ func (s *Store) Publish(ctx context.Context, event Event) error {
 	if err := event.Validate(); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(ctx, `
+	tag, err := s.db.Exec(ctx, `
 		INSERT INTO platform_replication_outbox
 		  (event_id, origin, entity_type, entity_id, entity_version,
 		   schema_version, event_type, occurred_at, payload)
@@ -52,6 +54,11 @@ func (s *Store) Publish(ctx context.Context, event Event) error {
 		event.OccurredAt.UTC(), []byte(event.Payload))
 	if err != nil {
 		return fmt.Errorf("insert replication event: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		if err := verifyOutboxEvent(ctx, s.db, event); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -66,7 +73,7 @@ func PublishTx(ctx context.Context, tx pgx.Tx, event Event) error {
 	if err := event.Validate(); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO platform_replication_outbox
 		  (event_id, origin, entity_type, entity_id, entity_version,
 		   schema_version, event_type, occurred_at, payload)
@@ -77,6 +84,11 @@ func PublishTx(ctx context.Context, tx pgx.Tx, event Event) error {
 		event.OccurredAt.UTC(), []byte(event.Payload))
 	if err != nil {
 		return fmt.Errorf("insert replication event in transaction: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		if err := verifyOutboxEvent(ctx, tx, event); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -497,3 +509,47 @@ func AdvanceEntityVersion(ctx context.Context, tx pgx.Tx, event Event) error {
 	}
 	return errors.New("could not serialize replication entity version update")
 }
+
+type replicationQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func canonicalJSON(raw []byte) ([]byte, error) {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
+}
+
+func verifyOutboxEvent(ctx context.Context, queryer replicationQueryRower, event Event) error {
+	var origin, entityType, entityID, eventType, payload string
+	var entityVersion int64
+	var schemaVersion int
+	var occurredAt time.Time
+	err := queryer.QueryRow(ctx, `
+		SELECT origin, entity_type, entity_id, entity_version, schema_version,
+		       event_type, occurred_at, payload::text
+		FROM platform_replication_outbox WHERE event_id=$1::uuid`, event.ID).Scan(
+		&origin, &entityType, &entityID, &entityVersion, &schemaVersion,
+		&eventType, &occurredAt, &payload)
+	if err != nil {
+		return fmt.Errorf("verify duplicate replication event: %w", err)
+	}
+	existingPayload, err := canonicalJSON([]byte(payload))
+	if err != nil {
+		return fmt.Errorf("decode existing replication payload: %w", err)
+	}
+	incomingPayload, err := canonicalJSON(event.Payload)
+	if err != nil {
+		return fmt.Errorf("decode incoming replication payload: %w", err)
+	}
+	if origin != event.Origin || entityType != event.EntityType || entityID != event.EntityID ||
+		entityVersion != event.EntityVersion || schemaVersion != event.SchemaVersion ||
+		eventType != event.EventType || !occurredAt.Equal(event.OccurredAt.UTC()) ||
+		!bytes.Equal(existingPayload, incomingPayload) {
+		return ErrEventConflict
+	}
+	return nil
+}
+
