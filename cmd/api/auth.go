@@ -14,10 +14,13 @@ import (
 	"net"
 	"net/http"
 	"net/mail"
+	"crypto/tls"
+	"net/smtp"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -143,26 +146,47 @@ func authClientIP(r *http.Request) string {
 }
 
 func (s *service) authSendEmail(ctx context.Context, recipient, subject, html string) error {
-	apiKey := strings.TrimSpace(os.Getenv("RESEND_API_KEY"))
+	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
+	port := strings.TrimSpace(env("SMTP_PORT", "587"))
+	username := strings.TrimSpace(os.Getenv("SMTP_USERNAME"))
+	password := os.Getenv("SMTP_PASSWORD")
 	from := strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL"))
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
-	if apiKey == "" || from == "" || base == "" {
-		return errors.New("email delivery is not configured")
+	if host == "" || from == "" || base == "" || username == "" || password == "" {
+		return errors.New("SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, AUTH_FROM_EMAIL and AUTH_PUBLIC_BASE_URL are required")
 	}
 	if !strings.HasPrefix(base, "https://") { return errors.New("AUTH_PUBLIC_BASE_URL must use HTTPS") }
-	payload, _ := json.Marshal(map[string]any{
-		"from": from, "to": []string{recipient}, "subject": subject, "html": html,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.resend.com/emails", strings.NewReader(string(payload)))
+	if _, err := strconv.Atoi(port); err != nil { return errors.New("SMTP_PORT must be numeric") }
+	if _, err := mail.ParseAddress(from); err != nil { return errors.New("AUTH_FROM_EMAIL is invalid") }
+	if _, err := mail.ParseAddress(recipient); err != nil { return errors.New("recipient email is invalid") }
+	address := net.JoinHostPort(host, port)
+	dialer := &net.Dialer{Timeout: 4*time.Second}
+	var conn net.Conn
+	var err error
+	if port == "465" {
+		conn, err = tls.DialWithDialer(dialer, "tcp", address, &tls.Config{ServerName:host, MinVersion:tls.VersionTLS12})
+	} else {
+		conn, err = dialer.DialContext(ctx, "tcp", address)
+	}
 	if err != nil { return err }
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 5*time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := client.Do(req)
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5*time.Second))
+	client, err := smtp.NewClient(conn, host)
 	if err != nil { return err }
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return fmt.Errorf("email provider returned status %d", resp.StatusCode) }
-	return nil
+	defer client.Close()
+	if port != "465" {
+		if ok, _ := client.Extension("STARTTLS"); !ok { return errors.New("SMTP server does not support required STARTTLS") }
+		if err := client.StartTLS(&tls.Config{ServerName:host, MinVersion:tls.VersionTLS12}); err != nil { return err }
+	}
+	if err := client.Auth(smtp.PlainAuth("", username, password, host)); err != nil { return err }
+	if err := client.Mail(from); err != nil { return err }
+	if err := client.Rcpt(recipient); err != nil { return err }
+	writer, err := client.Data()
+	if err != nil { return err }
+	message := "From: " + from + "\r\nTo: " + recipient + "\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n" + html
+	if _, err := writer.Write([]byte(message)); err != nil { _ = writer.Close(); return err }
+	if err := writer.Close(); err != nil { return err }
+	return client.Quit()
 }
 
 func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action string) bool {
