@@ -80,7 +80,8 @@ func bytesContainSensitiveKey(raw []byte) bool {
 				key := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(k, "-", "_"), " ", "_"))
 				switch key {
 				case "authorization", "access_token", "refresh_token", "service_role_key",
-					"secret_key", "password", "signed_url", "presigned_url", "upload_url":
+					"secret_key", "private_key", "password", "password_hash", "email", "phone",
+					"cookie", "session", "api_key", "signed_url", "presigned_url", "upload_url":
 					return true
 				}
 				if walk(child) {
