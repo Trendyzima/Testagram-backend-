@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -205,4 +206,67 @@ func (s *Store) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
 		return fmt.Errorf("commit replication transaction: %w", err)
 	}
 	return nil
+}
+
+ 
+// ApplyInboxTx records receipt, applies the domain projection, and marks the
+// event applied in one transaction. A duplicate event ID with a different
+// payload is rejected instead of being silently treated as a successful replay.
+func (s *Store) ApplyInboxTx(ctx context.Context, event Event, apply ApplyFunc) (bool, error) {
+	if err := event.Validate(); err != nil {
+		return false, err
+	}
+	if apply == nil {
+		return false, errors.New("event apply function is required")
+	}
+	hash := sha256.Sum256(event.Payload)
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin replication apply transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var insertedID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO platform_replication_inbox
+		  (event_id, origin, entity_type, entity_id, entity_version,
+		   schema_version, event_type, payload_hash, outcome)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, 'received')
+		ON CONFLICT (event_id) DO NOTHING
+		RETURNING event_id::text`,
+		event.ID, event.Origin, event.EntityType, event.EntityID,
+		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:]).Scan(&insertedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var existingHash []byte
+		if readErr := tx.QueryRow(ctx, `SELECT payload_hash FROM platform_replication_inbox WHERE event_id = $1::uuid`, event.ID).Scan(&existingHash); readErr != nil {
+			return false, fmt.Errorf("read duplicate replication receipt: %w", readErr)
+		}
+		if !hmac.Equal(existingHash, hash[:]) {
+			return false, errors.New("replication event id reused with different payload")
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return false, fmt.Errorf("commit duplicate receipt check: %w", err)
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("insert replication inbox receipt: %w", err)
+	}
+	if err := apply(ctx, tx, event); err != nil {
+		return false, fmt.Errorf("apply replication event: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE platform_replication_inbox
+		SET applied_at = now(), outcome = 'applied', error_code = NULL
+		WHERE event_id = $1::uuid AND outcome = 'received'`, event.ID)
+	if err != nil {
+		return false, fmt.Errorf("mark replication event applied: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return false, errors.New("replication inbox state changed unexpectedly")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit replication projection: %w", err)
+	}
+	return true, nil
 }
