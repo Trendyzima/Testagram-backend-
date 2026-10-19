@@ -28,3 +28,50 @@ func TestTimestampSkewHelper(t *testing.T) {
 	if absDuration(now.Sub(time.Unix(1792368000, 0))) > 5*time.Minute { t.Fatal("current timestamp rejected") }
 	if absDuration(now.Sub(time.Unix(1792367000, 0))) <= 5*time.Minute { t.Fatal("old timestamp should be rejected") }
 }
+
+func TestQueueReceiverRejectsUnknownOriginBeforeDatabaseAccess(t *testing.T) {
+	key := bytes.Repeat([]byte{0x31}, 32)
+	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
+	if err != nil { t.Fatal(err) }
+	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewBufferString(`{}`))
+	req.Header.Set(HeaderOrigin, "unknown-peer")
+	req.Header.Set(HeaderTimestamp, "1792368000")
+	req.Header.Set(HeaderSignature, SignRequest(key, "1792368000", []byte(`{}`)))
+	recorder := httptest.NewRecorder()
+	receiver.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnauthorized { t.Fatalf("got status %d, want 401", recorder.Code) }
+}
+
+func TestQueueReceiverRejectsExpiredTimestampBeforeDatabaseAccess(t *testing.T) {
+	key := bytes.Repeat([]byte{0x31}, 32)
+	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
+	if err != nil { t.Fatal(err) }
+	body := []byte(`{}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewReader(body))
+	req.Header.Set(HeaderOrigin, "xclone")
+	req.Header.Set(HeaderTimestamp, "1000000000")
+	req.Header.Set(HeaderSignature, SignRequest(key, "1000000000", body))
+	recorder := httptest.NewRecorder()
+	receiver.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnauthorized { t.Fatalf("got status %d, want 401", recorder.Code) }
+}
+
+func TestQueueReceiverRejectsBadSignatureBeforeDatabaseAccess(t *testing.T) {
+	key := bytes.Repeat([]byte{0x31}, 32)
+	receiver, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": key})
+	if err != nil { t.Fatal(err) }
+	body := []byte(`{}`)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	req := httptest.NewRequest(http.MethodPost, "/internal/replication/events", bytes.NewReader(body))
+	req.Header.Set(HeaderOrigin, "xclone")
+	req.Header.Set(HeaderTimestamp, timestamp)
+	req.Header.Set(HeaderSignature, "sha256="+strings.Repeat("0", 64))
+	recorder := httptest.NewRecorder()
+	receiver.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusUnauthorized { t.Fatalf("got status %d, want 401", recorder.Code) }
+}
+
+func TestNewReceiverRejectsShortPeerKeys(t *testing.T) {
+	_, err := NewQueueReceiver(&Store{}, map[string][]byte{"xclone": []byte("too-short")})
+	if err == nil { t.Fatal("expected short peer key to be rejected") }
+}
