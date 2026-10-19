@@ -447,6 +447,9 @@ func AdvanceEntityVersion(ctx context.Context, tx pgx.Tx, event Event) error {
 	if tx == nil {
 		return errors.New("replication transaction is required")
 	}
+	if err := event.Validate(); err != nil {
+		return err
+	}
 	tombstone := isTombstoneEvent(event.EventType)
 	for attempt := 0; attempt < 3; attempt++ {
 		var current int64
