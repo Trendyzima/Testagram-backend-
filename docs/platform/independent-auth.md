@@ -7,6 +7,7 @@ This is an additive, opt-in rollout for **new Testagram-native identities**. It 
 All request bodies are JSON. Routes are under `/api/auth`:
 
 - `POST /signup` — `{"email":"person@example.com","username":"my_name","password":"at least 12 characters"}`; sends a 24-hour email verification link.
+- `POST /resend-verification` — `{"email":"person@example.com"}`; generic response, safely rotates and resends a verification token for an unverified account.
 - `POST /verify-email` — `{"token":"..." }`; verifies the address and initializes a local profile.
 - `POST /login` — `{"email":"person@example.com","password":"..."}`; returns a 15-minute HS256 bearer access token.
 - `POST /forgot-password` — `{"email":"person@example.com"}`; always returns a generic accepted response to reduce account enumeration.
