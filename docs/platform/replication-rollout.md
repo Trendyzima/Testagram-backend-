@@ -57,3 +57,18 @@ Do not enable cross-backend production relay solely because this migration is de
 ## Public projection read route
 
 The API now exposes `GET /api/replication/public/{origin}/{entity_type}/{entity_id}` for the public mirror only. It accepts the two configured protocol origins and the `account`, `post`, and `media` projection types; it returns 404 for absent or tombstoned records and 503 if the projection database is unavailable. Responses use `Cache-Control: no-store` until public-cache invalidation is integrated. Existing product routes are unchanged, so this is a safe read surface for incremental client integration—not yet a replacement for legacy feed/profile/media queries.
+
+
+## Local Testagram account/post authority (feature-gated)
+
+The additive migration `migrations/20261019_testagram_local_accounts_posts.sql` creates `testagram_local.accounts` and `testagram_local.posts`. These are real local PostgreSQL tables, and row triggers append versioned account/post events to `platform_replication_outbox` in the same transaction as each write. Account protection/deactivation also causes public post tombstones; private profiles do not emit public account events.
+
+The existing `/api/capability` gateway can route these capability names to the local store when `TESTAGRAM_LOCAL_PRODUCT_WRITES_ENABLED=true`:
+- `testagram.profile.update` (full profile payload, including username);
+- `testagram.posts.create`;
+- `testagram.posts.update` (full post payload, including ID and visibility);
+- `testagram.posts.delete` (post ID).
+
+**The feature flag defaults to false and must remain false until validation and client compatibility tests pass.** Local writes require a PostgreSQL connection and an HS256 bearer token that can be verified with `SUPABASE_JWT_SECRET`; asymmetric JWTs are deliberately rejected by this first implementation. If the deployment uses an asymmetric Supabase signing key, do not enable the flag until a proper JWKS verifier is implemented. A local profile must be created before that account can create local posts. These new local tables are not automatically backfilled from Supabase; do not switch existing users over without a verified, resumable migration and conflict policy.
+
+CI now includes an isolated PostgreSQL test that applies the migrations and verifies account/post outbox writes, privacy tombstones, and exclusion of private accounts. This validates schema behavior in CI only; it does not establish production migration, historical backfill, client cutover, or peer-outage recovery.
