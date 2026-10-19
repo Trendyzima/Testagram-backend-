@@ -52,3 +52,8 @@ Suggested alert thresholds for an exporter polling the health view:
 - persistent nonzero pending counts with no successful delivery/application progress.
 
 Do not enable cross-backend production relay solely because this migration is deployed. First test trigger behavior on a disposable database, validate a public create/update/tombstone end-to-end, confirm private media produces no event, and test a peer outage followed by recovery.
+
+
+## Public projection read route
+
+The API now exposes `GET /api/replication/public/{origin}/{entity_type}/{entity_id}` for the public mirror only. It accepts the two configured protocol origins and the `account`, `post`, and `media` projection types; it returns 404 for absent or tombstoned records and 503 if the projection database is unavailable. Responses use `Cache-Control: no-store` until public-cache invalidation is integrated. Existing product routes are unchanged, so this is a safe read surface for incremental client integration—not yet a replacement for legacy feed/profile/media queries.
