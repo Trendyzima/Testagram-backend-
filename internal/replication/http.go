@@ -191,6 +191,13 @@ func (s *Store) RelayOnce(ctx context.Context, client *http.Client, endpoint, lo
 			if firstErr == nil { firstErr = errors.New("outbox event origin does not match local origin") }
 			continue
 		}
+		if validationErr := event.Validate(); validationErr != nil {
+			_ = s.Fail(ctx, event.ID, event.LeaseToken, "invalid_event")
+			if firstErr == nil {
+				firstErr = fmt.Errorf("outbox event failed validation: %w", validationErr)
+			}
+			continue
+		}
 		body, marshalErr := json.Marshal(event)
 		if marshalErr != nil {
 			if firstErr == nil { firstErr = marshalErr }
