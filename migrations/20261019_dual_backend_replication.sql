@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS platform_replication_inbox (
     schema_version INTEGER NOT NULL CHECK (schema_version > 0),
     event_type TEXT NOT NULL CHECK (length(event_type) BETWEEN 1 AND 128),
     payload_hash BYTEA NOT NULL CHECK (octet_length(payload_hash) = 32),
+    payload JSONB NOT NULL CHECK (octet_length(payload::text) <= 1048576),
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     applied_at TIMESTAMPTZ,
     outcome TEXT NOT NULL DEFAULT 'received'
