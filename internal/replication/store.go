@@ -178,6 +178,10 @@ func (s *Store) RecordInbox(ctx context.Context, event Event) (bool, error) {
 		return false, err
 	}
 	hash := sha256.Sum256(event.Payload)
+	envelope, err := json.Marshal(event)
+	if err != nil {
+		return false, fmt.Errorf("marshal replication event: %w", err)
+	}
 	tag, err := s.db.Exec(ctx, `
 		INSERT INTO platform_replication_inbox
 		  (event_id, origin, entity_type, entity_id, entity_version,
@@ -185,7 +189,7 @@ func (s *Store) RecordInbox(ctx context.Context, event Event) (bool, error) {
 		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'received')
 		ON CONFLICT (event_id) DO NOTHING`,
 		event.ID, event.Origin, event.EntityType, event.EntityID,
-		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:], []byte(event.Payload))
+		event.EntityVersion, event.SchemaVersion, event.EventType, hash[:], envelope)
 	if err != nil {
 		return false, fmt.Errorf("record replication inbox event: %w", err)
 	}
