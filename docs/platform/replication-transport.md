@@ -47,3 +47,23 @@ mappings between unlike schemas.
 
 Never put private post bodies, credentials, signed media URLs, or bearer tokens in
 events. Never use a Redis cache as the durable outbox.
+
+
+## Inbox projection worker (opt-in)
+
+Set `REPLICATION_APPLY_ENABLED=true` only after applying the additive replication
+migration and reviewing the projection policy. The worker polls the durable inbox
+every five seconds and processes at most 25 events per pass. It writes to
+`platform_replication_projection`, a separate public-data mirror table; it does
+not mutate the authoritative account, post, or media tables.
+
+The built-in projector supports only `account`, `post`, and `media` entity
+types. It uses per-type field allowlists, rejects email/phone/session/credential
+fields, requires explicitly public posts and media, and requires media checksum
+metadata. Unsupported or invalid projection payloads are marked rejected instead
+of retrying forever. Transient database errors remain retryable with backoff.
+
+This is intentionally a safe mirror rather than automatic product-table parity.
+Do not enable production event producers until each product write is connected
+to an atomic outbox event, each destination projector is mapped to its actual
+domain schema, and cross-account/privacy tests pass.
