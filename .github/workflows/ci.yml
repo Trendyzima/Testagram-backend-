@@ -266,7 +266,7 @@ jobs:
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261019_dual_backend_replication.sql \
             migrations/20261019_testagram_media_replication_producers.sql \
-            migrations/20261019_testagram_local_accounts_posts.sql \\
+            migrations/20261019_testagram_local_accounts_posts.sql \
             migrations/20261019_testagram_independent_auth.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
