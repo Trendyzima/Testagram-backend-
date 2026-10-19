@@ -532,7 +532,7 @@ func (s *service) publicReplicationProjection(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = w.Write([]byte(`{"ok":true,"data":{"origin":` + mustJSON(origin) + `,"entity_type":` + mustJSON(entityType) + `,"entity_id":` + mustJSON(entityID) + `,"version":` + strconv.FormatInt(version, 10) + `,"updated_at":` + mustJSON(updatedAt.UTC().Format(time.RFC3339Nano)) + `,"payload":` + payload + `}}`))
+	_, _ = w.Write([]byte(`{"ok":true,"data":{"origin":` + replicationJSONString(origin) + `,"entity_type":` + replicationJSONString(entityType) + `,"entity_id":` + replicationJSONString(entityID) + `,"version":` + strconv.FormatInt(version, 10) + `,"updated_at":` + replicationJSONString(updatedAt.UTC().Format(time.RFC3339Nano)) + `,"payload":` + payload + `}}`))
 }
 
 var replicationReadIdentity = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
