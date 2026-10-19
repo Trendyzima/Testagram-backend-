@@ -433,7 +433,7 @@ func (s *service) routes() http.Handler {
 		if s.db != nil {
 			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 			defer cancel()
-			var outboxPending, oldestOutboxSeconds, outboxFailed, inboxPending, inboxRejected, inboxStale int64
+			var outboxPending, oldestOutboxSeconds, outboxFailed, inboxPending, oldestInboxSeconds, inboxRejected, inboxStale, inboxRejected24h int64
 			err := s.db.QueryRow(ctx, `
 				SELECT count(*) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL),
 				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL)))::bigint, 0),
@@ -442,16 +442,20 @@ func (s *service) routes() http.Handler {
 			if err == nil {
 				err = s.db.QueryRow(ctx, `
 					SELECT count(*) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry')),
+					       COALESCE(EXTRACT(EPOCH FROM (now() - min(received_at) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry'))))::bigint, 0),
 					       count(*) FILTER (WHERE outcome = 'rejected'),
-					       count(*) FILTER (WHERE outcome = 'stale')
-					FROM platform_replication_inbox`).Scan(&inboxPending, &inboxRejected, &inboxStale)
+					       count(*) FILTER (WHERE outcome = 'stale'),
+					       count(*) FILTER (WHERE outcome = 'rejected' AND received_at >= now() - interval '24 hours')
+					FROM platform_replication_inbox`).Scan(&inboxPending, &oldestInboxSeconds, &inboxRejected, &inboxStale, &inboxRejected24h)
 			}
 			if err == nil {
 				fmt.Fprintf(&output, "testagram_replication_outbox_pending %d\n", outboxPending)
 				fmt.Fprintf(&output, "testagram_replication_outbox_oldest_seconds %d\n", oldestOutboxSeconds)
 				fmt.Fprintf(&output, "testagram_replication_outbox_failed_total %d\n", outboxFailed)
 				fmt.Fprintf(&output, "testagram_replication_inbox_pending %d\n", inboxPending)
+				fmt.Fprintf(&output, "testagram_replication_inbox_oldest_seconds %d\n", oldestInboxSeconds)
 				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_total %d\n", inboxRejected)
+				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_24h %d\n", inboxRejected24h)
 				fmt.Fprintf(&output, "testagram_replication_inbox_stale_total %d\n", inboxStale)
 			}
 		}
