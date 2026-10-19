@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS platform_replication_inbox (
     payload_hash BYTEA NOT NULL CHECK (octet_length(payload_hash) = 32),
     payload JSONB NOT NULL CHECK (octet_length(payload::text) <= 1048576),
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     applied_at TIMESTAMPTZ,
     outcome TEXT NOT NULL DEFAULT 'received'
       CHECK (outcome IN ('received', 'applied', 'stale', 'rejected', 'retry')),
