@@ -51,6 +51,31 @@ func (s *Store) Publish(ctx context.Context, event Event) error {
 	return nil
 }
 
+// PublishTx is the transactional form: call it with the same transaction that
+// writes the entity being changed. The entity write and outbox event then commit
+// or roll back together.
+func PublishTx(ctx context.Context, tx pgx.Tx, event Event) error {
+	if tx == nil {
+		return errors.New("replication transaction is required")
+	}
+	if err := event.Validate(); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO platform_replication_outbox
+		  (event_id, origin, entity_type, entity_id, entity_version,
+		   schema_version, event_type, occurred_at, payload)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+		ON CONFLICT (event_id) DO NOTHING`,
+		event.ID, event.Origin, event.EntityType, event.EntityID,
+		event.EntityVersion, event.SchemaVersion, event.EventType,
+		event.OccurredAt.UTC(), []byte(event.Payload))
+	if err != nil {
+		return fmt.Errorf("insert replication event in transaction: %w", err)
+	}
+	return nil
+}
+
 // ClaimBatch leases ready events using SKIP LOCKED, allowing multiple relay
 // instances to run concurrently without claiming the same row at once. The
 // caller must MarkDelivered or Retry before the lease expires.
