@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS platform_replication_outbox (
 
 CREATE INDEX IF NOT EXISTS platform_replication_outbox_ready_idx
     ON platform_replication_outbox (available_at, created_at)
-    WHERE delivered_at IS NULL;
+    WHERE delivered_at IS NULL AND failed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS platform_replication_inbox (
     event_id UUID PRIMARY KEY,
