@@ -160,6 +160,31 @@ func (s *Store) MarkDelivered(ctx context.Context, eventID, leaseToken string) e
 
 // Retry releases a lease and applies bounded exponential backoff. Store only a
 // stable error code, never raw response bodies, credentials, or private payloads.
+func (s *Store) Fail(ctx context.Context, eventID, leaseToken, errorCode string) error {
+	if len(errorCode) > 64 || errorCode == "" {
+		return errors.New("replication error code must be 1-64 characters")
+	}
+	for _, r := range errorCode {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') &&
+			!(r >= '0' && r <= '9') && r != '_' && r != '-' {
+			return errors.New("replication error code contains invalid characters")
+		}
+	}
+	tag, err := s.db.Exec(ctx, `
+		UPDATE platform_replication_outbox
+		SET failed_at=now(), lease_until=NULL, lease_token=NULL, last_error_code=$3
+		WHERE event_id=$1::uuid AND lease_token=$2::uuid
+		  AND delivered_at IS NULL AND failed_at IS NULL AND lease_until IS NOT NULL`,
+		eventID, leaseToken, errorCode)
+	if err != nil {
+		return fmt.Errorf("mark replication event permanently failed: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrLeaseNotHeld
+	}
+	return nil
+}
+
 func (s *Store) Retry(ctx context.Context, eventID, leaseToken, errorCode string) error {
 	if len(errorCode) > 64 || errorCode == "" {
 		return errors.New("replication error code must be 1-64 characters")
