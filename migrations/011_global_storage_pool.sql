@@ -16,7 +16,7 @@ insert into testagram_storage.pool(pool_id) values (1) on conflict (pool_id) do 
 
 create table if not exists testagram_storage.user_usage (
   owner_id text primary key check (owner_id ~ '^[A-Za-z0-9-]{1,128}$'),
-  quota_bytes bigint not null default 5368709120 check (quota_bytes >= 0),
+  quota_bytes bigint not null default 2147483648 check (quota_bytes >= 0),
   used_bytes bigint not null default 0 check (used_bytes >= 0),
   reserved_bytes bigint not null default 0 check (reserved_bytes >= 0),
   updated_at timestamptz not null default now(),
