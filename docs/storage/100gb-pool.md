@@ -6,7 +6,7 @@ This change adds the PostgreSQL control-plane foundation for a 100 GiB logical m
 
 - Logical quota is charged once per verified asset.
 - Physical replicas are tracked separately and require additional physical capacity.
-- Default per-user quota is 5 GiB; the global pool is the aggregate hard cap.
+- Default per-user quota is 2 GiB; the global pool is the aggregate hard cap.
 - Upload reservations are transactional and safe across concurrent API instances.
 - Existing ready assets are included in a one-time usage backfill.
 - Node and replica inventory are metadata only. A node is not upload-eligible until a trusted heartbeat and placement protocol is deployed.
@@ -20,7 +20,7 @@ For an existing PostgreSQL deployment, take a verified backup first, then apply 
 ## Capacity policy
 
 Default global capacity: 107374182400 bytes (100 GiB).
-Default per-user quota: 5368709120 bytes (5 GiB). Operators can adjust a user's quota through a trusted administrative SQL operation. Do not expose these tables or functions directly to browser/mobile clients.
+Default per-user quota: 2147483648 bytes (2 GiB), matching the existing API default. Operators can adjust a user's quota through a trusted administrative SQL operation. Do not expose these tables or functions directly to browser/mobile clients.
 
 The upload-intent insert trigger reserves the declared maximum bytes before a signed upload can proceed. A global or user quota overflow aborts the insert with SQLSTATE 53100 and a stable message: TESTAGRAM_GLOBAL_STORAGE_LIMIT or TESTAGRAM_USER_STORAGE_LIMIT. When a verified asset row is inserted, its actual bytes replace the reservation. Cancelled/expired intents release reservations. Asset status changes away from ready and hard deletion decrement logical usage.
 
