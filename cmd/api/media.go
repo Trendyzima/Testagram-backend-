@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const maxMediaIntentBody = 16 << 10
@@ -192,6 +193,18 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		values ($1,$2,$3,$4,$5,$6,$7,'issued',$8,$9)`,
 		intent.Key, userID, body.Visibility, body.ContentType, body.Name, body.SizeBytes, intent.ExpiresAt, storageNamespace, storageProvider)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "53100" {
+			switch pgErr.Message {
+			case "TESTAGRAM_GLOBAL_STORAGE_LIMIT":
+				writeJSON(w, http.StatusInsufficientStorage, errorBody("MEDIA_GLOBAL_STORAGE_LIMIT", "Testagram's shared media storage pool is full; try again after capacity is added", id))
+			case "TESTAGRAM_USER_STORAGE_LIMIT":
+				writeJSON(w, http.StatusInsufficientStorage, errorBody("MEDIA_QUOTA_EXCEEDED", "This upload would exceed the account media storage quota", id))
+			default:
+				writeJSON(w, http.StatusInsufficientStorage, errorBody("MEDIA_STORAGE_LIMIT", "The media storage capacity limit was reached", id))
+			}
+			return
+		}
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_PERSIST_FAILED", "Could not safely register the upload intent", id))
 		return
 	}
