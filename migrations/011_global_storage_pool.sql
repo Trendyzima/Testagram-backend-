@@ -155,7 +155,7 @@ begin
   if not exists(select 1 from testagram_storage.migration_markers where marker='seed-existing-assets-v1') then
     insert into testagram_storage.user_usage(owner_id,used_bytes)
       select owner_id,sum(size_bytes)::bigint from testagram_media.assets where status not in ('deleted','quarantined') group by owner_id
-      on conflict(owner_id) do update set used_bytes=excluded.used_bytes,updated_at=now();
+      on conflict(owner_id) do update set used_bytes=excluded.used_bytes, quota_bytes=greatest(testagram_storage.user_usage.quota_bytes, excluded.used_bytes), updated_at=now();
     update testagram_storage.pool set used_bytes=coalesce((select sum(size_bytes)::bigint from testagram_media.assets where status not in ('deleted','quarantined')),0),updated_at=now() where pool_id=1;
     insert into testagram_storage.migration_markers(marker) values('seed-existing-assets-v1');
   end if;
@@ -205,7 +205,7 @@ begin
     where status='reserved' and expires_at<now() order by expires_at limit p_limit for update skip locked
   loop
     update testagram_media.upload_intents set status='expired',updated_at=now()
-      where object_key=r.object_key and status in ('issued','uploading');
+      where object_key=r.object_key and status in ('issued','uploading','uploaded');
     v_count:=v_count+1;
   end loop;
   return v_count;
