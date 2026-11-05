@@ -117,7 +117,7 @@ for each row when (new.status='ready') execute function testagram_storage.accoun
 create or replace function testagram_storage.account_asset_delete()
 returns trigger language plpgsql as $$
 begin
-  if old.status='ready' then
+  if old.status not in ('deleted','quarantined') then
     update testagram_storage.pool set used_bytes=greatest(0,used_bytes-old.size_bytes),updated_at=now() where pool_id=1;
     update testagram_storage.user_usage set used_bytes=greatest(0,used_bytes-old.size_bytes),updated_at=now() where owner_id=old.owner_id;
   end if;
@@ -130,10 +130,10 @@ for each row execute function testagram_storage.account_asset_delete();
 create or replace function testagram_storage.account_asset_status_change()
 returns trigger language plpgsql as $$
 begin
-  if old.status='ready' and new.status<>'ready' then
+  if old.status not in ('deleted','quarantined') and new.status in ('deleted','quarantined') then
     update testagram_storage.pool set used_bytes=greatest(0,used_bytes-old.size_bytes),updated_at=now() where pool_id=1;
     update testagram_storage.user_usage set used_bytes=greatest(0,used_bytes-old.size_bytes),updated_at=now() where owner_id=old.owner_id;
-  elsif old.status<>'ready' and new.status='ready' then
+  elsif old.status in ('deleted','quarantined') and new.status not in ('deleted','quarantined') then
     update testagram_storage.pool set used_bytes=used_bytes+new.size_bytes,updated_at=now()
       where pool_id=1 and used_bytes+reserved_bytes+new.size_bytes<=capacity_bytes;
     if not found then raise exception using errcode='53100',message='TESTAGRAM_GLOBAL_STORAGE_LIMIT'; end if;
@@ -154,9 +154,9 @@ do $$
 begin
   if not exists(select 1 from testagram_storage.migration_markers where marker='seed-existing-assets-v1') then
     insert into testagram_storage.user_usage(owner_id,used_bytes)
-      select owner_id,sum(size_bytes)::bigint from testagram_media.assets where status='ready' group by owner_id
+      select owner_id,sum(size_bytes)::bigint from testagram_media.assets where status not in ('deleted','quarantined') group by owner_id
       on conflict(owner_id) do update set used_bytes=excluded.used_bytes,updated_at=now();
-    update testagram_storage.pool set used_bytes=coalesce((select sum(size_bytes)::bigint from testagram_media.assets where status='ready'),0),updated_at=now() where pool_id=1;
+    update testagram_storage.pool set used_bytes=coalesce((select sum(size_bytes)::bigint from testagram_media.assets where status not in ('deleted','quarantined')),0),updated_at=now() where pool_id=1;
     insert into testagram_storage.migration_markers(marker) values('seed-existing-assets-v1');
   end if;
 end $$;
