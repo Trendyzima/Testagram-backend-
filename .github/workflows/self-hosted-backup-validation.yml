@@ -21,7 +21,7 @@ jobs:
   validate-backup-script:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check Bash syntax
         run: |
           bash -n scripts/self-hosted-backup.sh
