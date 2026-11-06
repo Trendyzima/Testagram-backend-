@@ -195,6 +195,11 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 	defer r.Body.Close()
 	in, err := decodeAppwriteProvisionInput(r)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("REQUEST_TOO_LARGE", "Provisioning request exceeds 8 KiB", id))
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REQUEST", "Username and display name are required in one JSON object", id))
 		return
 	}
