@@ -12,11 +12,11 @@ func TestValidateAppwriteProvisionInput(t *testing.T) {
 		in      appwriteProvisionInput
 		wantErr bool
 	}{
-		{"valid", appwriteProvisionInput{Username: "trendy_kenya", DisplayName: "Trendy"}, false},
-		{"short username", appwriteProvisionInput{Username: "ab", DisplayName: "Trendy"}, true},
-		{"unsafe username", appwriteProvisionInput{Username: "../admin", DisplayName: "Trendy"}, true},
-		{"empty display name", appwriteProvisionInput{Username: "trendy_kenya"}, true},
-		{"long display name", appwriteProvisionInput{Username: "trendy_kenya", DisplayName: string(make([]byte, 81))}, true},
+		{"valid", appwriteProvisionInput{Username: "trendy_kenya", DisplayName: "Trendy", BirthDate: "1990-01-01", PolicyVersion: "2026-09", TermsAccepted: true, PrivacyAccepted: true, ContentPolicyAccepted: true, AgeConfirmed: true}, false},
+		{"short username", appwriteProvisionInput{Username: "ab", DisplayName: "Trendy", BirthDate: "1990-01-01", PolicyVersion: "2026-09", TermsAccepted: true, PrivacyAccepted: true, ContentPolicyAccepted: true, AgeConfirmed: true}, true},
+		{"unsafe username", appwriteProvisionInput{Username: "../admin", DisplayName: "Trendy", BirthDate: "1990-01-01", PolicyVersion: "2026-09", TermsAccepted: true, PrivacyAccepted: true, ContentPolicyAccepted: true, AgeConfirmed: true}, true},
+		{"empty display name", appwriteProvisionInput{Username: "trendy_kenya", BirthDate: "1990-01-01", PolicyVersion: "2026-09", TermsAccepted: true, PrivacyAccepted: true, ContentPolicyAccepted: true, AgeConfirmed: true}, true},
+		{"long display name", appwriteProvisionInput{Username: "trendy_kenya", DisplayName: string(make([]byte, 81)), BirthDate: "1990-01-01", PolicyVersion: "2026-09", TermsAccepted: true, PrivacyAccepted: true, ContentPolicyAccepted: true, AgeConfirmed: true}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -34,9 +34,9 @@ func TestDecodeAppwriteProvisionInput(t *testing.T) {
 		body    string
 		wantErr bool
 	}{
-		{name: "valid", body: `{"username":"test_user","display_name":"Test User"}`},
-		{name: "unknown field", body: `{"username":"test_user","display_name":"Test User","admin":true}`, wantErr: true},
-		{name: "multiple values", body: `{"username":"test_user","display_name":"Test User"} {}`, wantErr: true},
+		{name: "valid", body: `{"username":"test_user","display_name":"Test User","birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true}`},
+		{name: "unknown field", body: `{"username":"test_user","display_name":"Test User","birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true,"admin":true}`, wantErr: true},
+		{name: "multiple values", body: `{"username":"test_user","display_name":"Test User","birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true} {}`, wantErr: true},
 		{name: "invalid JSON", body: `{"username":`, wantErr: true},
 	}
 	for _, tt := range tests {
