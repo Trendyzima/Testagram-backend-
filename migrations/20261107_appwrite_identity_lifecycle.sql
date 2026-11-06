@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS testagram_identity.legal_acceptances (
 REVOKE ALL ON TABLE testagram_identity.legal_acceptances FROM PUBLIC;
 CREATE TABLE IF NOT EXISTS testagram_identity.verification_approvals (
   appwrite_user_id TEXT PRIMARY KEY CHECK (length(appwrite_user_id) BETWEEN 1 AND 36),
-  registration_id TEXT NOT NULL CHECK (length(registration_id) BETWEEN 1 AND 128),
+  registration_id TEXT NOT NULL UNIQUE CHECK (length(registration_id) BETWEEN 1 AND 128),
   provider_event_id TEXT NOT NULL UNIQUE CHECK (length(provider_event_id) BETWEEN 1 AND 128),
   approved_at TIMESTAMPTZ NOT NULL,
   ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
