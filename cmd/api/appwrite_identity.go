@@ -137,6 +137,40 @@ type appwriteIdentityResponse struct {
 	AccountStatus   string
 }
 
+func (s *service) appwriteRegistrationStatus(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "GET required", id))
+		return
+	}
+	enabled := false
+	reason := "legacy_inventory_incomplete"
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("APPWRITE_KYC_BINDING_ENABLED")), "true") &&
+		strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT")) != "" &&
+		strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID")) != "" &&
+		len(strings.TrimSpace(os.Getenv("APPWRITE_IDENTITY_INGEST_TOKEN"))) >= 32 {
+		if s.db != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			var inventoryComplete bool
+			if err := s.db.QueryRow(ctx, "SELECT legacy_inventory_complete FROM testagram_identity.migration_control WHERE singleton=TRUE").Scan(&inventoryComplete); err == nil && inventoryComplete {
+				enabled = true
+				reason = ""
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{"new_account_registration_enabled": enabled, "reason": reason},
+		"error": nil,
+		"request_id": id,
+	})
+}
+
 func (s *service) appwriteIdentitySession(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	if !s.cors(w, r) {
@@ -249,6 +283,10 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOOKUP_FAILED", "Identity lookup failed", id))
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("APPWRITE_KYC_BINDING_ENABLED")), "true") {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("APPWRITE_KYC_BINDING_DISABLED", "Appwrite registration is not enabled until the trusted KYC worker is configured", id))
 		return
 	}
 	var kycApproved bool
