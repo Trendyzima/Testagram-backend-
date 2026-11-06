@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -22,13 +24,15 @@ var appwriteUsernamePattern = regexp.MustCompile("^[A-Za-z0-9_]{3,30}$")
 func decodeAppwriteProvisionInput(r *http.Request) (appwriteProvisionInput, error) {
 	var raw map[string]json.RawMessage
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&raw); err != nil {
 		return appwriteProvisionInput{}, err
 	}
+	for key := range raw {
+		if key != "username" && key != "display_name" { return appwriteProvisionInput{}, errors.New("unknown field") }
+	}
 	var extra any
-	if err := decoder.Decode(&extra); err == nil {
-		return appwriteProvisionInput{}, errors.New("multiple JSON values")
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return appwriteProvisionInput{}, errors.New("request must contain exactly one JSON value")
 	}
 	var in appwriteProvisionInput
 	if value := raw["username"]; len(value) > 0 {
