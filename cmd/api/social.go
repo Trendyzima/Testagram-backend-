@@ -17,6 +17,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const socialInteractionSummarySQL = "SELECT p.likes_count,p.replies_count,p.reposts_count," +
+	"(SELECT count(*) FROM testagram_local.bookmarks b WHERE b.post_id=p.id)," +
+	"COALESCE((SELECT r.emoji FROM testagram_local.post_reactions r WHERE r.post_id=p.id AND r.user_id=$2),'')," +
+	"EXISTS(SELECT 1 FROM testagram_local.reposts r WHERE r.post_id=p.id AND r.user_id=$2)," +
+	"EXISTS(SELECT 1 FROM testagram_local.bookmarks b WHERE b.post_id=p.id AND b.user_id=$2)," +
+	"COALESCE((SELECT jsonb_object_agg(grouped.emoji,grouped.reaction_count) " +
+	"FROM (SELECT emoji,count(*)::bigint AS reaction_count FROM testagram_local.post_reactions " +
+	"WHERE post_id=p.id GROUP BY emoji) grouped),'{}'::jsonb) " +
+	"FROM testagram_local.posts p WHERE p.id=$1"
+
 var socialUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 type socialFollowRequest struct {
@@ -1022,20 +1032,11 @@ func (s *service) socialInteractionSummary(w http.ResponseWriter, r *http.Reques
 	// Read counts, viewer state and the reaction breakdown in one indexed query
 	// after the privacy check. This keeps feed-card hydration to one aggregate
 	// round trip instead of issuing a separate query for every counter/state.
-	const summarySQL = `SELECT p.likes_count,p.replies_count,p.reposts_count,
-		(SELECT count(*) FROM testagram_local.bookmarks b WHERE b.post_id=p.id),
-		COALESCE((SELECT r.emoji FROM testagram_local.post_reactions r WHERE r.post_id=p.id AND r.user_id=$2),''),
-		EXISTS(SELECT 1 FROM testagram_local.reposts r WHERE r.post_id=p.id AND r.user_id=$2),
-		EXISTS(SELECT 1 FROM testagram_local.bookmarks b WHERE b.post_id=p.id AND b.user_id=$2),
-		COALESCE((SELECT jsonb_object_agg(grouped.emoji,grouped.reaction_count)
-			FROM (SELECT emoji,count(*)::bigint AS reaction_count
-				FROM testagram_local.post_reactions WHERE post_id=p.id GROUP BY emoji) grouped),'{}'::jsonb)
-		FROM testagram_local.posts p WHERE p.id=$1`
 	var likesCount, repliesCount, repostsCount, bookmarksCount int64
 	var emoji string
 	var reposted, bookmarked bool
 	var reactionsJSON []byte
-	if err := tx.QueryRow(ctx, summarySQL, postID, userID).Scan(
+	if err := tx.QueryRow(ctx, socialInteractionSummarySQL, postID, userID).Scan(
 		&likesCount, &repliesCount, &repostsCount, &bookmarksCount,
 		&emoji, &reposted, &bookmarked, &reactionsJSON,
 	); err != nil {
