@@ -471,6 +471,24 @@ func (s *service) routes() http.Handler {
 	}
 	mux.HandleFunc("OPTIONS /api/identity/link", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/link", s.linkAppwriteIdentity)
+	mux.HandleFunc("OPTIONS /api/social/{path...}", s.mediaPreflight)
+	mux.HandleFunc("GET /api/social/follows/{target_user_id}", s.socialFollowState)
+	mux.HandleFunc("POST /api/social/follows", s.socialFollow)
+	mux.HandleFunc("GET /api/social/follow-requests", s.socialFollowRequests)
+	mux.HandleFunc("POST /api/social/follow-requests/{follower_id}/accept", s.socialAcceptFollowRequest)
+	mux.HandleFunc("POST /api/social/follow-requests/{follower_id}/reject", s.socialRejectFollowRequest)
+	mux.HandleFunc("DELETE /api/social/follows/{target_user_id}", s.socialUnfollow)
+	mux.HandleFunc("POST /api/social/blocks", s.socialBlock)
+	mux.HandleFunc("DELETE /api/social/blocks/{target_user_id}", s.socialUnblock)
+	mux.HandleFunc("POST /api/social/posts/{post_id}/reaction", s.socialReact)
+	mux.HandleFunc("DELETE /api/social/posts/{post_id}/reaction", s.socialUnreact)
+	mux.HandleFunc("POST /api/social/posts/{post_id}/replies", s.socialReply)
+	mux.HandleFunc("POST /api/social/posts/{post_id}/reposts", s.socialRepost)
+	mux.HandleFunc("DELETE /api/social/posts/{post_id}/reposts", s.socialUnrepost)
+	mux.HandleFunc("POST /api/social/posts/{post_id}/bookmarks", s.socialBookmark)
+	mux.HandleFunc("DELETE /api/social/posts/{post_id}/bookmarks", s.socialUnbookmark)
+	mux.HandleFunc("GET /api/social/notifications", s.socialNotifications)
+	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
@@ -552,6 +570,9 @@ func replicationJSONString(value string) string {
 }
 
 func normalizedRoute(path string) string {
+	if strings.HasPrefix(path, "/api/social/") {
+		return "/api/social/{route}"
+	}
 	if strings.HasPrefix(path, "/api/replication/public/") {
 		return "/api/replication/public/{origin}/{entity_type}/{entity_id}"
 	}
