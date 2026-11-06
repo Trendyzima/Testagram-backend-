@@ -1,10 +1,22 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestAppwriteApprovalIngestionFailsClosedWhenKYCBindingDisabled(t *testing.T) {
+	t.Setenv("APPWRITE_KYC_BINDING_ENABLED", "false")
+	req := httptest.NewRequest("POST", "/internal/identity/approval", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	(&service{}).recordAppwriteIdentityApproval(recorder, req)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s; want 503 while KYC binding is disabled", recorder.Code, recorder.Body.String())
+	}
+}
 
 func TestDecodeAppwriteApprovalInput(t *testing.T) {
 	tests := []struct {
