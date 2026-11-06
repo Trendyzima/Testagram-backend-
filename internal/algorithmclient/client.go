@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -78,7 +79,7 @@ func New(endpoint, token string, timeout time.Duration) (*Client, error) {
 	if timeout <= 0 || timeout > 5*time.Second {
 		timeout = 1200 * time.Millisecond
 	}
-	return &Client{endpoint: endpoint, token: token, http: &http.Client{Timeout: timeout}}, nil
+	return &Client{endpoint: endpoint, token: token, http: &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
@@ -118,6 +119,24 @@ func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	}
 	if len(output.Items) > input.Limit {
 		return Response{}, errors.New("algorithm service exceeded requested result limit")
+	}
+	seen := make(map[string]struct{}, len(output.Items))
+	for _, item := range output.Items {
+		if strings.TrimSpace(item.ID) == "" || math.IsNaN(item.Score) || math.IsInf(item.Score, 0) || item.Score < 0 || item.Score > 1 {
+			return Response{}, errors.New("algorithm service returned an invalid ranked item")
+		}
+		if _, duplicate := seen[item.ID]; duplicate {
+			return Response{}, errors.New("algorithm service returned a duplicate candidate")
+		}
+		seen[item.ID] = struct{}{}
+		if len(item.Reasons) > 8 {
+			return Response{}, errors.New("algorithm service returned too many ranking reasons")
+		}
+		for _, reason := range item.Reasons {
+			if len(reason) == 0 || len(reason) > 64 {
+				return Response{}, errors.New("algorithm service returned an invalid ranking reason")
+			}
+		}
 	}
 	return output, nil
 }
