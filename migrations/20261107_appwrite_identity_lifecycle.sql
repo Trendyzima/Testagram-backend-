@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS testagram_identity.legal_acceptances (
   accepted_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 REVOKE ALL ON TABLE testagram_identity.legal_acceptances FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS testagram_identity.verification_approvals (
+  appwrite_user_id TEXT PRIMARY KEY CHECK (length(appwrite_user_id) BETWEEN 1 AND 36),
+  registration_id TEXT NOT NULL CHECK (length(registration_id) BETWEEN 1 AND 128),
+  provider_event_id TEXT NOT NULL UNIQUE CHECK (length(provider_event_id) BETWEEN 1 AND 128),
+  approved_at TIMESTAMPTZ NOT NULL,
+  ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+REVOKE ALL ON TABLE testagram_identity.verification_approvals FROM PUBLIC;
 CREATE TABLE IF NOT EXISTS testagram_identity.identity_events (
   event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   appwrite_user_id TEXT NOT NULL,
@@ -54,13 +62,14 @@ DO $grants$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
     GRANT SELECT ON testagram_identity.migration_control,
-      testagram_identity.legacy_email_reservations TO testagram_app;
+      testagram_identity.legacy_email_reservations,
+      testagram_identity.verification_approvals TO testagram_app;
     GRANT INSERT, SELECT ON testagram_identity.identity_events, testagram_identity.legal_acceptances TO testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     GRANT SELECT ON testagram_identity.migration_control,
       testagram_identity.legacy_email_reservations TO service_role;
-    GRANT INSERT, SELECT ON testagram_identity.identity_events, testagram_identity.legal_acceptances TO service_role;
+    GRANT INSERT, SELECT ON testagram_identity.identity_events, testagram_identity.legal_acceptances, testagram_identity.verification_approvals TO service_role;
   END IF;
 END;
 $grants$;
