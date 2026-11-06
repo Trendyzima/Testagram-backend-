@@ -71,3 +71,55 @@ func TestRankRejectsNon200AndOversizedCandidateBatch(t *testing.T) {
 		t.Fatal("expected candidate bound error")
 	}
 }
+
+func TestRankDoesNotFollowRedirects(t *testing.T) {
+	var destinationCalled bool
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		destinationCalled = true
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{\"items\":[]}"))
+	}))
+	defer destination.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", destination.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+
+	client, err := New(redirect.URL, strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Rank(context.Background(), Request{Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+	if err == nil {
+		t.Fatal("expected redirect response to be rejected")
+	}
+	if destinationCalled {
+		t.Fatal("ranking client followed an upstream redirect")
+	}
+}
+
+func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
+	for name, body := range map[string]string{
+		"out of range score": "{\"items\":[{\"id\":\"p\",\"score\":2}]}",
+		"empty ID":           "{\"items\":[{\"id\":\" \",\"score\":0.5}]}",
+		"duplicate ID":       "{\"items\":[{\"id\":\"p\",\"score\":0.5},{\"id\":\"p\",\"score\":0.4}]}",
+		"too many reasons":   "{\"items\":[{\"id\":\"p\",\"score\":0.5,\"reasons\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}]}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client, err := New(server.URL, strings.Repeat("s", 32), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.Rank(context.Background(), Request{Limit: 2, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+			if err == nil {
+				t.Fatal("expected invalid ranker response to be rejected")
+			}
+		})
+	}
+}
