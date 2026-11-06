@@ -1,10 +1,23 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestAppwriteProvisioningFailsClosedWhenKYCBindingDisabled(t *testing.T) {
+	t.Setenv("APPWRITE_KYC_BINDING_ENABLED", "false")
+	body := `{"username":"test_user","display_name":"Test User","birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true}`
+	req := httptest.NewRequest("POST", "/api/identity/provision", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	(&service{}).provisionAppwriteIdentity(recorder, req)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s; want 503 while KYC binding is disabled", recorder.Code, recorder.Body.String())
+	}
+}
 
 func TestValidateAppwriteProvisionInput(t *testing.T) {
 	tests := []struct {
