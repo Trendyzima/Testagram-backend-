@@ -37,6 +37,8 @@ services:
       MEDIA_PRIVATE_BUCKET: ${MEDIA_PRIVATE_BUCKET:-testagram-private-media}
       MEDIA_PUBLIC_BUCKET: ${MEDIA_PUBLIC_BUCKET:-testagram-public-media}
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
+      ALGORITHM_URL: ${ALGORITHM_URL:-}
+      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site,http://localhost:5173,http://127.0.0.1:5173}
     ports:
       - "127.0.0.1:8080:8080"
