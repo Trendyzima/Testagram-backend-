@@ -225,8 +225,7 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 	}
 	defer tx.Rollback(ctx)
 	email := strings.ToLower(strings.TrimSpace(account.Email))
-	var lockResult any
-	if err = tx.QueryRow(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", email).Scan(&lockResult); err != nil {
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", email); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOCK_FAILED", "Identity provisioning is temporarily unavailable", id))
 		return
 	}
