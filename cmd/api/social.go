@@ -1018,46 +1018,36 @@ func (s *service) socialInteractionSummary(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be checked", requestID))
 		return
 	}
+
+	// Read counts, viewer state and the reaction breakdown in one indexed query
+	// after the privacy check. This keeps feed-card hydration to one aggregate
+	// round trip instead of issuing a separate query for every counter/state.
+	const summarySQL = `SELECT p.likes_count,p.replies_count,p.reposts_count,
+		(SELECT count(*) FROM testagram_local.bookmarks b WHERE b.post_id=p.id),
+		COALESCE((SELECT r.emoji FROM testagram_local.post_reactions r WHERE r.post_id=p.id AND r.user_id=$2),''),
+		EXISTS(SELECT 1 FROM testagram_local.reposts r WHERE r.post_id=p.id AND r.user_id=$2),
+		EXISTS(SELECT 1 FROM testagram_local.bookmarks b WHERE b.post_id=p.id AND b.user_id=$2),
+		COALESCE((SELECT jsonb_object_agg(grouped.emoji,grouped.reaction_count)
+			FROM (SELECT emoji,count(*)::bigint AS reaction_count
+				FROM testagram_local.post_reactions WHERE post_id=p.id GROUP BY emoji) grouped),'{}'::jsonb)
+		FROM testagram_local.posts p WHERE p.id=$1`
 	var likesCount, repliesCount, repostsCount, bookmarksCount int64
-	query := "SELECT likes_count,replies_count,reposts_count,(SELECT count(*) FROM testagram_local.bookmarks b WHERE b.post_id=p.id) FROM testagram_local.posts p WHERE p.id=$1"
-	if err := tx.QueryRow(ctx, query, postID).Scan(&likesCount, &repliesCount, &repostsCount, &bookmarksCount); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Interaction counts could not be loaded", requestID))
-		return
-	}
 	var emoji string
-	err = tx.QueryRow(ctx, "SELECT emoji FROM testagram_local.post_reactions WHERE post_id=$1 AND user_id=$2", postID, userID).Scan(&emoji)
-	if errors.Is(err, pgx.ErrNoRows) {
-		emoji = ""
-	} else if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Your reaction state could not be loaded", requestID))
-		return
-	}
 	var reposted, bookmarked bool
-	if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_local.reposts WHERE post_id=$1 AND user_id=$2), EXISTS(SELECT 1 FROM testagram_local.bookmarks WHERE post_id=$1 AND user_id=$2)", postID, userID).Scan(&reposted, &bookmarked); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Your interaction state could not be loaded", requestID))
-		return
-	}
-	rows, err := tx.Query(ctx, "SELECT emoji,count(*) FROM testagram_local.post_reactions WHERE post_id=$1 GROUP BY emoji", postID)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Reaction breakdown could not be loaded", requestID))
+	var reactionsJSON []byte
+	if err := tx.QueryRow(ctx, summarySQL, postID, userID).Scan(
+		&likesCount, &repliesCount, &repostsCount, &bookmarksCount,
+		&emoji, &reposted, &bookmarked, &reactionsJSON,
+	); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Interaction summary could not be loaded", requestID))
 		return
 	}
 	reactions := make(map[string]int64)
-	for rows.Next() {
-		var reaction string
-		var count int64
-		if err := rows.Scan(&reaction, &count); err != nil {
-			rows.Close()
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Reaction breakdown could not be loaded", requestID))
+	if len(reactionsJSON) > 0 {
+		if err := json.Unmarshal(reactionsJSON, &reactions); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Reaction breakdown could not be decoded", requestID))
 			return
 		}
-		reactions[reaction] = count
-	}
-	rowsErr := rows.Err()
-	rows.Close()
-	if rowsErr != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Reaction breakdown could not be loaded", requestID))
-		return
 	}
 	if err := tx.Commit(ctx); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Interaction state could not be confirmed", requestID))
