@@ -61,6 +61,10 @@ func (s *service) recordAppwriteIdentityApproval(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", id))
 		return
 	}
+	if !appwriteKYCBindingEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("APPWRITE_KYC_BINDING_DISABLED", "Appwrite KYC approval ingestion is disabled until the trusted callback is configured", id))
+		return
+	}
 	expected := strings.TrimSpace(os.Getenv("APPWRITE_IDENTITY_INGEST_TOKEN"))
 	provided := strings.TrimSpace(r.Header.Get("X-Testagram-Identity-Ingest"))
 	if len(expected) < 32 || len(provided) != len(expected) || subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
