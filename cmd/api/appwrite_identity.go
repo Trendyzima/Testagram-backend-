@@ -148,16 +148,21 @@ func (s *service) appwriteRegistrationStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	enabled := false
-	reason := "legacy_inventory_incomplete"
+	reason := "kyc_binding_disabled"
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("APPWRITE_KYC_BINDING_ENABLED")), "true") &&
 		strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT")) != "" &&
 		strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID")) != "" &&
 		len(strings.TrimSpace(os.Getenv("APPWRITE_IDENTITY_INGEST_TOKEN"))) >= 32 {
-		if s.db != nil {
+		reason = "legacy_inventory_incomplete"
+		if s.db == nil {
+			reason = "identity_database_unavailable"
+		} else {
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			defer cancel()
 			var inventoryComplete bool
-			if err := s.db.QueryRow(ctx, "SELECT legacy_inventory_complete FROM testagram_identity.migration_control WHERE singleton=TRUE").Scan(&inventoryComplete); err == nil && inventoryComplete {
+			if err := s.db.QueryRow(ctx, "SELECT legacy_inventory_complete FROM testagram_identity.migration_control WHERE singleton=TRUE").Scan(&inventoryComplete); err != nil {
+				reason = "identity_database_unavailable"
+			} else if inventoryComplete {
 				enabled = true
 				reason = ""
 			}
