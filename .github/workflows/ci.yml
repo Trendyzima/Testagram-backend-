@@ -327,9 +327,12 @@ jobs:
             migrations/007_media_product_bridge.sql \
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261019_dual_backend_replication.sql \
-            migrations/20261019_testagram_media_replication_producers.sql \
             migrations/20261019_testagram_local_accounts_posts.sql \
-            migrations/20261019_testagram_independent_auth.sql; do
+            migrations/20261019_testagram_independent_auth.sql \
+            migrations/20261019_testagram_media_replication_producers.sql \
+            migrations/20261106_appwrite_identity_bridge.sql \
+            migrations/20261106_tv_health_postgres.sql \
+            migrations/20261106_social_core.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
@@ -340,6 +343,57 @@ jobs:
           VALUES ('123e4567-e89b-42d3-a456-426614174000','ci_public_user','CI User');
           INSERT INTO testagram_local.posts(id,author_id,text,visibility)
           VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174000','public test post','public');
+          INSERT INTO testagram_local.accounts(user_id,username,display_name)
+          VALUES ('123e4567-e89b-42d3-a456-426614174004','ci_social_user','Social User'),
+                 ('123e4567-e89b-42d3-a456-426614174005','ci_protected_user','Protected User');
+          UPDATE testagram_local.accounts SET protected_account=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174005';
+          INSERT INTO testagram_local.follows(follower_id,following_id,status)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174004','accepted'),
+                 ('123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174005','pending');
+          INSERT INTO testagram_local.post_reactions(post_id,user_id,emoji)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174004','❤️');
+          INSERT INTO testagram_local.replies(post_id,user_id,content)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174004','CI reply');
+          INSERT INTO testagram_local.reposts(post_id,user_id)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174004');
+          INSERT INTO testagram_local.bookmarks(user_id,post_id)
+          VALUES ('123e4567-e89b-42d3-a456-426614174004','123e4567-e89b-42d3-a456-426614174001');
+          DO $social$
+          BEGIN
+            IF (SELECT following_count FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174000') <> 1 THEN
+              RAISE EXCEPTION 'accepted follow did not increment following count';
+            END IF;
+            IF (SELECT follower_count FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174004') <> 1 THEN
+              RAISE EXCEPTION 'accepted follow did not increment follower count';
+            END IF;
+            IF (SELECT follower_count FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174005') <> 0 THEN
+              RAISE EXCEPTION 'pending follow must not increment follower count';
+            END IF;
+            IF (SELECT likes_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 1 THEN
+              RAISE EXCEPTION 'reaction count trigger failed';
+            END IF;
+            IF (SELECT replies_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 1 THEN
+              RAISE EXCEPTION 'reply count trigger failed';
+            END IF;
+            IF (SELECT reposts_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 1 THEN
+              RAISE EXCEPTION 'repost count trigger failed';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_local.bookmarks WHERE user_id='123e4567-e89b-42d3-a456-426614174004') THEN
+              RAISE EXCEPTION 'bookmark insert failed';
+            END IF;
+          END $social$;
+          UPDATE testagram_local.replies SET deleted_at=now()
+            WHERE post_id='123e4567-e89b-42d3-a456-426614174001';
+          DELETE FROM testagram_local.post_reactions WHERE post_id='123e4567-e89b-42d3-a456-426614174001';
+          DELETE FROM testagram_local.reposts WHERE post_id='123e4567-e89b-42d3-a456-426614174001';
+          DO $social_counts$
+          BEGIN
+            IF (SELECT likes_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 0
+              OR (SELECT replies_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 0
+              OR (SELECT reposts_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 0 THEN
+              RAISE EXCEPTION 'delete/soft-delete counters did not return to zero';
+            END IF;
+          END $social_counts$;
           DO $ci$
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND event_type='account.created' AND entity_id='123e4567-e89b-42d3-a456-426614174000') THEN
