@@ -481,6 +481,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/identity/session", s.appwriteIdentitySession)
 	mux.HandleFunc("OPTIONS /api/identity/provision", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/provision", s.provisionAppwriteIdentity)
+	mux.HandleFunc("POST /internal/identity/approval", s.recordAppwriteIdentityApproval)
 	mux.HandleFunc("OPTIONS /api/feed/home", s.mediaPreflight)
 	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/social/{path...}", s.mediaPreflight)
