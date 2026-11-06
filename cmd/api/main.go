@@ -477,6 +477,8 @@ func (s *service) routes() http.Handler {
 	}
 	mux.HandleFunc("OPTIONS /api/identity/link", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/link", s.linkAppwriteIdentity)
+	mux.HandleFunc("OPTIONS /api/identity/registration-status", s.mediaPreflight)
+	mux.HandleFunc("GET /api/identity/registration-status", s.appwriteRegistrationStatus)
 	mux.HandleFunc("OPTIONS /api/identity/session", s.mediaPreflight)
 	mux.HandleFunc("GET /api/identity/session", s.appwriteIdentitySession)
 	mux.HandleFunc("OPTIONS /api/identity/provision", s.mediaPreflight)
