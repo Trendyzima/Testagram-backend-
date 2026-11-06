@@ -692,6 +692,9 @@ func TestMediaUploadGatewayPreflightAllowsConfiguredOrigin(t *testing.T) {
 	if !strings.Contains(allowedHeaders, "authorization") || !strings.Contains(allowedHeaders, "content-type") {
 		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization and content-type", allowedHeaders)
 	}
+	if !strings.Contains(allowedHeaders, "x-testagram-legacy-authorization") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want the explicit legacy proof header", allowedHeaders)
+	}
 }
 
 func TestUpstreamFailureOutcome(t *testing.T) {

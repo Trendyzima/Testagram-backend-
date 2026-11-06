@@ -469,6 +469,8 @@ func (s *service) routes() http.Handler {
 		mux.HandleFunc("OPTIONS /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 		mux.HandleFunc("POST /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 	}
+	mux.HandleFunc("OPTIONS /api/identity/link", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/link", s.linkAppwriteIdentity)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
@@ -558,7 +560,7 @@ func normalizedRoute(path string) string {
 		"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
 		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
-		"/api/media/list", "/internal/media/quarantine", "/internal/replication/events":
+		"/api/media/list", "/api/identity/link", "/internal/media/quarantine", "/internal/replication/events":
 		return path
 	default:
 		return "unmatched"
@@ -580,7 +582,7 @@ func (s *service) cors(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "authorization, apikey, content-type, x-client-info, x-request-id, accept")
+	w.Header().Set("Access-Control-Allow-Headers", "authorization, apikey, content-type, x-client-info, x-request-id, accept, x-testagram-legacy-authorization")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if origin == "" {
 		return true // non-browser clients do not use CORS
