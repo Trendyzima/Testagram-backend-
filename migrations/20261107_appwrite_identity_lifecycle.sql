@@ -65,7 +65,8 @@ BEGIN
       testagram_identity.legacy_email_reservations,
       testagram_identity.verification_approvals TO testagram_app;
     GRANT INSERT ON testagram_identity.verification_approvals TO testagram_app;
-    GRANT INSERT, SELECT ON testagram_identity.identity_events, testagram_identity.legal_acceptances TO testagram_app;
+    GRANT INSERT, SELECT ON testagram_identity.identity_events TO testagram_app;
+    GRANT INSERT ON testagram_identity.legal_acceptances TO testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     GRANT SELECT ON testagram_identity.migration_control,
