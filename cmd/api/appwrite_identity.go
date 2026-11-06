@@ -1,155 +1,257 @@
 package main
 
 import (
-  "context"
-  "encoding/json"
-  "errors"
-  "net/http"
-  "regexp"
-  "strings"
-  "time"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
 
-  "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 type appwriteProvisionInput struct {
-  Username string `json:"username"`
-  DisplayName string `json:"display_name"`
+	Username    string
+	DisplayName string
 }
 
-var appwriteUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}package main
+var appwriteUsernamePattern = regexp.MustCompile("^[A-Za-z0-9_]{3,30}$")
 
-import (
-  "context"
-  "encoding/json"
-  "errors"
-  "net/http"
-  "regexp"
-  "strings"
-  "time"
-
-  "github.com/jackc/pgx/v5"
-)
-
-type appwriteProvisionInput struct {
-  Username string `json:"username"`
-  DisplayName string `json:"display_name"`
+func decodeAppwriteProvisionInput(r *http.Request) (appwriteProvisionInput, error) {
+	var raw map[string]json.RawMessage
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		return appwriteProvisionInput{}, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return appwriteProvisionInput{}, errors.New("multiple JSON values")
+	}
+	var in appwriteProvisionInput
+	if value := raw["username"]; len(value) > 0 {
+		if err := json.Unmarshal(value, &in.Username); err != nil {
+			return in, err
+		}
+	}
+	if value := raw["display_name"]; len(value) > 0 {
+		if err := json.Unmarshal(value, &in.DisplayName); err != nil {
+			return in, err
+		}
+	}
+	return in, nil
 }
-
-)
 
 func validateAppwriteProvisionInput(in appwriteProvisionInput) error {
-  if !appwriteUsernamePattern.MatchString(in.Username) { return errors.New("username must contain 3 to 30 letters, numbers or underscores") }
-  if strings.TrimSpace(in.DisplayName)=="" || len(in.DisplayName)>80 { return errors.New("display name must contain 1 to 80 characters") }
-  return nil
-}
-
-type appwriteIdentityResponse struct {
-  CanonicalUserID string `json:"canonical_user_id"`
-  AppwriteUserID string `json:"appwrite_user_id"`
-  Email string `json:"email"`
-  EmailVerified bool `json:"email_verified"`
-  Username string `json:"username"`
-  DisplayName string `json:"display_name"`
-  AccountStatus string `json:"account_status"`
+	if !appwriteUsernamePattern.MatchString(in.Username) {
+		return errors.New("username must contain 3 to 30 letters, numbers or underscores")
+	}
+	if strings.TrimSpace(in.DisplayName) == "" || len(in.DisplayName) > 80 {
+		return errors.New("display name must contain 1 to 80 characters")
+	}
+	return nil
 }
 
 func (s *service) verifiedAppwriteRequest(r *http.Request) (appwriteAccount, int, error) {
-  token, ok := bearerToken(r.Header.Get("Authorization"))
-  if !ok { return appwriteAccount{}, http.StatusUnauthorized, errors.New("Appwrite session is required") }
-  endpoint, project := strings.TrimSpace(env("APPWRITE_ENDPOINT", "")), strings.TrimSpace(env("APPWRITE_PROJECT_ID", ""))
-  if endpoint == "" || project == "" { return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("Appwrite is not configured") }
-  ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
-  defer cancel()
-  account, status, err := fetchAppwriteAccount(ctx, s.upstream, endpoint, project, token)
-  if err != nil { return appwriteAccount{}, status, err }
-  if !account.EmailVerification { return appwriteAccount{}, http.StatusForbidden, errors.New("verify your Appwrite email before continuing") }
-  if account.Email == "" || len(account.Email) > 254 || strings.ContainsAny(account.Email, "\r\n") {
-    return appwriteAccount{}, http.StatusBadGateway, errors.New("Appwrite returned an invalid email address")
-  }
-  return account, http.StatusOK, nil
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		return appwriteAccount{}, http.StatusUnauthorized, errors.New("Appwrite session is required")
+	}
+	endpoint := strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT"))
+	project := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
+	if endpoint == "" || project == "" {
+		return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("Appwrite is not configured")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	account, status, err := fetchAppwriteAccount(ctx, s.upstream, endpoint, project, token)
+	if err != nil {
+		return appwriteAccount{}, status, err
+	}
+	if !account.EmailVerification {
+		return appwriteAccount{}, http.StatusForbidden, errors.New("verify your Appwrite email before continuing")
+	}
+	if account.Email == "" || len(account.Email) > 254 || strings.ContainsAny(account.Email, "\r\n") {
+		return appwriteAccount{}, http.StatusBadGateway, errors.New("Appwrite returned an invalid email address")
+	}
+	return account, http.StatusOK, nil
+}
+
+func appwriteIdentityPayload(out appwriteIdentityResponse) map[string]any {
+	return map[string]any{
+		"canonical_user_id": out.CanonicalUserID,
+		"appwrite_user_id": out.AppwriteUserID,
+		"email": out.Email,
+		"email_verified": out.EmailVerified,
+		"username": out.Username,
+		"display_name": out.DisplayName,
+		"account_status": out.AccountStatus,
+	}
+}
+
+type appwriteIdentityResponse struct {
+	CanonicalUserID string
+	AppwriteUserID  string
+	Email           string
+	EmailVerified   bool
+	Username        string
+	DisplayName     string
+	AccountStatus   string
 }
 
 func (s *service) appwriteIdentitySession(w http.ResponseWriter, r *http.Request) {
-  id := requestID(r)
-  if !s.cors(w,r) { writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id)); return }
-  account,status,err := s.verifiedAppwriteRequest(r)
-  if err != nil { writeJSON(w,status,errorBody("APPWRITE_SESSION_INVALID",err.Error(),id)); return }
-  if s.db == nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_DATABASE_UNAVAILABLE","Identity database is unavailable",id)); return }
-  ctx,cancel := context.WithTimeout(r.Context(),3*time.Second); defer cancel()
-  var out appwriteIdentityResponse
-  err = s.db.QueryRow(ctx,`
-    SELECT m.canonical_user_id::text,m.appwrite_user_id,COALESCE(m.email,''),m.email_verified,
-      a.username,a.display_name,a.account_status
-    FROM testagram_identity.appwrite_accounts m
-    JOIN testagram_local.accounts a ON a.user_id=m.canonical_user_id
-    WHERE m.appwrite_user_id=$1
-  `,account.ID).Scan(&out.CanonicalUserID,&out.AppwriteUserID,&out.Email,&out.EmailVerified,&out.Username,&out.DisplayName,&out.AccountStatus)
-  if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusConflict,errorBody("IDENTITY_NOT_PROVISIONED","This Appwrite identity is not linked to a Testagram account. Existing users must complete verified account linking; new accounts require the migration inventory gate.",id)); return }
-  if err != nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_LOOKUP_FAILED","Testagram identity could not be resolved",id)); return }
-  if out.AccountStatus != "active" { writeJSON(w,http.StatusForbidden,errorBody("ACCOUNT_NOT_ACTIVE","This Testagram account is not active",id)); return }
-  out.Email = strings.ToLower(strings.TrimSpace(account.Email))
-  out.EmailVerified = account.EmailVerification
-  writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":out,"error":nil,"request_id":id})
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	account, status, err := s.verifiedAppwriteRequest(r)
+	if err != nil {
+		writeJSON(w, status, errorBody("APPWRITE_SESSION_INVALID", err.Error(), id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_DATABASE_UNAVAILABLE", "Identity database is unavailable", id))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	var out appwriteIdentityResponse
+	err = s.db.QueryRow(ctx,
+		"SELECT m.canonical_user_id::text,m.appwrite_user_id,COALESCE(m.email,''),m.email_verified,a.username,a.display_name,a.account_status "+
+			"FROM testagram_identity.appwrite_accounts m JOIN testagram_local.accounts a ON a.user_id=m.canonical_user_id "+
+			"WHERE m.appwrite_user_id=$1", account.ID,
+	).Scan(&out.CanonicalUserID, &out.AppwriteUserID, &out.Email, &out.EmailVerified, &out.Username, &out.DisplayName, &out.AccountStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusConflict, errorBody("IDENTITY_NOT_PROVISIONED", "This Appwrite identity is not linked to a Testagram account. Existing users must complete verified account linking; new accounts require the migration inventory gate.", id))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOOKUP_FAILED", "Testagram identity could not be resolved", id))
+		return
+	}
+	if out.AccountStatus != "active" {
+		writeJSON(w, http.StatusForbidden, errorBody("ACCOUNT_NOT_ACTIVE", "This Testagram account is not active", id))
+		return
+	}
+	out.Email = strings.ToLower(strings.TrimSpace(account.Email))
+	out.EmailVerified = account.EmailVerification
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": appwriteIdentityPayload(out), "error": nil, "request_id": id})
 }
 
 func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Request) {
-  id := requestID(r)
-  if !s.cors(w,r) { writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id)); return }
-  if r.Method != http.MethodPost { writeJSON(w,http.StatusMethodNotAllowed,errorBody("METHOD_NOT_ALLOWED","POST required",id)); return }
-  r.Body = http.MaxBytesReader(w,r.Body,8<<10); defer r.Body.Close()
-  var in appwriteProvisionInput
-  dec := json.NewDecoder(r.Body); dec.DisallowUnknownFields()
-  if err := dec.Decode(&in); err != nil { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_REQUEST","Username and display name are required",id)); return }
-  if err := validateAppwriteProvisionInput(in); err != nil {
-    writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PROFILE","Choose a username (3–30 letters, numbers or underscores) and a display name up to 80 characters",id)); return
-  }
-  account,status,err := s.verifiedAppwriteRequest(r)
-  if err != nil { writeJSON(w,status,errorBody("APPWRITE_SESSION_INVALID",err.Error(),id)); return }
-  if s.db == nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_DATABASE_UNAVAILABLE","Identity database is unavailable",id)); return }
-  ctx,cancel := context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-  tx,err := s.db.Begin(ctx)
-  if err != nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_DATABASE_UNAVAILABLE","Identity database is unavailable",id)); return }
-  defer tx.Rollback(ctx)
-  email := strings.ToLower(strings.TrimSpace(account.Email))
-  if _,err = tx.Exec(ctx,`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,email); err != nil {
-    writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_LOCK_FAILED","Identity provisioning is temporarily unavailable",id)); return
-  }
-  var existing appwriteIdentityResponse
-  err = tx.QueryRow(ctx,`
-    SELECT m.canonical_user_id::text,m.appwrite_user_id,COALESCE(m.email,''),m.email_verified,
-      a.username,a.display_name,a.account_status
-    FROM testagram_identity.appwrite_accounts m
-    JOIN testagram_local.accounts a ON a.user_id=m.canonical_user_id
-    WHERE m.appwrite_user_id=$1
-  `,account.ID).Scan(&existing.CanonicalUserID,&existing.AppwriteUserID,&existing.Email,&existing.EmailVerified,&existing.Username,&existing.DisplayName,&existing.AccountStatus)
-  if err == nil {
-    if existing.AccountStatus!="active" { writeJSON(w,http.StatusForbidden,errorBody("ACCOUNT_NOT_ACTIVE","This Testagram account is not active",id)); return }
-    if err=tx.Commit(ctx); err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_COMMIT_FAILED","Identity could not be confirmed",id)); return }
-    writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":existing,"error":nil,"request_id":id}); return
-  }
-  if !errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_LOOKUP_FAILED","Identity lookup failed",id)); return }
-  var inventoryComplete bool
-  if err=tx.QueryRow(ctx,`SELECT legacy_inventory_complete FROM testagram_identity.migration_control WHERE singleton=TRUE FOR SHARE`).Scan(&inventoryComplete); err!=nil || !inventoryComplete {
-    writeJSON(w,http.StatusServiceUnavailable,errorBody("LEGACY_INVENTORY_INCOMPLETE","New account creation is paused until the complete legacy account inventory has been imported. Existing data is protected.",id)); return
-  }
-  var reserved bool
-  if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_identity.legacy_email_reservations WHERE email_normalized=$1)`,email).Scan(&reserved); err!=nil {
-    writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_LOOKUP_FAILED","Legacy account protection check failed",id)); return
-  }
-  if reserved { writeJSON(w,http.StatusConflict,errorBody("LEGACY_ACCOUNT_REQUIRES_LINK","An existing Testagram account uses this email. Sign in to the existing account and complete verified linking; do not create a duplicate.",id)); return }
-  var legacyEmailExists bool
-  err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_auth.identities WHERE email_normalized=$1)`,email).Scan(&legacyEmailExists)
-  if err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("LEGACY_ACCOUNT_CHECK_FAILED","Legacy account protection check failed",id)); return }
-  if legacyEmailExists { writeJSON(w,http.StatusConflict,errorBody("LEGACY_ACCOUNT_REQUIRES_LINK","An existing Testagram account uses this email. Complete verified account linking.",id)); return }
-  var canonicalID string
-  err=tx.QueryRow(ctx,`INSERT INTO testagram_local.accounts(user_id,username,display_name) VALUES(gen_random_uuid(),$1,$2) RETURNING user_id::text`,in.Username,strings.TrimSpace(in.DisplayName)).Scan(&canonicalID)
-  if err!=nil { writeJSON(w,http.StatusConflict,errorBody("PROFILE_CREATE_FAILED","Username is unavailable or the account could not be created",id)); return }
-  _,err=tx.Exec(ctx,`INSERT INTO testagram_identity.appwrite_accounts(appwrite_user_id,canonical_user_id,email,email_verified,linked_at) VALUES($1,$2,$3,TRUE,now())`,account.ID,canonicalID,email)
-  if err!=nil { writeJSON(w,http.StatusConflict,errorBody("IDENTITY_ALREADY_LINKED","This Appwrite identity is already linked to another Testagram account",id)); return }
-  _,err=tx.Exec(ctx,`INSERT INTO testagram_identity.identity_events(appwrite_user_id,canonical_user_id,event_type,request_id) VALUES($1,$2,'provisioned',$3)`,account.ID,canonicalID,id)
-  if err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_AUDIT_FAILED","Account creation could not be audited; no changes were committed",id)); return }
-  if err=tx.Commit(ctx); err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_COMMIT_FAILED","Account creation could not be committed",id)); return }
-  out:=appwriteIdentityResponse{CanonicalUserID:canonicalID,AppwriteUserID:account.ID,Email:email,EmailVerified:true,Username:in.Username,DisplayName:strings.TrimSpace(in.DisplayName),AccountStatus:"active"}
-  writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":out,"error":nil,"request_id":id})
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", id))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	defer r.Body.Close()
+	in, err := decodeAppwriteProvisionInput(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REQUEST", "Username and display name are required in one JSON object", id))
+		return
+	}
+	if err := validateAppwriteProvisionInput(in); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PROFILE", "Choose a username (3–30 letters, numbers or underscores) and a display name up to 80 characters", id))
+		return
+	}
+	account, status, err := s.verifiedAppwriteRequest(r)
+	if err != nil {
+		writeJSON(w, status, errorBody("APPWRITE_SESSION_INVALID", err.Error(), id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_DATABASE_UNAVAILABLE", "Identity database is unavailable", id))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_DATABASE_UNAVAILABLE", "Identity database is unavailable", id))
+		return
+	}
+	defer tx.Rollback(ctx)
+	email := strings.ToLower(strings.TrimSpace(account.Email))
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", email); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOCK_FAILED", "Identity provisioning is temporarily unavailable", id))
+		return
+	}
+	var existing appwriteIdentityResponse
+	err = tx.QueryRow(ctx,
+		"SELECT m.canonical_user_id::text,m.appwrite_user_id,COALESCE(m.email,''),m.email_verified,a.username,a.display_name,a.account_status "+
+			"FROM testagram_identity.appwrite_accounts m JOIN testagram_local.accounts a ON a.user_id=m.canonical_user_id "+
+			"WHERE m.appwrite_user_id=$1", account.ID,
+	).Scan(&existing.CanonicalUserID, &existing.AppwriteUserID, &existing.Email, &existing.EmailVerified, &existing.Username, &existing.DisplayName, &existing.AccountStatus)
+	if err == nil {
+		if existing.AccountStatus != "active" {
+			writeJSON(w, http.StatusForbidden, errorBody("ACCOUNT_NOT_ACTIVE", "This Testagram account is not active", id))
+			return
+		}
+		if err = tx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_COMMIT_FAILED", "Identity could not be confirmed", id))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": appwriteIdentityPayload(existing), "error": nil, "request_id": id})
+		return
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOOKUP_FAILED", "Identity lookup failed", id))
+		return
+	}
+	var inventoryComplete bool
+	err = tx.QueryRow(ctx, "SELECT legacy_inventory_complete FROM testagram_identity.migration_control WHERE singleton=TRUE FOR SHARE").Scan(&inventoryComplete)
+	if err != nil || !inventoryComplete {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LEGACY_INVENTORY_INCOMPLETE", "New account creation is paused until the complete legacy account inventory has been imported. Existing data is protected.", id))
+		return
+	}
+	var reserved bool
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_identity.legacy_email_reservations WHERE email_normalized=$1)", email).Scan(&reserved)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOOKUP_FAILED", "Legacy account protection check failed", id))
+		return
+	}
+	if reserved {
+		writeJSON(w, http.StatusConflict, errorBody("LEGACY_ACCOUNT_REQUIRES_LINK", "An existing Testagram account uses this email. Sign in to the existing account and complete verified linking; do not create a duplicate.", id))
+		return
+	}
+	var legacyEmailExists bool
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_auth.identities WHERE email_normalized=$1)", email).Scan(&legacyEmailExists)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LEGACY_ACCOUNT_CHECK_FAILED", "Legacy account protection check failed", id))
+		return
+	}
+	if legacyEmailExists {
+		writeJSON(w, http.StatusConflict, errorBody("LEGACY_ACCOUNT_REQUIRES_LINK", "An existing Testagram account uses this email. Complete verified account linking.", id))
+		return
+	}
+	var canonicalID string
+	err = tx.QueryRow(ctx, "INSERT INTO testagram_local.accounts(user_id,username,display_name) VALUES(gen_random_uuid(),$1,$2) RETURNING user_id::text", in.Username, strings.TrimSpace(in.DisplayName)).Scan(&canonicalID)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, errorBody("PROFILE_CREATE_FAILED", "Username is unavailable or the account could not be created", id))
+		return
+	}
+	_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.appwrite_accounts(appwrite_user_id,canonical_user_id,email,email_verified,linked_at) VALUES($1,$2,$3,TRUE,now())", account.ID, canonicalID, email)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, errorBody("IDENTITY_ALREADY_LINKED", "This Appwrite identity is already linked to another Testagram account", id))
+		return
+	}
+	_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.identity_events(appwrite_user_id,canonical_user_id,event_type,request_id) VALUES($1,$2,'provisioned',$3)", account.ID, canonicalID, id)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Account creation could not be audited; no changes were committed", id))
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_COMMIT_FAILED", "Account creation could not be committed", id))
+		return
+	}
+	out := appwriteIdentityResponse{CanonicalUserID: canonicalID, AppwriteUserID: account.ID, Email: email, EmailVerified: true, Username: in.Username, DisplayName: strings.TrimSpace(in.DisplayName), AccountStatus: "active"}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": appwriteIdentityPayload(out), "error": nil, "request_id": id})
 }
