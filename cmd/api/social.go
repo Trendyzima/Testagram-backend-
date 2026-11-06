@@ -134,6 +134,20 @@ type socialQueryer interface {
 }
 
 func socialCanViewPostWith(ctx context.Context, queryer socialQueryer, viewerID, postID string) (string, error) {
+	return socialCanViewPostWithLock(ctx, queryer, viewerID, postID, "UPDATE")
+}
+
+// Read handlers use shared row locks so concurrent readers do not serialize on
+// an author's account row. These locks still conflict with follow/block/privacy
+// mutations, keeping the authorization decision consistent with those writes.
+func socialCanViewPostReadWith(ctx context.Context, queryer socialQueryer, viewerID, postID string) (string, error) {
+	return socialCanViewPostWithLock(ctx, queryer, viewerID, postID, "SHARE")
+}
+
+func socialCanViewPostWithLock(ctx context.Context, queryer socialQueryer, viewerID, postID, lockMode string) (string, error) {
+	if lockMode != "UPDATE" && lockMode != "SHARE" {
+		return "", errors.New("unsupported social account lock mode")
+	}
 	var authorID string
 	err := queryer.QueryRow(ctx, "SELECT author_id::text FROM testagram_local.posts WHERE id=$1 AND deleted_at IS NULL", postID).Scan(&authorID)
 	if err != nil {
@@ -142,7 +156,7 @@ func socialCanViewPostWith(ctx context.Context, queryer socialQueryer, viewerID,
 	// Follow/block mutations lock the same two account rows in UUID order.
 	// Locking them here makes privacy and block checks serializable with those
 	// changes for every post interaction.
-	locked, err := queryer.Query(ctx, "SELECT user_id,account_status FROM testagram_local.accounts WHERE user_id IN ($1,$2) ORDER BY user_id FOR UPDATE", viewerID, authorID)
+	locked, err := queryer.Query(ctx, "SELECT user_id,account_status FROM testagram_local.accounts WHERE user_id IN ($1,$2) ORDER BY user_id FOR "+lockMode, viewerID, authorID)
 	if err != nil {
 		return "", err
 	}
@@ -977,6 +991,167 @@ func (s *service) socialAcceptFollowRequest(w http.ResponseWriter, r *http.Reque
 
 func (s *service) socialRejectFollowRequest(w http.ResponseWriter, r *http.Request) {
 	s.socialRespondFollowRequest(w, r, false)
+}
+
+func (s *service) socialInteractionSummary(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	postID := strings.ToLower(r.PathValue("post_id"))
+	if !socialUUIDPattern.MatchString(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "A valid post ID is required", requestID))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Interaction state could not be loaded", requestID))
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err := socialCanViewPostReadWith(ctx, tx, userID, postID); errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "The post is unavailable", requestID))
+		return
+	} else if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be checked", requestID))
+		return
+	}
+
+	// Read counts, viewer state and the reaction breakdown in one indexed query
+	// after the privacy check. This keeps feed-card hydration to one aggregate
+	// round trip instead of issuing a separate query for every counter/state.
+	const summarySQL = `SELECT p.likes_count,p.replies_count,p.reposts_count,
+		(SELECT count(*) FROM testagram_local.bookmarks b WHERE b.post_id=p.id),
+		COALESCE((SELECT r.emoji FROM testagram_local.post_reactions r WHERE r.post_id=p.id AND r.user_id=$2),''),
+		EXISTS(SELECT 1 FROM testagram_local.reposts r WHERE r.post_id=p.id AND r.user_id=$2),
+		EXISTS(SELECT 1 FROM testagram_local.bookmarks b WHERE b.post_id=p.id AND b.user_id=$2),
+		COALESCE((SELECT jsonb_object_agg(grouped.emoji,grouped.reaction_count)
+			FROM (SELECT emoji,count(*)::bigint AS reaction_count
+				FROM testagram_local.post_reactions WHERE post_id=p.id GROUP BY emoji) grouped),'{}'::jsonb)
+		FROM testagram_local.posts p WHERE p.id=$1`
+	var likesCount, repliesCount, repostsCount, bookmarksCount int64
+	var emoji string
+	var reposted, bookmarked bool
+	var reactionsJSON []byte
+	if err := tx.QueryRow(ctx, summarySQL, postID, userID).Scan(
+		&likesCount, &repliesCount, &repostsCount, &bookmarksCount,
+		&emoji, &reposted, &bookmarked, &reactionsJSON,
+	); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Interaction summary could not be loaded", requestID))
+		return
+	}
+	reactions := make(map[string]int64)
+	if len(reactionsJSON) > 0 {
+		if err := json.Unmarshal(reactionsJSON, &reactions); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Reaction breakdown could not be decoded", requestID))
+			return
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("INTERACTION_STATE_UNAVAILABLE", "Interaction state could not be confirmed", requestID))
+		return
+	}
+	userReactions := []string{}
+	if emoji != "" {
+		userReactions = append(userReactions, emoji)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"likes": likesCount, "reposts": repostsCount, "replies": repliesCount,
+			"quotes": 0, "views": 0, "shares": 0, "bookmarks": bookmarksCount,
+			"reaction_total": likesCount, "reactions": reactions,
+			"is_liked": emoji == "❤️", "is_reposted": reposted, "is_bookmarked": bookmarked,
+			"user_reactions": userReactions,
+		},
+		"error": nil, "request_id": requestID,
+	})
+}
+
+func (s *service) socialReactionState(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	postID := strings.ToLower(r.PathValue("post_id"))
+	if !socialUUIDPattern.MatchString(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "A valid post ID is required", requestID))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REACTION_STATE_UNAVAILABLE", "Reaction state could not be loaded", requestID))
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err := socialCanViewPostReadWith(ctx, tx, userID, postID); errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "The post is unavailable", requestID))
+		return
+	} else if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be checked", requestID))
+		return
+	}
+	var emoji string
+	err = tx.QueryRow(ctx, "SELECT emoji FROM testagram_local.post_reactions WHERE post_id=$1 AND user_id=$2", postID, userID).Scan(&emoji)
+	if errors.Is(err, pgx.ErrNoRows) {
+		emoji = ""
+	} else if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REACTION_STATE_UNAVAILABLE", "Reaction state could not be loaded", requestID))
+		return
+	}
+	var likesCount int64
+	if err := tx.QueryRow(ctx, "SELECT likes_count FROM testagram_local.posts WHERE id=$1", postID).Scan(&likesCount); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REACTION_STATE_UNAVAILABLE", "Reaction count could not be loaded", requestID))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REACTION_STATE_UNAVAILABLE", "Reaction state could not be confirmed", requestID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"liked": emoji != "", "emoji": emoji, "likes_count": likesCount}, "error": nil, "request_id": requestID})
+}
+
+func (s *service) socialRepostState(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	postID := strings.ToLower(r.PathValue("post_id"))
+	if !socialUUIDPattern.MatchString(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "A valid post ID is required", requestID))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPOST_STATE_UNAVAILABLE", "Repost state could not be loaded", requestID))
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err := socialCanViewPostReadWith(ctx, tx, userID, postID); errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "The post is unavailable", requestID))
+		return
+	} else if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be checked", requestID))
+		return
+	}
+	var reposted bool
+	var repostsCount int64
+	query := "SELECT EXISTS(SELECT 1 FROM testagram_local.reposts WHERE post_id=$1 AND user_id=$2), reposts_count FROM testagram_local.posts WHERE id=$1"
+	if err := tx.QueryRow(ctx, query, postID, userID).Scan(&reposted, &repostsCount); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPOST_STATE_UNAVAILABLE", "Repost state could not be loaded", requestID))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPOST_STATE_UNAVAILABLE", "Repost state could not be confirmed", requestID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"reposted": reposted, "reposts_count": repostsCount}, "error": nil, "request_id": requestID})
 }
 
 func (s *service) socialFollowState(w http.ResponseWriter, r *http.Request) {
