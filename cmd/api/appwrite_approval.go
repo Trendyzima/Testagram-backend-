@@ -74,6 +74,13 @@ func (s *service) recordAppwriteIdentityApproval(w http.ResponseWriter, r *http.
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	defer r.Body.Close()
 	in, err := decodeAppwriteApprovalInput(r)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("REQUEST_TOO_LARGE", "Approval request exceeds 4 KiB", id))
+			return
+		}
+	}
 	if err != nil || !validAppwriteUserID(in.AppwriteUserID) ||
 		!identityApprovalIDPattern.MatchString(in.RegistrationID) ||
 		!identityApprovalIDPattern.MatchString(in.ProviderEventID) {
