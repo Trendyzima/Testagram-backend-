@@ -27,6 +27,10 @@ type appwriteProvisionInput struct {
 
 var appwriteUsernamePattern = regexp.MustCompile("^[A-Za-z0-9_]{3,30}$")
 
+func appwriteKYCBindingEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("APPWRITE_KYC_BINDING_ENABLED")), "true")
+}
+
 func decodeAppwriteProvisionInput(r *http.Request) (appwriteProvisionInput, error) {
 	var raw map[string]json.RawMessage
 	decoder := json.NewDecoder(r.Body)
@@ -220,6 +224,10 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 	id := requestID(r)
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if !appwriteKYCBindingEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("APPWRITE_KYC_BINDING_DISABLED", "Appwrite identity provisioning is disabled until the trusted KYC callback is configured and verified", id))
 		return
 	}
 	if r.Method != http.MethodPost {
