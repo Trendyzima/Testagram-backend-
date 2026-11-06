@@ -17,7 +17,32 @@ type appwriteProvisionInput struct {
   DisplayName string `json:"display_name"`
 }
 
-var appwriteUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}$`)
+var appwriteUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}package main
+
+import (
+  "context"
+  "encoding/json"
+  "errors"
+  "net/http"
+  "regexp"
+  "strings"
+  "time"
+
+  "github.com/jackc/pgx/v5"
+)
+
+type appwriteProvisionInput struct {
+  Username string `json:"username"`
+  DisplayName string `json:"display_name"`
+}
+
+)
+
+func validateAppwriteProvisionInput(in appwriteProvisionInput) error {
+  if !appwriteUsernamePattern.MatchString(in.Username) { return errors.New("username must contain 3 to 30 letters, numbers or underscores") }
+  if strings.TrimSpace(in.DisplayName)=="" || len(in.DisplayName)>80 { return errors.New("display name must contain 1 to 80 characters") }
+  return nil
+}
 
 type appwriteIdentityResponse struct {
   CanonicalUserID string `json:"canonical_user_id"`
@@ -65,7 +90,6 @@ func (s *service) appwriteIdentitySession(w http.ResponseWriter, r *http.Request
   if out.AccountStatus != "active" { writeJSON(w,http.StatusForbidden,errorBody("ACCOUNT_NOT_ACTIVE","This Testagram account is not active",id)); return }
   out.Email = strings.ToLower(strings.TrimSpace(account.Email))
   out.EmailVerified = account.EmailVerification
-  _,_ = s.db.Exec(ctx,`INSERT INTO testagram_identity.identity_events(appwrite_user_id,canonical_user_id,event_type,request_id) VALUES($1,$2,'session_resolved',$3)`,account.ID,out.CanonicalUserID,id)
   writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":out,"error":nil,"request_id":id})
 }
 
@@ -77,7 +101,7 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
   var in appwriteProvisionInput
   dec := json.NewDecoder(r.Body); dec.DisallowUnknownFields()
   if err := dec.Decode(&in); err != nil { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_REQUEST","Username and display name are required",id)); return }
-  if !appwriteUsernamePattern.MatchString(in.Username) || len(in.DisplayName)>80 || strings.TrimSpace(in.DisplayName)=="" {
+  if err := validateAppwriteProvisionInput(in); err != nil {
     writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PROFILE","Choose a username (3–30 letters, numbers or underscores) and a display name up to 80 characters",id)); return
   }
   account,status,err := s.verifiedAppwriteRequest(r)
