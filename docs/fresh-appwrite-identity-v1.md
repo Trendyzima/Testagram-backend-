@@ -10,14 +10,15 @@
 ## API
 
 - `GET /api/identity/session`: verifies the Appwrite session and resolves the existing mapping plus active canonical account.
-- `POST /api/identity/provision`: for a verified Appwrite email, creates a new canonical account and mapping atomically, but only after the complete legacy email inventory gate is marked complete.
+- `POST /api/identity/provision`: for a verified Appwrite email, creates a new canonical account and mapping atomically, but only after a trusted KYC approval record and the complete legacy email inventory gate exist.
+- `POST /internal/identity/approval`: accepts an attestation only from the configured identity-verification worker using the server-only `APPWRITE_IDENTITY_INGEST_TOKEN`. It is idempotent for the same provider event and rejects conflicting approvals.
 - `POST /api/identity/link`: existing account path; requires simultaneous Appwrite and legacy Supabase session proof and preserves the legacy canonical UUID.
 
-Provisioning is idempotent for an already-mapped Appwrite ID. A reserved legacy email returns 409 and must use the verified linking path. The same email is never sufficient proof to claim an existing account.
+Provisioning is idempotent for an already-mapped Appwrite ID. A reserved legacy email returns 409 and must use the verified linking path. New accounts are also rejected unless the identity-verification worker has recorded an approval for that exact Appwrite user ID; a browser cannot mark itself approved. The same email is never sufficient proof to claim an existing account.
 
 ## Migration safety gate
 
-Apply `20261107_appwrite_identity_lifecycle.sql`. The singleton inventory flag defaults to false. New account provisioning returns 503 until operators import and reconcile every legacy email/UUID into `testagram_identity.legacy_email_reservations` and explicitly set `legacy_inventory_complete=true`. Do not set that flag based on an estimate or partial export.
+Apply `20261107_appwrite_identity_lifecycle.sql`. The singleton inventory flag defaults to false. New account provisioning returns 503 until operators import and reconcile every legacy email/UUID into `testagram_identity.legacy_email_reservations` and explicitly set `legacy_inventory_complete=true`. Do not set that flag based on an estimate or partial export. The KYC approval table is separate: only the trusted verification worker may populate it after the existing identity-verification engine has approved the registration.
 
 The importer/reconciliation job is a separate controlled operation: export the legacy user inventory from the old identity provider, reconcile it with canonical account rows and dependent data, import only normalized email plus stable legacy UUID, compare counts/checksums, and record the source export hash and operator approval. Do not put raw passwords, access tokens or recovery secrets in this inventory.
 
@@ -27,4 +28,4 @@ No existing account, post, follow, message, media object or canonical UUID is de
 
 ## Deployment
 
-Configure server-side `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`. Never expose an Appwrite API key in browser variables. Keep the production auth provider on the existing provider until XClone's global session provider, legal acceptance, recovery, direct Supabase dependencies and all staging flows have been migrated. This PR adds the identity API; it does not switch production traffic.
+Configure server-side `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, and a high-entropy `APPWRITE_IDENTITY_INGEST_TOKEN` shared only with the trusted KYC worker. Never expose an Appwrite API key in browser variables. Keep the production auth provider on the existing provider until XClone's global session provider, legal acceptance, recovery, direct Supabase dependencies and all staging flows have been migrated. This PR adds the identity API; it does not switch production traffic.
