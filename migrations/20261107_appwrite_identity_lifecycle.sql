@@ -25,6 +25,17 @@ CREATE INDEX IF NOT EXISTS legacy_email_reservations_canonical
   ON testagram_identity.legacy_email_reservations(canonical_user_id)
   WHERE canonical_user_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS testagram_identity.legal_acceptances (
+  canonical_user_id UUID PRIMARY KEY REFERENCES testagram_local.accounts(user_id) ON DELETE RESTRICT,
+  birth_date DATE NOT NULL,
+  terms_accepted BOOLEAN NOT NULL CHECK (terms_accepted),
+  privacy_accepted BOOLEAN NOT NULL CHECK (privacy_accepted),
+  content_policy_accepted BOOLEAN NOT NULL CHECK (content_policy_accepted),
+  age_confirmed BOOLEAN NOT NULL CHECK (age_confirmed),
+  policy_version TEXT NOT NULL CHECK (length(policy_version) BETWEEN 1 AND 32),
+  accepted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+REVOKE ALL ON TABLE testagram_identity.legal_acceptances FROM PUBLIC;
 CREATE TABLE IF NOT EXISTS testagram_identity.identity_events (
   event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   appwrite_user_id TEXT NOT NULL,
@@ -44,12 +55,12 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
     GRANT SELECT ON testagram_identity.migration_control,
       testagram_identity.legacy_email_reservations TO testagram_app;
-    GRANT INSERT, SELECT ON testagram_identity.identity_events TO testagram_app;
+    GRANT INSERT, SELECT ON testagram_identity.identity_events, testagram_identity.legal_acceptances TO testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     GRANT SELECT ON testagram_identity.migration_control,
       testagram_identity.legacy_email_reservations TO service_role;
-    GRANT INSERT, SELECT ON testagram_identity.identity_events TO service_role;
+    GRANT INSERT, SELECT ON testagram_identity.identity_events, testagram_identity.legal_acceptances TO service_role;
   END IF;
 END;
 $grants$;
