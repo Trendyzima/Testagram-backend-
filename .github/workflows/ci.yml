@@ -453,12 +453,30 @@ jobs:
       - name: Apply schema and verify constraints
         run: |
           set -euo pipefail
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_dual_backend_replication.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261107_appwrite_identity_lifecycle.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO testagram_auth.identities(email,username,password_hash)
           VALUES ('ci@example.test','ci_user','test-hash');
+          INSERT INTO testagram_local.accounts(user_id,username,display_name)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','ci_user','CI User');
+          DO $inventory$
+          BEGIN
+            IF (SELECT legacy_inventory_complete FROM testagram_identity.migration_control WHERE singleton=TRUE) THEN
+              RAISE EXCEPTION 'legacy inventory gate must default to closed';
+            END IF;
+          END $inventory$;
+          INSERT INTO testagram_identity.legacy_email_reservations(email_normalized,legacy_user_id,canonical_user_id)
+          VALUES ('legacy@example.test','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000');
+          UPDATE testagram_identity.migration_control
+            SET legacy_inventory_complete=TRUE,legacy_inventory_completed_at=now(),updated_at=now()
+            WHERE singleton=TRUE;
+          INSERT INTO testagram_identity.legal_acceptances(canonical_user_id,birth_date,terms_accepted,privacy_accepted,content_policy_accepted,age_confirmed,policy_version)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','1990-01-01',TRUE,TRUE,TRUE,TRUE,'2026-09');
           DO $ci$
           BEGIN
             IF (SELECT count(*) FROM testagram_auth.identities WHERE email_normalized='ci@example.test') <> 1 THEN
@@ -472,6 +490,18 @@ jobs:
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='link_audit') THEN
               RAISE EXCEPTION 'Appwrite identity link audit table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='migration_control') THEN
+              RAISE EXCEPTION 'Appwrite migration control table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='legacy_email_reservations') THEN
+              RAISE EXCEPTION 'legacy email reservation table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_identity.legal_acceptances WHERE canonical_user_id='123e4567-e89b-42d3-a456-426614174000' AND policy_version='2026-09') THEN
+              RAISE EXCEPTION 'server-recorded legal acceptance missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_identity.legacy_email_reservations WHERE email_normalized='legacy@example.test') THEN
+              RAISE EXCEPTION 'legacy email reservation missing';
             END IF;
             INSERT INTO testagram_identity.appwrite_accounts(appwrite_user_id,canonical_user_id,legacy_user_id,email,email_verified,linked_at)
             VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','ci@example.test',TRUE,now());
