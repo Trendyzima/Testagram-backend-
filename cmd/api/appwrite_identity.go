@@ -28,7 +28,9 @@ func decodeAppwriteProvisionInput(r *http.Request) (appwriteProvisionInput, erro
 		return appwriteProvisionInput{}, err
 	}
 	for key := range raw {
-		if key != "username" && key != "display_name" { return appwriteProvisionInput{}, errors.New("unknown field") }
+		if key != "username" && key != "display_name" {
+			return appwriteProvisionInput{}, errors.New("unknown field")
+		}
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
@@ -86,12 +88,12 @@ func (s *service) verifiedAppwriteRequest(r *http.Request) (appwriteAccount, int
 func appwriteIdentityPayload(out appwriteIdentityResponse) map[string]any {
 	return map[string]any{
 		"canonical_user_id": out.CanonicalUserID,
-		"appwrite_user_id": out.AppwriteUserID,
-		"email": out.Email,
-		"email_verified": out.EmailVerified,
-		"username": out.Username,
-		"display_name": out.DisplayName,
-		"account_status": out.AccountStatus,
+		"appwrite_user_id":  out.AppwriteUserID,
+		"email":             out.Email,
+		"email_verified":    out.EmailVerified,
+		"username":          out.Username,
+		"display_name":      out.DisplayName,
+		"account_status":    out.AccountStatus,
 	}
 }
 
@@ -155,6 +157,10 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", id))
 		return
 	}
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		writeJSON(w, http.StatusUnsupportedMediaType, errorBody("UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json", id))
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	defer r.Body.Close()
 	in, err := decodeAppwriteProvisionInput(r)
@@ -184,7 +190,8 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 	}
 	defer tx.Rollback(ctx)
 	email := strings.ToLower(strings.TrimSpace(account.Email))
-	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", email); err != nil {
+	var lockResult any
+	if err = tx.QueryRow(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", email).Scan(&lockResult); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOCK_FAILED", "Identity provisioning is temporarily unavailable", id))
 		return
 	}
