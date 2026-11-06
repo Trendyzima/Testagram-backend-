@@ -16,14 +16,14 @@ This branch adds:
 
 - An Appwrite session verifier that calls Appwrite `/v1/account` with `X-Appwrite-Project` and `X-Appwrite-JWT`.
 - Explicit `TESTAGRAM_AUTH_PROVIDER=appwrite` selection. It does not silently fall back to Supabase if Appwrite is unavailable.
-- A PostgreSQL mapping from Appwrite user IDs to stable Testagram UUIDs, with an explicit `legacy_user_id` link slot.
+- A PostgreSQL mapping from Appwrite user IDs to explicitly provisioned stable Testagram UUIDs, with an explicit `legacy_user_id` link slot. Auth rejects unmapped Appwrite accounts; it never creates a new Testagram identity during login.
 - Safe defaults that retain the current Supabase auth path until the client and existing-account migration are ready.
 
 ## Acceptance checklist and honest status
 
 | Gate | Current status | Remaining acceptance evidence |
 |---|---|---|
-| Appwrite authentication | **Backend adapter implemented; not production-enabled** | Staging Appwrite project tests, session expiry/revocation behavior, client SDK integration, and account-link migration for existing users |
+| Appwrite authentication | **Backend verifier and explicit mapping lookup implemented; provisioning/linking not production-ready** | Staging Appwrite project tests, session expiry/revocation behavior, client SDK integration, and account-link migration for existing users |
 | PostgreSQL consistency | **Foundation exists; partial** | Apply the complete ordered schema to a clean staging DB, test constraints/transactions/outbox replay, and verify data reconciliation |
 | 100 GiB global quota | **Schema foundation exists; partial** | Concurrency tests against the final Go upload routes, pool usage reconciliation, and actual provider capacity proof |
 | Backblaze direct uploads | **Generic S3 provider exists; not B2-certified** | B2-specific signed PUT/HEAD/GET/DELETE, multipart behavior if enabled, SHA-256 verification and CDN origin tests |
@@ -36,7 +36,7 @@ This branch adds:
 
 ## Existing-account migration policy
 
-Appwrite user IDs are not assumed to equal the existing Supabase UUID. The mapping table provides a stable canonical UUID. A legacy account must be linked only after a verified ownership process (for example, an authenticated legacy session plus an Appwrite session, or a verified recovery flow). Email equality by itself is not sufficient proof. The linking operation must be transactional, unique on both identities, auditable, and idempotent. Existing actor IDs and federation signing keys remain unchanged.
+Appwrite user IDs are not assumed to equal the existing Supabase UUID. The mapping table provides a stable canonical UUID. Authentication never auto-creates a mapping. A legacy account must be linked only after a verified ownership process (for example, an authenticated legacy session plus an Appwrite session, or a verified recovery flow). Email equality by itself is not sufficient proof. The linking operation must be transactional, unique on both identities, auditable, and idempotent. Existing actor IDs and federation signing keys remain unchanged.
 
 Do not bulk-create Appwrite accounts from email addresses without a verified invitation/reset workflow. Do not copy password hashes from Supabase Auth; normal Auth APIs do not expose them.
 

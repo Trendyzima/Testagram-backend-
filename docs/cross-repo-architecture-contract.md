@@ -7,7 +7,7 @@ This document defines the integration boundary between [XClone](https://github.c
 ## Ownership boundaries
 
 - **XClone** owns the product UI, browser/mobile session acquisition, client-side API adapters, and compatibility with existing product features.
-- **Supabase Auth/Postgres/Edge Functions** remain authoritative for the existing product operations until a domain is explicitly migrated and tested. Never assume a mirrored record is authoritative.
+- **Hybrid migration target:** Appwrite Auth owns credentials/sessions after staged linking; independent PostgreSQL is the canonical Testagram product and federation data plane. Supabase remains a recoverable legacy source for each domain until that domain passes its migration gate. Never infer cutover from a mirrored record or successful health probe.
 - **Testagram Go API** owns its documented gateway behavior, bounded request handling, operational endpoints, and explicitly migrated backend capabilities. A gateway response is not proof that every product domain has migrated.
 - **Replication transport** provides authenticated, bounded, at-least-once event delivery with idempotent intake. A transport acknowledgement means durable peer acceptance, not successful product projection.
 - **Projection tables** are read models only. They must not silently replace the source tables or grant write authority.
@@ -40,7 +40,7 @@ Required fields: `id`, `origin`, `entity_type`, `entity_id`, `entity_version`, `
 
 ## API and media compatibility
 
-- Keep the current Supabase identity project and RLS behavior while routing is staged. Never use a service-role credential to impersonate a user or bypass authorization.
+- During transition, keep the current Supabase identity project and RLS behavior for unmigrated domains. After Appwrite cutover, validate Appwrite JWTs server-side and resolve them through the explicit identity bridge. Never use a service-role credential to impersonate a user or bypass authorization.
 - Browser configuration may contain only publishable values. Backend origins, signing keys, database credentials, and internal platform tokens remain server-side.
 - Preserve existing client response/error shapes or add an explicit versioned adapter. Unknown endpoints fail clearly; do not silently switch data stores.
 - Upload lifecycle must be tested end-to-end: authenticated intent → signed upload → provider-observed verification → completion → authorized attachment → public CDN rendering or private retrieval → deletion and cleanup.

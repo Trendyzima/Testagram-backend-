@@ -6,7 +6,7 @@ CREATE SCHEMA IF NOT EXISTS testagram_identity;
 
 CREATE TABLE IF NOT EXISTS testagram_identity.appwrite_accounts (
   appwrite_user_id TEXT PRIMARY KEY CHECK (length(appwrite_user_id) BETWEEN 1 AND 36),
-  canonical_user_id UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  canonical_user_id UUID NOT NULL UNIQUE,
   legacy_user_id UUID UNIQUE,
   email TEXT,
   email_verified BOOLEAN NOT NULL DEFAULT FALSE,

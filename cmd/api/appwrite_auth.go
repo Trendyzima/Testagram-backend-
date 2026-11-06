@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const maxAppwriteAccountResponse = 64 << 10
@@ -110,16 +112,22 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if len(email) > 254 || strings.ContainsAny(email, "\r\n") {
 		return "", http.StatusBadGateway, errors.New("Appwrite returned an invalid email address")
 	}
+	// Authentication must never create a new Testagram identity as a side
+	// effect. A valid Appwrite account is not proof that it has been linked to
+	// an existing Testagram profile, posts, actor ID, or storage ownership.
+	// Signup provisioning and existing-account linking are separate trusted,
+	// transactional flows; unknown identities fail closed here.
 	err = s.db.QueryRow(ctx, `
-		INSERT INTO testagram_identity.appwrite_accounts
-			(appwrite_user_id, canonical_user_id, email, email_verified, last_seen_at)
-		VALUES ($1, gen_random_uuid(), NULLIF($2, ''), $3, now())
-		ON CONFLICT (appwrite_user_id) DO UPDATE
-		SET email = COALESCE(NULLIF(EXCLUDED.email, ''), testagram_identity.appwrite_accounts.email),
-		    email_verified = EXCLUDED.email_verified,
+		UPDATE testagram_identity.appwrite_accounts
+		SET email = COALESCE(NULLIF($2, ''), email),
+		    email_verified = $3,
 		    last_seen_at = now(),
 		    updated_at = now()
+		WHERE appwrite_user_id = $1
 		RETURNING canonical_user_id::text`, account.ID, email, account.EmailVerification).Scan(&canonicalID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", http.StatusConflict, errors.New("Appwrite identity is not linked to a Testagram account")
+	}
 	if err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("Appwrite identity could not be mapped to the Testagram account")
 	}
