@@ -332,7 +332,8 @@ jobs:
             migrations/20261019_testagram_media_replication_producers.sql \
             migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
-            migrations/20261106_social_core.sql; do
+            migrations/20261106_social_core.sql \
+            migrations/20261106_social_feed_indexes.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
@@ -394,6 +395,15 @@ jobs:
               RAISE EXCEPTION 'delete/soft-delete counters did not return to zero';
             END IF;
           END $social_counts$;
+          DO $feed_indexes$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_local' AND indexname='testagram_local_posts_public_feed_idx')
+              OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_local' AND indexname='testagram_local_posts_author_feed_idx')
+              OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_local' AND indexname='testagram_local_mutes_feed_lookup_idx')
+              OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_local' AND indexname='testagram_local_blocks_feed_lookup_idx') THEN
+              RAISE EXCEPTION 'social feed access indexes are missing';
+            END IF;
+          END $feed_indexes$;
           DO $ci$
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND event_type='account.created' AND entity_id='123e4567-e89b-42d3-a456-426614174000') THEN

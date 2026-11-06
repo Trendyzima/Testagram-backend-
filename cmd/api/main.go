@@ -472,6 +472,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/identity/link", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/link", s.linkAppwriteIdentity)
 	mux.HandleFunc("OPTIONS /api/social/{path...}", s.mediaPreflight)
+	mux.HandleFunc("GET /api/social/feed", s.socialFeed)
 	mux.HandleFunc("GET /api/social/follows/{target_user_id}", s.socialFollowState)
 	mux.HandleFunc("POST /api/social/follows", s.socialFollow)
 	mux.HandleFunc("GET /api/social/follow-requests", s.socialFollowRequests)

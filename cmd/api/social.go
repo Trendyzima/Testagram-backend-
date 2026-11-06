@@ -39,6 +39,8 @@ type socialRepostRequest struct {
 type socialCursor struct {
 	CreatedAt time.Time `json:"created_at"`
 	ID        string    `json:"id"`
+	Score     float64   `json:"score,omitempty"`
+	Mode      string    `json:"mode,omitempty"`
 }
 
 func encodeSocialCursor(cursor socialCursor) string {
@@ -113,6 +115,19 @@ func (s *service) socialRateLimit(ctx context.Context, userID, action string, ma
 		_, _ = s.db.Exec(ctx, "DELETE FROM testagram_auth.rate_limits WHERE action=$1 AND window_start < now() - interval '1 day'", action)
 	}
 	return attempts <= maxAttempts, nil
+}
+
+func (s *service) socialReadAllowed(w http.ResponseWriter, r *http.Request, userID, requestID, action string, maxAttempts int) bool {
+	allowed, err := s.socialRateLimit(r.Context(), userID, action, maxAttempts)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_RATE_LIMIT_UNAVAILABLE", "Social read protection is temporarily unavailable", requestID))
+		return false
+	}
+	if !allowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("SOCIAL_RATE_LIMITED", "Too many requests; wait a minute and try again", requestID))
+		return false
+	}
+	return true
 }
 
 func (s *service) socialWriteAllowed(w http.ResponseWriter, r *http.Request, userID, requestID, action string, maxAttempts int) bool {
@@ -1006,5 +1021,132 @@ func (s *service) socialFollowState(w http.ResponseWriter, r *http.Request) {
 		},
 		"error":      nil,
 		"request_id": requestID,
+	})
+}
+
+// socialFeed provides bounded keyset pagination. "for_you" uses an explicit
+// recency/engagement heuristic; "latest" is strictly chronological.
+func (s *service) socialFeed(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.socialReadAllowed(w, r, userID, requestID, "social-feed-read", 120) {
+		return
+	}
+
+	limit := 30
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 50 {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_LIMIT", "limit must be between 1 and 50", requestID))
+			return
+		}
+		limit = parsed
+	}
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode == "" {
+		mode = "for_you"
+	}
+	if mode != "for_you" && mode != "latest" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_FEED_MODE", "mode must be for_you or latest", requestID))
+		return
+	}
+	var beforeAt any
+	var beforeID any
+	var beforeScore float64
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		cursor, err := decodeSocialCursor(raw)
+		if err != nil || (cursor.Mode != "" && cursor.Mode != mode) {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CURSOR", "The feed cursor is invalid for this feed mode", requestID))
+			return
+		}
+		beforeAt, beforeID, beforeScore = cursor.CreatedAt, cursor.ID, cursor.Score
+	}
+
+	rows, err := s.db.Query(r.Context(), `WITH ranked AS (
+		SELECT p.id,p.author_id,p.text,p.visibility,p.media_ids,p.created_at,p.updated_at,
+		       p.likes_count,p.replies_count,p.reposts_count,
+		       a.username,a.display_name,a.avatar_key,
+		       CASE WHEN $2='latest' THEN 0::double precision
+		            ELSE ln(1.0 + p.likes_count*2.0 + p.replies_count*3.0 + p.reposts_count*2.0)
+		                 / power(1.0 + GREATEST(0.0,EXTRACT(EPOCH FROM (now()-p.created_at))/3600.0),1.25)
+		       END AS rank_score
+		FROM testagram_local.posts p
+		JOIN testagram_local.accounts a ON a.user_id=p.author_id
+		WHERE p.deleted_at IS NULL AND a.account_status='active'
+		  AND (
+		    p.author_id=$1
+		    OR (p.visibility='public' AND NOT a.protected_account)
+		    OR (p.visibility='followers' AND EXISTS (
+		      SELECT 1 FROM testagram_local.follows f
+		      WHERE f.follower_id=$1 AND f.following_id=p.author_id AND f.status='accepted'
+		    ))
+		    OR (p.visibility='public' AND a.protected_account AND EXISTS (
+		      SELECT 1 FROM testagram_local.follows f
+		      WHERE f.follower_id=$1 AND f.following_id=p.author_id AND f.status='accepted'
+		    ))
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM testagram_local.blocks b
+		    WHERE (b.blocker_id=p.author_id AND b.blocked_id=$1)
+		       OR (b.blocker_id=$1 AND b.blocked_id=p.author_id)
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM testagram_local.mutes m
+		    WHERE m.muter_id=$1 AND m.muted_id=p.author_id
+		  )
+	)
+	SELECT id::text,author_id::text,text,visibility,media_ids,created_at,updated_at,
+	       likes_count,replies_count,reposts_count,username,display_name,avatar_key,rank_score
+	FROM ranked
+	WHERE $3::timestamptz IS NULL
+	   OR ($2='latest' AND (created_at,id)<($3::timestamptz,$4::uuid))
+	   OR ($2='for_you' AND (rank_score,created_at,id)<($5::double precision,$3::timestamptz,$4::uuid))
+	ORDER BY CASE WHEN $2='for_you' THEN rank_score END DESC NULLS LAST,
+	         created_at DESC,id DESC
+	LIMIT $6`, userID, mode, beforeAt, beforeID, beforeScore, limit+1)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_UNAVAILABLE", "The home feed could not be loaded", requestID))
+		return
+	}
+	defer rows.Close()
+	items := make([]map[string]any, 0, limit+1)
+	var last socialCursor
+	for rows.Next() {
+		var id, authorID, content, visibility, username, displayName, avatarKey string
+		var mediaIDs []byte
+		var createdAt, updatedAt time.Time
+		var likesCount, repliesCount, repostsCount int64
+		var score float64
+		if err := rows.Scan(&id, &authorID, &content, &visibility, &mediaIDs, &createdAt, &updatedAt,
+			&likesCount, &repliesCount, &repostsCount, &username, &displayName, &avatarKey, &score); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_UNAVAILABLE", "The home feed could not be loaded", requestID))
+			return
+		}
+		var decodedMedia []any
+		_ = json.Unmarshal(mediaIDs, &decodedMedia)
+		items = append(items, map[string]any{
+			"id": id, "author_id": authorID, "text": content, "visibility": visibility, "media_ids": decodedMedia,
+			"created_at": createdAt, "updated_at": updatedAt, "likes_count": likesCount,
+			"replies_count": repliesCount, "reposts_count": repostsCount, "rank_score": score,
+			"author": map[string]any{"id": authorID, "username": username, "display_name": displayName, "avatar_key": avatarKey},
+		})
+		if len(items) <= limit {
+			last = socialCursor{CreatedAt: createdAt, ID: id, Score: score, Mode: mode}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_UNAVAILABLE", "The home feed could not be loaded", requestID))
+		return
+	}
+	nextCursor := ""
+	if len(items) > limit {
+		items = items[:limit]
+		nextCursor = encodeSocialCursor(last)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "data": map[string]any{"items": items, "next_cursor": nextCursor, "mode": mode},
+		"error": nil, "request_id": requestID,
 	})
 }

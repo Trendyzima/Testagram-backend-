@@ -17,6 +17,22 @@ func TestSocialCursorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSocialFeedCursorRoundTrip(t *testing.T) {
+	want := socialCursor{
+		CreatedAt: time.Date(2026, 11, 6, 13, 45, 0, 0, time.UTC),
+		ID:        "123e4567-e89b-42d3-a456-426614174001",
+		Score:     1.234567890123,
+		Mode:      "for_you",
+	}
+	got, err := decodeSocialCursor(encodeSocialCursor(want))
+	if err != nil {
+		t.Fatalf("decode feed cursor: %v", err)
+	}
+	if !got.CreatedAt.Equal(want.CreatedAt) || got.ID != want.ID || got.Score != want.Score || got.Mode != want.Mode {
+		t.Fatalf("feed cursor round-trip = %#v, want %#v", got, want)
+	}
+}
+
 func TestSocialCursorRejectsInvalidValues(t *testing.T) {
 	for _, value := range []string{"", "not-base64", "e30", "eyJpZCI6Im5vdC1hLXV1aWQifQ"} {
 		if _, err := decodeSocialCursor(value); err == nil {
