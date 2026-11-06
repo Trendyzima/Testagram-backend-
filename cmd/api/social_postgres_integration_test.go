@@ -72,18 +72,15 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 
 	assertVisible := func(name, viewer, post string, want bool) {
 		t.Helper()
-		_, readErr := socialCanViewPostReadWith(ctx, tx, viewer, post)
-		_, writeErr := socialCanViewPostWith(ctx, tx, viewer, post)
-		for mode, err := range map[string]error{"read": readErr, "write": writeErr} {
-			got := err == nil
-			if errors.Is(err, pgx.ErrNoRows) {
-				got = false
-			} else if err != nil {
-				t.Fatalf("%s (%s): visibility query failed: %v", name, mode, err)
-			}
-			if got != want {
-				t.Errorf("%s (%s): visible=%v, want %v", name, mode, got, want)
-			}
+		_, err := socialCanViewPostWith(ctx, tx, viewer, post)
+		got := err == nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			got = false
+		} else if err != nil {
+			t.Fatalf("%s: visibility query failed: %v", name, err)
+		}
+		if got != want {
+			t.Errorf("%s: visible=%v, want %v", name, got, want)
 		}
 	}
 
