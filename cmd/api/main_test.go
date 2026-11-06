@@ -759,3 +759,27 @@ func TestUnifiedSearchRPCBodyRejectsUnboundedInput(t *testing.T) {
 		})
 	}
 }
+
+func TestHomeFeedRequiresAuthenticatedSession(t *testing.T) {
+	s := &service{}
+	r := httptest.NewRequest(http.MethodGet, "/api/feed/home?limit=20", nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("home feed status = %d, want %d: %s", w.Code, http.StatusUnauthorized, w.Body.String())
+	}
+}
+
+func TestHomeFeedCursorRoundTripAndValidation(t *testing.T) {
+	cursor := homeFeedCursor{CreatedAt: time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC), ID: "123e4567-e89b-42d3-a456-426614174000"}
+	decoded, err := decodeHomeFeedCursor(encodeHomeFeedCursor(cursor))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.CreatedAt.Equal(cursor.CreatedAt) || decoded.ID != cursor.ID {
+		t.Fatalf("cursor round trip mismatch: %#v", decoded)
+	}
+	if _, err := decodeHomeFeedCursor("not-a-cursor"); err == nil {
+		t.Fatal("expected invalid cursor rejection")
+	}
+}

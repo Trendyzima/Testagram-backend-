@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
@@ -59,10 +60,13 @@ type service struct {
 	cacheMisses         atomic.Uint64
 	rateLimited         atomic.Uint64
 	platformErrors      atomic.Uint64
+	algorithmRequests   atomic.Uint64
+	algorithmFailures   atomic.Uint64
 	upstream            *http.Client
 	platform            *platformclient.Client
 	media               *media.Signer
 	virtualStorage      *virtualstorage.Manager
+	algorithm           *algorithmclient.Client
 	replicationReceiver http.Handler
 }
 
@@ -301,6 +305,8 @@ func (s *service) metricsText() string {
 	fmt.Fprintf(&b, "# HELP testagram_platform_cache_misses_total Public capability cache misses.\n# TYPE testagram_platform_cache_misses_total counter\ntestagram_platform_cache_misses_total %d\n", s.cacheMisses.Load())
 	fmt.Fprintf(&b, "# HELP testagram_rate_limited_requests_total Requests denied by the shared rate limiter.\n# TYPE testagram_rate_limited_requests_total counter\ntestagram_rate_limited_requests_total %d\n", s.rateLimited.Load())
 	fmt.Fprintf(&b, "# HELP testagram_platform_errors_total Shared platform API errors observed by the gateway.\n# TYPE testagram_platform_errors_total counter\ntestagram_platform_errors_total %d\n", s.platformErrors.Load())
+	fmt.Fprintf(&b, "# HELP testagram_algorithm_requests_total Requests sent to the private feed ranker.\n# TYPE testagram_algorithm_requests_total counter\ntestagram_algorithm_requests_total %d\n", s.algorithmRequests.Load())
+	fmt.Fprintf(&b, "# HELP testagram_algorithm_failures_total Ranker failures that triggered chronological fallback.\n# TYPE testagram_algorithm_failures_total counter\ntestagram_algorithm_failures_total %d\n", s.algorithmFailures.Load())
 
 	s.metricsMu.Lock()
 	defer s.metricsMu.Unlock()
@@ -471,6 +477,8 @@ func (s *service) routes() http.Handler {
 	}
 	mux.HandleFunc("OPTIONS /api/identity/link", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/link", s.linkAppwriteIdentity)
+	mux.HandleFunc("OPTIONS /api/feed/home", s.mediaPreflight)
+	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/social/{path...}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/social/follows/{target_user_id}", s.socialFollowState)
 	mux.HandleFunc("POST /api/social/follows", s.socialFollow)
@@ -1119,6 +1127,20 @@ func main() {
 	} else if platformURL != "" || platformToken != "" {
 		log.Printf("internal platform integration disabled: PLATFORM_URL and PLATFORM_INTERNAL_TOKEN must both be configured")
 	}
+	var algorithm *algorithmclient.Client
+	algorithmURL := strings.TrimSpace(os.Getenv("ALGORITHM_URL"))
+	algorithmToken := strings.TrimSpace(os.Getenv("ALGORITHM_INTERNAL_TOKEN"))
+	if algorithmURL != "" || algorithmToken != "" {
+		if algorithmURL == "" || algorithmToken == "" {
+			log.Printf("algorithm integration disabled: ALGORITHM_URL and ALGORITHM_INTERNAL_TOKEN must both be configured")
+		} else {
+			algorithm, err = algorithmclient.New(algorithmURL, algorithmToken, 1400*time.Millisecond)
+			if err != nil {
+				log.Fatalf("configure algorithm service: %v", err)
+			}
+			log.Printf("private Testagram feed ranking integration enabled")
+		}
+	}
 	var mediaSigner *media.Signer
 	// MEDIA_S3_* is the documented deployment contract. R2_* and legacy MINIO_*
 	// variables remain accepted to avoid breaking existing self-hosted installs.
@@ -1208,7 +1230,7 @@ func main() {
 			log.Printf("durable replication relay enabled")
 		}
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager, replicationReceiver: replicationReceiver}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
