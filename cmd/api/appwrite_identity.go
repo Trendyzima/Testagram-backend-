@@ -17,6 +17,12 @@ import (
 type appwriteProvisionInput struct {
 	Username    string
 	DisplayName string
+	BirthDate string
+	PolicyVersion string
+	TermsAccepted bool
+	PrivacyAccepted bool
+	ContentPolicyAccepted bool
+	AgeConfirmed bool
 }
 
 var appwriteUsernamePattern = regexp.MustCompile("^[A-Za-z0-9_]{3,30}$")
@@ -28,7 +34,7 @@ func decodeAppwriteProvisionInput(r *http.Request) (appwriteProvisionInput, erro
 		return appwriteProvisionInput{}, err
 	}
 	for key := range raw {
-		if key != "username" && key != "display_name" {
+		if key != "username" && key != "display_name" && key != "birth_date" && key != "policy_version" && key != "terms_accepted" && key != "privacy_accepted" && key != "content_policy_accepted" && key != "age_confirmed" {
 			return appwriteProvisionInput{}, errors.New("unknown field")
 		}
 	}
@@ -42,10 +48,11 @@ func decodeAppwriteProvisionInput(r *http.Request) (appwriteProvisionInput, erro
 			return in, err
 		}
 	}
-	if value := raw["display_name"]; len(value) > 0 {
-		if err := json.Unmarshal(value, &in.DisplayName); err != nil {
-			return in, err
-		}
+	if value := raw["display_name"]; len(value) > 0 { if err := json.Unmarshal(value, &in.DisplayName); err != nil { return in, err } }
+	if value := raw["birth_date"]; len(value) > 0 { if err := json.Unmarshal(value, &in.BirthDate); err != nil { return in, err } }
+	if value := raw["policy_version"]; len(value) > 0 { if err := json.Unmarshal(value, &in.PolicyVersion); err != nil { return in, err } }
+	for key, target := range map[string]*bool{"terms_accepted": &in.TermsAccepted, "privacy_accepted": &in.PrivacyAccepted, "content_policy_accepted": &in.ContentPolicyAccepted, "age_confirmed": &in.AgeConfirmed} {
+		if value := raw[key]; len(value) > 0 { if err := json.Unmarshal(value, target); err != nil { return in, err } }
 	}
 	return in, nil
 }
@@ -56,6 +63,13 @@ func validateAppwriteProvisionInput(in appwriteProvisionInput) error {
 	}
 	if strings.TrimSpace(in.DisplayName) == "" || len(in.DisplayName) > 80 {
 		return errors.New("display name must contain 1 to 80 characters")
+	}
+	birthDate, err := time.Parse("2006-01-02", in.BirthDate)
+	if err != nil || birthDate.After(time.Now().UTC().AddDate(-18, 0, 0)) {
+		return errors.New("account creation requires a valid adult birth date")
+	}
+	if in.PolicyVersion != env("TESTAGRAM_LEGAL_POLICY_VERSION", "2026-09") || !in.TermsAccepted || !in.PrivacyAccepted || !in.ContentPolicyAccepted || !in.AgeConfirmed {
+		return errors.New("all current Testagram policies and age confirmation must be accepted")
 	}
 	return nil
 }
@@ -254,7 +268,12 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusConflict, errorBody("IDENTITY_ALREADY_LINKED", "This Appwrite identity is already linked to another Testagram account", id))
 		return
 	}
-	_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.identity_events(appwrite_user_id,canonical_user_id,event_type,request_id) VALUES($1,$2,'provisioned',$3)", account.ID, canonicalID, id)
+		_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.legal_acceptances(canonical_user_id,birth_date,terms_accepted,privacy_accepted,content_policy_accepted,age_confirmed,policy_version) VALUES($1,$2::date,TRUE,TRUE,TRUE,TRUE,$3)", canonicalID, in.BirthDate, in.PolicyVersion)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LEGAL_ACCEPTANCE_FAILED", "Required policy acceptance could not be recorded; no account was committed", id))
+		return
+	}
+_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.identity_events(appwrite_user_id,canonical_user_id,event_type,request_id) VALUES($1,$2,'provisioned',$3)", account.ID, canonicalID, id)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Account creation could not be audited; no changes were committed", id))
 		return
