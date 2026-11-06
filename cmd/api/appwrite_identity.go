@@ -247,6 +247,16 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_LOOKUP_FAILED", "Identity lookup failed", id))
 		return
 	}
+	var kycApproved bool
+	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_identity.verification_approvals WHERE appwrite_user_id=$1)", account.ID).Scan(&kycApproved)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_VERIFICATION_LOOKUP_FAILED", "Identity verification status could not be checked", id))
+		return
+	}
+	if !kycApproved {
+		writeJSON(w, http.StatusForbidden, errorBody("IDENTITY_VERIFICATION_REQUIRED", "Complete Testagram's identity verification before creating the canonical account", id))
+		return
+	}
 	var inventoryComplete bool
 	err = tx.QueryRow(ctx, "SELECT legacy_inventory_complete FROM testagram_identity.migration_control WHERE singleton=TRUE FOR SHARE").Scan(&inventoryComplete)
 	if err != nil || !inventoryComplete {
