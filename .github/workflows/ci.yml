@@ -477,6 +477,8 @@ jobs:
             WHERE singleton=TRUE;
           INSERT INTO testagram_identity.legal_acceptances(canonical_user_id,birth_date,terms_accepted,privacy_accepted,content_policy_accepted,age_confirmed,policy_version)
           VALUES ('123e4567-e89b-42d3-a456-426614174000','1990-01-01',TRUE,TRUE,TRUE,TRUE,'2026-09');
+          INSERT INTO testagram_identity.verification_approvals(appwrite_user_id,registration_id,provider_event_id,approved_at)
+          VALUES ('ci-appwrite-user','ci-registration','ci-provider-event',now());
           DO $ci$
           BEGIN
             IF (SELECT count(*) FROM testagram_auth.identities WHERE email_normalized='ci@example.test') <> 1 THEN
@@ -496,6 +498,9 @@ jobs:
             END IF;
             IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='legacy_email_reservations') THEN
               RAISE EXCEPTION 'legacy email reservation table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='verification_approvals') THEN
+              RAISE EXCEPTION 'trusted verification approval table missing';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM testagram_identity.legal_acceptances WHERE canonical_user_id='123e4567-e89b-42d3-a456-426614174000' AND policy_version='2026-09') THEN
               RAISE EXCEPTION 'server-recorded legal acceptance missing';
