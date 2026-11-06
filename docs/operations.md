@@ -57,3 +57,9 @@ Stop and fix regressions before increasing load. Use realistic mixes of feed rea
     docker compose config --quiet
 
 The local Compose database is disposable development infrastructure. It is not a production backup or high-availability configuration.
+
+## TV channel health persistence
+
+The canonical TV health write API is `POST /internal/tv/health`. It accepts batches of up to 100 channel probe results and stores the latest status in `testagram_tv.channel_health` in independent PostgreSQL. The writer is restricted to the `TV Channel Health Monitor` workflow in `Trendyzima/XClone-9b4dz1-9b4dz1-8936-20260809tr`, on `refs/heads/main`, using a short-lived GitHub Actions OIDC token with audience `testagram-tv-health`. The API verifies the token signature against GitHub's published JWKS and validates issuer, audience, repository, workflow, ref, and event before accepting writes.
+
+Apply `migrations/20261106_tv_health_postgres.sql` using the normal migration runner after a verified backup. The self-hosted Compose bootstrap mounts it for newly initialized database volumes only; an existing volume must use the reviewed migration process. Configure the frontend repository Actions variable `TESTAGRAM_BACKEND_URL` to the HTTPS base URL of the deployed Go API. Do not switch the scheduled frontend workflow to this endpoint until the migration is applied and the backend route is deployed. No Supabase service-role credential is needed for the new persistence path.

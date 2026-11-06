@@ -21,6 +21,7 @@ services:
       - ../../migrations/010_media_upload_claim.sql:/docker-entrypoint-initdb.d/010_media_upload_claim.sql:ro
       - ../../migrations/011_global_storage_pool.sql:/docker-entrypoint-initdb.d/011_global_storage_pool.sql:ro
       - ../../migrations/20261106_appwrite_identity_bridge.sql:/docker-entrypoint-initdb.d/012_appwrite_identity_bridge.sql:ro
+      - ../../migrations/20261106_tv_health_postgres.sql:/docker-entrypoint-initdb.d/013_tv_health_postgres.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s

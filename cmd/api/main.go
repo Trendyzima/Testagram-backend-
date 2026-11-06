@@ -484,6 +484,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/media/attach", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/attach", s.mediaAttach)
 	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
+	mux.HandleFunc("POST /internal/tv/health", s.tvHealthBatch)
+	mux.HandleFunc("GET /api/tv/health", s.tvHealthRead)
 	mux.HandleFunc("GET /api/replication/public/{origin}/{entity_type}/{entity_id}", s.publicReplicationProjection)
 	if s.replicationReceiver != nil {
 		mux.Handle("POST /internal/replication/events", s.replicationReceiver)

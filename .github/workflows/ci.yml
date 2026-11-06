@@ -97,6 +97,56 @@ jobs:
         working-directory: services/platform
         run: govulncheck ./...
 
+  tv-health-schema-integration:
+    name: TV health PostgreSQL migration integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-tv-health-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-tv-health-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-tv-health-ci
+          exit 1
+      - name: Apply TV health migration and verify constraints
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-tv-health-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE testagram_app NOLOGIN;
+          CREATE ROLE service_role NOLOGIN;
+          SQL
+          docker exec -i testagram-tv-health-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_tv_health_postgres.sql
+          docker exec -i testagram-tv-health-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_tv.channel_health
+            (channel_id,url,is_online,last_checked_at,last_online_at,consecutive_failures,consecutive_successes,latency_ms,priority)
+          VALUES ('ci-channel','https://stream.example/live.m3u8',true,now(),now(),0,1,120,10);
+          INSERT INTO testagram_tv.channel_health
+            (channel_id,url,is_online,last_checked_at,last_online_at,consecutive_failures,consecutive_successes,latency_ms,priority)
+          VALUES ('ci-channel','https://stream.example/live.m3u8',false,now(),NULL,1,0,2500,10)
+          ON CONFLICT (channel_id) DO UPDATE SET
+            is_online=EXCLUDED.is_online,
+            last_checked_at=EXCLUDED.last_checked_at,
+            last_online_at=CASE WHEN EXCLUDED.is_online THEN EXCLUDED.last_checked_at ELSE testagram_tv.channel_health.last_online_at END,
+            consecutive_failures=CASE WHEN EXCLUDED.is_online THEN 0 ELSE testagram_tv.channel_health.consecutive_failures+1 END,
+            consecutive_successes=CASE WHEN EXCLUDED.is_online THEN testagram_tv.channel_health.consecutive_successes+1 ELSE 0 END;
+          DO $ci$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM testagram_tv.channel_health WHERE channel_id='ci-channel' AND NOT is_online AND consecutive_failures=1 AND consecutive_successes=0 AND last_online_at IS NOT NULL) THEN
+              RAISE EXCEPTION 'offline health update did not preserve last online timestamp or failure streak';
+            END IF;
+          END $ci$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-tv-health-ci || true
+
   compose:
     name: Self-hosted Compose validation
     runs-on: ubuntu-latest
