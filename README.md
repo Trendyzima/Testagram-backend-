@@ -135,3 +135,13 @@ Read docs/architecture.md, docs/operations.md, and docs/capacity-model.md. The K
 ## Virtual Storage
 
 The provider-neutral logical storage policy foundation is documented in [docs/platform/virtual-storage.md](docs/platform/virtual-storage.md). It is not production-enabled until an object-store adapter, durable metadata/quotas, authenticated routes, and live integration tests pass.
+
+## Hybrid Supabase migration foundation
+
+The migration target is Appwrite Auth + independent PostgreSQL + the Go API. PostgreSQL remains the canonical owner of Testagram product, federation, media metadata, quota and node state. Appwrite Realtime is a derived projection, not a second write authority. See [the migration readiness matrix](docs/migration/hybrid-supabase-exit-readiness.md).
+
+The API now supports `TESTAGRAM_AUTH_PROVIDER=appwrite`. It validates an Appwrite session by calling the configured `APPWRITE_ENDPOINT` `/v1/account` endpoint with `X-Appwrite-Project` and `X-Appwrite-JWT`, then resolves the Appwrite ID through the explicit PostgreSQL identity bridge in `migrations/20261106_appwrite_identity_bridge.sql`. Unknown identities fail closed with HTTP 409; authentication never invents a new Testagram identity. New-account provisioning and verified existing-account linking must be implemented as separate transactional flows before enabling Appwrite. The provider defaults to `supabase` for backward compatibility; this is deliberate. Do not enable Appwrite in production until the frontend SDK, existing-account linking, PostgreSQL migration and staging acceptance gates are complete. Appwrite failures do not fall back to Supabase when Appwrite is selected.
+
+For a fresh self-hosted PostgreSQL volume, the Appwrite identity bridge is included after the existing 100 GiB storage migration. Existing database volumes are not changed by init scripts: take a verified backup and apply the reviewed migration through the normal migration process. The API requires `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`; no Appwrite API key is required to validate a session JWT against the authenticated account endpoint.
+
+The backend is not yet a complete Supabase replacement. The capability gateway, admin console, some media metadata operations and the frontend's broad Auth/PostgREST/Realtime/Edge Function usage still depend on Supabase. Keep the old project recoverable until all migration gates pass.

@@ -105,9 +105,13 @@ func (s *service) localProductCapability(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
-	userID, err := localJWTSubject(r.Header.Get("Authorization"))
+	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "A valid locally verifiable bearer token is required", requestID))
+		message := "A valid authenticated session is required"
+		if status >= 500 {
+			message = "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody("AUTH_REQUIRED", message, requestID))
 		return true
 	}
 	if s.db == nil {

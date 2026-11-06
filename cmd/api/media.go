@@ -720,9 +720,18 @@ func decodeMediaJSON(w http.ResponseWriter, r *http.Request, destination any) er
 }
 
 func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
-	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
-	if !strings.HasPrefix(strings.ToLower(authorization), "bearer ") || len(strings.TrimSpace(authorization[7:])) < 8 {
+	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 {
 		return "", http.StatusUnauthorized, errors.New("missing bearer token")
+	}
+	switch strings.ToLower(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "supabase"))) {
+	case "appwrite":
+		return s.authenticatedAppwriteUser(r, parts[1])
+	case "supabase", "legacy_supabase":
+		// Transitional compatibility only. Production cutover must explicitly set
+		// TESTAGRAM_AUTH_PROVIDER=appwrite and remove legacy Supabase credentials.
+	default:
+		return "", http.StatusServiceUnavailable, errors.New("unsupported authentication provider configuration")
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(env("SUPABASE_URL", "")), "/")
 	apiKey := strings.TrimSpace(env("SUPABASE_PUBLISHABLE_KEY", ""))
@@ -736,7 +745,7 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 		return "", http.StatusBadGateway, err
 	}
 	req.Header.Set("apikey", apiKey)
-	req.Header.Set("Authorization", authorization)
+	req.Header.Set("Authorization", "Bearer "+parts[1])
 	req.Header.Set("Accept", "application/json")
 	client := s.upstream
 	if client == nil {
