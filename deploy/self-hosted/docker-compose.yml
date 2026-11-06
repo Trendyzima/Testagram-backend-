@@ -20,6 +20,7 @@ services:
       - ../../migrations/009_saas_tenant_hosting.sql:/docker-entrypoint-initdb.d/009_saas_tenant_hosting.sql:ro
       - ../../migrations/010_media_upload_claim.sql:/docker-entrypoint-initdb.d/010_media_upload_claim.sql:ro
       - ../../migrations/011_global_storage_pool.sql:/docker-entrypoint-initdb.d/011_global_storage_pool.sql:ro
+      - ../../migrations/20261106_appwrite_identity_bridge.sql:/docker-entrypoint-initdb.d/012_appwrite_identity_bridge.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -152,6 +153,16 @@ services:
     environment:
       LISTEN_ADDR: ":8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
+      TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:-supabase}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-}
+      MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-}
+      MEDIA_S3_SIGNING_HOST: ${MEDIA_S3_SIGNING_HOST:-}
+      MEDIA_S3_ACCESS_KEY: ${MEDIA_S3_ACCESS_KEY:-}
+      MEDIA_S3_SECRET_KEY: ${MEDIA_S3_SECRET_KEY:-}
+      MEDIA_S3_REGION: ${MEDIA_S3_REGION:-us-east-1}
+      MEDIA_PRIVATE_BUCKET: ${MEDIA_PRIVATE_BUCKET:-testagram-private-media}
+      MEDIA_PUBLIC_BUCKET: ${MEDIA_PUBLIC_BUCKET:-testagram-public-media}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-20}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
