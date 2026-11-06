@@ -422,6 +422,10 @@ jobs:
             END IF;
           END $ci$;
           SQL
+      - name: Verify Go social privacy decisions against PostgreSQL
+        env:
+          TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run '^TestSocialPostVisibilityPostgresIntegration$' -count=1 -v
       - name: Stop isolated PostgreSQL
         if: always()
         run: docker stop testagram-local-product-ci || true
