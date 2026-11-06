@@ -15,14 +15,14 @@ import (
 )
 
 type appwriteProvisionInput struct {
-	Username    string
-	DisplayName string
-	BirthDate string
-	PolicyVersion string
-	TermsAccepted bool
-	PrivacyAccepted bool
+	Username              string
+	DisplayName           string
+	BirthDate             string
+	PolicyVersion         string
+	TermsAccepted         bool
+	PrivacyAccepted       bool
 	ContentPolicyAccepted bool
-	AgeConfirmed bool
+	AgeConfirmed          bool
 }
 
 var appwriteUsernamePattern = regexp.MustCompile("^[A-Za-z0-9_]{3,30}$")
@@ -48,11 +48,27 @@ func decodeAppwriteProvisionInput(r *http.Request) (appwriteProvisionInput, erro
 			return in, err
 		}
 	}
-	if value := raw["display_name"]; len(value) > 0 { if err := json.Unmarshal(value, &in.DisplayName); err != nil { return in, err } }
-	if value := raw["birth_date"]; len(value) > 0 { if err := json.Unmarshal(value, &in.BirthDate); err != nil { return in, err } }
-	if value := raw["policy_version"]; len(value) > 0 { if err := json.Unmarshal(value, &in.PolicyVersion); err != nil { return in, err } }
+	if value := raw["display_name"]; len(value) > 0 {
+		if err := json.Unmarshal(value, &in.DisplayName); err != nil {
+			return in, err
+		}
+	}
+	if value := raw["birth_date"]; len(value) > 0 {
+		if err := json.Unmarshal(value, &in.BirthDate); err != nil {
+			return in, err
+		}
+	}
+	if value := raw["policy_version"]; len(value) > 0 {
+		if err := json.Unmarshal(value, &in.PolicyVersion); err != nil {
+			return in, err
+		}
+	}
 	for key, target := range map[string]*bool{"terms_accepted": &in.TermsAccepted, "privacy_accepted": &in.PrivacyAccepted, "content_policy_accepted": &in.ContentPolicyAccepted, "age_confirmed": &in.AgeConfirmed} {
-		if value := raw[key]; len(value) > 0 { if err := json.Unmarshal(value, target); err != nil { return in, err } }
+		if value := raw[key]; len(value) > 0 {
+			if err := json.Unmarshal(value, target); err != nil {
+				return in, err
+			}
+		}
 	}
 	return in, nil
 }
@@ -268,12 +284,12 @@ func (s *service) provisionAppwriteIdentity(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusConflict, errorBody("IDENTITY_ALREADY_LINKED", "This Appwrite identity is already linked to another Testagram account", id))
 		return
 	}
-		_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.legal_acceptances(canonical_user_id,birth_date,terms_accepted,privacy_accepted,content_policy_accepted,age_confirmed,policy_version) VALUES($1,$2::date,TRUE,TRUE,TRUE,TRUE,$3)", canonicalID, in.BirthDate, in.PolicyVersion)
+	_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.legal_acceptances(canonical_user_id,birth_date,terms_accepted,privacy_accepted,content_policy_accepted,age_confirmed,policy_version) VALUES($1,$2::date,TRUE,TRUE,TRUE,TRUE,$3)", canonicalID, in.BirthDate, in.PolicyVersion)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("LEGAL_ACCEPTANCE_FAILED", "Required policy acceptance could not be recorded; no account was committed", id))
 		return
 	}
-_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.identity_events(appwrite_user_id,canonical_user_id,event_type,request_id) VALUES($1,$2,'provisioned',$3)", account.ID, canonicalID, id)
+	_, err = tx.Exec(ctx, "INSERT INTO testagram_identity.identity_events(appwrite_user_id,canonical_user_id,event_type,request_id) VALUES($1,$2,'provisioned',$3)", account.ID, canonicalID, id)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Account creation could not be audited; no changes were committed", id))
 		return
