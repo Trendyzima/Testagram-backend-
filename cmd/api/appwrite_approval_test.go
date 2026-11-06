@@ -8,8 +8,8 @@ import (
 
 func TestDecodeAppwriteApprovalInput(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
+		name    string
+		body    string
 		wantErr bool
 	}{
 		{"valid", `{"appwrite_user_id":"appwrite-user-1","registration_id":"reg-123","provider_event_id":"event-123"}`, false},
@@ -21,7 +21,9 @@ func TestDecodeAppwriteApprovalInput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", "/internal/identity/approval", strings.NewReader(tt.body))
 			_, err := decodeAppwriteApprovalInput(req)
-			if (err != nil) != tt.wantErr { t.Fatalf("error=%v wantErr=%v", err, tt.wantErr) }
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error=%v wantErr=%v", err, tt.wantErr)
+			}
 		})
 	}
 }
