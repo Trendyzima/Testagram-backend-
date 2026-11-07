@@ -297,6 +297,7 @@ func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
 		"event_id": eventID, "event_type": "testagram.post.published", "schema_version": 1,
 		"occurred_at": now, "actor_id": a.ID, "object_id": postID, "visibility": input.Visibility,
 		"federation_eligible": federationEligible, "created_at": now,
+		"payload": map[string]any{"id": postID, "author_id": a.ID, "content": input.Content, "visibility": input.Visibility, "sensitive": input.Sensitive, "created_at": now},
 	}
 	if err = s.db.CreateDocumentInTransaction(r.Context(), "backend_outbox", eventID, event, tx); err != nil {
 		rollback()
