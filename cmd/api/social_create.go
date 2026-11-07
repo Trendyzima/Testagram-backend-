@@ -73,7 +73,7 @@ func (s *service) socialCreatePost(w http.ResponseWriter, r *http.Request) {
 	}
 	input.Content = strings.TrimSpace(input.Content)
 	if input.Content == "" || len(input.Content) > 10000 {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_CONTENT", "Post content must contain 1 to 10000 characters", requestID))
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_CONTENT", "Post content must contain 1 to 10000 bytes", requestID))
 		return
 	}
 	if input.Visibility == "" {
@@ -159,7 +159,7 @@ func (s *service) socialCreatePost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_CREATE_FAILED", "Post could not be committed", requestID))
 		return
 	}
-	post.LegacyID, post.UserID, post.Body = post.ID, post.AuthorID, post.Content
+	post.LegacyID, post.UserID, post.Body, post.Status = post.ID, post.AuthorID, post.Content, "published"
 	w.Header().Set("Location", "/api/social/posts/"+post.ID)
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": post, "error": nil, "request_id": requestID})
 }
