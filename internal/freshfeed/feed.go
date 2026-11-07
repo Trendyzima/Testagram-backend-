@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -213,7 +214,7 @@ func (s *Service) Home(ctx context.Context, viewerID string, limit int, cursor s
 		byID := make(map[string]*candidatePost, len(candidates))
 		for i := range candidates {
 			c := &candidates[i]
-			input.Candidates = append(input.Candidates, algorithmclient.Candidate{ID: c.id, AuthorID: c.authorID, CreatedAt: c.created, Visible: c.visible, Sensitive: c.sensitive, Features: algorithmclient.Features{Following: c.following, Quality: 0.5}})
+			input.Candidates = append(input.Candidates, algorithmclient.Candidate{ID: c.id, AuthorID: c.authorID, CreatedAt: c.created, Visible: c.visible, Sensitive: c.sensitive, Features: algorithmclient.Features{Following: c.following}})
 			byID[c.id] = c
 		}
 		ranked, rankErr := s.ranker.Rank(ctx, input)
@@ -223,12 +224,18 @@ func (s *Service) Home(ctx context.Context, viewerID string, limit int, cursor s
 		if rankErr == nil && len(ranked.Items) == len(candidates) {
 			ordered := make([]candidatePost, 0, len(candidates))
 			valid := true
+			seenRanked := make(map[string]struct{}, len(ranked.Items))
 			for _, item := range ranked.Items {
 				candidate, ok := byID[item.ID]
-				if !ok {
+				if !ok || item.AuthorID != candidate.authorID || math.IsNaN(item.Score) || math.IsInf(item.Score, 0) || item.Score < 0 || item.Score > 1 {
 					valid = false
 					break
 				}
+				if _, duplicate := seenRanked[item.ID]; duplicate {
+					valid = false
+					break
+				}
+				seenRanked[item.ID] = struct{}{}
 				candidate.score = item.Score
 				candidate.reasons = append([]string(nil), item.Reasons...)
 				ordered = append(ordered, *candidate)
