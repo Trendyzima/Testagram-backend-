@@ -31,6 +31,12 @@ type Server struct {
 	allowedOrigins map[string]struct{}
 	internalToken  string
 	moderation     ContentModeration
+	neon           NeonHealth
+	neonRequired   bool
+}
+
+type NeonHealth interface {
+	Ping(context.Context) error
 }
 
 type HomeFeedService interface {
@@ -43,6 +49,12 @@ type MediaService interface {
 	CompleteUpload(context.Context, string, string) error
 	DownloadURL(context.Context, string, string) (string, error)
 	RestoreArchive(context.Context, string, string) error
+}
+
+func (s *Server) WithNeon(neon NeonHealth, required bool) *Server {
+	s.neon = neon
+	s.neonRequired = required
+	return s
 }
 
 func (s *Server) WithFeed(feed HomeFeedService) *Server {
@@ -178,12 +190,22 @@ func (s *Server) cors(next http.Handler) http.Handler {
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	if s.neonRequired && s.neon == nil {
+		writeError(w, http.StatusServiceUnavailable, "required Neon data plane is not configured")
+		return
+	}
 	if s.feed == nil {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not configured")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
+	if s.neon != nil {
+		if err := s.neon.Ping(ctx); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "Neon data plane is not ready")
+			return
+		}
+	}
 	if err := s.feed.Ready(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
 		return
@@ -197,7 +219,11 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready", "post_write": "ready", "outbox": "ready"})
+	neonStatus := "not_configured"
+	if s.neon != nil {
+		neonStatus = "ready"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "post_write": "ready", "outbox": "ready"})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
