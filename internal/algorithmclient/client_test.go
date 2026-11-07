@@ -35,6 +35,9 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("s", 32) {
 			t.Fatal("missing service authorization")
 		}
+		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
+			t.Fatal("missing versioned API tracing headers")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[{"id":"post-1","score":0.9,"reasons":["recent"]}]}`))
 	}))
@@ -104,6 +107,7 @@ func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
 		"out of range score": "{\"items\":[{\"id\":\"p\",\"score\":2}]}",
 		"empty ID":           "{\"items\":[{\"id\":\" \",\"score\":0.5}]}",
 		"duplicate ID":       "{\"items\":[{\"id\":\"p\",\"score\":0.5},{\"id\":\"p\",\"score\":0.4}]}",
+		"unknown candidate":  "{\"items\":[{\"id\":\"not-supplied\",\"score\":0.5}]}",
 		"too many reasons":   "{\"items\":[{\"id\":\"p\",\"score\":0.5,\"reasons\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}]}",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -128,6 +132,9 @@ func TestReadyChecksAlgorithmServiceHealth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/readyz" || r.Method != http.MethodGet {
 			t.Fatalf("unexpected readiness request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
+			t.Fatal("readiness request missing versioned tracing headers")
 		}
 		w.WriteHeader(http.StatusOK)
 	}))

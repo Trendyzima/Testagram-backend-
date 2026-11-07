@@ -62,3 +62,10 @@ Required fields: `id`, `origin`, `entity_type`, `entity_id`, `entity_version`, `
 ## Rollout rule
 
 Migrate one capability family at a time. Record its source of truth, contract, authorization rule, metrics, regression tests, staging evidence, feature flag, and rollback. Do not enable global dual-write, replication workers, virtual storage, or DNS changes as a side effect of merging documentation or passing builds.
+
+
+## API client ownership and versioning
+
+XClone uses the public Backend `/v1` contract only. Backend is the sole public product API and owns user identity, canonical data, authorization and response shaping. Federation, Algorithm and Data Centre use private service clients with distinct bearer credentials, bounded payloads, request timeouts and request IDs. Internal API tokens must never enter browser/mobile builds.
+
+All private platform client implementations in Backend and Data Centre follow the same `internal-platform.yaml` contract. Version `1` is declared on requests and echoed on responses; clients reject public-HTTP endpoints, disable redirects and cap response bodies. Public user APIs use Appwrite JWTs and never receive service credentials.

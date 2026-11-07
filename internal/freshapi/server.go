@@ -2,6 +2,7 @@ package freshapi
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -146,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
 	mux.HandleFunc("POST /v1/moderation/check", s.moderateContent)
+	mux.HandleFunc("POST /v1/capabilities", s.capabilities)
 	if s.internalToken != "" {
 		mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationReadyz)
 		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
@@ -158,7 +160,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /v1/media/{objectID}/download", s.downloadMedia)
 		mux.HandleFunc("POST /v1/media/{objectID}/restore", s.restoreMedia)
 	}
-	return securityHeaders(s.cors(mux))
+	return apiContractHeaders(securityHeaders(s.cors(mux)))
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {
@@ -189,7 +191,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				writeError(w, http.StatusForbidden, "CORS method is not allowed")
 				return
 			}
-			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true}
+			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true, "x-request-id": true, "x-testagram-api-version": true}
 			for _, header := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				if header = strings.ToLower(strings.TrimSpace(header)); header != "" && !allowedHeaders[header] {
 					writeError(w, http.StatusForbidden, "CORS request header is not allowed")
@@ -197,7 +199,8 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				}
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept, X-Request-ID, X-Testagram-API-Version")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Testagram-API-Version, Retry-After")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.Header().Add("Vary", "Access-Control-Request-Method")
 			w.Header().Add("Vary", "Access-Control-Request-Headers")
@@ -257,6 +260,49 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		postWriteStatus = "ready"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "moderation": moderationStatus, "post_write": postWriteStatus, "outbox": "ready"})
+}
+
+// capabilities is an authenticated, versioned fail-closed boundary. A
+// capability is enabled only after its domain implementation is migrated to
+// this fresh Appwrite/Neon Backend; it must never proxy to legacy Supabase RPC.
+func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
+	if _, status, err := s.authenticate(r); err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var input struct {
+		Capability string         `json:"capability"`
+		Input      map[string]any `json:"input"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid capability request")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "capability request must contain one JSON object")
+		return
+	}
+	if len(input.Capability) < 3 || len(input.Capability) > 128 {
+		writeError(w, http.StatusBadRequest, "capability name must contain 3-128 characters")
+		return
+	}
+	for _, char := range input.Capability {
+		if !(char >= 'a' && char <= 'z') && !(char >= '0' && char <= '9') && char != '.' && char != '_' && char != '-' {
+			writeError(w, http.StatusBadRequest, "capability name contains unsupported characters")
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		"ok": false,
+		"error": map[string]string{
+			"code": "CAPABILITY_NOT_IMPLEMENTED",
+			"message": "This capability has not yet been migrated to the centralized Testagram Backend API.",
+		},
+		"request_id": w.Header().Get("X-Request-ID"),
+	})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
@@ -523,7 +569,7 @@ func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
 		documents = documents[:limit]
 	}
 	var nextCursor string
-	if hasMore && len(documents) > 0 {
+	if len(documents) > 0 {
 		var last struct {
 			ID string `json:"$id"`
 		}
@@ -1118,6 +1164,20 @@ func validHandle(v string) bool {
 	}
 	return true
 }
+
+func apiContractHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\r\n") {
+			var raw [16]byte
+			if _, err := rand.Read(raw[:]); err == nil { id = hex.EncodeToString(raw[:]) } else { id = "testagram-" + strconv.FormatInt(time.Now().UnixNano(), 10) }
+		}
+		w.Header().Set("X-Request-ID", id)
+		w.Header().Set("X-Testagram-API-Version", "1")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

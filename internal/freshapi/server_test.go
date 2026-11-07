@@ -19,6 +19,7 @@ type mockAppwriteState struct {
 	documents                map[string][]byte
 	transactionCommitted     bool
 	outboxQueries            []string
+	outboxDocuments          [][]byte
 	profileFederationEnabled bool
 	accountActive            bool
 	emailVerified            bool
@@ -98,6 +99,13 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				}
 				if strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
 					state.outboxQueries = append(state.outboxQueries, r.URL.Query()["queries[]"]...)
+					if len(state.outboxDocuments) > 0 {
+						docs := make([]json.RawMessage, 0, len(state.outboxDocuments))
+						for _, doc := range state.outboxDocuments { docs = append(docs, json.RawMessage(doc)) }
+						encoded, _ := json.Marshal(map[string]any{"documents": docs, "total": len(docs)})
+						_, _ = w.Write(encoded)
+						return
+					}
 				}
 				_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 				return
@@ -696,5 +704,75 @@ func TestReadyzDoesNotClaimPostPublishingWhenModerationIsDisabled(t *testing.T) 
 	if !strings.Contains(rec.Body.String(), `"moderation":"not_configured"`) ||
 		!strings.Contains(rec.Body.String(), `"post_write":"disabled_moderation_unconfigured"`) {
 		t.Fatalf("readiness overstated publishing capability: %s", rec.Body.String())
+	}
+}
+
+func TestHandlerAddsVersionedRequestTracingHeaders(t *testing.T) {
+	api, _ := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("X-Request-ID", "client-trace-123")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if got := rec.Header().Get("X-Testagram-API-Version"); got != "1" {
+		t.Fatalf("API version header = %q, want 1", got)
+	}
+	if got := rec.Header().Get("X-Request-ID"); got != "client-trace-123" {
+		t.Fatalf("request ID = %q, want propagated value", got)
+	}
+}
+
+func TestHandlerRejectsUnsafeRequestIDAndGeneratesOne(t *testing.T) {
+	api, _ := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("X-Request-ID", "bad\\r\\nvalue")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	got := rec.Header().Get("X-Request-ID")
+	if got == "" || strings.ContainsAny(got, "\r\n") || got == "bad\r\nvalue" {
+		t.Fatalf("unsafe request ID was not replaced: %q", got)
+	}
+}
+
+func TestFederationOutboxReturnsDurableCursorOnFinalPage(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	token := strings.Repeat("f", 40)
+	if err := api.WithInternalToken(token); err != nil { t.Fatal(err) }
+	state.outboxDocuments = [][]byte{[]byte(`{"$id":"event-1","event_type":"testagram.post.published"}`)}
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=10", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
+	var payload struct {
+		Data struct {
+			NextCursor string `json:"next_cursor"`
+			HasMore bool `json:"has_more"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil { t.Fatal(err) }
+	want := base64.RawURLEncoding.EncodeToString([]byte("event-1"))
+	if payload.Data.NextCursor != want || payload.Data.HasMore {
+		t.Fatalf("final page cursor=%q has_more=%v, want cursor=%q and false", payload.Data.NextCursor, payload.Data.HasMore, want)
+	}
+}
+
+
+func TestCapabilitiesRequireAuthenticatedAppwriteSession(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/capabilities", strings.NewReader(`{"capability":"testagram.posts.list","input":{}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Testagram-API-Version", "1")
+	request.Header.Set("X-Request-ID", "capability-auth-test")
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthenticated capability request to fail with 401, got %d: %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("X-Testagram-API-Version") != "1" || response.Header().Get("X-Request-ID") != "capability-auth-test" {
+		t.Fatalf("API contract headers missing: %#v", response.Header())
 	}
 }

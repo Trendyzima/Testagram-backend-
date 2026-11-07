@@ -3,7 +3,7 @@ info:
   title: Testagram Internal Platform API
   version: 1.0.0
   description: >
-    Contract for Testagram-owned platform primitives. Internal routes are service-to-service only.
+    Contract for Testagram-owned platform primitives. Internal routes are service-to-service only. Requests send X-Testagram-API-Version: 1 and X-Request-ID; responses echo both headers.
     Do not call them directly from browsers or mobile clients. Auth, REST, storage, and realtime
     APIs remain release-specific upstream-compatible contracts.
 servers:

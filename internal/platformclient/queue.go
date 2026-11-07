@@ -3,6 +3,7 @@ package platformclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,8 +25,8 @@ type queueMessagesResponse struct {
 // Claim reads new messages for a consumer group. Counts outside the server's
 // supported range are rejected locally instead of silently changing semantics.
 func (c *Client) Claim(ctx context.Context, queue, group, consumer string, count int64) ([]QueueMessage, error) {
-	if queue == "" || group == "" || consumer == "" {
-		return nil, errors.New("queue, group and consumer are required")
+	for name, value := range map[string]string{"queue": queue, "group": group, "consumer": consumer} {
+		if err := validateKey(value); err != nil { return nil, fmt.Errorf("invalid %s: %w", name, err) }
 	}
 	if count < 1 || count > 100 {
 		return nil, errors.New("queue claim count must be between 1 and 100")
@@ -40,8 +41,11 @@ func (c *Client) Claim(ctx context.Context, queue, group, consumer string, count
 // Reclaim returns pending messages that have been idle long enough to indicate
 // that their previous consumer may have crashed. Re-delivery is expected.
 func (c *Client) Reclaim(ctx context.Context, queue, group, consumer string, minIdle time.Duration, count int64, start string) ([]QueueMessage, string, error) {
-	if queue == "" || group == "" || consumer == "" {
-		return nil, "", errors.New("queue, group and consumer are required")
+	for name, value := range map[string]string{"queue": queue, "group": group, "consumer": consumer} {
+		if err := validateKey(value); err != nil { return nil, "", fmt.Errorf("invalid %s: %w", name, err) }
+	}
+	if start != "" {
+		if err := validateKey(start); err != nil { return nil, "", fmt.Errorf("invalid reclaim cursor: %w", err) }
 	}
 	idleMS := minIdle.Milliseconds()
 	if idleMS < 1 || idleMS > 86400000 {
@@ -67,9 +71,9 @@ func (c *Client) Reclaim(ctx context.Context, queue, group, consumer string, min
 // Ack removes a successfully processed message from the group's pending list.
 // Call only after the business side effect has completed successfully.
 func (c *Client) Ack(ctx context.Context, queue, group, id string) error {
-	if queue == "" || group == "" || id == "" {
-		return errors.New("queue, group and message ID are required")
-	}
+	if err := validateKey(queue); err != nil { return fmt.Errorf("invalid queue: %w", err) }
+	if err := validateKey(group); err != nil { return fmt.Errorf("invalid group: %w", err) }
+	if err := validateKey(id); err != nil { return fmt.Errorf("invalid message ID: %w", err) }
 	q := url.Values{}
 	q.Set("queue", queue)
 	q.Set("group", group)
