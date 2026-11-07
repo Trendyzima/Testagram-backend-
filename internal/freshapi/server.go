@@ -108,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
+	mux.HandleFunc("GET /v1/me/legal", s.getLegalConsent)
+	mux.HandleFunc("PUT /v1/me/legal", s.updateLegalConsent)
 	mux.HandleFunc("GET /v1/me/federation", s.getFederationPreference)
 	mux.HandleFunc("PUT /v1/me/federation", s.updateFederationPreference)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
@@ -878,6 +880,111 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(raw)
 }
 
+const currentLegalPolicyVersion = "2026-09"
+
+func (s *Server) getLegalConsent(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	raw, err := s.db.GetDocument(r.Context(), "profiles", a.ID)
+	if err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			writeError(w, http.StatusNotFound, "profile not found")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "legal consent status is unavailable")
+		}
+		return
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "legal consent status is invalid")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"birth_date": profile["birth_date"],
+			"legal_terms_accepted_at": profile["legal_terms_accepted_at"],
+			"legal_privacy_accepted_at": profile["legal_privacy_accepted_at"],
+			"legal_content_policy_accepted_at": profile["legal_content_policy_accepted_at"],
+			"legal_age_confirmed_at": profile["legal_age_confirmed_at"],
+			"legal_policy_version": profile["legal_policy_version"],
+		},
+		"error": nil,
+	})
+}
+
+func (s *Server) updateLegalConsent(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var input struct {
+		BirthDate             string `json:"birth_date"`
+		PolicyVersion         string `json:"policy_version"`
+		TermsAccepted         bool   `json:"terms_accepted"`
+		PrivacyAccepted       bool   `json:"privacy_accepted"`
+		ContentPolicyAccepted bool   `json:"content_policy_accepted"`
+		AgeConfirmed          bool   `json:"age_confirmed"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid legal consent payload")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "legal consent must contain one JSON object")
+		return
+	}
+	if input.PolicyVersion != currentLegalPolicyVersion || !input.TermsAccepted || !input.PrivacyAccepted || !input.ContentPolicyAccepted || !input.AgeConfirmed {
+		writeError(w, http.StatusBadRequest, "all required policies and age confirmation must be accepted for the current policy version")
+		return
+	}
+	birthDate, err := time.Parse("2006-01-02", input.BirthDate)
+	if err != nil || birthDate.Format("2006-01-02") != input.BirthDate {
+		writeError(w, http.StatusBadRequest, "birth_date must use YYYY-MM-DD")
+		return
+	}
+	now := time.Now().UTC()
+	if birthDate.After(now) || birthDate.After(now.AddDate(-18, 0, 0)) {
+		writeError(w, http.StatusForbidden, "AGE_RESTRICTION")
+		return
+	}
+	if _, err := s.db.GetDocument(r.Context(), "profiles", a.ID); err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			writeError(w, http.StatusNotFound, "profile must be created before legal consent")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "profile service unavailable")
+		}
+		return
+	}
+	acceptedAt := now.Format(time.RFC3339Nano)
+	_, err = s.db.UpdateDocument(r.Context(), "profiles", a.ID, map[string]any{
+		"birth_date": input.BirthDate,
+		"legal_terms_accepted_at": acceptedAt,
+		"legal_privacy_accepted_at": acceptedAt,
+		"legal_content_policy_accepted_at": acceptedAt,
+		"legal_age_confirmed_at": acceptedAt,
+		"legal_policy_version": currentLegalPolicyVersion,
+		"updated_at": acceptedAt,
+	})
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "legal consent could not be recorded")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{"accepted": true, "policy_version": currentLegalPolicyVersion, "accepted_at": acceptedAt},
+		"error": nil,
+	})
+}
 func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 	a, status, err := s.authenticate(r)
 	if err != nil {
