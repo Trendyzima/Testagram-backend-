@@ -176,3 +176,47 @@ func TestAppwriteRetentionJobsCannotCompleteAfterLeaseExpiry(t *testing.T) {
 		t.Fatal("expired lease transaction was committed")
 	}
 }
+
+func TestAppwriteRetentionJobsRenewExtendsOnlyOwnedUnexpiredLease(t *testing.T) {
+	now := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	jobID := "rt_123"
+	var staged map[string]any
+	var committed bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/databases/transactions":
+			_, _ = w.Write([]byte(`{"$id":"tx_renew"}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/retention_jobs/documents/"+jobID):
+			doc := map[string]any{"$id": jobID, "job_key": strings.Repeat("d", 64), "object_id": "med_4", "action": "archive", "policy_version": RetentionPolicyVersion, "due_at": now.Add(-time.Hour).Format(time.RFC3339Nano), "status": "running", "worker_id": "worker", "lease_token": "owned-token", "lease_until": now.Add(time.Minute).Format(time.RFC3339Nano), "attempts": 1, "created_at": now.Add(-time.Hour).Format(time.RFC3339Nano), "updated_at": now.Format(time.RFC3339Nano)}
+			_ = json.NewEncoder(w).Encode(doc)
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/retention_jobs/documents/"+jobID):
+			var body struct {
+				Data map[string]any `json:"data"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			staged = body.Data
+			_, _ = w.Write([]byte(`{"$id":"rt_123"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/databases/transactions/tx_renew":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			committed = body["commit"] == true
+			_, _ = w.Write([]byte(`{"$id":"tx_renew"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", 404)
+		}
+	}))
+	defer server.Close()
+	db, err := appwritedb.New(appwritedb.Config{Endpoint: server.URL + "/v1", ProjectID: "p", APIKey: "secret", DatabaseID: "db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := NewAppwriteRetentionJobs(db)
+	err = repo.Renew(context.Background(), RetentionJob{ID: jobID, WorkerID: "worker", LeaseToken: "owned-token"}, now, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staged["lease_until"] != now.Add(10*time.Minute).Format(time.RFC3339Nano) || !committed {
+		t.Fatalf("lease was not renewed transactionally: %#v committed=%v", staged, committed)
+	}
+}
