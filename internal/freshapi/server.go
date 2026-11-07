@@ -116,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	if s.internalToken != "" {
 		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
 		mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActor)
+		mux.HandleFunc("GET /internal/v1/federation/actors/by-id/{userID}", s.federationActorByID)
 	}
 	if s.storage != nil {
 		mux.HandleFunc("POST /v1/media/uploads/reservations", s.reserveMediaUpload)
@@ -271,6 +272,36 @@ func (s *Server) federationActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "local actor profile is invalid")
 		return
 	}
+	s.writeFederationActorProfile(w, r, profile, handle)
+}
+
+func (s *Server) federationActorByID(w http.ResponseWriter, r *http.Request) {
+	if !s.requireFederationService(w, r) { return }
+	userID := strings.TrimSpace(r.PathValue("userID"))
+	if !validUserID(userID) {
+		writeError(w, http.StatusNotFound, "local actor not found")
+		return
+	}
+	raw, err := s.db.GetDocument(r.Context(), "profiles", userID)
+	if err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			writeError(w, http.StatusNotFound, "local actor not found")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "local actor lookup is unavailable")
+		}
+		return
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "local actor profile is invalid")
+		return
+	}
+	handle, _ := profile["handle"].(string)
+	s.writeFederationActorProfile(w, r, profile, handle)
+}
+
+func (s *Server) writeFederationActorProfile(w http.ResponseWriter, r *http.Request, profile map[string]any, expectedHandle string) {
 	if enabled, ok := profile["federation_enabled"].(bool); !ok || !enabled {
 		writeError(w, http.StatusNotFound, "local actor not found")
 		return
@@ -278,6 +309,11 @@ func (s *Server) federationActor(w http.ResponseWriter, r *http.Request) {
 	userID, ok := profile["user_id"].(string)
 	if !ok || !validUserID(userID) {
 		writeError(w, http.StatusServiceUnavailable, "local actor identity is invalid")
+		return
+	}
+	handle, _ := profile["handle"].(string)
+	if !validHandle(handle) || len(handle) < 3 || (expectedHandle != "" && handle != expectedHandle) {
+		writeError(w, http.StatusServiceUnavailable, "local actor handle is invalid")
 		return
 	}
 	user, err := s.db.GetUser(r.Context(), userID)
@@ -292,12 +328,12 @@ func (s *Server) federationActor(w http.ResponseWriter, r *http.Request) {
 	displayName, _ := profile["display_name"].(string)
 	bio, _ := profile["bio"].(string)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id": userID,
-		"handle": handle,
+		"user_id": userID, "handle": handle,
 		"display_name": strings.TrimSpace(displayName),
 		"summary": strings.TrimSpace(bio),
 		"federation_enabled": true,
 	})
+}
 }
 
 func (s *Server) getFederationPreference(w http.ResponseWriter, r *http.Request) {
