@@ -656,3 +656,20 @@ func TestReadyzChecksConfiguredNeonHealth(t *testing.T) {
 		t.Fatalf("readiness with healthy Neon status=%d body=%s", ready.Code, ready.Body.String())
 	}
 }
+
+
+func TestReadyzDoesNotClaimPostPublishingWhenModerationIsDisabled(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	api.WithFeed(&fakeHomeFeed{})
+	api.WithModeration(nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("readiness status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"moderation":"not_configured"`) ||
+		!strings.Contains(rec.Body.String(), `"post_write":"disabled_moderation_unconfigured"`) {
+		t.Fatalf("readiness overstated publishing capability: %s", rec.Body.String())
+	}
+}
