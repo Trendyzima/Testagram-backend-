@@ -61,3 +61,11 @@ The independent cold archive uses `ARCHIVE_S3_*` credentials and a bucket distin
 Retention must stay disabled and dry-run by default. Never run archive/story expiry against pre-rollout records; never purge user-deleted media before the 30-day recovery deadline. Direct messages, avatars, profile media, text-only posts, and legacy Supabase records are out of scope.
 
 The story and user-deletion workers set `media_objects.lifecycle_state=purging` before replica deletion. Attachment writers must transactionally reject new references to purging media; that attachment-writer guard is a required pre-production integration gate. The purge worker only reclaims quota after all listed replica documents are `deleted` and are re-read in the quota-release transaction. A node replica currently blocks the purge because node transport/deletion is not yet implemented.
+
+## Identity and account-creation invariants
+
+- Every fresh user API request requires a valid Appwrite JWT, an active Appwrite account, emailVerification=true, and a canonical profiles document whose identity_verification_status is approved.
+- A missing profile or a pending/rejected/blocked identity status is denied by the Backend. Do not create user accounts directly from the browser or set identity status from client-controlled Appwrite preferences.
+- New accounts are created only through POST /v1/identity/register. The Backend verifies a short-lived HMAC-signed identity approval assertion, checks adult eligibility and the current legal-policy version, creates the Appwrite user with verified email, then creates the canonical profile with approved identity and legal-consent metadata.
+- IDENTITY_PREAUTH_SECRET must be shared only between the trusted identity-approval issuer and Backend. It must never appear in browser/mobile configuration.
+- Store only the HMAC fingerprint and verification session reference. Never store raw national identity numbers or document images in the profiles collection.
