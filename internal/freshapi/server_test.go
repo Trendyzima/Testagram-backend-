@@ -396,6 +396,45 @@ func TestHomeFeedRequiresVerifiedAppwriteIdentityAndUsesBoundedPagination(t *tes
 	}
 }
 
+func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	if err := api.WithInternalToken(strings.Repeat("t", 32)); err != nil {
+		t.Fatal(err)
+	}
+	unauthorized := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox", nil)
+	unauthorizedRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(unauthorizedRec, unauthorized)
+	if unauthorizedRec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing service token status=%d", unauthorizedRec.Code)
+	}
+	invalid := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=100", nil)
+	invalid.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 32))
+	invalidRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit status=%d", invalidRec.Code)
+	}
+	valid := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=10", nil)
+	valid.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 32))
+	validRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(validRec, valid)
+	if validRec.Code != http.StatusOK || !strings.Contains(validRec.Body.String(), `"events":[]`) {
+		t.Fatalf("valid outbox request status=%d body=%s", validRec.Code, validRec.Body.String())
+	}
+}
+
+func TestFederationOutboxIsNotMountedWithoutSecret(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox", nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("private route should not exist without token, status=%d", rec.Code)
+	}
+}
+
 func TestReadyzFailsUntilFeedDependenciesAreReady(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
