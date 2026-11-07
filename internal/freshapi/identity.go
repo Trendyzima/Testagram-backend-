@@ -67,6 +67,20 @@ func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusForbidden, "identity approval evidence reference is invalid")
 		return
 	}
+	// A unique Appwrite index is the final race-safe guard; this bounded lookup
+	// provides a clear conflict response before creating the identity.
+	fingerprints, err := s.db.ListDocumentsWithQueries(r.Context(), "profiles", []string{
+		mustQuery("equal", "identity_fingerprint_hash", approval.Fingerprint),
+		mustQuery("limit", "", 1),
+	}, 1)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "identity uniqueness check is unavailable")
+		return
+	}
+	if len(fingerprints) != 0 {
+		writeError(w, http.StatusConflict, "IDENTITY_ALREADY_REGISTERED")
+		return
+	}
 	birthDate, err := time.Parse("2006-01-02", approval.BirthDate)
 	now := time.Now().UTC()
 	if err != nil || birthDate.Format("2006-01-02") != approval.BirthDate || birthDate.After(now.AddDate(-18, 0, 0)) {
