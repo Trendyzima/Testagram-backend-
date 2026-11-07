@@ -102,6 +102,7 @@ type fakeMediaService struct {
 	reserveInput              freshstorage.ReserveInput
 	completeOwner, completeID string
 	downloadOwner, downloadID string
+	restoreOwner, restoreID   string
 }
 
 func (f *fakeMediaService) ReserveUpload(_ context.Context, in freshstorage.ReserveInput) (freshstorage.UploadReservation, error) {
@@ -115,6 +116,10 @@ func (f *fakeMediaService) CompleteUpload(_ context.Context, owner, id string) e
 func (f *fakeMediaService) DownloadURL(_ context.Context, owner, id string) (string, error) {
 	f.downloadOwner, f.downloadID = owner, id
 	return "https://storage.example/private", nil
+}
+func (f *fakeMediaService) RestoreArchive(_ context.Context, owner, id string) error {
+	f.restoreOwner, f.restoreID = owner, id
+	return nil
 }
 
 func TestFreshMediaEndpointsUseAuthenticatedAppwriteOwner(t *testing.T) {
@@ -146,6 +151,13 @@ func TestFreshMediaEndpointsUseAuthenticatedAppwriteOwner(t *testing.T) {
 	api.Handler().ServeHTTP(downloadRec, download)
 	if downloadRec.Code != http.StatusOK || media.downloadOwner != "new_user_1" || media.downloadID != "med_123" {
 		t.Fatalf("download response=%d %s", downloadRec.Code, downloadRec.Body.String())
+	}
+	restore := httptest.NewRequest(http.MethodPost, "/v1/media/med_123/restore", nil)
+	restore.Header.Set("Authorization", "Bearer valid-session")
+	restoreRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(restoreRec, restore)
+	if restoreRec.Code != http.StatusOK || media.restoreOwner != "new_user_1" || media.restoreID != "med_123" {
+		t.Fatalf("restore response=%d %s owner=%s id=%s", restoreRec.Code, restoreRec.Body.String(), media.restoreOwner, media.restoreID)
 	}
 }
 
