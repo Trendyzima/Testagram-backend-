@@ -20,15 +20,15 @@ import (
 )
 
 type identityApprovalPayload struct {
-	Email          string `json:"email"`
-	BirthDate      string `json:"birth_date"`
-	SessionID      string `json:"session_id"`
-	Fingerprint    string `json:"fingerprint"`
-	Username       string `json:"username"`
-	DisplayName    string `json:"display_name"`
-	PolicyVersion  string `json:"policy_version"`
-	IssuedAt       int64  `json:"issued_at"`
-	ExpiresAt      int64  `json:"expires_at"`
+	Email         string `json:"email"`
+	BirthDate     string `json:"birth_date"`
+	SessionID     string `json:"session_id"`
+	Fingerprint   string `json:"fingerprint"`
+	Username      string `json:"username"`
+	DisplayName   string `json:"display_name"`
+	PolicyVersion string `json:"policy_version"`
+	IssuedAt      int64  `json:"issued_at"`
+	ExpiresAt     int64  `json:"expires_at"`
 }
 
 var identityFingerprintPattern = regexp.MustCompile("^[a-f0-9]{64}$")
