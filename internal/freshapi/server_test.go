@@ -51,6 +51,16 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				return
 			}
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true,"emailVerification":`+strconv.FormatBool(state.emailVerified)+`}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/users":
+			if r.Header.Get("X-Appwrite-Key") != "appwrite-test-server-key" {
+				http.Error(w, "invalid server key", http.StatusUnauthorized)
+				return
+			}
+			var input map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil { t.Errorf("decode Appwrite user: %v", err) }
+			if input["emailVerification"] != true || input["email"] != "new@example.com" { t.Errorf("unexpected Appwrite account payload: %#v", input) }
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","status":true,"emailVerification":true}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/new_user_1":
 			status := state.accountActive
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":`+strconv.FormatBool(status)+`}`))
