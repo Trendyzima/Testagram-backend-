@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
@@ -1143,6 +1145,27 @@ func main() {
 			log.Printf("private Testagram feed ranking integration enabled")
 		}
 	}
+	var federationWorker *federationoutbox.Worker
+	federationURL := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_URL"))
+	federationToken := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_TOKEN"))
+	if federationURL != "" || federationToken != "" {
+		if federationURL == "" || federationToken == "" {
+			log.Fatal("FEDERATION_INTERNAL_URL and FEDERATION_INTERNAL_TOKEN must be configured together")
+		}
+		publisher, federationErr := federationclient.New(federationURL, federationToken, 4*time.Second)
+		if federationErr != nil {
+			log.Fatalf("configure private Federation publisher: %v", federationErr)
+		}
+		outboxStore, storeErr := federationoutbox.NewStore(db)
+		if storeErr != nil {
+			log.Fatalf("configure transactional Federation outbox: %v", storeErr)
+		}
+		federationWorker, err = federationoutbox.NewWorker(outboxStore, publisher, nil)
+		if err != nil {
+			log.Fatalf("configure Federation outbox worker: %v", err)
+		}
+		log.Printf("private Federation outbox dispatcher enabled")
+	}
 	var mediaSigner *media.Signer
 	// MEDIA_S3_* is the documented deployment contract. R2_* and legacy MINIO_*
 	// variables remain accepted to avoid breaking existing self-hosted installs.
@@ -1248,6 +1271,7 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
+	if federationWorker != nil { go federationWorker.Run(signalCtx) }
 	go svc.runStorageDeletionWorker(signalCtx)
 	if replicationApplyEnabled {
 		if replicationStore == nil {
