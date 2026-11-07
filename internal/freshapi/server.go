@@ -643,12 +643,27 @@ func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	eventID := "evt_" + hex.EncodeToString(postHash[:16])
-	federationEligible := input.Visibility == "public" && !input.Sensitive
+	federationEligible := false
+	actorHandle, actorDisplayName := "", ""
+	// Public visibility alone is not consent to federate. The profile must
+	// explicitly opt in; lookup failures suppress federation without blocking
+	// the user's local post.
+	if input.Visibility == "public" && !input.Sensitive {
+		if profileRaw, profileErr := s.db.GetDocument(r.Context(), "profiles", a.ID); profileErr == nil {
+			var profile map[string]any
+			if json.Unmarshal(profileRaw, &profile) == nil {
+				enabled, _ := profile["federation_enabled"].(bool)
+				actorHandle, _ = profile["handle"].(string)
+				actorDisplayName, _ = profile["display_name"].(string)
+				federationEligible = enabled && validHandle(actorHandle) && len(actorHandle) >= 3
+			}
+		}
+	}
 	event := map[string]any{
 		"event_id": eventID, "event_type": "testagram.post.published", "schema_version": 1,
 		"occurred_at": now, "actor_id": a.ID, "object_id": postID, "visibility": input.Visibility,
 		"federation_eligible": federationEligible, "created_at": now,
-		"payload": map[string]any{"id": postID, "author_id": a.ID, "content": input.Content, "visibility": input.Visibility, "sensitive": input.Sensitive, "created_at": now},
+		"payload": map[string]any{"id": postID, "author_id": a.ID, "actor_handle": actorHandle, "actor_display_name": actorDisplayName, "content": input.Content, "visibility": input.Visibility, "sensitive": input.Sensitive, "created_at": now},
 	}
 	if err = s.db.CreateDocumentInTransaction(r.Context(), "backend_outbox", eventID, event, tx); err != nil {
 		rollback()
