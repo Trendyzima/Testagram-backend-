@@ -8,7 +8,7 @@ import (
 
 func clear(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_REGION", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_BUCKET"} {
+	for _, k := range []string{"B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_REGION", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_BUCKET", "ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY", "ARCHIVE_S3_BUCKET"} {
 		old, ok := os.LookupEnv(k)
 		_ = os.Unsetenv(k)
 		t.Cleanup(func() {
@@ -80,5 +80,23 @@ func TestFromEnvValidatesPrivateCloudflareMediaSigningPair(t *testing.T) {
 	t.Setenv("CLOUDFLARE_MEDIA_BASE_URL", "http://media.testagram.example")
 	if _, err := FromEnv(); err == nil {
 		t.Fatal("insecure Cloudflare media origin was accepted")
+	}
+}
+
+func TestArchiveProviderRequiresCompleteIndependentConfiguration(t *testing.T) {
+	clear(t)
+	_ = os.Setenv("ARCHIVE_S3_ENDPOINT", "https://archive.example.test")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("partial archive provider configuration was accepted")
+	}
+	_ = os.Setenv("ARCHIVE_S3_ACCESS_KEY_ID", "archive-key")
+	_ = os.Setenv("ARCHIVE_S3_SECRET_ACCESS_KEY", "archive-secret")
+	_ = os.Setenv("ARCHIVE_S3_BUCKET", "cold-archive")
+	p, err := FromEnv()
+	if err != nil {
+		t.Fatalf("complete archive provider configuration rejected: %v", err)
+	}
+	if p.Archive == nil || p.ArchiveBucket != "cold-archive" {
+		t.Fatalf("archive provider not configured: %#v", p)
 	}
 }
