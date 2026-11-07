@@ -821,15 +821,15 @@ func (s *AppwriteStore) ListExpiredReservations(ctx context.Context, now time.Ti
 }
 
 func appwriteEqualQuery(column string, value any) []byte {
-	encoded, _ := json.Marshal(map[string]any{"method": "equal", "attribute": column, "values": []any{value}})
+	encoded, _ := json.Marshal(map[string]any{"method": "equal", "column": column, "values": []any{value}})
 	return encoded
 }
 func appwriteLessThanEqualQuery(column string, value any) []byte {
-	encoded, _ := json.Marshal(map[string]any{"method": "lessThanEqual", "attribute": column, "values": []any{value}})
+	encoded, _ := json.Marshal(map[string]any{"method": "lessThanEqual", "column": column, "values": []any{value}})
 	return encoded
 }
 func appwriteGreaterThanEqualQuery(attribute string, value any) []byte {
-	encoded, _ := json.Marshal(map[string]any{"method": "greaterThanEqual", "attribute": attribute, "values": []any{value}})
+	encoded, _ := json.Marshal(map[string]any{"method": "greaterThanEqual", "column": attribute, "values": []any{value}})
 	return encoded
 }
 func appwriteAndQuery(queries ...[]byte) []byte {
