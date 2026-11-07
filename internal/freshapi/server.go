@@ -58,8 +58,11 @@ func (s *Server) WithModeration(moderation ContentModeration) *Server {
 }
 
 func (s *Server) WithAppwriteServerKey(key string) error {
+	if strings.ContainsAny(key, "\r\n") {
+		return errors.New("Appwrite server API key must be a single line")
+	}
 	key = strings.TrimSpace(key)
-	if key == "" || len(key) > 4096 || strings.ContainsAny(key, "\r\n") {
+	if key == "" || len(key) > 4096 {
 		return errors.New("Appwrite server API key is required")
 	}
 	s.appwriteServerKey = key
@@ -67,8 +70,11 @@ func (s *Server) WithAppwriteServerKey(key string) error {
 }
 
 func (s *Server) WithIdentitySecret(secret string) error {
+	if strings.ContainsAny(secret, "\r\n") {
+		return errors.New("identity approval secret must be a single line")
+	}
 	secret = strings.TrimSpace(secret)
-	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
+	if len(secret) < 32 {
 		return errors.New("identity approval secret must contain at least 32 characters")
 	}
 	s.identitySecret = secret
