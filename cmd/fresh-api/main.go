@@ -132,23 +132,26 @@ func main() {
 	var ranker *algorithmclient.Client
 	algorithmEndpoint := strings.TrimSpace(os.Getenv("ALGORITHM_ENDPOINT"))
 	algorithmToken := strings.TrimSpace(os.Getenv("ALGORITHM_INTERNAL_TOKEN"))
-	if algorithmEndpoint != "" || algorithmToken != "" {
-		if algorithmEndpoint == "" || algorithmToken == "" {
-			log.Fatal("ALGORITHM_ENDPOINT and ALGORITHM_INTERNAL_TOKEN must be configured together")
-		}
+	if algorithmEndpoint == "" && algorithmToken == "" {
+		log.Printf("Algorithm ranker is not configured; feed will use the safe chronological order")
+	} else if algorithmEndpoint == "" || algorithmToken == "" {
+		log.Printf("Algorithm ranker is disabled because ALGORITHM_ENDPOINT and ALGORITHM_INTERNAL_TOKEN must be configured together")
+	} else {
 		ranker, err = algorithmclient.New(algorithmEndpoint, algorithmToken, 1200*time.Millisecond)
 		if err != nil {
-			log.Fatalf("configure private Algorithm client: %v", err)
+			log.Printf("Algorithm ranker configuration rejected; continuing without ranking: %v", err)
+			ranker = nil
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("FEED_RANKING_REQUIRED")), "true") && ranker == nil {
-		log.Fatal("FEED_RANKING_REQUIRED is true but Algorithm is not configured")
+	rankingRequired := strings.EqualFold(strings.TrimSpace(os.Getenv("FEED_RANKING_REQUIRED")), "true")
+	if rankingRequired && ranker == nil {
+		log.Printf("required ranking is unavailable; Appwrite authentication remains online and feed requests will fail closed")
 	}
 	feed, err := freshfeed.New(db, ranker, mediaSigner)
 	if err != nil {
 		log.Fatal(err)
 	}
-	feed.RequireRanker(strings.EqualFold(strings.TrimSpace(os.Getenv("FEED_RANKING_REQUIRED")), "true"))
+	feed.RequireRanker(rankingRequired)
 	api.WithFeed(feed)
 
 	addr := strings.TrimSpace(os.Getenv("FRESH_API_ADDR"))
