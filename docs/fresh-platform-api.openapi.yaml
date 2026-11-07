@@ -232,19 +232,6 @@ paths:
         '400': {description: Invalid content}
         '401': {description: Invalid Appwrite JWT}
         '503': {description: Moderation dependency unavailable}
-  /v1/media/{objectID}/download:
-    get:
-      summary: Obtain a short-lived owner-authorized media delivery URL
-      parameters:
-        - in: path
-          name: objectID
-          required: true
-          schema: {type: string, minLength: 1, maxLength: 128}
-      responses:
-        '200': {description: Short-lived signed media URL}
-        '401': {description: Invalid Appwrite JWT}
-        '403': {description: Caller is not authorized to access the media}
-        '404': {description: Media object not found}
   /internal/v1/federation/readyz:
     get:
       security:
