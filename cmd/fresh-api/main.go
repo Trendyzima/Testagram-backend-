@@ -33,8 +33,10 @@ func main() {
 		log.Fatal(err)
 	}
 	api, err := freshapi.New(db, endpoint, project, nil)
-	if err != nil {
-		log.Fatal(err)
+	if err != nil { log.Fatal(err) }
+	if err := api.WithAppwriteServerKey(key); err != nil { log.Fatal(err) }
+	if identitySecret := strings.TrimSpace(os.Getenv("IDENTITY_PREAUTH_SECRET")); identitySecret != "" {
+		if err := api.WithIdentitySecret(identitySecret); err != nil { log.Fatal(err) }
 	}
 
 	neonURL := strings.TrimSpace(os.Getenv("NEON_DATABASE_URL"))
