@@ -25,6 +25,22 @@ This is a foundation, not a claim of production readiness or a 5-million-concurr
 
 ## Cross-repository integration
 
+## Five-repository Testagram architecture
+
+The fresh Appwrite platform is coordinated across five repositories. Keep the following ownership boundaries intact:
+
+| Repository | Responsibility | Boundary |
+| --- | --- | --- |
+| [XClone](https://github.com/Trendyzima/XClone-9b4dz1-9b4dz1-8936-20260809tr) | Web/mobile UI and presentation | Never owns server authorization or private service credentials |
+| **Testagram Backend (this repository)** | Canonical Appwrite identity, profiles, posts, social graph, permissions, visibility, transactional events and API orchestration | The only authority for local account/post state and access decisions |
+| [Federated Content](https://github.com/Trendyzima/federated-content) | ActivityPub actors, remote keys, signed inbox ingress, protocol outbox and delivery workers | Owns protocol state only; resolves local users through this Backend |
+| [the-algorithm](https://github.com/Trendyzima/the-algorithm) | Private feed ranking and recommendation scoring | Returns ordering only; Backend rechecks visibility and hydrates canonical posts |
+| [Testagram Data Centre](https://github.com/Trendyzima/Testagram-data-centre-) | Runtime deployment, private networks, media durability, storage nodes, backups and recovery | Owns infrastructure and media durability, not product identity or social policy |
+
+Legacy Supabase-compatible modules remain in this repository for migration compatibility. The fresh Appwrite runtime is a separate, explicitly configured path; do not silently fall back between identity providers. The public API remains the only client-facing application boundary. Federation, Algorithm and infrastructure services stay on private networks.
+
+Federation has a dedicated authenticated `GET /internal/v1/federation/readyz` contract. It checks only the Appwrite profile and transactional outbox dependencies needed by Federation, while public `/readyz` continues to include Algorithm/home-feed readiness.
+
 - [XClone + Server E hybrid integration contract](docs/server-e-hybrid-integration.md): staged API/media routing while preserving Cloudflare, Firebase, Redis and Upstash.
 - [VPS data-centre integration contract](docs/vps-data-centre-integration.md): workload policy, release gates and repository ownership.
 
