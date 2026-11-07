@@ -30,13 +30,13 @@ Target is 150,000,000,000 bytes (150 GB decimal) of usable logical media capacit
 - Backblaze B2: preferred durable object origin.
 - Cloudflare R2: additional durable object provider for verified replicas and controlled overflow. Do not count CDN cache as storage.
 - Cloudflare CDN/WAF/DNS: edge delivery/security only; CDN cache is never counted as durable capacity.
-- Android Node B: removable-SD-only storage node. It can add optional verified replica capacity, never compute, never use internal phone storage and never be the sole copy.
-- Computer nodes: independently opt into compute, storage, or both. Compute-only nodes contribute CPU/RAM but no media capacity. Storage-enabled computers expose only a dedicated, separately quota-limited media path, never the OS disk or compute scratch directory. A dual-purpose computer must have separate compute and media roots.
-- Node capacity is counted only after authenticated enrollment, fresh heartbeats, quota reservation, successful object write/read-back, SHA-256 verification and a tested recovery path. Offline/unverified node bytes are not available capacity.
+- Android Node B: removable-SD-only storage node. It never uses internal phone storage and never performs compute. Its local media endpoint is currently loopback-only; remote object transport and replica placement are not complete, so SD capacity is not yet counted toward usable platform capacity.
+- Computer nodes: independently opt into compute, storage, or both. Compute-only nodes contribute CPU/RAM but no media capacity. Storage-enabled Linux computers require a dedicated mounted filesystem and explicit quota, separate from OS and compute paths. Windows/macOS adapters and remote media object transport are not complete.
+- Node capacity is counted only after authenticated enrollment, fresh heartbeats, quota reservation, successful object write/read-back, SHA-256 verification and a tested recovery path. The current node control plane reports capacity as reported-only, not verified usable capacity.
 
-Reserve logical quota before upload, validate provider-observed size and SHA-256, and mark media ready only after the configured durability policy passes. ETag is not SHA-256. Never delete until ownership and required replicas are verified.
+The fresh Go media lifecycle now reserves platform and per-user quota transactionally in Appwrite (KiB units, rounded up), issues idempotent B2 upload reservations, validates B2 object size/MIME/SHA-256, streams a bounded copy to R2 and independently verifies the R2 read-back checksum. It records B2/R2 replica documents and marks an object protected only after both cloud replicas pass. Abandoned reservations have a lease-protected expiry sweeper; operator-triggered repair can restore one cloud replica from the other. ETag is not SHA-256. Never delete until ownership and required replicas are verified.
 
-Safe initial rollout: B2 is the preferred cloud origin and R2 is the second cloud provider. Keep automatic failover disabled until restore/reconciliation tests pass. Android SD and computer nodes are optional extra replicas; they may expand the physical pool but cannot become the only copy. Keep a durable cloud copy for every asset and require two independently verified copies before marking it fully protected.
+Safe initial rollout: B2 is the preferred cloud origin and R2 is the second cloud provider. Keep automatic failover disabled until restore/reconciliation tests pass. Android SD and computer nodes are future optional extra replicas; they must never become the only copy. Keep a durable cloud copy for every asset and require two independently verified cloud copies before marking it fully protected.
 
 Use opaque server-generated object keys. Keep buckets private and credentials server-side. Separate dev/staging/prod credentials. Public cache keys must be immutable/versioned; private media bypasses public shared cache and uses short-lived authorized access.
 
@@ -44,12 +44,16 @@ Use opaque server-generated object keys. Keep buckets private and credentials se
 - Separate Appwrite projects, databases, collections, indexes and server keys for dev/staging/prod.
 - Auth signup/login/verification/recovery/logout and Backend JWT validation pass E2E.
 - Database CRUD, uniqueness, indexes, permissions and failure handling pass.
-- Fresh app has no production Supabase dependency or required Supabase environment variables.
-- B2/R2 upload/read/head/delete/SHA-256 integration tests pass with test buckets.
+- Fresh frontend mode selects Appwrite, removes legacy identity linking, disables Supabase clients to loopback and fails closed for unported social endpoints; no fresh request may reach the legacy Supabase/API host.
+- B2/R2 upload/read/head/delete/SHA-256 tests pass against isolated staging buckets (local mocked-provider tests alone are insufficient).
 - 150 GB quota reservations, races, cancellation, expiry, deletion and reconciliation pass.
-- Android Node B physical SD-card tests pass; internal storage rejected; card removal/replacement safe. Computer-node compute-only, storage-only and dual-purpose enrollment tests pass; storage quotas and disjoint media/compute paths are enforced.
+- Android Node B physical SD-card tests pass; internal storage rejected; card removal/replacement and authenticated remote transfer are safe. Computer-node compute-only, storage-only and dual-purpose enrollment tests pass; storage quotas and disjoint media/compute paths are enforced. These gates remain open.
 - Database and object backups restore successfully.
-- Cloudflare public/private caching, origin protection, TLS and access controls pass.
+- Cloudflare private-media Worker is deployed with the correct R2 binding, HMAC secret, exact frontend origins, TLS and no-store policy. Public-media caching requires a separate explicit authorization/cache policy.
 - Load, security, observability and disaster recovery pass before production.
 
 No Supabase migration, no legacy import/linking, no automatic federation activation, and no production-readiness claim based only on compilation.
+
+## Current fresh frontend boundary
+
+The fresh environment example sets VITE_TESTAGRAM_FRESH_MODE=true, VITE_TESTAGRAM_AUTH_PROVIDER=appwrite, and points both API-origin variables at the fresh Go API. Fresh builds disable legacy Supabase clients rather than connecting to the old project. The new browser media upload/download service exists, but it is not yet wired into post, message, story or profile composers. Social/feed endpoints deliberately fail closed in fresh mode until their Appwrite-backed implementations are ready; a successful frontend build does not mean those screens are migrated.
