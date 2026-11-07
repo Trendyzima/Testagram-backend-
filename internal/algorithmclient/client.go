@@ -3,6 +3,8 @@ package algorithmclient
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,6 +105,12 @@ func (c *Client) Ready(ctx context.Context) error {
 	return nil
 }
 
+func newRequestID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err == nil { return hex.EncodeToString(raw[:]) }
+	return fmt.Sprintf("backend-ranker-%d", time.Now().UnixNano())
+}
+
 func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	if c == nil {
 		return Response{}, errors.New("algorithm client is not configured")
@@ -124,6 +132,8 @@ func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Testagram-API-Version", "1")
+	req.Header.Set("X-Request-ID", newRequestID())
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return Response{}, fmt.Errorf("algorithm service request: %w", err)
