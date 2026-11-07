@@ -78,7 +78,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || (s.dataCentreMedia != nil && s.mediaIntentFactory == nil) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage is not configured on this server", id))
 		return
 	}
@@ -124,13 +124,24 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer and contain no line breaks", id))
 		return
 	}
-	intent, err := s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+	var intent media.UploadIntent
+if s.dataCentreMedia != nil {
+	intent, err = s.mediaIntentFactory.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+} else {
+	intent, err = s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
 		return
 	}
 	storageNamespace, storageProvider := "legacy-media", "default"
-	if s.virtualStorage != nil {
+	if s.dataCentreMedia != nil {
+		storageNamespace, storageProvider = intent.Bucket, "data-centre"
+		if _, err = s.dataCentreMedia.CreateUploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("DATA_CENTRE_UPLOAD_URL_FAILED", "Could not register a Data Centre media upload", id))
+			return
+		}
+	} else if s.virtualStorage != nil {
 		storageNamespace = "media-private"
 		if body.Visibility == "public" {
 			storageNamespace = "media-public"
