@@ -30,8 +30,9 @@ type Server struct {
 	feed           HomeFeedService
 	allowedOrigins map[string]struct{}
 	internalToken  string
-	identitySecret string
-	moderation     ContentModeration
+	identitySecret   string
+	appwriteServerKey string
+	moderation       ContentModeration
 }
 
 type HomeFeedService interface {
@@ -54,6 +55,15 @@ func (s *Server) WithFeed(feed HomeFeedService) *Server {
 func (s *Server) WithModeration(moderation ContentModeration) *Server {
 	s.moderation = moderation
 	return s
+}
+
+func (s *Server) WithAppwriteServerKey(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" || len(key) > 4096 || strings.ContainsAny(key, "\\r\\n") {
+		return errors.New("Appwrite server API key is required")
+	}
+	s.appwriteServerKey = key
+	return nil
 }
 
 func (s *Server) WithIdentitySecret(secret string) error {
@@ -118,7 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
-	mux.HandleFunc("POST /v1/me/identity/approval", s.identityApproval)
+	mux.HandleFunc("POST /v1/identity/register", s.registerIdentityVerifiedAccount)
 	mux.HandleFunc("GET /v1/me/legal", s.getLegalConsent)
 	mux.HandleFunc("PUT /v1/me/legal", s.updateLegalConsent)
 	mux.HandleFunc("GET /v1/me/federation", s.getFederationPreference)
