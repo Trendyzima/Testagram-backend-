@@ -626,80 +626,64 @@ func TestFederationOutboxIsNotMountedWithoutSecret(t *testing.T) {
 	}
 }
 
-func TestReadyzFailsUntilFeedDependenciesAreReady(t *testing.T) {
+func TestReadyzDoesNotDependOnFeedOrAlgorithm(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("readiness without feed service status=%d", rec.Code)
+	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Appwrite login readiness must not depend on feed or Algorithm; status=%d body=%s", rec.Code, rec.Body.String())
 	}
-
-	feed := &fakeHomeFeed{}
-	api.WithFeed(feed)
-	readyReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	readyRec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(readyRec, readyReq)
-	if readyRec.Code != http.StatusOK {
-		t.Fatalf("readiness with ready dependencies status=%d body=%s", readyRec.Code, readyRec.Body.String())
-	}
-
-	feed.err = errors.New("dependency unavailable")
-	failedReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	failedRec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(failedRec, failedReq)
-	if failedRec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("readiness with failed dependency status=%d", failedRec.Code)
+	if !strings.Contains(rec.Body.String(), `"authentication":"available"`) ||
+		!strings.Contains(rec.Body.String(), `"platform_ready":false`) {
+		t.Fatalf("service readiness response did not disclose login and platform state: %s", rec.Body.String())
 	}
 }
-
 
 type fakeNeonHealth struct { err error }
 
 func (f fakeNeonHealth) Ping(context.Context) error { return f.err }
 
-func TestReadyzFailsWhenRequiredNeonIsMissing(t *testing.T) {
+func TestReadyzDoesNotDependOnRequiredNeonAvailability(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
-	api.WithFeed(&fakeHomeFeed{})
 	api.WithNeon(nil, true)
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("readiness without required Neon status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Appwrite login service should remain ready without Neon; status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	platform := httptest.NewRecorder()
+	api.Handler().ServeHTTP(platform, httptest.NewRequest(http.MethodGet, "/readyz/platform", nil))
+	if platform.Code != http.StatusServiceUnavailable || !strings.Contains(platform.Body.String(), "Neon is not configured") {
+		t.Fatalf("full platform readiness must fail without required Neon; status=%d body=%s", platform.Code, platform.Body.String())
 	}
 }
 
-func TestReadyzChecksConfiguredNeonHealth(t *testing.T) {
+func TestReadyzReportsNeonHealthWithoutBlockingLogin(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
 	api.WithFeed(&fakeHomeFeed{})
 	api.WithNeon(fakeNeonHealth{err: errors.New("database unavailable")}, true)
-	failed := httptest.NewRecorder()
-	api.Handler().ServeHTTP(failed, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if failed.Code != http.StatusServiceUnavailable {
-		t.Fatalf("readiness with unhealthy Neon status=%d body=%s", failed.Code, failed.Body.String())
-	}
-
-	api.WithNeon(fakeNeonHealth{}, true)
-	ready := httptest.NewRecorder()
-	api.Handler().ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if ready.Code != http.StatusOK {
-		t.Fatalf("Appwrite login service should be ready when required Neon is reachable; status=%d body=%s", ready.Code, ready.Body.String())
-	}
-	if !strings.Contains(ready.Body.String(), `"social_data_plane":"connected_not_integrated"`) ||
-		!strings.Contains(ready.Body.String(), `"platform_ready":false`) {
-		t.Fatalf("service readiness must disclose that Neon product repositories are not integrated: %s", ready.Body.String())
+	service := httptest.NewRecorder()
+	api.Handler().ServeHTTP(service, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if service.Code != http.StatusOK || !strings.Contains(service.Body.String(), `"social_data_plane":"unavailable"`) {
+		t.Fatalf("login service should be ready while reporting Neon outage; status=%d body=%s", service.Code, service.Body.String())
 	}
 
 	platform := httptest.NewRecorder()
+	api.Handler().ServeHTTP(platform, httptest.NewRequest(http.MethodGet, "/readyz/platform", nil))
+	if platform.Code != http.StatusServiceUnavailable || !strings.Contains(platform.Body.String(), "Neon PostgreSQL connectivity is not ready") {
+		t.Fatalf("full platform readiness must fail while Neon is unavailable; status=%d body=%s", platform.Code, platform.Body.String())
+	}
+
+	api.WithNeon(fakeNeonHealth{}, true)
+	platform = httptest.NewRecorder()
 	api.Handler().ServeHTTP(platform, httptest.NewRequest(http.MethodGet, "/readyz/platform", nil))
 	if platform.Code != http.StatusServiceUnavailable || !strings.Contains(platform.Body.String(), "canonical social repositories are not integrated") {
 		t.Fatalf("full platform readiness must remain blocked until Neon repositories are integrated; status=%d body=%s", platform.Code, platform.Body.String())
 	}
 }
-
 
 func TestReadyzDoesNotClaimPostPublishingWhenModerationIsDisabled(t *testing.T) {
 	api, mock := testServer(t)
