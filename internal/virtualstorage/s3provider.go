@@ -39,6 +39,13 @@ type S3Provider struct {
 	client                                    *http.Client
 }
 
+func (p *S3Provider) EndpointHost() string {
+	if p == nil || p.endpoint == nil {
+		return ""
+	}
+	return strings.ToLower(p.endpoint.Host)
+}
+
 func isLocalS3Host(host string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
 }
