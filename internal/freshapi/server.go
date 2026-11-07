@@ -2,6 +2,8 @@ package freshapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshfeed"
@@ -88,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
+	mux.HandleFunc("POST /v1/posts", s.createPost)
 	if s.storage != nil {
 		mux.HandleFunc("POST /v1/media/uploads/reservations", s.reserveMediaUpload)
 		mux.HandleFunc("POST /v1/media/uploads/{reservationID}/complete", s.completeMediaUpload)
@@ -192,6 +196,108 @@ func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
 		"data":  result,
 		"error": nil,
 	})
+}
+
+func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) < 8 || len(idempotencyKey) > 128 || strings.ContainsAny(idempotencyKey, "\r\n") {
+		writeError(w, http.StatusBadRequest, "an 8-128 character Idempotency-Key is required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var input struct {
+		Content    string `json:"content"`
+		Visibility string `json:"visibility"`
+		Sensitive  bool   `json:"sensitive"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid post payload")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "post payload must contain one JSON object")
+		return
+	}
+	input.Content = strings.TrimSpace(input.Content)
+	input.Visibility = strings.ToLower(strings.TrimSpace(input.Visibility))
+	if !utf8.ValidString(input.Content) || input.Content == "" || utf8.RuneCountInString(input.Content) > 5000 {
+		writeError(w, http.StatusBadRequest, "post content must contain between 1 and 5000 valid Unicode characters")
+		return
+	}
+	switch input.Visibility {
+	case "public", "followers", "private":
+	default:
+		writeError(w, http.StatusBadRequest, "visibility must be public, followers, or private")
+		return
+	}
+	canonical, err := json.Marshal(input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid post payload")
+		return
+	}
+	requestHash := sha256.Sum256(canonical)
+	keyHash := sha256.Sum256([]byte(idempotencyKey))
+	postHash := sha256.Sum256([]byte(a.ID + "\x00" + idempotencyKey))
+	postID := "p_" + hex.EncodeToString(postHash[:16])
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	data := map[string]any{
+		"author_id":            a.ID,
+		"body":                 input.Content,
+		"visibility":           input.Visibility,
+		"status":               "published",
+		"sensitive":            input.Sensitive,
+		"idempotency_key_hash": hex.EncodeToString(keyHash[:]),
+		"request_hash":         hex.EncodeToString(requestHash[:]),
+		"created_at":           now,
+		"updated_at":           now,
+	}
+	raw, err := s.db.CreateDocument(r.Context(), "posts", postID, data, nil)
+	if err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+			existing, readErr := s.db.GetDocument(r.Context(), "posts", postID)
+			if readErr == nil {
+				var saved map[string]any
+				if json.Unmarshal(existing, &saved) == nil && saved["author_id"] == a.ID && saved["idempotency_key_hash"] == hex.EncodeToString(keyHash[:]) && saved["request_hash"] == hex.EncodeToString(requestHash[:]) {
+					public, sanitizeErr := publicPostDocument(existing)
+					if sanitizeErr != nil {
+						writeError(w, http.StatusServiceUnavailable, "post could not be read")
+						return
+					}
+					writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": public, "error": nil})
+					return
+				}
+				writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different post")
+				return
+			}
+		}
+		writeError(w, http.StatusServiceUnavailable, "post could not be saved")
+		return
+	}
+	public, sanitizeErr := publicPostDocument(raw)
+	if sanitizeErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "post could not be read")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": public, "error": nil})
+}
+
+func publicPostDocument(raw []byte) (json.RawMessage, error) {
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil || document == nil {
+		return nil, errors.New("invalid Appwrite post document")
+	}
+	delete(document, "idempotency_key_hash")
+	delete(document, "request_hash")
+	encoded, err := json.Marshal(document)
+	return json.RawMessage(encoded), err
 }
 
 func (s *Server) reserveMediaUpload(w http.ResponseWriter, r *http.Request) {
