@@ -311,6 +311,7 @@ func (s *Server) reserveMediaUpload(w http.ResponseWriter, r *http.Request) {
 		Bytes       int64  `json:"bytes"`
 		ContentType string `json:"content_type"`
 		SHA256      string `json:"sha256"`
+		Scope       string `json:"scope"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -322,7 +323,7 @@ func (s *Server) reserveMediaUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "upload reservation must contain one JSON object")
 		return
 	}
-	result, err := s.storage.ReserveUpload(r.Context(), freshstorage.ReserveInput{OwnerID: a.ID, IdempotencyKey: r.Header.Get("Idempotency-Key"), Bytes: input.Bytes, ContentType: input.ContentType, SHA256: input.SHA256})
+	result, err := s.storage.ReserveUpload(r.Context(), freshstorage.ReserveInput{OwnerID: a.ID, IdempotencyKey: r.Header.Get("Idempotency-Key"), Scope: input.Scope, Bytes: input.Bytes, ContentType: input.ContentType, SHA256: input.SHA256})
 	if err != nil {
 		writeStorageError(w, err)
 		return
