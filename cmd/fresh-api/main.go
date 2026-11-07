@@ -35,6 +35,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := api.WithAppwriteServerKey(key); err != nil {
+		log.Fatal(err)
+	}
 	if identitySecret := strings.TrimSpace(os.Getenv("IDENTITY_PREAUTH_SECRET")); identitySecret != "" {
 		if err := api.WithIdentitySecret(identitySecret); err != nil {
 			log.Fatal(err)
