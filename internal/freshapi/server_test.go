@@ -70,6 +70,8 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			state.transactionCommitted = body["commit"] == true
 			_, _ = w.Write([]byte(`{"$id":"tx_posts","status":"committed"}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/collections/profiles/documents/"):
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","identity_verification_status":"approved","federation_enabled":true}`))
 		case strings.HasSuffix(r.URL.Path, "/documents"):
 			if r.Method == http.MethodGet {
 				if strings.Contains(r.URL.Path, "/collections/profiles/") {
