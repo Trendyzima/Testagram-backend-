@@ -30,6 +30,7 @@ type Server struct {
 	feed           HomeFeedService
 	allowedOrigins map[string]struct{}
 	internalToken  string
+	identitySecret string
 	moderation     ContentModeration
 }
 
@@ -53,6 +54,15 @@ func (s *Server) WithFeed(feed HomeFeedService) *Server {
 func (s *Server) WithModeration(moderation ContentModeration) *Server {
 	s.moderation = moderation
 	return s
+}
+
+func (s *Server) WithIdentitySecret(secret string) error {
+	secret = strings.TrimSpace(secret)
+	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
+		return errors.New("identity approval secret must contain at least 32 characters")
+	}
+	s.identitySecret = secret
+	return nil
 }
 
 func (s *Server) WithInternalToken(token string) error {
@@ -108,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
+	mux.HandleFunc("POST /v1/me/identity/approval", s.identityApproval)
 	mux.HandleFunc("GET /v1/me/legal", s.getLegalConsent)
 	mux.HandleFunc("PUT /v1/me/legal", s.updateLegalConsent)
 	mux.HandleFunc("GET /v1/me/federation", s.getFederationPreference)
@@ -821,6 +832,8 @@ func writeStorageError(w http.ResponseWriter, err error) {
 
 type account struct {
 	ID                string `json:"$id"`
+	Email             string `json:"email"`
+	Name              string `json:"name"`
 	Status            bool   `json:"status"`
 	EmailVerification bool   `json:"emailVerification"`
 }
