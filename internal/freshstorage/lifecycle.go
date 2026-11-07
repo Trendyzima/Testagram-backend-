@@ -379,21 +379,44 @@ func verifyReplica(ctx context.Context, provider *virtualstorage.S3Provider, buc
 	return err == nil && hash == record.SHA256
 }
 
-// DownloadURL returns a short-lived R2 URL only after Appwrite confirms ownership
+// DownloadURL returns a one-hour private media URL only after Appwrite confirms ownership
 // and the media object is marked ready. All new uploads are private by default.
 func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (string, error) {
 	key, err := s.store.MediaKey(ctx, ownerID, objectID)
 	if err != nil {
 		return "", err
 	}
-	if s.cdnBaseURL != "" && s.cdnSigningSecret != "" {
-		return signPrivateMediaURL(s.cdnBaseURL, s.cdnSigningSecret, key, 120, time.Now().UTC())
+	record, err := s.store.GetMediaRecord(ctx, objectID)
+	if err != nil {
+		return "", err
 	}
-	return s.r2.PresignGet(ctx, s.r2Bucket, key, 2*time.Minute)
+	if record.OwnerID != ownerID || record.Status != "ready" || record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
+		return "", ErrNotReady
+	}
+	// Cloudflare R2 is the preferred delivery origin because the private Worker
+	// reads its bucket directly. If R2 is temporarily unavailable or its metadata
+	// is wrong, serve the independently verified B2 primary instead of breaking
+	// every media view. RepairObject will reconcile the degraded R2 replica.
+	r2Info, r2Err := s.r2.Head(ctx, s.r2Bucket, key)
+	r2Ready := r2Err == nil && r2Info.Size == record.Bytes && strings.EqualFold(r2Info.ContentType, record.ContentType)
+	if r2Ready {
+		if s.cdnBaseURL != "" && s.cdnSigningSecret != "" {
+			return signPrivateMediaURL(s.cdnBaseURL, s.cdnSigningSecret, key, 3600, time.Now().UTC())
+		}
+		return s.r2.PresignGet(ctx, s.r2Bucket, key, time.Hour)
+	}
+	b2Info, b2Err := s.b2.Head(ctx, s.b2Bucket, key)
+	if b2Err != nil {
+		return "", fmt.Errorf("Cloudflare R2 delivery unavailable (%v) and Backblaze B2 fallback unavailable: %w", r2Err, b2Err)
+	}
+	if b2Info.Size != record.Bytes || !strings.EqualFold(b2Info.ContentType, record.ContentType) {
+		return "", ErrNotReady
+	}
+	return s.b2.PresignGet(ctx, s.b2Bucket, key, time.Hour)
 }
 
 func signPrivateMediaURL(baseURL, secret, objectKey string, ttlSeconds int, now time.Time) (string, error) {
-	if validateMediaCDNBaseURL(baseURL) != nil || len(secret) < 32 || !validObjectKey(objectKey) || ttlSeconds < 1 || ttlSeconds > 120 {
+	if validateMediaCDNBaseURL(baseURL) != nil || len(secret) < 32 || !validObjectKey(objectKey) || ttlSeconds < 1 || ttlSeconds > 3600 {
 		return "", errors.New("invalid private CDN URL signing configuration")
 	}
 	expires := now.Unix() + int64(ttlSeconds)
