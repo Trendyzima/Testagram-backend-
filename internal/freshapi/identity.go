@@ -118,10 +118,14 @@ func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.
 		return
 	}
 	var created struct {
-		ID string `json:"$id"`
+		ID                string `json:"$id"`
+		Email             string `json:"email"`
+		EmailVerification bool   `json:"emailVerification"`
 	}
-	if err := json.NewDecoder(io.LimitReader(createResp.Body, 64<<10)).Decode(&created); err != nil || !validUserID(created.ID) {
-		writeError(w, http.StatusServiceUnavailable, "Appwrite returned an invalid account")
+	if err := json.NewDecoder(io.LimitReader(createResp.Body, 64<<10)).Decode(&created); err != nil ||
+		!validUserID(created.ID) || !strings.EqualFold(created.Email, approval.Email) || !created.EmailVerification {
+		s.deleteAppwriteUser(created.ID)
+		writeError(w, http.StatusServiceUnavailable, "Appwrite did not confirm the verified account")
 		return
 	}
 
