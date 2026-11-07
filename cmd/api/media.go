@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -311,7 +313,8 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	defer tmp.Close()
-	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, tmp)
+	hasher := sha256.New()
+	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, io.MultiWriter(tmp, hasher))
 	if copyErr != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(copyErr, &maxErr) {
@@ -362,7 +365,8 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage rejected the bounded upload", id))
 		return
 	}
-	completed, stateErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploaded', updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading' and expires_at > now()", key, userID)
+	checksumSHA256 := hex.EncodeToString(hasher.Sum(nil))
+	completed, stateErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploaded', checksum_sha256=$3, updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading' and expires_at > now()", key, userID, checksumSHA256)
 	if stateErr != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_STATE_FAILED", "Object uploaded but intent state could not be saved; stale-upload cleanup will reconcile it", id))
 		return
