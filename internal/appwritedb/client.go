@@ -86,6 +86,26 @@ func (c *Client) CreateDocument(ctx context.Context, collectionID, documentID st
 	return c.do(ctx, http.MethodPost, c.documentsPath(collectionID, ""), body)
 }
 
+type User struct {
+	ID string `json:"$id"`
+	Status bool `json:"status"`
+}
+
+func (c *Client) GetUser(ctx context.Context, userID string) (User, error) {
+	if !validID(userID) {
+		return User{}, errors.New("invalid Appwrite user ID")
+	}
+	raw, err := c.do(ctx, http.MethodGet, c.base.Path+"/users/"+url.PathEscape(userID), nil)
+	if err != nil {
+		return User{}, err
+	}
+	var user User
+	if err := json.Unmarshal(raw, &user); err != nil || user.ID != userID {
+		return User{}, errors.New("Appwrite returned an invalid user record")
+	}
+	return user, nil
+}
+
 func (c *Client) GetDocument(ctx context.Context, collectionID, documentID string) (json.RawMessage, error) {
 	if !validID(collectionID) || !validID(documentID) {
 		return nil, errors.New("invalid Appwrite collection or document ID")
