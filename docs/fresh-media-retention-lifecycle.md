@@ -18,7 +18,7 @@ This is an implementation plan, not authorization to run destructive jobs. Reten
 3. A provider timeout is an unknown outcome, not proof of deletion. Re-HEAD and reconcile before retrying.
 4. Never release quota while any charged copy remains, any deletion is unverified, or the replica inventory is incomplete.
 5. Jobs are deterministic and idempotent. A repeated run must converge on the same terminal state without duplicate quota changes.
-6. Claims use Appwrite transactions and expiring leases. A stale worker cannot overwrite a newer claim or complete a job it no longer owns.
+6. Claims use Appwrite transactions and expiring leases. A stale worker cannot overwrite a newer claim or complete a job it no longer owns. The dispatcher renews its 10-minute lease every 2 minutes during long provider operations; a failed renewal cancels the worker context.
 7. Every state transition and provider operation is auditable. Errors are bounded/redacted; never log signed URLs, credentials, or user content.
 8. The retention worker never processes direct messages, avatars, profile media, or ordinary post text unless a separate explicit policy is approved.
 
