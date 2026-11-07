@@ -23,6 +23,8 @@ type mockAppwriteState struct {
 	accountActive            bool
 	emailVerified            bool
 	profileIdentityStatus    string
+	identityFingerprintExists bool
+	createdAppwriteUsers int
 	profileUpdates           map[string]map[string]any
 }
 
@@ -61,6 +63,13 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			if input["emailVerification"] != true || input["email"] != "new@example.com" { t.Errorf("unexpected Appwrite account payload: %#v", input) }
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","status":true,"emailVerification":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/users":
+			if r.Header.Get("X-Appwrite-Key") != "appwrite-test-server-key" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			state.createdAppwriteUsers++
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","emailVerification":true,"status":true}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/new_user_1":
 			status := state.accountActive
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":`+strconv.FormatBool(status)+`}`))
@@ -74,6 +83,10 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 		case strings.HasSuffix(r.URL.Path, "/documents"):
 			if r.Method == http.MethodGet {
 				if strings.Contains(r.URL.Path, "/collections/profiles/") {
+					if strings.Contains(strings.Join(r.URL.Query()["queries[]"], " "), "identity_fingerprint_hash") && state.identityFingerprintExists {
+						_, _ = w.Write([]byte(`{"documents":[{"$id":"existing_identity"}],"total":1}`))
+						return
+					}
 					if strings.Contains(strings.Join(r.URL.Query()["queries[]"], " "), "tester") {
 						profile := map[string]any{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","bio":"A test profile","federation_enabled":state.profileFederationEnabled,"identity_verification_status":state.profileIdentityStatus}
 						encoded, _ := json.Marshal(map[string]any{"documents":[]any{profile},"total":1})
