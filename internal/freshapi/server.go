@@ -889,6 +889,20 @@ func (s *Server) authenticate(r *http.Request) (account, int, error) {
 	if !a.EmailVerification {
 		return account{}, http.StatusForbidden, errors.New("EMAIL_NOT_VERIFIED")
 	}
+	profileRaw, err := s.db.GetDocument(ctx, "profiles", a.ID)
+	if err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return account{}, http.StatusForbidden, errors.New("IDENTITY_VERIFICATION_REQUIRED")
+		}
+		return account{}, http.StatusServiceUnavailable, errors.New("profile authorization unavailable")
+	}
+	var profile struct {
+		IdentityVerificationStatus string `json:"identity_verification_status"`
+	}
+	if err := json.Unmarshal(profileRaw, &profile); err != nil || profile.IdentityVerificationStatus != "approved" {
+		return account{}, http.StatusForbidden, errors.New("IDENTITY_VERIFICATION_REQUIRED")
+	}
 	return a, 200, nil
 }
 
