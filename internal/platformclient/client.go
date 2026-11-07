@@ -86,7 +86,22 @@ func newRequestID() string {
 	return fmt.Sprintf("platform-%d", time.Now().UnixNano())
 }
 
+func validateKey(key string) error {
+	if len(key) < 1 || len(key) > 160 {
+		return errors.New("platform key must contain between 1 and 160 ASCII characters")
+	}
+	for _, char := range key {
+		if !(char == '-' || char == '_' || char == '.' || char == ':' ||
+			(char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9')) {
+			return errors.New("platform key contains a character not supported by the API")
+		}
+	}
+	return nil
+}
+
 func (c *Client) Get(ctx context.Context, key string) (string, error) {
+	if err := validateKey(key); err != nil { return "", err }
 	q := url.Values{"key": []string{key}}
 	var result struct { Value string `json:"value"` }
 	err := c.do(ctx, http.MethodGet, "/v1/cache/get?"+q.Encode(), nil, &result)
@@ -98,6 +113,8 @@ func (c *Client) Get(ctx context.Context, key string) (string, error) {
 }
 
 func (c *Client) Set(ctx context.Context, key, value string, ttl time.Duration) error {
+	if err := validateKey(key); err != nil { return err }
+	if len(value) > 256<<10 { return errors.New("cache value exceeds 256 KiB") }
 	seconds := int64(ttl / time.Second)
 	if ttl%time.Second != 0 { seconds++ }
 	if seconds < 1 || seconds > 86400 { return errors.New("cache TTL must be between 1 second and 24 hours") }
@@ -105,11 +122,13 @@ func (c *Client) Set(ctx context.Context, key, value string, ttl time.Duration) 
 }
 
 func (c *Client) Delete(ctx context.Context, key string) error {
+	if err := validateKey(key); err != nil { return err }
 	q := url.Values{"key": []string{key}}
 	return c.do(ctx, http.MethodDelete, "/v1/cache/delete?"+q.Encode(), nil, nil)
 }
 
 func (c *Client) Check(ctx context.Context, key string, limit int64, window time.Duration) (RateLimitResult, error) {
+	if err := validateKey(key); err != nil { return RateLimitResult{}, err }
 	seconds := int64(window / time.Second)
 	if window%time.Second != 0 { seconds++ }
 	if limit < 1 || limit > 100000 || seconds < 1 || seconds > 86400 {
@@ -121,10 +140,16 @@ func (c *Client) Check(ctx context.Context, key string, limit int64, window time
 }
 
 func (c *Client) Enqueue(ctx context.Context, queue string, payload map[string]string) (string, error) {
-	if len(payload) == 0 { return "", errors.New("queue payload must not be empty") }
+	if err := validateKey(queue); err != nil { return "", fmt.Errorf("invalid queue name: %w", err) }
+	if len(payload) == 0 || len(payload) > 256 { return "", errors.New("queue payload must contain between 1 and 256 fields") }
+	for key, value := range payload {
+		if validateKey(key) != nil || len(value) > 16<<10 { return "", errors.New("queue payload contains an invalid field or oversized value") }
+	}
 	var result struct { ID string `json:"id"` }
 	err := c.do(ctx, http.MethodPost, "/v1/queue/enqueue", map[string]any{"queue": queue, "payload": payload}, &result)
-	return result.ID, err
+	if err != nil { return "", err }
+	if strings.TrimSpace(result.ID) == "" || len(result.ID) > 128 { return "", errors.New("platform API returned an invalid queue job ID") }
+	return result.ID, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
@@ -145,8 +170,8 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if err != nil { return fmt.Errorf("call Testagram platform API: %w", err) }
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if err != nil { return fmt.Errorf("read platform API response: %w", err) }
 	if len(raw) > 1<<20 { return errors.New("platform API response exceeded 1 MiB") }
-	if err != nil { return err }
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusNotFound {
 			return &StatusError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
