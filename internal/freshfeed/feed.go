@@ -227,7 +227,7 @@ func (s *Service) Home(ctx context.Context, viewerID string, limit int, cursor s
 			seenRanked := make(map[string]struct{}, len(ranked.Items))
 			for _, item := range ranked.Items {
 				candidate, ok := byID[item.ID]
-				if !ok || item.AuthorID != candidate.authorID || math.IsNaN(item.Score) || math.IsInf(item.Score, 0) || item.Score < 0 || item.Score > 1 {
+				if !ok || math.IsNaN(item.Score) || math.IsInf(item.Score, 0) || item.Score < 0 || item.Score > 1 {
 					valid = false
 					break
 				}
