@@ -21,9 +21,19 @@ paths:
   /readyz:
     get:
       security: []
+      summary: Check whether the Backend can serve its currently enabled routes, including login
+      description: A reachable Neon database is reported as connected_not_integrated until canonical social repositories are deployed. This endpoint is the process/edge readiness gate, not proof of full product readiness.
       responses:
-        '200': { description: Appwrite/feed/outbox are ready; response reports social_data_plane, moderation and post_write capability states }
+        '200': { description: Appwrite identity, enabled feed dependencies and outbox are ready; response reports social_data_plane and platform_ready=false when Neon repositories are not integrated }
         '503': { description: Required Neon connection, Appwrite collections/indexes, feed or Algorithm dependency is unavailable }
+  /readyz/platform:
+    get:
+      security: []
+      summary: Check full Testagram product data-plane readiness
+      description: Remains unavailable until canonical Neon social repositories and their transactional outbox are integrated and verified.
+      responses:
+        '200': { description: Canonical social data plane is fully ready }
+        '503': { description: Neon unavailable or canonical social repositories not yet integrated }
   /v1/me:
     get:
       summary: Read authenticated Appwrite user profile
@@ -146,20 +156,6 @@ paths:
       responses:
         '200': { description: Authorized public feed page with next_cursor and has_more }
         '400': { description: Invalid pagination parameters }
-        '503': { description: Feed dependencies unavailable; no unfiltered fallback is returned }
-      parameters:
-        - in: query
-          name: limit
-          required: false
-          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
-        - in: query
-          name: before
-          required: false
-          schema: { type: string, maxLength: 256 }
-      responses:
-        '200': { description: Authorized home feed page with next_cursor, has_more and ranking_mode }
-        '400': { description: Invalid pagination parameters }
-        '401': { description: Invalid or expired Appwrite JWT }
         '503': { description: Feed dependencies unavailable; no unfiltered fallback is returned }
   /v1/media/uploads/reservations:
     post:
