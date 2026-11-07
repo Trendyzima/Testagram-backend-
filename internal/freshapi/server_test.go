@@ -3,12 +3,14 @@ package freshapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshfeed"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
@@ -204,5 +206,90 @@ func TestFreshAPICORSAllowsOnlyConfiguredOriginsAndHeaders(t *testing.T) {
 	api.Handler().ServeHTTP(badHeaderRec, badHeader)
 	if badHeaderRec.Code != http.StatusForbidden {
 		t.Fatalf("unapproved request header accepted: %d", badHeaderRec.Code)
+	}
+}
+
+type fakeHomeFeed struct {
+	viewer string
+	limit  int
+	cursor string
+	err    error
+}
+
+func (f *fakeHomeFeed) Home(_ context.Context, viewer string, limit int, cursor string) (freshfeed.Result, error) {
+	f.viewer, f.limit, f.cursor = viewer, limit, cursor
+	return freshfeed.Result{Posts: []map[string]any{{"id": "post_1"}}, NextCursor: "next", HasMore: true, RankingMode: "chronological"}, f.err
+}
+
+func (f *fakeHomeFeed) Ready(context.Context) error { return f.err }
+
+func TestHomeFeedRequiresVerifiedAppwriteIdentityAndUsesBoundedPagination(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	feed := &fakeHomeFeed{}
+	api.WithFeed(feed)
+
+	unauthenticated := httptest.NewRequest(http.MethodGet, "/v1/feed/home", nil)
+	unauthenticatedRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(unauthenticatedRec, unauthenticated)
+	if unauthenticatedRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated feed status=%d", unauthenticatedRec.Code)
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/v1/feed/home?limit=51", nil)
+	invalid.Header.Set("Authorization", "Bearer valid-session")
+	invalidRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit status=%d", invalidRec.Code)
+	}
+	invalidCursor := httptest.NewRequest(http.MethodGet, "/v1/feed/home?before=not-base64", nil)
+	invalidCursor.Header.Set("Authorization", "Bearer valid-session")
+	invalidCursorRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(invalidCursorRec, invalidCursor)
+	if invalidCursorRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor status=%d", invalidCursorRec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/feed/home?limit=12&before=Y3Vyc29yXzE", nil)
+	req.Header.Set("Authorization", "Bearer valid-session")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feed status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if feed.viewer != "new_user_1" || feed.limit != 12 || feed.cursor != "Y3Vyc29yXzE" {
+		t.Fatalf("feed received unverified or incorrect inputs: %#v", feed)
+	}
+	if !strings.Contains(rec.Body.String(), "post_1") || !strings.Contains(rec.Body.String(), "chronological") {
+		t.Fatalf("feed response shape mismatch: %s", rec.Body.String())
+	}
+}
+
+func TestReadyzFailsUntilFeedDependenciesAreReady(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness without feed service status=%d", rec.Code)
+	}
+
+	feed := &fakeHomeFeed{}
+	api.WithFeed(feed)
+	readyReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	readyRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(readyRec, readyReq)
+	if readyRec.Code != http.StatusOK {
+		t.Fatalf("readiness with ready dependencies status=%d body=%s", readyRec.Code, readyRec.Body.String())
+	}
+
+	feed.err = errors.New("dependency unavailable")
+	failedReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	failedRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(failedRec, failedReq)
+	if failedRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness with failed dependency status=%d", failedRec.Code)
 	}
 }
