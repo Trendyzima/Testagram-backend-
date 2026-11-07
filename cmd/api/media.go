@@ -624,7 +624,8 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 			case <-time.After(500 * time.Millisecond):
 			}
 		}
-	} else if storageNamespace != "legacy-media" {(ctx, userID, storageNamespace, body.Key, body.ContentType, intentMaxBytes)
+	} else if storageNamespace != "legacy-media" {
+		info, verifyErr := s.virtualStorage.VerifyUpload(ctx, userID, storageNamespace, body.Key, body.ContentType, intentMaxBytes)
 		if verifyErr != nil {
 			if errors.Is(verifyErr, virtualstorage.ErrNotFound) {
 				writeJSON(w, http.StatusConflict, errorBody("MEDIA_UPLOAD_NOT_FOUND", "Upload is not present in object storage yet", id))
