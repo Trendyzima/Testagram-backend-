@@ -461,8 +461,11 @@ func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		documents = documents[:limit]
 	}
+	// The cursor identifies the last event in this page even when has_more
+	// is false. Consumers persist it and can resume incrementally when new events
+	// arrive; an empty cursor is reserved for an empty result page.
 	var nextCursor string
-	if hasMore && len(documents) > 0 {
+	if len(documents) > 0 {
 		var last struct {
 			ID string `json:"$id"`
 		}
