@@ -29,8 +29,7 @@ type Claims struct {
 }
 
 func Issue(secret, subject, conversationID string, now time.Time, ttl time.Duration) (string, error) {
-	if len(secret) < 32 || strings.ContainsAny(secret, "
-") {
+	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
 		return "", errors.New("realtime ticket secret must contain at least 32 characters")
 	}
 	subject = strings.TrimSpace(subject)
@@ -64,8 +63,7 @@ func Issue(secret, subject, conversationID string, now time.Time, ttl time.Durat
 
 func Verify(secret, token, expectedConversationID string, now time.Time) (Claims, error) {
 	var claims Claims
-	if len(secret) < 32 || strings.ContainsAny(secret, "
-") {
+	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
 		return claims, errors.New("realtime ticket secret is not configured securely")
 	}
 	parts := strings.Split(token, ".")
@@ -100,8 +98,7 @@ func Verify(secret, token, expectedConversationID string, now time.Time) (Claims
 // these bytes before parsing the event envelope; callers must not re-encode
 // the JSON between signing and sending it.
 func SignPublish(secret string, rawBody []byte) (string, error) {
-	if len(secret) < 32 || strings.ContainsAny(secret, "
-") {
+	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
 		return "", errors.New("realtime publish secret must contain at least 32 characters")
 	}
 	if len(rawBody) == 0 || len(rawBody) > 64*1024 {
