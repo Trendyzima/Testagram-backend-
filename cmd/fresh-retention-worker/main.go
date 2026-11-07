@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -64,36 +65,33 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var runErr error
-	switch job.Action {
-	case freshstorage.RetentionArchive:
-		if archive == nil || providers.ArchiveBucket == "" {
-			runErr = logError("archive provider is not configured")
-			break
+	runErr := runWithLease(ctx, jobs, job, func(workCtx context.Context) error {
+		switch job.Action {
+		case freshstorage.RetentionArchive:
+			if archive == nil || providers.ArchiveBucket == "" {
+				return fmt.Errorf("archive provider is not configured")
+			}
+			worker, e := freshstorage.NewArchiveWorker(b2, archive, store, providers.B2Bucket, providers.ArchiveBucket)
+			if e != nil {
+				return e
+			}
+			return worker.Run(workCtx, job, false)
+		case freshstorage.RetentionExpireStory:
+			worker, e := freshstorage.NewStoryExpiryWorker(store, freshstorage.ReplicaProviders{B2: b2, R2: r2, Archive: archive})
+			if e != nil {
+				return e
+			}
+			return worker.Run(workCtx, job, now, false)
+		case freshstorage.RetentionPurgeDeleted:
+			worker, e := freshstorage.NewUserDeletionPurgeWorker(store, freshstorage.ReplicaProviders{B2: b2, R2: r2, Archive: archive}, policy.RecoveryWindow)
+			if e != nil {
+				return e
+			}
+			return worker.Run(workCtx, job, now, false)
+		default:
+			return fmt.Errorf("unsupported retention job action")
 		}
-		worker, e := freshstorage.NewArchiveWorker(b2, archive, store, providers.B2Bucket, providers.ArchiveBucket)
-		if e != nil {
-			runErr = e
-		} else {
-			runErr = worker.Run(ctx, job, false)
-		}
-	case freshstorage.RetentionExpireStory:
-		worker, e := freshstorage.NewStoryExpiryWorker(store, freshstorage.ReplicaProviders{B2: b2, R2: r2, Archive: archive})
-		if e != nil {
-			runErr = e
-		} else {
-			runErr = worker.Run(ctx, job, now, false)
-		}
-	case freshstorage.RetentionPurgeDeleted:
-		worker, e := freshstorage.NewUserDeletionPurgeWorker(store, freshstorage.ReplicaProviders{B2: b2, R2: r2, Archive: archive}, policy.RecoveryWindow)
-		if e != nil {
-			runErr = e
-		} else {
-			runErr = worker.Run(ctx, job, now, false)
-		}
-	default:
-		runErr = logError("unsupported retention job action")
-	}
+	})
 	if runErr != nil {
 		if retryErr := jobs.Retry(ctx, job, runErr, time.Now().UTC()); retryErr != nil {
 			log.Fatalf("worker failed (%v) and lease retry update failed: %v", runErr, retryErr)
@@ -106,8 +104,27 @@ func main() {
 	}
 	log.Printf("retention job %s (%s) completed", job.ID, job.Action)
 }
-func logError(message string) error { return &workerError{message: message} }
-
-type workerError struct{ message string }
-
-func (e *workerError) Error() string { return e.message }
+func runWithLease(ctx context.Context, jobs *freshstorage.AppwriteRetentionJobs, job freshstorage.RetentionJob, run func(context.Context) error) error {
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- run(workCtx) }()
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-ticker.C:
+			if err := jobs.Renew(ctx, job, time.Now().UTC(), 10*time.Minute); err != nil {
+				cancel()
+				<-done
+				return fmt.Errorf("retention lease renewal failed: %w", err)
+			}
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return ctx.Err()
+		}
+	}
+}
