@@ -59,7 +59,7 @@ func (s *Server) WithModeration(moderation ContentModeration) *Server {
 
 func (s *Server) WithAppwriteServerKey(key string) error {
 	key = strings.TrimSpace(key)
-	if key == "" || len(key) > 4096 || strings.ContainsAny(key, "\\r\\n") {
+	if key == "" || len(key) > 4096 || strings.ContainsAny(key, "\r\n") {
 		return errors.New("Appwrite server API key is required")
 	}
 	s.appwriteServerKey = key
