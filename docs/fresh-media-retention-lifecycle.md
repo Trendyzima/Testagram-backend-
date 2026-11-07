@@ -111,3 +111,23 @@ Provision all attributes and indexes before enabling workers. Appwrite attribute
 ## Current implementation boundary
 
 The existing fresh storage code already handles upload reservation expiry and B2/R2 verification/repair. That reservation expiry is not post/story retention. This design adds the separate content lifecycle and must not reuse reservation cleanup to delete ready media. Archive-provider selection, Appwrite transaction implementation, story integration, restore delivery, and scheduled worker deployment remain required before production enablement.
+
+
+# Testagram backend retention worker implementation boundary
+
+The retention policy and schema are defined in `fresh-media-retention-lifecycle.md`. This commit adds a pure policy evaluator with deterministic job identities and tests for cutoff, exact 24-hour expiry, permanent-post archive-only behavior, and the fresh user-deletion event cutoff.
+
+## Worker architecture required
+- `fresh-story-expire`: claim due story records, mark expired before media cleanup, detach shared references safely, and enqueue object cleanup only when no live references remain.
+- `fresh-media-archive`: after 30 days, copy to a separately configured archive provider, verify metadata and SHA-256 by independent read-back, persist the archive replica, then clean active replicas.
+- `fresh-media-purge`: after the 30-day recovery window, purge user-deleted objects across every ledgered provider/node replica, verify absence, then release quota exactly once.
+- `fresh-media-restore`: coalesce concurrent restore requests, copy from archive to active provider, verify, then make signed delivery available.
+
+Every worker must use durable Appwrite jobs, transactional claim/lease ownership, expired-lease reclamation, bounded retries/backoff, append-only audit records, and an independent kill switch. No browser or node runs these jobs.
+
+## Current code status
+- Pure evaluator: implemented in `internal/freshstorage/retention_policy.go`.
+- Evaluator tests: implemented in `internal/freshstorage/retention_policy_test.go`.
+- Existing upload reservation expiry remains separate and must not be reused for ready media.
+- Concrete Appwrite job repository, provider archive adapter, story/reference integration, replica-aware purge, restore API, and executable scheduled workers remain pending.
+- Retention is disabled and dry-run by default. No destructive operation is authorized by this commit.
