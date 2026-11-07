@@ -17,9 +17,9 @@ paths:
     get:
       security: []
       summary: Check the Appwrite login service and public API process
-      description: Checks the Appwrite profile database needed for session authorization. Neon, Algorithm, Federation and feed readiness do not gate login. A configured Neon data plane is reported as configured_not_checked.
+      description: Checks the Appwrite Auth account endpoint and profile database needed for session authorization. Neon, Algorithm, Federation and feed readiness do not gate login. A configured Neon data plane is reported as configured_not_checked.
       responses:
-        '200': { description: Appwrite profile store is ready; authentication is available and platform_ready remains false until the strict readiness endpoint passes }
+        '200': { description: Appwrite Auth endpoint and profile store are ready; authentication is available and platform_ready remains false until the strict readiness endpoint passes }
         '503': { description: Appwrite profile database is unavailable }
   /readyz/platform:
     get:
