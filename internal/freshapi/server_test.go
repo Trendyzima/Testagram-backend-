@@ -698,3 +698,29 @@ func TestReadyzDoesNotClaimPostPublishingWhenModerationIsDisabled(t *testing.T) 
 		t.Fatalf("readiness overstated publishing capability: %s", rec.Body.String())
 	}
 }
+
+func TestHandlerAddsVersionedRequestTracingHeaders(t *testing.T) {
+	api, _ := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("X-Request-ID", "client-trace-123")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if got := rec.Header().Get("X-Testagram-API-Version"); got != "1" {
+		t.Fatalf("API version header = %q, want 1", got)
+	}
+	if got := rec.Header().Get("X-Request-ID"); got != "client-trace-123" {
+		t.Fatalf("request ID = %q, want propagated value", got)
+	}
+}
+
+func TestHandlerRejectsUnsafeRequestIDAndGeneratesOne(t *testing.T) {
+	api, _ := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("X-Request-ID", "bad\\r\\nvalue")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	got := rec.Header().Get("X-Request-ID")
+	if got == "" || strings.ContainsAny(got, "\\r\\n") || got == "bad\\r\\nvalue" {
+		t.Fatalf("unsafe request ID was not replaced: %q", got)
+	}
+}
