@@ -15,6 +15,7 @@ import (
 // ArchiveCopier is implemented by the S3 provider. Implementations must stream
 // and independently read back the destination before returning success.
 type ArchiveCopier interface {
+	EndpointHost() string
 	CopyFrom(context.Context, *virtualstorage.S3Provider, string, string, string, string, int64, string, string) error
 }
 
@@ -36,6 +37,9 @@ func NewArchiveWorker(source *virtualstorage.S3Provider, archive ArchiveCopier, 
 	}
 	if sourceBucket == archiveBucket {
 		return nil, errors.New("archive bucket must be distinct from active B2 bucket")
+	}
+	if source.EndpointHost() == "" || archive.EndpointHost() == "" || source.EndpointHost() == archive.EndpointHost() {
+		return nil, errors.New("archive endpoint must be independent from the active B2 endpoint")
 	}
 	return &ArchiveWorker{source: source, archive: archive, ledger: ledger, sourceBucket: sourceBucket, archiveBucket: archiveBucket}, nil
 }
