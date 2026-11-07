@@ -456,11 +456,17 @@ func TestFreshAPICORSAllowsOnlyConfiguredOriginsAndHeaders(t *testing.T) {
 	preflight := httptest.NewRequest(http.MethodOptions, "/v1/media/uploads/reservations", nil)
 	preflight.Header.Set("Origin", "https://app.testagram.example")
 	preflight.Header.Set("Access-Control-Request-Method", "POST")
-	preflight.Header.Set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key")
+	preflight.Header.Set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key,x-request-id,x-testagram-api-version")
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, preflight)
 	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "https://app.testagram.example" {
 		t.Fatalf("preflight rejected: %d %s", rec.Code, rec.Body.String())
+	}
+	allowed := strings.ToLower(rec.Header().Get("Access-Control-Allow-Headers"))
+	exposed := strings.ToLower(rec.Header().Get("Access-Control-Expose-Headers"))
+	if !strings.Contains(allowed, "x-request-id") || !strings.Contains(allowed, "x-testagram-api-version") ||
+		!strings.Contains(exposed, "x-request-id") || !strings.Contains(exposed, "x-testagram-api-version") {
+		t.Fatalf("versioned API headers were not allowed/exposed: allow=%q expose=%q", allowed, exposed)
 	}
 	bad := httptest.NewRequest(http.MethodOptions, "/v1/media/uploads/reservations", nil)
 	bad.Header.Set("Origin", "https://evil.example")
