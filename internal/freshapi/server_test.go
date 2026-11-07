@@ -188,6 +188,19 @@ func TestUpdateFederationPreferenceRequiresAuthenticatedProfile(t *testing.T) {
 	}
 }
 
+func TestFederationHandleLockedAfterActorCreated(t *testing.T) {
+	profile := map[string]any{"handle":"alice","federation_actor_created":true}
+	if !federationHandleLocked(profile,"alice_2") {
+		t.Fatal("handle change was allowed after canonical actor creation")
+	}
+	if federationHandleLocked(profile,"alice") {
+		t.Fatal("unchanged handle was incorrectly rejected")
+	}
+	if federationHandleLocked(map[string]any{"handle":"alice","federation_actor_created":false},"alice_2") {
+		t.Fatal("non-federated profile handle change was incorrectly locked")
+	}
+}
+
 func TestProfileRequiresAppwriteSession(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
