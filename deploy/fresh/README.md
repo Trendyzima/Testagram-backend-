@@ -28,3 +28,10 @@ The B2-to-R2 lifecycle and reservation expiry state machine are implemented and 
 Set FRESH_API_ALLOWED_ORIGINS to exact frontend origins (comma-separated, no paths or wildcards), for example https://app.example.com. The API rejects unlisted cross-origin requests and only permits the required Authorization, Content-Type and Idempotency-Key headers.
 
 Because browser uploads go directly to B2, configure the B2 bucket CORS policy to allow the same frontend origin(s), method PUT, and request header Content-Type. Do not allow wildcard origins for private media. R2 replication and private downloads are performed by the Backend using server credentials and do not require browser access to R2.
+
+
+### Retention workers (not activated)
+
+The Backend now contains a one-job dispatcher at `cmd/fresh-retention-worker`. A trusted scheduler must inject `TESTAGRAM_RETENTION_JOB_ID` and `TESTAGRAM_RETENTION_WORKER_ID`; the job must already exist in Appwrite `retention_jobs`. The dispatcher refuses to start unless `TESTAGRAM_RETENTION_ENABLED=true`, `TESTAGRAM_RETENTION_DRY_RUN=false`, and `TESTAGRAM_RETENTION_START_AT` is set. Keep these settings disabled until the candidate scanner, live Appwrite/B2/R2/archive tests, user-deletion workflow, node replica deletion, and operational retry/kill-switch controls are complete. Do not invoke this worker in production yet.
+
+Archive configuration is separate from active B2/R2: set all `ARCHIVE_S3_*` values to an independent cold-archive provider and bucket before archive jobs can run. The archive worker verifies size, content type and SHA-256 read-back before it records the archive replica; it does not remove active replicas.
