@@ -144,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/me/federation", s.getFederationPreference)
 	mux.HandleFunc("PUT /v1/me/federation", s.updateFederationPreference)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
+	mux.HandleFunc("GET /v1/feed/public", s.publicHomeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
 	mux.HandleFunc("POST /v1/moderation/check", s.moderateContent)
 	if s.internalToken != "" {
@@ -257,6 +258,43 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		postWriteStatus = "ready"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "moderation": moderationStatus, "post_write": postWriteStatus, "outbox": "ready"})
+}
+
+
+// publicHomeFeed serves only public, non-sensitive posts from the Appwrite feed
+// store. The zero UUID is a non-account viewer: it has no follows, no ownership
+// privileges and no authenticated relationship state. freshfeed applies the
+// same protected-profile, visibility, block and post-status checks as the
+// authenticated feed before returning any post.
+func (s *Server) publicHomeFeed(w http.ResponseWriter, r *http.Request) {
+	if s.feed == nil {
+		writeError(w, http.StatusServiceUnavailable, "feed service is not configured")
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 50 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 50")
+			return
+		}
+		limit = parsed
+	}
+	cursor := strings.TrimSpace(r.URL.Query().Get("before"))
+	if freshfeed.ValidateCursor(cursor) != nil {
+		writeError(w, http.StatusBadRequest, "invalid feed cursor")
+		return
+	}
+	result, err := s.feed.Home(r.Context(), "00000000-0000-0000-0000-000000000000", limit, cursor)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "public feed is temporarily unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": result,
+		"error": nil,
+	})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
