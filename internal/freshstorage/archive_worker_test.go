@@ -43,7 +43,7 @@ func (f *archiveLedgerFake) RecordArchiveReplica(context.Context, MediaRecord, s
 
 func TestArchiveWorkerDryRunDoesNotCopyOrWriteLedger(t *testing.T) {
 	copier := &archiveCopyFake{}
-	ledger := &archiveLedgerFake{media: MediaRecord{ObjectID: "med_1", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 10, ContentType: "image/jpeg", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "ready"}}
+	ledger := &archiveLedgerFake{media: MediaRecord{ObjectID: "med_1", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 10, ContentType: "image/jpeg", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "ready", RetentionClass: "permanent", Scope: "post_media"}}
 	worker, err := NewArchiveWorker(&virtualstorage.S3Provider{}, copier, ledger, "active-b2", "cold-archive")
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestArchiveWorkerDryRunDoesNotCopyOrWriteLedger(t *testing.T) {
 }
 
 func TestArchiveWorkerRecordsOnlyAfterVerifiedCopy(t *testing.T) {
-	media := MediaRecord{ObjectID: "med_1", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 10, ContentType: "image/jpeg", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "ready"}
+	media := MediaRecord{ObjectID: "med_1", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 10, ContentType: "image/jpeg", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "ready", RetentionClass: "permanent", Scope: "post_media"}
 	copier := &archiveCopyFake{}
 	ledger := &archiveLedgerFake{media: media}
 	worker, err := NewArchiveWorker(&virtualstorage.S3Provider{}, copier, ledger, "active-b2", "cold-archive")
@@ -74,7 +74,7 @@ func TestArchiveWorkerRecordsOnlyAfterVerifiedCopy(t *testing.T) {
 }
 
 func TestArchiveWorkerNeverRecordsFailedCopy(t *testing.T) {
-	media := MediaRecord{ObjectID: "med_1", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 10, ContentType: "image/jpeg", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "ready"}
+	media := MediaRecord{ObjectID: "med_1", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 10, ContentType: "image/jpeg", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: "ready", RetentionClass: "permanent", Scope: "post_media"}
 	copier := &archiveCopyFake{err: errors.New("checksum mismatch")}
 	ledger := &archiveLedgerFake{media: media}
 	worker, _ := NewArchiveWorker(&virtualstorage.S3Provider{}, copier, ledger, "active-b2", "cold-archive")
