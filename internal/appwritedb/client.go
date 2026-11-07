@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,9 +32,16 @@ type Client struct {
 	http       *http.Client
 }
 
-type HTTPError struct{ StatusCode int }
+type HTTPError struct {
+	StatusCode int
+	Type       string
+	Message    string
+}
 
 func (e HTTPError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("Appwrite Database returned HTTP %d (%s): %s", e.StatusCode, e.Type, e.Message)
+	}
 	return fmt.Sprintf("Appwrite Database returned HTTP %d", e.StatusCode)
 }
 
@@ -85,6 +93,30 @@ func (c *Client) GetDocument(ctx context.Context, collectionID, documentID strin
 	return c.do(ctx, http.MethodGet, c.documentsPath(collectionID, documentID), nil)
 }
 
+func (c *Client) GetDocumentInTransaction(ctx context.Context, collectionID, documentID, transactionID string) (json.RawMessage, error) {
+	if !validID(transactionID) || !validID(collectionID) || !validID(documentID) {
+		return nil, errors.New("invalid Appwrite transactional document read")
+	}
+	return c.doQuery(ctx, http.MethodGet, c.documentsPath(collectionID, documentID), map[string]string{"transactionId": transactionID}, nil)
+}
+
+func (c *Client) ListDocuments(ctx context.Context, collectionID, query string, limit int) ([]json.RawMessage, error) {
+	if !validID(collectionID) || strings.TrimSpace(query) == "" || limit < 1 || limit > 100 {
+		return nil, errors.New("invalid Appwrite document list query")
+	}
+	raw, err := c.doQuery(ctx, http.MethodGet, c.documentsPath(collectionID, ""), map[string]string{"queries[]": query, "limit": strconv.Itoa(limit)}, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Documents []json.RawMessage `json:"documents"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, errors.New("invalid Appwrite document list response")
+	}
+	return result.Documents, nil
+}
+
 func (c *Client) UpdateDocument(ctx context.Context, collectionID, documentID string, data map[string]any) (json.RawMessage, error) {
 	if !validID(collectionID) || !validID(documentID) || data == nil {
 		return nil, errors.New("invalid Appwrite collection, document ID or data")
@@ -108,7 +140,75 @@ func (c *Client) documentsPath(collectionID, documentID string) string {
 	return p
 }
 
+func (c *Client) CreateTransaction(ctx context.Context, ttlSeconds int) (string, error) {
+	if ttlSeconds < 60 || ttlSeconds > 300 {
+		return "", errors.New("Appwrite transaction TTL must be between 60 and 300 seconds")
+	}
+	raw, err := c.do(ctx, http.MethodPost, c.base.Path+"/databases/transactions", map[string]any{"ttl": ttlSeconds})
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		ID string `json:"$id"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil || !validID(result.ID) {
+		return "", errors.New("Appwrite returned an invalid transaction ID")
+	}
+	return result.ID, nil
+}
+
+func (c *Client) UpdateTransaction(ctx context.Context, transactionID string, commit bool) error {
+	if !validID(transactionID) {
+		return errors.New("invalid Appwrite transaction ID")
+	}
+	_, err := c.do(ctx, http.MethodPatch, c.base.Path+"/databases/transactions/"+url.PathEscape(transactionID), map[string]any{"commit": commit, "rollback": !commit})
+	return err
+}
+
+func (c *Client) CreateDocumentInTransaction(ctx context.Context, collectionID, documentID string, data map[string]any, transactionID string) error {
+	if !validID(transactionID) || !validID(collectionID) || !validID(documentID) || data == nil {
+		return errors.New("invalid Appwrite transactional document")
+	}
+	_, err := c.doQuery(ctx, http.MethodPost, c.documentsPath(collectionID, ""), map[string]string{"transactionId": transactionID}, map[string]any{"documentId": documentID, "data": data})
+	return err
+}
+
+func (c *Client) UpdateDocumentInTransaction(ctx context.Context, collectionID, documentID string, data map[string]any, transactionID string) error {
+	if !validID(transactionID) || !validID(collectionID) || !validID(documentID) || data == nil {
+		return errors.New("invalid Appwrite transactional document update")
+	}
+	_, err := c.doQuery(ctx, http.MethodPatch, c.documentsPath(collectionID, documentID), map[string]string{"transactionId": transactionID}, map[string]any{"data": data})
+	return err
+}
+
+func (c *Client) IncrementDocumentAttribute(ctx context.Context, collectionID, documentID, attribute string, value, max int64, transactionID string) error {
+	return c.numericDocumentAttribute(ctx, "increment", collectionID, documentID, attribute, value, max, transactionID)
+}
+
+func (c *Client) DecrementDocumentAttribute(ctx context.Context, collectionID, documentID, attribute string, value, min int64, transactionID string) error {
+	return c.numericDocumentAttribute(ctx, "decrement", collectionID, documentID, attribute, value, min, transactionID)
+}
+
+func (c *Client) numericDocumentAttribute(ctx context.Context, operation, collectionID, documentID, attribute string, value, bound int64, transactionID string) error {
+	if !validID(transactionID) || !validID(collectionID) || !validID(documentID) || !validID(attribute) || value < 1 || bound < 0 || (operation != "increment" && operation != "decrement") {
+		return errors.New("invalid Appwrite atomic numeric operation")
+	}
+	body := map[string]any{"value": value}
+	if operation == "increment" {
+		body["max"] = bound
+	} else {
+		body["min"] = bound
+	}
+	path := c.documentsPath(collectionID, documentID) + "/" + url.PathEscape(attribute) + "/" + operation
+	_, err := c.doQuery(ctx, http.MethodPatch, path, map[string]string{"transactionId": transactionID}, body)
+	return err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, payload any) (json.RawMessage, error) {
+	return c.doQuery(ctx, method, path, nil, payload)
+}
+
+func (c *Client) doQuery(ctx context.Context, method, path string, query map[string]string, payload any) (json.RawMessage, error) {
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -119,6 +219,11 @@ func (c *Client) do(ctx context.Context, method, path string, payload any) (json
 	}
 	u := *c.base
 	u.Path = path
+	q := u.Query()
+	for key, value := range query {
+		q.Set(key, value)
+	}
+	u.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
 		return nil, errors.New("construct Appwrite database request")
@@ -142,7 +247,12 @@ func (c *Client) do(ctx context.Context, method, path string, payload any) (json
 		return nil, errors.New("Appwrite Database response exceeded limit")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, HTTPError{StatusCode: resp.StatusCode}
+		var apiError struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(raw, &apiError)
+		return nil, HTTPError{StatusCode: resp.StatusCode, Type: apiError.Type, Message: apiError.Message}
 	}
 	if method == http.MethodDelete {
 		return nil, nil
