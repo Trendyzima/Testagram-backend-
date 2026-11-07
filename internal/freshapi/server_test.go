@@ -110,6 +110,10 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			}
 		case strings.Contains(r.URL.Path, "/documents/"):
 			if r.Method == http.MethodGet {
+				if strings.Contains(r.URL.Path, "/collections/profiles/documents/") {
+					_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","federation_enabled":false}`))
+					return
+				}
 				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 				if saved, ok := state.documents[id]; ok {
 					_, _ = w.Write(saved)
