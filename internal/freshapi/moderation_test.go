@@ -64,8 +64,12 @@ func TestHTTPModerationServiceRejectsInvalidConfigurationAndContent(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Analyze(context.Background(), "x"); err == nil {
-		t.Fatal("too-short content accepted")
+	if _, err := service.Analyze(context.Background(), ""); err == nil {
+		t.Fatal("empty content accepted")
+	}
+	short, err := service.Analyze(context.Background(), "x")
+	if err != nil || short.Action != "pass" {
+		t.Fatalf("short post should pass without provider analysis: %#v err=%v", short, err)
 	}
 }
 
