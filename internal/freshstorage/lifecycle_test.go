@@ -260,6 +260,33 @@ func (m *memoryStore) MediaKey(_ context.Context, owner, id string) (string, err
 	return m.reservation.ObjectKey, nil
 }
 
+func TestReserveUploadDefaultsScopeAndRejectsUnsupportedScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer server.Close()
+	b2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "b2", SecretKey: "secret", Region: "us-west-004"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "r2", SecretKey: "secret", Region: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryStore{}
+	service, err := NewService(store, ProviderSet{B2: b2, B2Bucket: "b2-bucket", R2: r2, R2Bucket: "r2-bucket"}, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReserveUpload(context.Background(), ReserveInput{OwnerID: "user_123", IdempotencyKey: "upload-default-scope", Bytes: 1024, ContentType: "image/jpeg"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.reservation.Scope != "post_media" {
+		t.Fatalf("default media scope=%q", store.reservation.Scope)
+	}
+	if _, err := service.ReserveUpload(context.Background(), ReserveInput{OwnerID: "user_123", IdempotencyKey: "upload-invalid-scope", Scope: "unknown", Bytes: 1024, ContentType: "image/jpeg"}); err == nil {
+		t.Fatal("unsupported media scope accepted")
+	}
+}
+
 func TestServiceCompletesB2UploadOnlyAfterVerifiedR2Replica(t *testing.T) {
 	payload := []byte("fresh-platform-image")
 	hash := sha256.Sum256(payload)
