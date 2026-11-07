@@ -2,7 +2,12 @@ openapi: 3.1.0
 info:
   title: Testagram Central Backend API
   version: 1.0.0
-  description: >\n    Canonical public API for XClone and private service integration contracts. All API v1\n    requests carry X-Testagram-API-Version: 1 and X-Request-ID; the server echoes both headers.\n    Private responses are no-store. GET requests may be retried by clients on 429/502/503/504;\n    mutations are not automatically retried and must use Idempotency-Key where required.
+  description: >
+    Canonical public API for XClone and private service integration contracts.
+    API v1 requests use X-Testagram-API-Version: 1 and X-Request-ID; the server
+    echoes both headers. Private responses are no-store. GET requests may be
+    retried on transient 429/502/503/504 responses with bounded backoff. Mutations
+    are not automatically retried and use Idempotency-Key where specified.
 servers:
   - url: https://api.testagram.site
 security:
@@ -56,11 +61,11 @@ paths:
   /v1/capabilities:
     post:
       operationId: invokeBackendCapability
-      summary: Invoke an authenticated capability implemented by the fresh Backend
+      summary: Invoke a migrated Backend capability
       description: >
-        Capability names are accepted only by this versioned Appwrite/Neon API.
-        Unmigrated capabilities fail closed with CAPABILITY_NOT_IMPLEMENTED; this
-        endpoint never proxies to Supabase or legacy database RPC.
+        Capability names are accepted only by the fresh Appwrite/Neon Backend.
+        Unmigrated capabilities fail closed with CAPABILITY_NOT_IMPLEMENTED;
+        this endpoint never proxies to Supabase or legacy database RPC.
       requestBody:
         required: true
         content:
@@ -70,7 +75,12 @@ paths:
               additionalProperties: false
               required: [capability, input]
               properties:
-                capability: { type: string, minLength: 3, maxLength: 128, pattern: '^[a-z][a-z0-9_.-]+    post:
+                capability:
+                  type: string
+                  minLength: 3
+                  maxLength: 128
+                  pattern: '^[a-z][a-z0-9_.-]+  /v1/posts:
+    post:
       operationId: createPost
       summary: Create an authenticated text post
       security:
@@ -110,6 +120,24 @@ paths:
     get:
       summary: Read authenticated home feed
       description: Backend applies follow, block, account visibility and post visibility rules before optionally calling the private Algorithm ranker.
+  /v1/feed/public:
+    get:
+      security: []
+      summary: Read the anonymous public timeline
+      description: Returns only published, non-sensitive posts from public profiles; no account, follow or ownership privileges are granted.
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - in: query
+          name: before
+          required: false
+          schema: { type: string, maxLength: 256 }
+      responses:
+        '200': { description: Authorized public feed page with next_cursor and has_more }
+        '400': { description: Invalid pagination parameters }
+        '503': { description: Feed dependencies unavailable; no unfiltered fallback is returned }
       parameters:
         - in: query
           name: limit
@@ -184,107 +212,6 @@ paths:
       responses:
         '200': { description: Signed media delivery URL }
         '401': { description: Invalid or expired Appwrite JWT }
-  /v1/me/legal:
-    get:
-      summary: Read authenticated legal-consent status
-      responses:
-        '200': {description: Current accepted policy version and consent timestamps}
-        '401': {description: Invalid Appwrite JWT}
-    put:
-      summary: Record age confirmation and current legal consents
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [birth_date, terms, privacy, content_policy, age_confirmed]
-              properties:
-                birth_date: {type: string, format: date}
-                terms: {type: boolean, const: true}
-                privacy: {type: boolean, const: true}
-                content_policy: {type: boolean, const: true}
-                age_confirmed: {type: boolean, const: true}
-      responses:
-        '200': {description: Consent recorded}
-        '400': {description: Consent or age confirmation invalid}
-        '401': {description: Invalid Appwrite JWT}
-  /v1/me/federation:
-    get:
-      summary: Read current user's opt-in Federation preference
-      responses:
-        '200': {description: Federation preference}
-        '401': {description: Invalid Appwrite JWT}
-    put:
-      summary: Update current user's Federation preference
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [enabled]
-              properties:
-                enabled: {type: boolean}
-      responses:
-        '200': {description: Preference updated}
-        '400': {description: Invalid preference}
-        '401': {description: Invalid Appwrite JWT}
-  /v1/moderation/check:
-    post:
-      summary: Analyze text content before publication
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [content]
-              properties:
-                content: {type: string, minLength: 1, maxLength: 5000}
-      responses:
-        '200': {description: Moderation decision}
-        '400': {description: Invalid content}
-        '401': {description: Invalid Appwrite JWT}
-        '503': {description: Moderation dependency unavailable}
-  /internal/v1/federation/readyz:
-    get:
-      security:
-        - federationInternalBearer: []
-      summary: Verify Backend dependencies required by Federation
-      responses:
-        '200': {description: Backend Federation dependency is ready}
-        '401': {description: Invalid internal service token}
-        '503': {description: Federation dependency unavailable}
-  /internal/v1/federation/actors/{handle}:
-    get:
-      security:
-        - federationInternalBearer: []
-      summary: Resolve an eligible local ActivityPub actor by handle
-      parameters:
-        - in: path
-          name: handle
-          required: true
-          schema: {type: string, minLength: 3, maxLength: 30}
-      responses:
-        '200': {description: Federation-enabled local actor}
-        '401': {description: Invalid internal service token}
-        '404': {description: Actor unavailable or Federation disabled}
-  /internal/v1/federation/actors/by-id/{userID}:
-    get:
-      security:
-        - federationInternalBearer: []
-      summary: Resolve an eligible local ActivityPub actor by Appwrite user ID
-      parameters:
-        - in: path
-          name: userID
-          required: true
-          schema: {type: string, minLength: 1, maxLength: 36}
-      responses:
-        '200': {description: Federation-enabled local actor}
-        '401': {description: Invalid internal service token}
-        '404': {description: Actor unavailable or Federation disabled}
 components:
   securitySchemes:
     federationInternalBearer:
@@ -294,8 +221,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Appwrite JWT
- }
-                input: { type: object }
+
+                input:
+                  type: object
       responses:
         '200': { description: Capability result }
         '400': { description: Invalid capability request }
@@ -417,107 +345,6 @@ components:
       responses:
         '200': { description: Signed media delivery URL }
         '401': { description: Invalid or expired Appwrite JWT }
-  /v1/me/legal:
-    get:
-      summary: Read authenticated legal-consent status
-      responses:
-        '200': {description: Current accepted policy version and consent timestamps}
-        '401': {description: Invalid Appwrite JWT}
-    put:
-      summary: Record age confirmation and current legal consents
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [birth_date, terms, privacy, content_policy, age_confirmed]
-              properties:
-                birth_date: {type: string, format: date}
-                terms: {type: boolean, const: true}
-                privacy: {type: boolean, const: true}
-                content_policy: {type: boolean, const: true}
-                age_confirmed: {type: boolean, const: true}
-      responses:
-        '200': {description: Consent recorded}
-        '400': {description: Consent or age confirmation invalid}
-        '401': {description: Invalid Appwrite JWT}
-  /v1/me/federation:
-    get:
-      summary: Read current user's opt-in Federation preference
-      responses:
-        '200': {description: Federation preference}
-        '401': {description: Invalid Appwrite JWT}
-    put:
-      summary: Update current user's Federation preference
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [enabled]
-              properties:
-                enabled: {type: boolean}
-      responses:
-        '200': {description: Preference updated}
-        '400': {description: Invalid preference}
-        '401': {description: Invalid Appwrite JWT}
-  /v1/moderation/check:
-    post:
-      summary: Analyze text content before publication
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [content]
-              properties:
-                content: {type: string, minLength: 1, maxLength: 5000}
-      responses:
-        '200': {description: Moderation decision}
-        '400': {description: Invalid content}
-        '401': {description: Invalid Appwrite JWT}
-        '503': {description: Moderation dependency unavailable}
-  /internal/v1/federation/readyz:
-    get:
-      security:
-        - federationInternalBearer: []
-      summary: Verify Backend dependencies required by Federation
-      responses:
-        '200': {description: Backend Federation dependency is ready}
-        '401': {description: Invalid internal service token}
-        '503': {description: Federation dependency unavailable}
-  /internal/v1/federation/actors/{handle}:
-    get:
-      security:
-        - federationInternalBearer: []
-      summary: Resolve an eligible local ActivityPub actor by handle
-      parameters:
-        - in: path
-          name: handle
-          required: true
-          schema: {type: string, minLength: 3, maxLength: 30}
-      responses:
-        '200': {description: Federation-enabled local actor}
-        '401': {description: Invalid internal service token}
-        '404': {description: Actor unavailable or Federation disabled}
-  /internal/v1/federation/actors/by-id/{userID}:
-    get:
-      security:
-        - federationInternalBearer: []
-      summary: Resolve an eligible local ActivityPub actor by Appwrite user ID
-      parameters:
-        - in: path
-          name: userID
-          required: true
-          schema: {type: string, minLength: 1, maxLength: 36}
-      responses:
-        '200': {description: Federation-enabled local actor}
-        '401': {description: Invalid internal service token}
-        '404': {description: Actor unavailable or Federation disabled}
 components:
   securitySchemes:
     federationInternalBearer:
