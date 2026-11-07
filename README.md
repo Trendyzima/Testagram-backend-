@@ -1,12 +1,14 @@
 # Testagram Backend
 
-This repository is the application-service foundation for Testagram. It is separate from:
+This repository contains the Go application API and workers for Testagram. The production target is the fresh Appwrite runtime:
 
-- supabase-for-testagram: Supabase platform and database/auth/storage services.
-- cdn-: Go media-delivery/cache data plane.
-- [Testagram data-centre](https://github.com/Trendyzima/Testagram-data-centre-): VPS assembly, pinned Supabase upstreams, node-agent and host backup/restore operations; see [the cross-repository integration contract](docs/vps-data-centre-integration.md).
+- **Appwrite:** authentication and application document database for the fresh runtime.
+- **Backblaze B2:** primary private object-storage origin.
+- **Cloudflare R2 + Cloudflare Workers:** verified media replica and signed media delivery.
+- **Testagram Data Centre:** private deployment, backups, Android removable-SD storage nodes and Linux computer nodes.
+- **Federated Content and Algorithm:** private protocol and ranking services called only by Backend.
 
-It must not duplicate Supabase's database, authentication, or binary media responsibilities. It provides a separately deployable API/worker layer that can scale horizontally as demand grows.
+The repository still contains legacy `cmd/api`, capability-gateway and Supabase-compatible migration code. Those files are not part of the fresh `Dockerfile.fresh` runtime and are not yet fully retired. Do not interpret this migration branch as proof that every old endpoint, admin screen or frontend feature has been ported.
 
 ## Current service
 
@@ -48,19 +50,20 @@ Federation has a dedicated authenticated `GET /internal/v1/federation/readyz` co
 
 `POST /api/capability` implements the same capability-dispatch envelope used by the existing Testagram web client. It forwards the user's Bearer JWT and the publishable API key to the canonical Supabase `capability_dispatch_v2` RPC; it does not use a service-role key to bypass row-level security. It also preserves the bookmark RPC compatibility paths, applies strict origin allow-listing, caps request/response bodies, applies an 8-second upstream deadline, and returns request IDs on gateway errors. `GET /healthz`, `GET /readyz`, and `GET /metrics` remain available.
 
-To opt the web app into this gateway only after deployment, set `VITE_TESTAGRAM_API_URL=https://api.testagram.site` in the frontend build environment. Leave it blank to keep the current same-origin `/api/capability` Vercel route. Configure matching TLS/DNS and `ALLOWED_ORIGINS` before switching production traffic. The gateway requires `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`; never set the Supabase service-role key in browser-visible configuration.
+The capability gateway described in this section is a legacy compatibility surface and is not the fresh Appwrite API. Do not route fresh Appwrite authentication or new product writes through it. Port its remaining capabilities to the fresh Backend API before retiring the legacy gateway; it still has Supabase-specific upstream dependencies.
 
-## Local development
+## Fresh Appwrite runtime and local development
 
-Requirements: Go 1.23+, Docker Compose.
+The fresh runtime is built with `Dockerfile.fresh` and `cmd/fresh-api`. It requires `APPWRITE_ENDPOINT`, `APPWRITE_PROJECT_ID`, `APPWRITE_DATABASE_ID` and a server-only `APPWRITE_SERVER_API_KEY`. It validates user sessions against Appwrite and never accepts a Supabase JWT.
 
-1. Copy .env.example to .env.
-2. Set POSTGRES_PASSWORD to a strong local-only password.
-3. Set DATABASE_URL to use the same password, e.g. postgres://testagram:YOUR_PASSWORD@db:5432/testagram?sslmode=disable
-4. Start the stack with docker compose up --build.
-5. Verify GET http://127.0.0.1:8080/healthz, /readyz and /metrics.
+1. Copy `.env.example` to a private local `.env`.
+2. Configure a development Appwrite project/database and its documented collections/indexes.
+3. Run `go test ./...` and `go vet ./...`.
+4. Run `go run ./cmd/fresh-api` with the Appwrite variables configured.
+5. Verify `GET /healthz` and `GET /readyz`. Readiness also requires the feed/outbox dependencies to be provisioned.
+6. Keep `FRESH_MEDIA_ENABLED=false` until B2/R2 credentials and provider read-back/restore tests are ready.
 
-The local database is for development only and is not automatically wired to the live Supabase project. Do not put production credentials in this repository or in .env.example.
+The example file contains no live secrets. Never put Appwrite server keys, B2/R2 application keys or Cloudflare signing secrets in browser-visible `VITE_*` variables.
 
 ## Testagram platform core
 
