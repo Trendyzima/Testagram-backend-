@@ -9,7 +9,7 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 )
 
-const TargetPoolBytes int64 = 100_000_000_000
+const TargetPoolBytes int64 = 150_000_000_000
 
 type ProviderSet struct {
 	B2       virtualstorage.Provider
