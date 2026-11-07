@@ -21,6 +21,8 @@ type mockAppwriteState struct {
 	outboxQueries            []string
 	profileFederationEnabled bool
 	accountActive            bool
+	emailVerified            bool
+	profileIdentityStatus    string
 	profileUpdates           map[string]map[string]any
 }
 
@@ -40,7 +42,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 
 func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
-	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, profileUpdates: map[string]map[string]any{}}
+	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, emailVerified: true, profileIdentityStatus: "approved", profileUpdates: map[string]map[string]any{}}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -48,7 +50,7 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				http.Error(w, "unauthorized", 401)
 				return
 			}
-			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true}`))
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true,"emailVerification":`+strconv.FormatBool(state.emailVerified)+`}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/new_user_1":
 			status := state.accountActive
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":`+strconv.FormatBool(status)+`}`))
@@ -63,7 +65,7 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			if r.Method == http.MethodGet {
 				if strings.Contains(r.URL.Path, "/collections/profiles/") {
 					if strings.Contains(strings.Join(r.URL.Query()["queries[]"], " "), "tester") {
-						profile := map[string]any{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","bio":"A test profile","federation_enabled":state.profileFederationEnabled}
+						profile := map[string]any{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","bio":"A test profile","federation_enabled":state.profileFederationEnabled,"identity_verification_status":state.profileIdentityStatus}
 						encoded, _ := json.Marshal(map[string]any{"documents":[]any{profile},"total":1})
 						_, _ = w.Write(encoded)
 					} else {
