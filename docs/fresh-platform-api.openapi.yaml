@@ -17,8 +17,8 @@ paths:
     get:
       security: []
       responses:
-        '200': { description: Appwrite feed schema and required private ranker are ready }
-        '503': { description: Required Appwrite collections/indexes or Algorithm service are unavailable }
+        '200': { description: Appwrite/feed/outbox are ready; response reports social_data_plane, moderation and post_write capability states }
+        '503': { description: Required Neon connection, Appwrite collections/indexes, feed or Algorithm dependency is unavailable }
   /v1/me:
     get:
       summary: Read authenticated Appwrite user profile

@@ -620,3 +620,56 @@ func TestReadyzFailsUntilFeedDependenciesAreReady(t *testing.T) {
 		t.Fatalf("readiness with failed dependency status=%d", failedRec.Code)
 	}
 }
+
+
+type fakeNeonHealth struct { err error }
+
+func (f fakeNeonHealth) Ping(context.Context) error { return f.err }
+
+func TestReadyzFailsWhenRequiredNeonIsMissing(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	api.WithFeed(&fakeHomeFeed{})
+	api.WithNeon(nil, true)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness without required Neon status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReadyzChecksConfiguredNeonHealth(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	api.WithFeed(&fakeHomeFeed{})
+	api.WithNeon(fakeNeonHealth{err: errors.New("database unavailable")}, true)
+	failed := httptest.NewRecorder()
+	api.Handler().ServeHTTP(failed, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if failed.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness with unhealthy Neon status=%d body=%s", failed.Code, failed.Body.String())
+	}
+
+	api.WithNeon(fakeNeonHealth{}, true)
+	ready := httptest.NewRecorder()
+	api.Handler().ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusServiceUnavailable || !strings.Contains(ready.Body.String(), "canonical social repositories are not integrated") {
+		t.Fatalf("readiness must fail until Neon repositories are integrated; status=%d body=%s", ready.Code, ready.Body.String())
+	}
+}
+
+
+func TestReadyzDoesNotClaimPostPublishingWhenModerationIsDisabled(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	api.WithFeed(&fakeHomeFeed{})
+	api.WithModeration(nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("readiness status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"moderation":"not_configured"`) ||
+		!strings.Contains(rec.Body.String(), `"post_write":"disabled_moderation_unconfigured"`) {
+		t.Fatalf("readiness overstated publishing capability: %s", rec.Body.String())
+	}
+}
