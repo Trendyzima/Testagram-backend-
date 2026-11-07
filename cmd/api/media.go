@@ -553,10 +553,10 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
 		return
 	}
-	var intentOwner, intentVisibility, intentType, intentName, intentStatus, storageNamespace, storageProvider string
+	var intentOwner, intentVisibility, intentType, intentName, intentStatus, storageNamespace, storageProvider, intentChecksum string
 	var intentMaxBytes int64
 	var intentExpires time.Time
-	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider
+	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider, coalesce(checksum_sha256, '')
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
 		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider)
 	if err != nil || intentOwner != userID ||
@@ -577,6 +577,18 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		body.ContentType = intentType
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+	body.ChecksumSHA256 = strings.ToLower(strings.TrimSpace(body.ChecksumSHA256))
+	intentChecksum = strings.ToLower(strings.TrimSpace(intentChecksum))
+	if body.ChecksumSHA256 == "" {
+		body.ChecksumSHA256 = intentChecksum
+	} else if intentChecksum != "" && body.ChecksumSHA256 != intentChecksum {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_CHECKSUM_MISMATCH", "Client checksum does not match the server-computed upload checksum", id))
+		return
+	}
+	if body.ChecksumSHA256 == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISSING", "The upload gateway has not recorded a server-computed checksum", id))
+		return
+	}
 	if intentVisibility != body.Visibility || intentType != body.ContentType {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
 		return
@@ -609,10 +621,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
-		if strings.TrimSpace(body.ChecksumSHA256) == "" {
-			writeJSON(w, http.StatusBadRequest, errorBody("MEDIA_CHECKSUM_REQUIRED", "checksum_sha256 is required and must be the SHA-256 of the uploaded bytes", id))
-			return
-		}
+
 		if _, verifyErr := s.dataCentreMedia.Verify(ctx, userID, storageNamespace, body.Key, body.ContentType, body.ChecksumSHA256, intentMaxBytes); verifyErr != nil {
 			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Data Centre could not queue media verification and replica recovery", id))
 			return
