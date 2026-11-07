@@ -620,3 +620,39 @@ func TestReadyzFailsUntilFeedDependenciesAreReady(t *testing.T) {
 		t.Fatalf("readiness with failed dependency status=%d", failedRec.Code)
 	}
 }
+
+
+type fakeNeonHealth struct { err error }
+
+func (f fakeNeonHealth) Ping(context.Context) error { return f.err }
+
+func TestReadyzFailsWhenRequiredNeonIsMissing(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	api.WithFeed(&fakeHomeFeed{})
+	api.WithNeon(nil, true)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness without required Neon status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReadyzChecksConfiguredNeonHealth(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	api.WithFeed(&fakeHomeFeed{})
+	api.WithNeon(fakeNeonHealth{err: errors.New("database unavailable")}, true)
+	failed := httptest.NewRecorder()
+	api.Handler().ServeHTTP(failed, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if failed.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness with unhealthy Neon status=%d body=%s", failed.Code, failed.Body.String())
+	}
+
+	api.WithNeon(fakeNeonHealth{}, true)
+	ready := httptest.NewRecorder()
+	api.Handler().ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), `"social_data_plane":"ready"`) {
+		t.Fatalf("readiness with healthy Neon status=%d body=%s", ready.Code, ready.Body.String())
+	}
+}
