@@ -652,8 +652,8 @@ func TestReadyzChecksConfiguredNeonHealth(t *testing.T) {
 	api.WithNeon(fakeNeonHealth{}, true)
 	ready := httptest.NewRecorder()
 	api.Handler().ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), `"social_data_plane":"ready"`) {
-		t.Fatalf("readiness with healthy Neon status=%d body=%s", ready.Code, ready.Body.String())
+	if ready.Code != http.StatusServiceUnavailable || !strings.Contains(ready.Body.String(), "canonical social repositories are not integrated") {
+		t.Fatalf("readiness must fail until Neon repositories are integrated; status=%d body=%s", ready.Code, ready.Body.String())
 	}
 }
 
