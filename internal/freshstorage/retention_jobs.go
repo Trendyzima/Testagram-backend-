@@ -43,6 +43,7 @@ type RetentionJob struct {
 type RetentionJobRepository interface {
 	Enqueue(context.Context, RetentionDecision, string) (RetentionJob, error)
 	Claim(context.Context, string, string, time.Time, time.Duration) (RetentionJob, error)
+	Renew(context.Context, RetentionJob, time.Time, time.Duration) error
 	Complete(context.Context, RetentionJob, time.Time) error
 	Retry(context.Context, RetentionJob, error, time.Time) error
 }
@@ -157,6 +158,37 @@ func (r *AppwriteRetentionJobs) Claim(ctx context.Context, id, worker string, no
 		return RetentionJob{}, err
 	}
 	return job, nil
+}
+
+func (r *AppwriteRetentionJobs) Renew(ctx context.Context, claimed RetentionJob, now time.Time, lease time.Duration) error {
+	if claimed.ID == "" || claimed.LeaseToken == "" || lease < 30*time.Second || lease > 15*time.Minute {
+		return ErrRetentionLeaseLost
+	}
+	tx, err := r.db.CreateTransaction(ctx, 120)
+	if err != nil {
+		return err
+	}
+	rollback := func() { _ = r.db.UpdateTransaction(context.Background(), tx, false) }
+	raw, err := r.db.GetDocumentInTransaction(ctx, retentionJobsCollection, claimed.ID, tx)
+	if err != nil {
+		rollback()
+		return err
+	}
+	current, err := decodeRetentionJob(raw)
+	if err != nil {
+		rollback()
+		return err
+	}
+	if current.Status != "running" || current.LeaseToken != claimed.LeaseToken || current.WorkerID != claimed.WorkerID || !current.LeaseUntil.After(now.UTC()) {
+		rollback()
+		return ErrRetentionLeaseLost
+	}
+	until := now.UTC().Add(lease)
+	if err = r.db.UpdateDocumentInTransaction(ctx, retentionJobsCollection, claimed.ID, map[string]any{"lease_until": until.Format(time.RFC3339Nano), "updated_at": now.UTC().Format(time.RFC3339Nano)}, tx); err != nil {
+		rollback()
+		return err
+	}
+	return r.db.UpdateTransaction(ctx, tx, true)
 }
 
 func (r *AppwriteRetentionJobs) Complete(ctx context.Context, claimed RetentionJob, now time.Time) error {
