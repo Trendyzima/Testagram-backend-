@@ -7,8 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
@@ -22,7 +22,7 @@ type mockAppwriteState struct {
 	outboxQueries        []string
 	outboxDocuments      [][]byte
 	profileFederationEnabled bool
-	accountActive bool
+	accountActive             bool
 }
 
 type staticModeration struct {
