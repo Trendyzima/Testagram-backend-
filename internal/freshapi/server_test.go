@@ -20,6 +20,15 @@ type mockAppwriteState struct {
 	outboxQueries        []string
 }
 
+type staticModeration struct {
+	result ModerationResult
+	err error
+}
+
+func (m staticModeration) Analyze(context.Context, string) (ModerationResult, error) {
+	return m.result, m.err
+}
+
 func testServer(t *testing.T) (*Server, *httptest.Server) {
 	api, mock, _ := testServerWithState(t)
 	return api, mock
@@ -109,6 +118,7 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 	if err != nil {
 		t.Fatal(err)
 	}
+	api.WithModeration(staticModeration{result: ModerationResult{OverallScore: 0, Action: "pass"}})
 	return api, mock, state
 }
 
