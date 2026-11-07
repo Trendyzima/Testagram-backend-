@@ -33,6 +33,8 @@ type Server struct {
 	moderation     ContentModeration
 	neon           NeonHealth
 	neonRequired   bool
+	identitySecret string
+	appwriteServerKey string
 }
 
 type NeonHealth interface {
@@ -55,6 +57,22 @@ func (s *Server) WithNeon(neon NeonHealth, required bool) *Server {
 	s.neon = neon
 	s.neonRequired = required
 	return s
+}
+
+func (s *Server) WithAppwriteServerKey(key string) error {
+	if strings.ContainsAny(key, "\r\n") { return errors.New("Appwrite server API key must be a single line") }
+	key = strings.TrimSpace(key)
+	if key == "" || len(key) > 4096 { return errors.New("Appwrite server API key is required") }
+	s.appwriteServerKey = key
+	return nil
+}
+
+func (s *Server) WithIdentitySecret(secret string) error {
+	if strings.ContainsAny(secret, "\r\n") { return errors.New("identity approval secret must be a single line") }
+	secret = strings.TrimSpace(secret)
+	if len(secret) < 32 { return errors.New("identity approval secret must contain at least 32 characters") }
+	s.identitySecret = secret
+	return nil
 }
 
 func (s *Server) WithFeed(feed HomeFeedService) *Server {
@@ -120,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
+	if s.identitySecret != "" && s.appwriteServerKey != "" { mux.HandleFunc("POST /v1/identity/register", s.registerIdentityVerifiedAccount) }
 	mux.HandleFunc("GET /v1/me/legal", s.getLegalConsent)
 	mux.HandleFunc("PUT /v1/me/legal", s.updateLegalConsent)
 	mux.HandleFunc("GET /v1/me/federation", s.getFederationPreference)
@@ -860,8 +879,10 @@ func writeStorageError(w http.ResponseWriter, err error) {
 }
 
 type account struct {
-	ID     string `json:"$id"`
-	Status bool   `json:"status"`
+	ID string `json:"$id"`
+	Status bool `json:"status"`
+	Email string `json:"email"`
+	EmailVerification bool `json:"emailVerification"`
 }
 
 func (s *Server) authenticate(r *http.Request) (account, int, error) {
@@ -896,6 +917,15 @@ func (s *Server) authenticate(r *http.Request) (account, int, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&a); err != nil || !validUserID(a.ID) || !a.Status {
 		return account{}, 401, errors.New("Appwrite account is invalid or disabled")
 	}
+	if !a.EmailVerification { return account{}, http.StatusForbidden, errors.New("EMAIL_NOT_VERIFIED") }
+	profileRaw, err := s.db.GetDocument(ctx, "profiles", a.ID)
+	if err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound { return account{}, http.StatusForbidden, errors.New("IDENTITY_VERIFICATION_REQUIRED") }
+		return account{}, http.StatusServiceUnavailable, errors.New("profile authorization unavailable")
+	}
+	var profile struct { IdentityVerificationStatus string `json:"identity_verification_status"` }
+	if err := json.Unmarshal(profileRaw, &profile); err != nil || profile.IdentityVerificationStatus != "approved" { return account{}, http.StatusForbidden, errors.New("IDENTITY_VERIFICATION_REQUIRED") }
 	return a, 200, nil
 }
 
