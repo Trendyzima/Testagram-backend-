@@ -44,7 +44,7 @@ func main() {
 	var neonClient *neondb.Client
 	if neonURL == "" {
 		if neonRequired {
-			log.Fatal("NEON_REQUIRED is true but NEON_DATABASE_URL is not configured")
+			log.Printf("Neon is required for full platform readiness but is not configured; keeping Appwrite login online")
 		}
 	} else {
 		neonClient, err = neondb.Open(context.Background(), neondb.Config{
@@ -52,9 +52,11 @@ func main() {
 			ConnMaxLifetime: 15 * time.Minute, ConnectTimeout: 5 * time.Second,
 		})
 		if err != nil {
-			log.Fatalf("configure Neon social data plane: %v", err)
+			log.Printf("Neon social data plane unavailable; keeping Appwrite login online and platform readiness closed: %v", err)
+			neonClient = nil
+		} else {
+			defer neonClient.Close()
 		}
-		defer neonClient.Close()
 	}
 	api.WithNeon(neonClient, neonRequired)
 
