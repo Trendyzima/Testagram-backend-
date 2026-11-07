@@ -3,6 +3,8 @@ package freshapi
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,6 +29,7 @@ type Server struct {
 	storage        MediaService
 	feed           HomeFeedService
 	allowedOrigins map[string]struct{}
+	internalToken  string
 }
 
 type HomeFeedService interface {
@@ -44,6 +47,15 @@ type MediaService interface {
 func (s *Server) WithFeed(feed HomeFeedService) *Server {
 	s.feed = feed
 	return s
+}
+
+func (s *Server) WithInternalToken(token string) error {
+	token = strings.TrimSpace(token)
+	if len(token) < 32 || strings.ContainsAny(token, "\r\n") {
+		return errors.New("federation internal token must contain at least 32 characters")
+	}
+	s.internalToken = token
+	return nil
 }
 
 func (s *Server) WithStorage(storage MediaService) *Server {
@@ -92,6 +104,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
+	if s.internalToken != "" {
+		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
+	}
 	if s.storage != nil {
 		mux.HandleFunc("POST /v1/media/uploads/reservations", s.reserveMediaUpload)
 		mux.HandleFunc("POST /v1/media/uploads/{reservationID}/complete", s.completeMediaUpload)
@@ -200,6 +215,81 @@ func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
 		"data":  result,
 		"error": nil,
 	})
+}
+
+func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	provided := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
+	if !strings.HasPrefix(authorization, "Bearer ") || len(provided) != len(s.internalToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.internalToken)) != 1 {
+		writeError(w, http.StatusUnauthorized, "internal service authentication required")
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 99 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 99")
+			return
+		}
+		limit = parsed
+	}
+	queries := []string{
+		mustQuery("equal", "event_type", "testagram.post.published"),
+		mustQuery("equal", "federation_eligible", true),
+		mustQuery("orderAsc", "created_at"),
+		mustQuery("limit", "", limit+1),
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("after")); raw != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil || !validOutboxDocumentID(string(decoded)) {
+			writeError(w, http.StatusBadRequest, "invalid outbox cursor")
+			return
+		}
+		queries = append(queries, mustQuery("cursorAfter", "", string(decoded)))
+	}
+	documents, err := s.db.ListDocumentsWithQueries(r.Context(), "backend_outbox", queries, limit+1)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "federation outbox is temporarily unavailable")
+		return
+	}
+	hasMore := len(documents) > limit
+	if hasMore {
+		documents = documents[:limit]
+	}
+	var nextCursor string
+	if hasMore && len(documents) > 0 {
+		var last struct {
+			ID string `json:"$id"`
+		}
+		if err := json.Unmarshal(documents[len(documents)-1], &last); err != nil || !validOutboxDocumentID(last.ID) {
+			writeError(w, http.StatusServiceUnavailable, "federation outbox returned an invalid event")
+			return
+		}
+		nextCursor = base64.RawURLEncoding.EncodeToString([]byte(last.ID))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"events": documents, "next_cursor": nextCursor, "has_more": hasMore}, "error": nil})
+}
+
+func validOutboxDocumentID(value string) bool {
+	if len(value) < 1 || len(value) > 36 || !((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= '0' && value[0] <= '9')) {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return value != "unique()"
+}
+
+func mustQuery(method, column string, values ...any) string {
+	query := map[string]any{"method": method, "values": values}
+	if column != "" {
+		query["column"] = column
+	}
+	encoded, _ := json.Marshal(query)
+	return string(encoded)
 }
 
 func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
