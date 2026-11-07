@@ -223,8 +223,24 @@ func TestFederationActorRequiresExplicitOptInAndActiveAppwriteAccount(t *testing
 			rec := httptest.NewRecorder()
 			api.Handler().ServeHTTP(rec, req)
 			if rec.Code != tc.want { t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.want, rec.Body.String()) }
-			if tc.want == http.StatusOK && (!strings.Contains(rec.Body.String(), `"user_id":"new_user_1"`) || strings.Contains(rec.Body.String(), "email")) {
-				t.Fatalf("unexpected actor response: %s", rec.Body.String())
+			if tc.want == http.StatusOK {
+				var response struct {
+					OK   bool `json:"ok"`
+					Data struct {
+						UserID            string `json:"user_id"`
+						Handle            string `json:"handle"`
+						DisplayName       string `json:"display_name"`
+						Summary           string `json:"summary"`
+						FederationEnabled bool   `json:"federation_enabled"`
+					} `json:"data"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+					t.Fatalf("decode Federation actor envelope: %v", err)
+				}
+				if !response.OK || response.Data.UserID != "new_user_1" || response.Data.Handle != "tester" ||
+					!response.Data.FederationEnabled || strings.Contains(rec.Body.String(), "email") {
+					t.Fatalf("unexpected actor response: %s", rec.Body.String())
+				}
 			}
 		})
 	}
