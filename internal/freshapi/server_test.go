@@ -53,6 +53,16 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/new_user_1":
 			status := state.accountActive
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":`+strconv.FormatBool(status)+`}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/users":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode Appwrite user create request: %v", err)
+			}
+			if body["emailVerification"] != true || body["email"] != "new@example.com" {
+				t.Errorf("Appwrite user was not created as verified: %+v", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","status":true,"emailVerification":true}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/databases/transactions":
 			_, _ = w.Write([]byte(`{"$id":"tx_posts"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/databases/transactions/tx_posts":
