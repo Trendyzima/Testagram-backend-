@@ -15,7 +15,7 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := New(server.URL, "unit-test-secret-that-is-long-enough-for-api", time.Second)
+	client, err := New(server.URL, "unit-test-secret-that-is-long-enough-for-api-that-is-long-enough-for-api", time.Second)
 	if err != nil { t.Fatal(err) }
 	return client
 }
@@ -28,7 +28,7 @@ func TestNewRequiresValidURLAndToken(t *testing.T) {
 func TestCacheSetSendsBearerAndTTL(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/cache/set" { t.Errorf("unexpected request: %s %s", r.Method, r.URL) }
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" { t.Errorf("missing internal bearer token") }
+		if r.Header.Get("Authorization") != "Bearer unit-test-secret-that-is-long-enough-for-api" { t.Errorf("missing internal bearer token") }
 		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" { t.Errorf("missing API version or request ID") }
 		if r.Header.Get("Content-Type") != "application/json" { t.Errorf("missing content type") }
 		var body struct {
@@ -63,7 +63,7 @@ func TestCacheGetAndMiss(t *testing.T) {
 
 func TestRateLimitAndEnqueue(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" { t.Errorf("missing authorization") }
+		if r.Header.Get("Authorization") != "Bearer unit-test-secret-that-is-long-enough-for-api" { t.Errorf("missing authorization") }
 		switch r.URL.Path {
 		case "/v1/rate-limit/check":
 			var body map[string]any
