@@ -136,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
 	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("GET /readyz/platform", s.platformReadyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
 	if s.identitySecret != "" && s.appwriteServerKey != "" { mux.HandleFunc("POST /v1/identity/register", s.registerIdentityVerifiedAccount) }
@@ -209,32 +210,61 @@ func (s *Server) cors(next http.Handler) http.Handler {
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	if s.neonRequired && s.neon == nil {
-		writeError(w, http.StatusServiceUnavailable, "required Neon data plane is not configured")
+	// Public-edge readiness must prove only that the Appwrite identity/profile
+	// dependency needed by login is available. Feed, Algorithm, Federation and
+	// Neon product-data health are reported separately and cannot block login.
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if _, err := s.db.ListDocumentsWithQueries(ctx, "profiles", []string{
+		mustQuery("limit", "", 1),
+	}, 1); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Appwrite profile database is not ready")
+		return
+	}
+	neonStatus := "not_configured"
+	if s.neon != nil {
+		neonStatus = "configured_not_checked"
+	}
+	moderationStatus := "not_configured"
+	postWriteStatus := "disabled_moderation_unconfigured"
+	if s.moderation != nil {
+		moderationStatus = "ready"
+		postWriteStatus = "ready"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"identity": "appwrite",
+		"database": "appwrite",
+		"authentication": "available",
+		"social_data_plane": neonStatus,
+		"platform_ready": false,
+		"platform_readiness_path": "/readyz/platform",
+		"moderation": moderationStatus,
+		"post_write": postWriteStatus,
+	})
+}
+
+// platformReadyz is deliberately stricter than process readiness. It checks
+// Neon connectivity, feed collections/ranking dependencies and the durable
+// Federation outbox. It remains unavailable until canonical Neon repositories
+// are actually integrated, even if the database accepts connections.
+func (s *Server) platformReadyz(w http.ResponseWriter, r *http.Request) {
+	if !s.neonRequired || s.neon == nil {
+		writeError(w, http.StatusServiceUnavailable, "Neon is not configured as the required canonical social data plane")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.neon.Ping(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Neon PostgreSQL connectivity is not ready")
 		return
 	}
 	if s.feed == nil {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not configured")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	if s.neon != nil {
-		if err := s.neon.Ping(ctx); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "Neon PostgreSQL connectivity is not ready")
-			return
-		}
-	}
-	// A successful PostgreSQL ping proves connectivity only. The current
-	// handlers still read and write canonical profiles/posts through Appwrite;
-	// do not advertise the Neon social data plane as production-ready until
-	// those repositories and their transactional outbox are actually wired.
-	if s.neonRequired {
-		writeError(w, http.StatusServiceUnavailable, "Neon is reachable, but canonical social repositories are not integrated")
-		return
-	}
 	if err := s.feed.Ready(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
+		writeError(w, http.StatusServiceUnavailable, "feed or Algorithm dependencies are not ready")
 		return
 	}
 	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{
@@ -246,17 +276,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
 		return
 	}
-	neonStatus := "not_configured"
-	if s.neon != nil {
-		neonStatus = "connected_not_integrated"
-	}
-	moderationStatus := "not_configured"
-	postWriteStatus := "disabled_moderation_unconfigured"
-	if s.moderation != nil {
-		moderationStatus = "ready"
-		postWriteStatus = "ready"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "moderation": moderationStatus, "post_write": postWriteStatus, "outbox": "ready"})
+	writeError(w, http.StatusServiceUnavailable, "Neon is reachable, but canonical social repositories are not integrated")
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
