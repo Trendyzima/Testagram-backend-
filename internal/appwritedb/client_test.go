@@ -150,7 +150,7 @@ func TestGetDocumentInTransactionAndListDocumentsEncodeQueries(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"$id":"res_1"}`))
 		case "/v1/databases/db/collections/storage_reservations/documents":
-			if r.URL.Query().Get("queries[]") != `{"method":"equal","attribute":"status","values":["reserved"]}` {
+			if r.URL.Query().Get("queries[]") != `{"method":"equal","column":"status","values":["reserved"]}` {
 				t.Errorf("query encoding incorrect: %s", r.URL.RawQuery)
 			}
 			if r.URL.Query().Get("limit") != "10" {
@@ -169,7 +169,7 @@ func TestGetDocumentInTransactionAndListDocumentsEncodeQueries(t *testing.T) {
 	if _, err := client.GetDocumentInTransaction(context.Background(), "storage_reservations", "res_1", "tx_1"); err != nil {
 		t.Fatal(err)
 	}
-	docs, err := client.ListDocuments(context.Background(), "storage_reservations", `{"method":"equal","attribute":"status","values":["reserved"]}`, 10)
+	docs, err := client.ListDocuments(context.Background(), "storage_reservations", `{"method":"equal","column":"status","values":["reserved"]}`, 10)
 	if err != nil || len(docs) != 1 {
 		t.Fatalf("documents=%d err=%v", len(docs), err)
 	}
