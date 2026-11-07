@@ -75,13 +75,17 @@ type Store interface {
 }
 
 type MediaRecord struct {
-	ObjectID    string
-	OwnerID     string
-	ObjectKey   string
-	Bytes       int64
-	ContentType string
-	SHA256      string
-	Status      string
+	ObjectID       string
+	OwnerID        string
+	ObjectKey      string
+	Bytes          int64
+	ContentType    string
+	SHA256         string
+	Status         string
+	Scope          string
+	RetentionClass string
+	DeletedAt      time.Time
+	LifecycleState string
 }
 
 type Service struct {
@@ -95,6 +99,8 @@ type Service struct {
 	reservationTTL   time.Duration
 	cdnBaseURL       string
 	cdnSigningSecret string
+	archive          *virtualstorage.S3Provider
+	archiveBucket    string
 }
 
 func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Service, error) {
@@ -126,7 +132,15 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 			return nil, errors.New("Cloudflare media CDN signing secret must be at least 32 characters")
 		}
 	}
-	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, cdnSigningSecret: providers.MediaCDNSigningSecret}, nil
+	var archive *virtualstorage.S3Provider
+	if providers.Archive != nil {
+		var archiveOK bool
+		archive, archiveOK = providers.Archive.(*virtualstorage.S3Provider)
+		if !archiveOK || strings.TrimSpace(providers.ArchiveBucket) == "" {
+			return nil, errors.New("cold archive provider must support verified object replication and have a bucket")
+		}
+	}
+	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, cdnSigningSecret: providers.MediaCDNSigningSecret, archive: archive, archiveBucket: providers.ArchiveBucket}, nil
 }
 
 type UploadReservation struct {
@@ -336,7 +350,7 @@ func (s *Service) RepairObject(ctx context.Context, objectID string) error {
 	if err != nil {
 		return err
 	}
-	if record.Status != "ready" || record.Bytes < 1 || record.ObjectKey == "" || len(record.SHA256) != 64 {
+	if record.Status != "ready" || record.LifecycleState == "purging" || record.Bytes < 1 || record.ObjectKey == "" || len(record.SHA256) != 64 {
 		return ErrNotReady
 	}
 	b2OK := verifyReplica(ctx, s.b2, s.b2Bucket, record)
@@ -390,7 +404,7 @@ func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (st
 	if err != nil {
 		return "", err
 	}
-	if record.OwnerID != ownerID || record.Status != "ready" || record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
+	if record.OwnerID != ownerID || record.Status != "ready" || record.LifecycleState == "purging" || record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
 		return "", ErrNotReady
 	}
 	// Cloudflare R2 is the preferred delivery origin because the private Worker
@@ -406,11 +420,17 @@ func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (st
 		return s.r2.PresignGet(ctx, s.r2Bucket, key, time.Hour)
 	}
 	b2Info, b2Err := s.b2.Head(ctx, s.b2Bucket, key)
-	if b2Err != nil {
-		return "", fmt.Errorf("Cloudflare R2 delivery unavailable (%v) and Backblaze B2 fallback unavailable: %w", r2Err, b2Err)
-	}
-	if b2Info.Size != record.Bytes || !strings.EqualFold(b2Info.ContentType, record.ContentType) {
-		return "", ErrNotReady
+	if b2Err != nil || b2Info.Size != record.Bytes || !strings.EqualFold(b2Info.ContentType, record.ContentType) {
+		if s.archive == nil {
+			return "", fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady)
+		}
+		if restoreErr := s.RestoreArchive(ctx, ownerID, objectID); restoreErr != nil {
+			return "", fmt.Errorf("active replicas unavailable and archive restore failed: %w", restoreErr)
+		}
+		if s.cdnBaseURL != "" && s.cdnSigningSecret != "" {
+			return signPrivateMediaURL(s.cdnBaseURL, s.cdnSigningSecret, key, 3600, time.Now().UTC())
+		}
+		return s.r2.PresignGet(ctx, s.r2Bucket, key, time.Hour)
 	}
 	return s.b2.PresignGet(ctx, s.b2Bucket, key, time.Hour)
 }
@@ -916,12 +936,16 @@ func (s *AppwriteStore) GetMediaRecord(ctx context.Context, objectID string) (Me
 		return MediaRecord{}, err
 	}
 	var wire struct {
-		OwnerID     string `json:"owner_id"`
-		ObjectKey   string `json:"object_key"`
-		Bytes       string `json:"bytes_decimal"`
-		ContentType string `json:"mime_type"`
-		SHA256      string `json:"sha256"`
-		Status      string `json:"status"`
+		OwnerID        string `json:"owner_id"`
+		ObjectKey      string `json:"object_key"`
+		Bytes          string `json:"bytes_decimal"`
+		ContentType    string `json:"mime_type"`
+		SHA256         string `json:"sha256"`
+		Status         string `json:"status"`
+		Scope          string `json:"scope"`
+		RetentionClass string `json:"retention_class"`
+		DeletedAt      string `json:"deleted_at"`
+		LifecycleState string `json:"lifecycle_state"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return MediaRecord{}, errors.New("invalid Appwrite media object document")
@@ -930,7 +954,14 @@ func (s *AppwriteStore) GetMediaRecord(ctx context.Context, objectID string) (Me
 	if err != nil || bytes < 1 || strconv.FormatInt(bytes, 10) != wire.Bytes || !validOwnerID(wire.OwnerID) || !validObjectKey(wire.ObjectKey) || wire.ContentType == "" || !validSHA256(wire.SHA256) {
 		return MediaRecord{}, errors.New("Appwrite media object metadata is invalid")
 	}
-	return MediaRecord{ObjectID: objectID, OwnerID: wire.OwnerID, ObjectKey: wire.ObjectKey, Bytes: bytes, ContentType: wire.ContentType, SHA256: wire.SHA256, Status: wire.Status}, nil
+	var deletedAt time.Time
+	if wire.DeletedAt != "" {
+		deletedAt, err = time.Parse(time.RFC3339Nano, wire.DeletedAt)
+		if err != nil {
+			return MediaRecord{}, errors.New("invalid media deletion timestamp")
+		}
+	}
+	return MediaRecord{ObjectID: objectID, OwnerID: wire.OwnerID, ObjectKey: wire.ObjectKey, Bytes: bytes, ContentType: wire.ContentType, SHA256: wire.SHA256, Status: wire.Status, Scope: wire.Scope, RetentionClass: wire.RetentionClass, DeletedAt: deletedAt, LifecycleState: wire.LifecycleState}, nil
 }
 
 func (s *AppwriteStore) MarkReplicaState(ctx context.Context, objectID, provider, state string) error {
@@ -940,6 +971,7 @@ func (s *AppwriteStore) MarkReplicaState(ctx context.Context, objectID, provider
 	data := map[string]any{"state": state}
 	if state == "verified" {
 		data["verified_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+		data["deleted_at"] = ""
 	}
 	_, err := s.db.UpdateDocument(ctx, replicaCollection, provider+"_"+objectID, data)
 	return err
