@@ -101,20 +101,26 @@ func (c *Client) GetDocumentInTransaction(ctx context.Context, collectionID, doc
 }
 
 func (c *Client) ListDocuments(ctx context.Context, collectionID, query string, limit int) ([]json.RawMessage, error) {
-	if !validID(collectionID) || strings.TrimSpace(query) == "" || limit < 1 || limit > 100 {
-		return nil, errors.New("invalid Appwrite document list query")
+	docs, _, err := c.ListDocumentsPage(ctx, collectionID, query, limit, 0)
+	return docs, err
+}
+
+func (c *Client) ListDocumentsPage(ctx context.Context, collectionID, query string, limit, offset int) ([]json.RawMessage, int, error) {
+	if !validID(collectionID) || strings.TrimSpace(query) == "" || limit < 1 || limit > 100 || offset < 0 {
+		return nil, 0, errors.New("invalid Appwrite document list query")
 	}
-	raw, err := c.doQuery(ctx, http.MethodGet, c.documentsPath(collectionID, ""), map[string]string{"queries[]": query, "limit": strconv.Itoa(limit)}, nil)
+	raw, err := c.doQuery(ctx, http.MethodGet, c.documentsPath(collectionID, ""), map[string]string{"queries[]": query, "limit": strconv.Itoa(limit), "offset": strconv.Itoa(offset)}, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var result struct {
 		Documents []json.RawMessage `json:"documents"`
+		Total     int               `json:"total"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, errors.New("invalid Appwrite document list response")
+		return nil, 0, errors.New("invalid Appwrite document list response")
 	}
-	return result.Documents, nil
+	return result.Documents, result.Total, nil
 }
 
 func (c *Client) UpdateDocument(ctx context.Context, collectionID, documentID string, data map[string]any) (json.RawMessage, error) {
