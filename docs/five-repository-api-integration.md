@@ -1,0 +1,78 @@
+# Testagram five-repository API integration architecture
+
+## Decision
+
+Testagram consists of exactly five repositories. The Backend is the centralized API integration layer and canonical application authority. Do not create a sixth API/client repository. Do not let frontend, ranking, federation or infrastructure repositories become alternate owners of identity, social records, authorization or lifecycle decisions.
+
+## Ownership and communication
+
+| Repository | Owns | Talks to |
+|---|---|---|
+| XClone | Web/mobile UI, local presentation state, client-side upload orchestration | Backend public API only; Appwrite Auth SDK only for identity/session operations |
+| Testagram Backend | Canonical identity verification, authorization, profiles/social graph/posts/engagement/notifications, API contracts, orchestration, lifecycle and audit | Appwrite Auth/Database; private Algorithm API; private Data Centre platform/storage APIs; private Federated Content API |
+| The Algorithm | Stateless feed ranking/recommendation over bounded candidate batches | Backend only; never Appwrite, object stores, browser or frontend |
+| Federated Content | ActivityPub protocol, remote actors, inbox/outbox, signatures and delivery state | Backend only for canonical authorization/content decisions; remote ActivityPub peers |
+| Data Centre | VPS/runtime, private service networking, storage providers, CDN/edge, node enrollment/placement and operations | Backend through authenticated infrastructure APIs; object providers and enrolled nodes |
+
+## Authentication boundaries
+
+1. Human user signs in through the fresh Appwrite Auth project. XClone creates a short-lived Appwrite JWT and sends `Authorization: Bearer <JWT>` to the Backend. The Backend validates that JWT against the configured Appwrite project and derives the user ID from the verified account response. Never accept a browser-supplied owner/user ID as authority.
+2. Backend-to-service calls use distinct, high-entropy credentials per service, scoped to the minimum allowed operations. Tokens are server-side only, rotated, redacted from logs, and compared in constant time. Do not reuse the user JWT as a service credential.
+3. Algorithm currently exposes `POST /v1/feed/rank` with a bearer service token. Only Backend-supplied, already-authorized and already-filtered candidate batches may reach it. The Backend validates every returned ID against its submitted candidate set and applies final visibility/authorization filters again.
+4. Federated Content's public ActivityPub routes are not a trusted Backend integration API. Add a separate private authenticated Backend-to-Federation API for enqueueing authorized activities and reporting delivery state. Public inbox processing remains unavailable until HTTP Signature verification, replay protection and durable inbox/outbox processing pass readiness gates.
+5. Data Centre's private cache/rate-limit/queue/storage/node operations are infrastructure APIs. The Backend is the product-facing policy and authorization layer. Browser clients never receive Data Centre, storage-provider, node or internal queue credentials.
+
+## API conventions
+
+- Public prefix: `/v1`; private service prefix: `/internal/v1` (private network plus service credential).
+- JSON request/response; UTF-8; UTC RFC3339 timestamps; byte counts as decimal strings where values may exceed JavaScript safe integers.
+- Success envelope: `{ "ok": true, "data": ..., "request_id": "..." }`. Error envelope: `{ "ok": false, "error": { "code": "...", "message": "..." }, "request_id": "..." }`.
+- Require a generated request ID, propagate it across service calls and include it in audit/structured logs. Never log JWTs, API keys, passwords, signed URLs or private message bodies.
+- Mutations accept `Idempotency-Key`; persist its scope, request hash and result atomically. Reuse with a different payload returns 409.
+- Enforce strict request schemas, body limits, pagination limits, per-user/service rate limits, timeouts, bounded retries and circuit breakers. Retry only idempotent operations.
+- Use additive versioned contract changes. Publish OpenAPI from this repository; generate/validate clients within their existing owning repositories rather than creating another repository.
+
+## Contract map
+
+### Public user API (XClone -> Backend)
+
+- `GET /v1/me`, `PUT /v1/me/profile`
+- `GET /v1/feed/home`, `GET /v1/feed/following`
+- `GET/POST/DELETE /v1/follows/{userID}` and `/v1/blocks/{userID}`
+- `GET/POST/DELETE /v1/posts`, `/v1/posts/{postID}/reactions`, `/reposts`, `/bookmarks`, `/replies`
+- `GET /v1/notifications`, `POST /v1/notifications/{id}/read`
+- `POST /v1/media/uploads/reservations`, `POST /v1/media/uploads/{id}/complete`, `GET /v1/media/{id}/download`
+
+Only `/v1/me`, profile and media endpoints are currently implemented in `internal/freshapi`. The social/feed routes above are target contracts, not claims of current implementation. Keep unimplemented features fail-closed in XClone; do not fall back to Supabase.
+
+### Private service API (Backend -> Algorithm)
+
+- `POST /v1/feed/rank`; request includes only a bounded batch of eligible candidate IDs and ranking features. The Algorithm does not fetch content or user data.
+- `GET /healthz`, `GET /readyz` for infrastructure probes only.
+
+### Private service API (Backend -> Federated Content)
+
+- Planned: `POST /internal/v1/activities` (idempotent authorized activity enqueue), `GET /internal/v1/deliveries/{id}`, `POST /internal/v1/actors/resolve`.
+- Federation must not create canonical users/posts or override Backend blocks, visibility, deletion or retention decisions.
+
+### Private service API (Backend -> Data Centre)
+
+- Use versioned authenticated infrastructure contracts for capacity reservation, media placement/replication, replica verification, restore, node enrollment/heartbeat and queue/rate-limit operations.
+- Data Centre must not write canonical profiles/posts/social relationships. Storage metadata is authoritative only for physical placement; Backend/Appwrite remains authoritative for ownership and lifecycle state.
+
+## Current integration status
+
+- Implemented: Appwrite JWT verification and `/v1/me`, profile update, fresh media upload/download API; Algorithm private bearer-token rank endpoint and Backend client; Data Centre has private platform-client contracts and infrastructure control plane.
+- In progress: lifecycle workers/scanner and five-repository deployment wiring.
+- Not implemented yet: complete social/feed API; Backend-to-Federation private API; full Backend-to-Data-Centre media placement/replica API; cross-repository end-to-end tests with live Appwrite and object-provider credentials.
+- Federation readiness intentionally returns unavailable until signature verification and durable inbox/outbox are safe.
+- Supabase is not part of the fresh runtime path. Legacy Supabase projects/data are out of scope and must remain untouched. No fresh-mode fallback to Supabase is permitted.
+
+## Release gates
+
+1. Contract tests for each API and auth failure/expiry/revocation cases.
+2. Cross-repository tests: XClone -> Backend -> Appwrite; Backend -> Algorithm; Backend -> Data Centre; Backend -> Federation (when enabled).
+3. Request ID propagation, idempotency replay, timeout/retry, rate-limit and credential rotation tests.
+4. Verify public frontend bundle and runtime network traces contain no Supabase API requests or credentials in fresh mode.
+5. Verify no repository besides Backend writes canonical product records.
+6. No production cutover, destructive retention or federation activation until the applicable gates pass.

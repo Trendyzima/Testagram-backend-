@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: Testagram Central Backend API
+  version: 1.0.0
+  description: Canonical public API for XClone and private service integration contracts.
+servers:
+  - url: https://api.testagram.site
+security:
+  - appwriteJWT: []
+paths:
+  /healthz:
+    get:
+      security: []
+      responses:
+        '200': { description: Liveness }
+  /readyz:
+    get:
+      security: []
+      responses:
+        '200': { description: Readiness }
+  /v1/me:
+    get:
+      summary: Read authenticated Appwrite user profile
+      responses:
+        '200': { description: Authenticated profile }
+        '401': { description: Invalid or expired Appwrite JWT }
+  /v1/me/profile:
+    put:
+      summary: Update authenticated user's profile
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200': { description: Profile updated }
+        '401': { description: Invalid or expired Appwrite JWT }
+  /v1/media/uploads/reservations:
+    post:
+      summary: Reserve media quota and obtain upload capability
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        '201': { description: Reservation created }
+        '401': { description: Invalid or expired Appwrite JWT }
+  /v1/media/uploads/{reservationID}/complete:
+    post:
+      summary: Verify uploaded object and finalize reservation
+      parameters:
+        - in: path
+          name: reservationID
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Upload finalized }
+        '401': { description: Invalid or expired Appwrite JWT }
+  /v1/media/{objectID}/download:
+    get:
+      summary: Obtain authorized short-lived media URL
+      parameters:
+        - in: path
+          name: objectID
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Signed media delivery URL }
+        '401': { description: Invalid or expired Appwrite JWT }
+  /internal/v1/feed/rank:
+    post:
+      security:
+        - serviceBearer: []
+      summary: Backend-only ranking contract (Algorithm service)
+      responses:
+        '200': { description: Ranked submitted candidate IDs }
+        '401': { description: Invalid service credential }
+components:
+  securitySchemes:
+    appwriteJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: Appwrite JWT
+    serviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Rotatable service credential

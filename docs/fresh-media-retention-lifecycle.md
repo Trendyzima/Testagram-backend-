@@ -1,0 +1,131 @@
+# Testagram media retention and lifecycle design
+
+## Approved policy proposal
+
+| Content | Policy | User-visible behavior |
+|---|---|---|
+| Normal posts | Permanent | Post text and engagement remain indefinitely. Attachments may be archived after 30 days. |
+| Stories | Expire after 24 hours | Hide at expiry; delete unshared story media only after reference checks. |
+| Ordinary media | Archive after 30 days | Preserve media and attachment references; retrieval may require restore. |
+| User-deleted media | 30-day recovery window | Revoke access immediately; purge all copies only after the recovery deadline. |
+
+This is an implementation plan, not authorization to run destructive jobs. Retention remains disabled and dry-run by default. No old Supabase data is read, migrated, changed, or deleted.
+
+## Non-negotiable invariants
+
+1. No object is deleted until its identity, owner, namespace, byte count, MIME type, SHA-256, and complete replica inventory have been loaded from the fresh Appwrite ledger.
+2. Never delete the only verified copy. Archive first, read back the archive object, verify byte count and SHA-256, persist the verified archive replica, and only then remove active copies.
+3. A provider timeout is an unknown outcome, not proof of deletion. Re-HEAD and reconcile before retrying.
+4. Never release quota while any charged copy remains, any deletion is unverified, or the replica inventory is incomplete.
+5. Jobs are deterministic and idempotent. A repeated run must converge on the same terminal state without duplicate quota changes.
+6. Claims use Appwrite transactions and expiring leases. A stale worker cannot overwrite a newer claim or complete a job it no longer owns. The dispatcher renews its 10-minute lease every 2 minutes during long provider operations; a failed renewal cancels the worker context.
+7. Every state transition and provider operation is auditable. Errors are bounded/redacted; never log signed URLs, credentials, or user content.
+8. The retention worker never processes direct messages, avatars, profile media, or ordinary post text unless a separate explicit policy is approved.
+
+## Lifecycle state machines
+
+### Story expiry (24 hours)
+
+`active -> expired -> media_reference_check -> delete_pending -> deleting_replicas -> deleted`
+
+- Compute `expires_at` once at story creation as UTC `created_at + 24h`; never recompute it on retries.
+- At or after the deadline, transactionally claim the story and mark it expired. Feed/API reads must reject expired stories even if the cleanup worker is delayed.
+- For every attachment, query all live references. If another post/story/message/profile references the same object, detach only the expired story reference and retain the object.
+- Otherwise create a deterministic `expire_story` job.
+- Delete B2, R2, archive, and node copies only after all are listed in the ledger. Verify each is absent. Missing objects are treated as already deleted only after a successful provider HEAD confirms not-found.
+- Release logical quota exactly once after all required copies are confirmed absent and the media ledger is terminal.
+
+### Archive after 30 days
+
+`active -> archive_pending -> copying -> verifying -> archived -> source_cleanup -> archived`
+
+- Eligibility is based on media `created_at + 30d`, not post edits or worker execution time.
+- Require a configured archive destination and a complete source-replica ledger.
+- Select a healthy source replica, validate metadata, stream/copy to archive, then independently HEAD and SHA-256 the archive object.
+- Persist the archive replica as verified before deleting any active copy.
+- If copy, read-back, checksum, Appwrite commit, or source deletion fails, keep every remaining good copy and retry. Never delete the source to make the job appear successful.
+- Keep `media_objects`, `post_media`, and post text intact. The download path must resolve archived media and support a restore-to-hot workflow.
+- Restore requests are coalesced by object ID; restore to an active provider, verify, then serve. Do not create multiple restores for concurrent requests.
+- Important: a second B2/R2 copy is replication, not cold archival. Cloudflare R2 is not itself a cold-storage class. Do not claim cost savings until an actual lower-cost archive destination and retrieval behavior are configured.
+
+### User-deleted media (30 days)
+
+`ready -> delete_pending -> recovery_window -> purge_claimed -> deleting_replicas -> deleted`
+
+- User action immediately revokes signed URL issuance and hides the attachment; record `deleted_at` and immutable `delete_after = deleted_at + 30d`.
+- Keep all recoverable copies during the window. The object is not served while deleted, except through an authenticated restore action by its owner.
+- Restore before the deadline is a transaction that clears the pending purge, restores attachment visibility, and invalidates/revokes any outstanding deletion claim. The worker must re-read state before every destructive operation.
+- At/after the deadline, claim a `purge_deleted` job. Recheck the deadline, owner deletion state, legal/abuse holds, and references inside the claim transaction.
+- Delete every ledgered B2, R2, archive, and node replica. Verify each deletion. A provider outage or unknown response leaves the job retryable and quota charged.
+- Only after every replica is confirmed absent: mark the media tombstone terminal, remove/expire attachment references as appropriate, and decrement user/platform used quota once in the same Appwrite transaction that marks the job completed.
+- Preserve a minimal non-content tombstone/audit record to prevent resurrection by delayed retries.
+
+## Worker execution model
+
+- Run from a trusted backend scheduler (QStash or controlled cron), never from the browser or Android node.
+- Separate queues/worker commands: story-expiry, archive, deleted-media-purge, and retry/reconciliation.
+- Each invocation processes a bounded batch (default 100), uses a 20-minute execution budget, and exits non-zero if any item remains failed/retryable.
+- Use a unique lease owner per process. Claim pending jobs transactionally with `lease_until`; reclaim only after lease expiry. Renew leases during long object transfers.
+- Use exponential backoff with jitter and a maximum retry delay. Do not discard permanently failing jobs; move them to `blocked` with an alert and operator recovery path.
+- Every provider action has an operation key derived from job key, provider, and operation. Provider delete is treated as idempotent, but always followed by HEAD verification.
+- Reconciliation periodically compares Appwrite replica records with provider objects, including orphan detection. Orphans are not deleted automatically until ownership and age are proven.
+
+## Appwrite records and indexes
+
+The schema extension is in `fresh-appwrite-database-schema.md`:
+- `stories`: status and indexed `expires_at`.
+- `media_objects`: retention class, lifecycle state, archive/delete deadlines, policy version, lease, attempt count, last access.
+- `media_lifecycle_jobs`: deterministic job key, action, state, deadline, lease, retry count, error and timestamps.
+- `media_lifecycle_audit`: append-only per-operation audit trail.
+- `storage_replicas`: one record per provider/bucket/key, including archive and node providers.
+
+Provision all attributes and indexes before enabling workers. Appwrite attribute/index operations are asynchronous; wait until each is available.
+
+## Rollout and no-retroactivity guard
+
+1. Deploy schema only; no workers enabled.
+2. Set `TESTAGRAM_RETENTION_ENABLED=false`, `TESTAGRAM_RETENTION_DRY_RUN=true`.
+3. Set `TESTAGRAM_RETENTION_START_AT` to the UTC deployment/approval cutoff. The worker must refuse to start if it is empty or invalid.
+4. Dry-run scans only new records at/after the cutoff and emits candidate counts, bytes, reference counts, and intended actions. It performs no writes to posts, stories, media, replicas, or quotas.
+5. Review sample candidates and archive destination verification, then explicitly approve enabling each job class.
+6. Enable story expiry first, then archive, then user-deletion purge. Keep independent kill switches.
+7. Monitor oldest pending job, retry age, bytes pending archive, bytes pending purge, verified archived bytes, failed checksum count, quota reclaimed, and provider deletion verification.
+8. Roll back by disabling workers. Do not reverse completed user deletion; restore only from the recovery window or verified archive/backup.
+
+## Acceptance tests
+
+- Exact 24-hour story boundary; UTC and daylight-saving-independent calculations.
+- Story with shared attachment does not delete media still referenced by a permanent post.
+- Permanent post never receives a delete deadline.
+- Archive destination outage, partial copy, wrong size, wrong SHA-256, and Appwrite write failure never delete source.
+- Repeated archive run creates one archive replica and one completed job.
+- Restore racing with purge prevents deletion if restore wins the transaction; purge rechecks state before every provider delete.
+- Purge exactly at 30 days, one nanosecond before deadline, and after deadline.
+- Provider delete timeout followed by HEAD found/not-found reconciles safely.
+- Partial replica inventory blocks quota release.
+- Concurrent workers cannot claim or complete the same lease.
+- Quota decrement is exactly once, transactionally coupled to terminal job state.
+- Dry-run produces no mutation requests.
+- Records created before the cutoff, legacy Supabase data, DMs, avatars, and unrelated media are never selected.
+
+## Current implementation boundary (2026-11-07)
+
+Implemented in the Backend branch (still a draft PR; no merge/deployment):
+- Pure policy evaluator and deterministic job keys with tests for 24-hour stories, 30-day archive, fresh user-deletion cutoff, and legacy cutoff exclusion.
+- Appwrite retention-job repository: deterministic/idempotent enqueue, transaction-scoped claim, cryptographically random 256-bit lease token, stale-lease reclaim, and lease-token/expiry validation before complete or retry.
+- Story expiry worker: marks due stories expired first, checks story/post media references, fails closed on incomplete reference scans, and only deletes media when no live references remain.
+- Archive worker: streams B2 to a separately configured `ARCHIVE_S3_*` provider; the S3 adapter independently checks destination size/content type and reads back SHA-256 before recording the archive replica. It intentionally does not delete active copies.
+- User-deletion purge worker: requires the deletion event's 30-day recovery deadline, refuses live references and unsupported/unmanaged replicas, verifies every provider object is absent, then transactionally rechecks replica-ledger state before quota release. A lifecycle `purging` state is set before object deletion to reduce concurrent mutation risk.
+- Archive restore path: authenticated `POST /v1/media/{objectID}/restore`, plus automatic restore-to-hot fallback when both active copies are unavailable. Restores B2 then R2 with independent read-back verification before marking replicas verified.
+- One-job executable dispatcher: `go run ./cmd/fresh-retention-worker` accepts a trusted scheduler-supplied job ID and worker ID. It renews a 10-minute lease every 2 minutes and refuses to run unless retention is explicitly enabled and dry-run is false.
+
+Still required before production:
+- Live staging runs of the candidate scanner/enqueuer. The scanner is now implemented at `cmd/fresh-retention-scan`; it pages Appwrite media by `created_at` and `deleted_at`, reports per-action counts/logical bytes, supports separate offsets for both scans, and creates deterministic jobs only when explicitly enabled with dry-run disabled. Local HTTP-fake tests verify the rollout cutoff and fresh deletion-event behavior. It does not yet report provider reference counts or live staging data.
+- A user-delete API that immediately marks media `user_deleted`, removes/detaches its post/story attachment references safely, and a restore action that restores user-deleted media before its deadline. The purge worker currently expects this canonical state to have been written by the owner-deletion workflow.
+- Transactional attachment/reference writers that refuse to attach media once `lifecycle_state=purging`; this closes the race between reference scanning and deletion.
+- QStash/cron scheduling, exponential retry/backoff, dead-letter/blocked handling, independent kill switches and append-only operation audit records.
+- Live Appwrite transaction/concurrency tests and staging B2/R2/archive end-to-end tests. Current tests use local HTTP fakes and `httptest`; they are not live-provider evidence.
+- Node replica deletion/verification transport. Any `node` replica currently blocks quota reclamation rather than being silently ignored.
+- Full archive lifecycle reconciliation and backup/disaster-recovery tests.
+
+Retention stays disabled and dry-run by default. No destructive operation has been run, no existing content has been processed, and no legacy Supabase data has been touched. Do not merge or activate retention until the remaining gates pass.
