@@ -6,10 +6,13 @@ package platformclient
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,17 +58,32 @@ type Client struct {
 }
 
 func New(baseURL, token string, timeout time.Duration) (*Client, error) {
-	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return nil, errors.New("platform base URL must be an absolute HTTP(S) URL")
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && isPrivateHost(u.Hostname()))) {
+		return nil, errors.New("platform base URL must use HTTPS or a private HTTP service hostname")
 	}
-	if strings.TrimSpace(token) == "" {
-		return nil, errors.New("platform internal token is required")
+	token = strings.TrimSpace(token)
+	if len(token) < 32 || strings.ContainsAny(token, "\r\n") {
+		return nil, errors.New("platform internal token must contain at least 32 characters")
 	}
-	if timeout <= 0 {
-		timeout = 2 * time.Second
-	}
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{Timeout: timeout}}, nil
+	if timeout <= 0 || timeout > 10*time.Second { timeout = 2*time.Second }
+	client := &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &Client{baseURL: baseURL, token: token, http: client}, nil
+}
+
+func isPrivateHost(host string) bool {
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" || host == "platform" || host == "api" || strings.HasSuffix(host, ".local") { return true }
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
+}
+
+func newRequestID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err == nil { return hex.EncodeToString(raw[:]) }
+	return fmt.Sprintf("platform-%d", time.Now().UnixNano())
 }
 
 func (c *Client) Get(ctx context.Context, key string) (string, error) {
@@ -119,11 +137,15 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil { return err }
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Testagram-API-Version", "1")
+	req.Header.Set("X-Request-ID", newRequestID())
 	if body != nil { req.Header.Set("Content-Type", "application/json") }
 	resp, err := c.http.Do(req)
 	if err != nil { return fmt.Errorf("call Testagram platform API: %w", err) }
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if len(raw) > 1<<20 { return errors.New("platform API response exceeded 1 MiB") }
 	if err != nil { return err }
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusNotFound {
