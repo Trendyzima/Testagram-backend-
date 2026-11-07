@@ -32,3 +32,8 @@ The OpenAPI document is the authoritative route list. Current public capabilitie
 - Backend -> Federation: actor discovery and durable public-post outbox.
 - Backend -> Algorithm: bounded, already-authorized candidate IDs and ranking features; Backend rechecks visibility after ranking.
 - Backend -> Data Centre: private infrastructure/cache/queue/media operations. Data Centre never writes canonical social records.
+
+
+## Capability migration boundary
+
+XClone may call `POST /v1/capabilities` only through the shared versioned API transport. The route authenticates the Appwrite JWT and currently returns `501 CAPABILITY_NOT_IMPLEMENTED` for capabilities that have not been ported into the fresh Backend. It does not proxy to the legacy `/api/capability` gateway or any Supabase RPC. Do not point Appwrite-mode clients at the legacy gateway to make an unported feature appear to work. Add a capability only after its Backend domain handler, persistence, authorization and contract tests are implemented.
