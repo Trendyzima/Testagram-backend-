@@ -147,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
 	mux.HandleFunc("POST /v1/moderation/check", s.moderateContent)
+	mux.HandleFunc("POST /v1/capabilities", s.capabilities)
 	if s.internalToken != "" {
 		mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationReadyz)
 		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
@@ -259,6 +260,49 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		postWriteStatus = "ready"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "moderation": moderationStatus, "post_write": postWriteStatus, "outbox": "ready"})
+}
+
+// capabilities is an authenticated, versioned fail-closed boundary. A
+// capability is enabled only after its domain implementation is migrated to
+// this fresh Appwrite/Neon Backend; it must never proxy to legacy Supabase RPC.
+func (s *Server) capabilities(w http.ResponseWriter, r *http.Request) {
+	if _, status, err := s.authenticate(r); err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var input struct {
+		Capability string         `json:"capability"`
+		Input      map[string]any `json:"input"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid capability request")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "capability request must contain one JSON object")
+		return
+	}
+	if len(input.Capability) < 3 || len(input.Capability) > 128 {
+		writeError(w, http.StatusBadRequest, "capability name must contain 3-128 characters")
+		return
+	}
+	for _, char := range input.Capability {
+		if !(char >= 'a' && char <= 'z') && !(char >= '0' && char <= '9') && char != '.' && char != '_' && char != '-' {
+			writeError(w, http.StatusBadRequest, "capability name contains unsupported characters")
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		"ok": false,
+		"error": map[string]string{
+			"code": "CAPABILITY_NOT_IMPLEMENTED",
+			"message": "This capability has not yet been migrated to the centralized Testagram Backend API.",
+		},
+		"request_id": w.Header().Get("X-Request-ID"),
+	})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
