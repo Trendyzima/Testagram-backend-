@@ -35,6 +35,9 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("s", 32) {
 			t.Fatal("missing service authorization")
 		}
+		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
+			t.Fatal("missing versioned API contract headers")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[{"id":"post-1","score":0.9,"reasons":["recent"]}]}`))
 	}))
