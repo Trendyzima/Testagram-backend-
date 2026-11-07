@@ -101,26 +101,64 @@ func (c *Client) GetDocumentInTransaction(ctx context.Context, collectionID, doc
 }
 
 func (c *Client) ListDocuments(ctx context.Context, collectionID, query string, limit int) ([]json.RawMessage, error) {
-	docs, _, err := c.ListDocumentsPage(ctx, collectionID, query, limit, 0)
-	return docs, err
+	return c.ListDocumentsWithQueries(ctx, collectionID, []string{query}, limit)
 }
 
-func (c *Client) ListDocumentsPage(ctx context.Context, collectionID, query string, limit, offset int) ([]json.RawMessage, int, error) {
-	if !validID(collectionID) || strings.TrimSpace(query) == "" || limit < 1 || limit > 100 || offset < 0 {
-		return nil, 0, errors.New("invalid Appwrite document list query")
+// ListDocumentsWithQueries preserves Appwrite's repeated queries[] parameters.
+// Multiple queries are ANDed by Appwrite; callers must explicitly encode OR
+// expressions using Appwrite's query format.
+func (c *Client) ListDocumentsWithQueries(ctx context.Context, collectionID string, queries []string, limit int) ([]json.RawMessage, error) {
+	if !validID(collectionID) || len(queries) == 0 || limit < 1 || limit > 100 {
+		return nil, errors.New("invalid Appwrite document list query")
 	}
-	raw, err := c.doQuery(ctx, http.MethodGet, c.documentsPath(collectionID, ""), map[string]string{"queries[]": query, "limit": strconv.Itoa(limit), "offset": strconv.Itoa(offset)}, nil)
+	values := make(url.Values, len(queries)+1)
+	for _, query := range queries {
+		if strings.TrimSpace(query) == "" || len(query) > 4096 {
+			return nil, errors.New("invalid Appwrite document list query")
+		}
+		values.Add("queries[]", query)
+	}
+	values.Set("limit", strconv.Itoa(limit))
+	raw, err := c.doQueryValues(ctx, http.MethodGet, c.documentsPath(collectionID, ""), values, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, errors.New("invalid Appwrite document list response")
+	}
+	var documents []json.RawMessage
+	if err := json.Unmarshal(result["documents"], &documents); err != nil {
+		return nil, errors.New("invalid Appwrite document list response")
+	}
+	return documents, nil
+}
+
+// ListDocumentsPage provides bounded offset pagination for callers that need
+// Appwrite's total count as well as the current page. Prefer cursor pagination
+// for user-facing feeds; offset pagination is retained for the bounded scanner.
+func (c *Client) ListDocumentsPage(ctx context.Context, collectionID, query string, limit, offset int) ([]json.RawMessage, int, error) {
+	if !validID(collectionID) || strings.TrimSpace(query) == "" || len(query) > 4096 || limit < 1 || limit > 100 || offset < 0 {
+		return nil, 0, errors.New("invalid Appwrite document page query")
+	}
+	values := make(url.Values)
+	values.Add("queries[]", query)
+	values.Set("limit", strconv.Itoa(limit))
+	values.Set("offset", strconv.Itoa(offset))
+	raw, err := c.doQueryValues(ctx, http.MethodGet, c.documentsPath(collectionID, ""), values, nil)
 	if err != nil {
 		return nil, 0, err
 	}
-	var result struct {
-		Documents []json.RawMessage `json:"documents"`
-		Total     int               `json:"total"`
-	}
+	var result map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, 0, errors.New("invalid Appwrite document list response")
+		return nil, 0, errors.New("invalid Appwrite document page response")
 	}
-	return result.Documents, result.Total, nil
+	var documents []json.RawMessage
+	var total int
+	if err := json.Unmarshal(result["documents"], &documents); err != nil || json.Unmarshal(result["total"], &total) != nil || total < 0 {
+		return nil, 0, errors.New("invalid Appwrite document page response")
+	}
+	return documents, total, nil
 }
 
 func (c *Client) UpdateDocument(ctx context.Context, collectionID, documentID string, data map[string]any) (json.RawMessage, error) {
@@ -215,6 +253,14 @@ func (c *Client) do(ctx context.Context, method, path string, payload any) (json
 }
 
 func (c *Client) doQuery(ctx context.Context, method, path string, query map[string]string, payload any) (json.RawMessage, error) {
+	values := make(url.Values, len(query))
+	for key, value := range query {
+		values.Set(key, value)
+	}
+	return c.doQueryValues(ctx, method, path, values, payload)
+}
+
+func (c *Client) doQueryValues(ctx context.Context, method, path string, values url.Values, payload any) (json.RawMessage, error) {
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -226,8 +272,11 @@ func (c *Client) doQuery(ctx context.Context, method, path string, query map[str
 	u := *c.base
 	u.Path = path
 	q := u.Query()
-	for key, value := range query {
-		q.Set(key, value)
+	for key, entries := range values {
+		q.Del(key)
+		for _, value := range entries {
+			q.Add(key, value)
+		}
 	}
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
