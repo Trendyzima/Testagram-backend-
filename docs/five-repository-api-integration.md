@@ -52,7 +52,7 @@ Implemented in `internal/freshapi`: `/v1/me`, profile update, `/v1/feed/home`, a
 
 ### Private service API (Backend -> Federated Content)
 
-- Planned: `POST /internal/v1/activities` (idempotent authorized activity enqueue), `GET /internal/v1/deliveries/{id}`, `POST /internal/v1/actors/resolve`.
+- Implemented in the Federation branch: `POST /internal/v1/activities` (private, idempotent, Backend-authorized activity enqueue). Backend now has a typed `internal/federationclient` publisher with HTTPS/private-host validation, a distinct service token, bounded payload/response handling and acknowledgement checks. **The Backend transactional-outbox dispatcher and producer wiring are still pending**, so this endpoint/client are not yet an end-to-end publish path. `GET /internal/v1/deliveries/{id}` and `POST /internal/v1/actors/resolve` remain planned.
 - Federation must not create canonical users/posts or override Backend blocks, visibility, deletion or retention decisions.
 
 ### Private service API (Backend -> Data Centre)
