@@ -142,6 +142,26 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 	return api, mock, state
 }
 
+func TestFederationReadinessIsPrivateAndIndependentOfAlgorithm(t *testing.T) {
+	api, mock, _ := testServerWithState(t)
+	defer mock.Close()
+	if err := api.WithInternalToken(strings.Repeat("f", 40)); err != nil {
+		t.Fatal(err)
+	}
+	unauthorized := httptest.NewRecorder()
+	api.Handler().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/internal/v1/federation/readyz", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("private readiness without token status=%d", unauthorized.Code)
+	}
+	ready := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/readyz", nil)
+	ready.Header.Set("Authorization", "Bearer "+strings.Repeat("f", 40))
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, ready)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"outbox":"ready"`) {
+		t.Fatalf("Federation readiness should not depend on Algorithm readiness: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestFederationActorRequiresInternalServiceToken(t *testing.T) {
 	api, mock, _ := testServerWithState(t)
 	defer mock.Close()
