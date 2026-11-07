@@ -92,7 +92,7 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	queryCtx, queryCancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer queryCancel()
 	query := `
-SELECT p.id::text, p.author_id::text, p.text, p.visibility, p.media_ids,
+SELECT p.id::text, p.author_id::text, p.text, p.visibility, p.sensitive, p.media_ids,
        p.language, p.created_at, p.likes_count, p.replies_count, p.reposts_count,
        a.username, a.display_name, a.avatar_key, a.protected_account,
        (p.author_id = $1::uuid OR EXISTS (
@@ -141,7 +141,7 @@ LIMIT $4`
 		var mediaRaw []byte
 		var username, displayName, avatarKey string
 		var protected, following bool
-		if err := rows.Scan(&post.ID, &post.UserID, &post.Content, &post.Visibility, &mediaRaw,
+		if err := rows.Scan(&post.ID, &post.UserID, &post.Content, &post.Visibility, &post.Sensitive, &mediaRaw,
 			&post.Language, &post.CreatedAt, &post.LikesCount, &post.RepliesCount, &post.RepostsCount,
 			&username, &displayName, &avatarKey, &protected, &following); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_SCAN_FAILED", "Feed could not be loaded", requestID))
