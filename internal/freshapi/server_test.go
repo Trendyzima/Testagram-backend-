@@ -22,6 +22,7 @@ type mockAppwriteState struct {
 	profileFederationEnabled bool
 	accountActive            bool
 	emailVerified            bool
+	profileIdentityStatus    string
 	profileUpdates           map[string]map[string]any
 }
 
@@ -41,7 +42,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 
 func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
-	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, emailVerified: true, profileUpdates: map[string]map[string]any{}}
+	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, emailVerified: true, profileIdentityStatus: "approved", profileUpdates: map[string]map[string]any{}}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -71,7 +72,9 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			state.transactionCommitted = body["commit"] == true
 			_, _ = w.Write([]byte(`{"$id":"tx_posts","status":"committed"}`))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/collections/profiles/documents/"):
-			_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","identity_verification_status":"approved","federation_enabled":true}`))
+			profile := map[string]any{"$id": "new_user_1", "user_id": "new_user_1", "handle": "tester", "display_name": "Test User", "identity_verification_status": state.profileIdentityStatus, "federation_enabled": true}
+			encoded, _ := json.Marshal(profile)
+			_, _ = w.Write(encoded)
 		case strings.HasSuffix(r.URL.Path, "/documents"):
 			if r.Method == http.MethodGet {
 				if strings.Contains(r.URL.Path, "/collections/profiles/") {
@@ -227,6 +230,19 @@ func TestUpdateFederationPreferenceRequiresAuthenticatedProfile(t *testing.T) {
 	api.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":true`) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFreshAPIRejectsPendingIdentityProfile(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	state.profileIdentityStatus = "pending"
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer valid-session")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "IDENTITY_VERIFICATION_REQUIRED") {
+		t.Fatalf("pending identity status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
