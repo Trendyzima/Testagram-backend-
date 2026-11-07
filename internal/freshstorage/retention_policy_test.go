@@ -9,7 +9,7 @@ func TestRetentionDecisionsRespectCutoffAndPreservePermanentPosts(t *testing.T) 
 	cases:=[]struct{name string;c RetentionCandidate;want RetentionAction}{
 		{"legacy excluded",RetentionCandidate{ObjectID:"old",Class:"story",Scope:"story_media",CreatedAt:cutoff.Add(-time.Second)},""},
 		{"permanent post archived not purged",RetentionCandidate{ObjectID:"post",Class:"permanent",Scope:"post_media",CreatedAt:cutoff},RetentionArchive},
-		{"story expires",RetentionCandidate{ObjectID:"story",Class:"story",CreatedAt:cutoff},RetentionExpireStory},
+		{"story expires",RetentionCandidate{ObjectID:"story",Class:"story",Scope:"story_media",CreatedAt:cutoff},RetentionExpireStory},
 		{"fresh deletion event applies to older media",RetentionCandidate{ObjectID:"deleted",Class:"user_deleted",Scope:"post_media",CreatedAt:cutoff.Add(-time.Hour),DeletedAt:cutoff},RetentionPurgeDeleted},
 		{"unknown class ignored",RetentionCandidate{ObjectID:"avatar",Class:"avatar",CreatedAt:cutoff},""},
 		{"profile media excluded",RetentionCandidate{ObjectID:"profile",Class:"permanent",Scope:"profile_media",CreatedAt:cutoff},""},
