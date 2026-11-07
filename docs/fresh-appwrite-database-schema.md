@@ -22,10 +22,10 @@ All collections use document security enabled with no broad collection-level pub
 | conversations | kind enum, created_by string(36), created_at datetime, updated_at datetime | updated_at |
 | conversation_members | conversation_id string(36), user_id string(36), joined_at datetime, last_read_at datetime | unique conversation_id+user_id; user_id+joined_at |
 | messages | conversation_id string(36), sender_id string(36), body string(10000), media_object_id string(128), created_at datetime, deleted_at datetime | conversation_id+created_at; sender_id+created_at |
-| media_objects | owner_id string(36), object_id string(128), provider string(16), bucket string(63), object_key string(512), bytes integer, mime_type string(128), sha256 string(64), visibility enum, status enum, created_at datetime | unique object_id; owner_id+created_at; status+created_at |
-| storage_reservations | owner_id string(36), object_id string(128), reserved_bytes integer, expires_at datetime, state enum | unique object_id; expires_at+state |
-| storage_nodes | node_id string(128), node_type enum, storage_only boolean, volume_identity string(128), total_bytes integer, free_bytes integer, status enum, last_heartbeat datetime | unique node_id; status+last_heartbeat |
-| storage_replicas | object_id string(128), provider string(16), node_id string(128), physical_key string(512), bytes integer, sha256 string(64), state enum, verified_at datetime | object_id+state; provider+state |
+| media_objects | owner_id string(36), object_id string(128), provider string(16), bucket string(63), object_key string(512), bytes_decimal string(20), mime_type string(128), sha256 string(64), visibility enum, status enum, created_at datetime | unique object_id; owner_id+created_at; status+created_at |
+| storage_reservations | owner_id string(36), object_id string(128), reserved_bytes_decimal string(20), expires_at datetime, state enum | unique object_id; expires_at+state |
+| storage_nodes | node_id string(128), node_type enum, storage_only boolean, storage_enabled boolean, compute_enabled boolean, volume_identity string(128), total_bytes_decimal string(20), free_bytes_decimal string(20), reserved_bytes_decimal string(20), verified_bytes_decimal string(20), status enum, last_heartbeat datetime | unique node_id; status+last_heartbeat; storage_enabled+status |
+| storage_replicas | object_id string(128), provider string(16), node_id string(128), physical_key string(512), bytes_decimal string(20), sha256 string(64), state enum, verified_at datetime | object_id+state; provider+state |
 
 ## Implementation constraints
 
@@ -37,3 +37,7 @@ All collections use document security enabled with no broad collection-level pub
 - Store media bytes only in object storage, never in Appwrite documents.
 - Appwrite documents are not the object-storage placement ledger unless all provider/node state transitions are persisted and reconciled by the Backend.
 - Do not provision public permissions on messages, notifications, account settings, storage records or private profiles.
+
+## Capacity representation
+
+Store byte counts as base-10 decimal strings in Appwrite documents (for example, bytes_decimal), not Appwrite integer attributes. The 150 GB pool and per-user quotas exceed signed 32-bit integer ranges. Parse and validate these values as int64 in the trusted Go Backend; reject negative, malformed, overflowing or non-canonical values. Keep arithmetic and reservation locking in the storage control plane rather than relying on lexicographic string sorting.
