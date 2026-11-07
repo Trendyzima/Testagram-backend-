@@ -6,8 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
@@ -16,12 +16,12 @@ import (
 )
 
 type mockAppwriteState struct {
-	documents            map[string][]byte
-	transactionCommitted bool
-	outboxQueries        []string
+	documents                map[string][]byte
+	transactionCommitted     bool
+	outboxQueries            []string
 	profileFederationEnabled bool
-	accountActive bool
-	profileUpdates map[string]map[string]any
+	accountActive            bool
+	profileUpdates           map[string]map[string]any
 }
 
 type staticModeration struct {
