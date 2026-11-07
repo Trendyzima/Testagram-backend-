@@ -47,11 +47,11 @@ func TestCacheSetSendsBearerAndTTL(t *testing.T) {
 func TestCacheGetAndMiss(t *testing.T) {
 	t.Run("hit", func(t *testing.T) {
 		client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Query().Get("key") != "hello world" { t.Errorf("query value not encoded: %s", r.URL.RawQuery) }
+			if r.URL.Query().Get("key") != "hello:world" { t.Errorf("query value not encoded: %s", r.URL.RawQuery) }
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"value":"there"}`))
 		})
-		got, err := client.Get(context.Background(), "hello world")
+		got, err := client.Get(context.Background(), "hello:world")
 		if err != nil || got != "there" { t.Fatalf("Get() = %q, %v", got, err) }
 	})
 	t.Run("miss", func(t *testing.T) {
@@ -91,4 +91,26 @@ func TestNonSuccessReturnsStatusError(t *testing.T) {
 	var status *StatusError
 	if !errors.As(err, &status) || status.StatusCode != http.StatusUnauthorized { t.Fatalf("expected status error, got %v", err) }
 	if !strings.Contains(err.Error(), "401") { t.Fatalf("unexpected error: %v", err) }
+}
+
+
+func TestRejectsInvalidPlatformInputsBeforeNetworkCall(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected network request for invalid input: %s %s", r.Method, r.URL)
+	})
+	if _, err := client.Get(context.Background(), "bad key"); err == nil {
+		t.Fatal("expected invalid cache key rejection")
+	}
+	if err := client.Set(context.Background(), "cache-key", strings.Repeat("x", (256<<10)+1), time.Minute); err == nil {
+		t.Fatal("expected oversized cache value rejection")
+	}
+	if err := client.Delete(context.Background(), "bad/key"); err == nil {
+		t.Fatal("expected invalid cache key character rejection")
+	}
+	if _, err := client.Enqueue(context.Background(), "", map[string]string{"id": "1"}); err == nil {
+		t.Fatal("expected invalid queue name rejection")
+	}
+	if _, err := client.Enqueue(context.Background(), "mail", map[string]string{}); err == nil {
+		t.Fatal("expected empty queue payload rejection")
+	}
 }
