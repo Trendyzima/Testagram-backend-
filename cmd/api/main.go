@@ -1158,6 +1158,10 @@ func main() {
 			log.Printf("private Data Centre media lifecycle integration enabled")
 		}
 	}
+	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
+	if freshMediaEnabled && dataCentreMedia == nil {
+		log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN; Backend must not receive B2/R2 credentials")
+	}
 	var mediaIntentFactory *media.IntentFactory
 	if dataCentreMedia != nil {
 		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{
