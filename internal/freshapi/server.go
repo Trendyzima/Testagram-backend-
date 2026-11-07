@@ -108,11 +108,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
+	mux.HandleFunc("PUT /v1/me/federation", s.updateFederationPreference)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
 	mux.HandleFunc("POST /v1/moderation/check", s.moderateContent)
 	if s.internalToken != "" {
 		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
+		mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActor)
 	}
 	if s.storage != nil {
 		mux.HandleFunc("POST /v1/media/uploads/reservations", s.reserveMediaUpload)
@@ -227,6 +229,114 @@ func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
 		"data":  result,
 		"error": nil,
 	})
+}
+
+func (s *Server) requireFederationService(w http.ResponseWriter, r *http.Request) bool {
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	provided := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
+	if !strings.HasPrefix(authorization, "Bearer ") || len(provided) != len(s.internalToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.internalToken)) != 1 {
+		writeError(w, http.StatusUnauthorized, "internal service authentication required")
+		return false
+	}
+	return true
+}
+
+// federationActor exposes only explicitly federation-enabled local profiles.
+// Appwrite Auth status is checked independently so suspended/deleted accounts
+// cannot remain discoverable merely because their profile document exists.
+func (s *Server) federationActor(w http.ResponseWriter, r *http.Request) {
+	if !s.requireFederationService(w, r) {
+		return
+	}
+	handle := strings.ToLower(strings.TrimSpace(r.PathValue("handle")))
+	if !validHandle(handle) || len(handle) < 3 {
+		writeError(w, http.StatusNotFound, "local actor not found")
+		return
+	}
+	documents, err := s.db.ListDocumentsWithQueries(r.Context(), "profiles", []string{
+		mustQuery("equal", "handle", handle),
+		mustQuery("limit", "", 2),
+	}, 2)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "local actor lookup is unavailable")
+		return
+	}
+	if len(documents) != 1 {
+		writeError(w, http.StatusNotFound, "local actor not found")
+		return
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(documents[0], &profile); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "local actor profile is invalid")
+		return
+	}
+	if enabled, ok := profile["federation_enabled"].(bool); !ok || !enabled {
+		writeError(w, http.StatusNotFound, "local actor not found")
+		return
+	}
+	userID, ok := profile["user_id"].(string)
+	if !ok || !validUserID(userID) {
+		writeError(w, http.StatusServiceUnavailable, "local actor identity is invalid")
+		return
+	}
+	user, err := s.db.GetUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "local actor account status is unavailable")
+		return
+	}
+	if !user.Status {
+		writeError(w, http.StatusNotFound, "local actor not found")
+		return
+	}
+	displayName, _ := profile["display_name"].(string)
+	bio, _ := profile["bio"].(string)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id": userID,
+		"handle": handle,
+		"display_name": strings.TrimSpace(displayName),
+		"summary": strings.TrimSpace(bio),
+		"federation_enabled": true,
+	})
+}
+
+func (s *Server) updateFederationPreference(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var input struct {
+		Enabled *bool `json:"enabled"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || input.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "enabled boolean is required")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "federation preference must contain one JSON object")
+		return
+	}
+	if _, err := s.db.GetDocument(r.Context(), "profiles", a.ID); err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			writeError(w, http.StatusNotFound, "profile not found")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "profile service unavailable")
+		}
+		return
+	}
+	_, err = s.db.UpdateDocument(r.Context(), "profiles", a.ID, map[string]any{
+		"federation_enabled": *input.Enabled,
+		"updated_at": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "federation preference could not be saved")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"federation_enabled": *input.Enabled}, "error": nil})
 }
 
 func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
@@ -693,7 +803,7 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "profile fields are invalid")
 		return
 	}
-	data := map[string]any{"user_id": a.ID, "display_name": input.DisplayName, "handle": input.Handle, "bio": input.Bio, "updated_at": time.Now().UTC().Format(time.RFC3339Nano)}
+	data := map[string]any{"user_id": a.ID, "display_name": input.DisplayName, "handle": input.Handle, "bio": input.Bio, "federation_enabled": false, "updated_at": time.Now().UTC().Format(time.RFC3339Nano)}
 	raw, err := s.db.CreateDocument(r.Context(), "profiles", a.ID, data, nil)
 	if err != nil {
 		// A conflict means this profile already exists; update only the
