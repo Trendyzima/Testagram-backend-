@@ -674,6 +674,7 @@ func TestPlatformReadyzFailsWhenRequiredNeonIsMissing(t *testing.T) {
 func TestPlatformReadyzChecksNeonWithoutBlockingLogin(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
+	api.WithFeed(&fakeHomeFeed{})
 	calls := 0
 	api.WithNeon(fakeNeonHealth{err: errors.New("database unavailable"), calls: &calls}, true)
 	service := httptest.NewRecorder()
