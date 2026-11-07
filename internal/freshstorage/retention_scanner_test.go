@@ -41,8 +41,9 @@ func TestRetentionScannerDryRunUsesOnlyPostCutoffEventsAndReportsAllClasses(t *t
 		}
 		query := r.URL.Query().Get("queries[]")
 		var q struct {
-			Method, Attribute string
-			Values            []string
+			Method    string   `json:"method"`
+			Attribute string   `json:"column"`
+			Values    []string `json:"values"`
 		}
 		if err := json.Unmarshal([]byte(query), &q); err != nil {
 			t.Errorf("bad query: %v", err)
@@ -106,7 +107,7 @@ func TestRetentionScannerCursorAdvancesByRawDocumentsNotEligibleRows(t *testing.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("queries[]")
 		var v struct {
-			Attribute string `json:"attribute"`
+			Attribute string `json:"column"`
 		}
 		_ = json.Unmarshal([]byte(q), &v)
 		page := docs
