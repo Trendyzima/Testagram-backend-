@@ -108,26 +108,24 @@ Provision all attributes and indexes before enabling workers. Appwrite attribute
 - Dry-run produces no mutation requests.
 - Records created before the cutoff, legacy Supabase data, DMs, avatars, and unrelated media are never selected.
 
-## Current implementation boundary
+## Current implementation boundary (2026-11-07)
 
-The existing fresh storage code already handles upload reservation expiry and B2/R2 verification/repair. That reservation expiry is not post/story retention. This design adds the separate content lifecycle and must not reuse reservation cleanup to delete ready media. Archive-provider selection, Appwrite transaction implementation, story integration, restore delivery, and scheduled worker deployment remain required before production enablement.
+Implemented in the Backend branch (still a draft PR; no merge/deployment):
+- Pure policy evaluator and deterministic job keys with tests for 24-hour stories, 30-day archive, fresh user-deletion cutoff, and legacy cutoff exclusion.
+- Appwrite retention-job repository: deterministic/idempotent enqueue, transaction-scoped claim, cryptographically random 256-bit lease token, stale-lease reclaim, and lease-token/expiry validation before complete or retry.
+- Story expiry worker: marks due stories expired first, checks story/post media references, fails closed on incomplete reference scans, and only deletes media when no live references remain.
+- Archive worker: streams B2 to a separately configured `ARCHIVE_S3_*` provider; the S3 adapter independently checks destination size/content type and reads back SHA-256 before recording the archive replica. It intentionally does not delete active copies.
+- User-deletion purge worker: requires the deletion event's 30-day recovery deadline, refuses live references and unsupported/unmanaged replicas, verifies every provider object is absent, then transactionally rechecks replica-ledger state before quota release. A lifecycle `purging` state is set before object deletion to reduce concurrent mutation risk.
+- Archive restore path: authenticated `POST /v1/media/{objectID}/restore`, plus automatic restore-to-hot fallback when both active copies are unavailable. Restores B2 then R2 with independent read-back verification before marking replicas verified.
+- One-job executable dispatcher: `go run ./cmd/fresh-retention-worker` accepts a trusted scheduler-supplied job ID and worker ID. It refuses to run unless retention is explicitly enabled and dry-run is false.
 
+Still required before production:
+- A complete candidate scanner/enqueuer that enumerates only newly eligible Appwrite media and produces dry-run reports with object counts, bytes, reference counts and action breakdowns.
+- A user-delete API that immediately marks media `user_deleted`, removes/detaches its post/story attachment references safely, and a restore action that restores user-deleted media before its deadline. The purge worker currently expects this canonical state to have been written by the owner-deletion workflow.
+- Transactional attachment/reference writers that refuse to attach media once `lifecycle_state=purging`; this closes the race between reference scanning and deletion.
+- QStash/cron scheduling, exponential retry/backoff, lease renewal for long transfers, dead-letter/blocked handling, independent kill switches and append-only operation audit records.
+- Live Appwrite transaction/concurrency tests and staging B2/R2/archive end-to-end tests. Current tests use local HTTP fakes and `httptest`; they are not live-provider evidence.
+- Node replica deletion/verification transport. Any `node` replica currently blocks quota reclamation rather than being silently ignored.
+- Full archive lifecycle reconciliation and backup/disaster-recovery tests.
 
-# Testagram backend retention worker implementation boundary
-
-The retention policy and schema are defined in `fresh-media-retention-lifecycle.md`. This commit adds a pure policy evaluator with deterministic job identities and tests for cutoff, exact 24-hour expiry, permanent-post archive-only behavior, and the fresh user-deletion event cutoff.
-
-## Worker architecture required
-- `fresh-story-expire`: claim due story records, mark expired before media cleanup, detach shared references safely, and enqueue object cleanup only when no live references remain.
-- `fresh-media-archive`: after 30 days, copy to a separately configured archive provider, verify metadata and SHA-256 by independent read-back, persist the archive replica, then clean active replicas.
-- `fresh-media-purge`: after the 30-day recovery window, purge user-deleted objects across every ledgered provider/node replica, verify absence, then release quota exactly once.
-- `fresh-media-restore`: coalesce concurrent restore requests, copy from archive to active provider, verify, then make signed delivery available.
-
-Every worker must use durable Appwrite jobs, transactional claim/lease ownership, expired-lease reclamation, bounded retries/backoff, append-only audit records, and an independent kill switch. No browser or node runs these jobs.
-
-## Current code status
-- Pure evaluator: implemented in `internal/freshstorage/retention_policy.go`; only `post_media` and `story_media` scopes are eligible. Direct messages, avatars and profile media are rejected by the evaluator.
-- Evaluator tests: implemented in `internal/freshstorage/retention_policy_test.go`, including explicit profile-media and direct-message exclusion.
-- Existing upload reservation expiry remains separate and must not be reused for ready media.
-- Concrete Appwrite job repository, provider archive adapter, story/reference integration, replica-aware purge, restore API, and executable scheduled workers remain pending.
-- Retention is disabled and dry-run by default. No destructive operation is authorized by this commit.
+Retention stays disabled and dry-run by default. No destructive operation has been run, no existing content has been processed, and no legacy Supabase data has been touched. Do not merge or activate retention until the remaining gates pass.
