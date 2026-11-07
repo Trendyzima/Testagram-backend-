@@ -2,7 +2,9 @@ package freshapi
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -158,7 +160,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /v1/media/{objectID}/download", s.downloadMedia)
 		mux.HandleFunc("POST /v1/media/{objectID}/restore", s.restoreMedia)
 	}
-	return securityHeaders(s.cors(mux))
+	return apiContractHeaders(securityHeaders(s.cors(mux)))
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {
@@ -189,7 +191,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				writeError(w, http.StatusForbidden, "CORS method is not allowed")
 				return
 			}
-			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true}
+			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true, "x-request-id": true, "x-testagram-api-version": true}
 			for _, header := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				if header = strings.ToLower(strings.TrimSpace(header)); header != "" && !allowedHeaders[header] {
 					writeError(w, http.StatusForbidden, "CORS request header is not allowed")
@@ -197,7 +199,8 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				}
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept, X-Request-ID, X-Testagram-API-Version")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Testagram-API-Version, Retry-After")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.Header().Add("Vary", "Access-Control-Request-Method")
 			w.Header().Add("Vary", "Access-Control-Request-Headers")
@@ -1118,6 +1121,20 @@ func validHandle(v string) bool {
 	}
 	return true
 }
+
+func apiContractHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\r\n") {
+			var raw [16]byte
+			if _, err := rand.Read(raw[:]); err == nil { id = hex.EncodeToString(raw[:]) } else { id = "testagram-" + strconv.FormatInt(time.Now().UnixNano(), 10) }
+		}
+		w.Header().Set("X-Request-ID", id)
+		w.Header().Set("X-Testagram-API-Version", "1")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
