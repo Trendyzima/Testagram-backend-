@@ -42,6 +42,7 @@ var (
 type Reservation struct {
 	ID             string    `json:"$id"`
 	OwnerID        string    `json:"owner_id"`
+	Scope          string    `json:"scope"`
 	ObjectID       string    `json:"object_id"`
 	ObjectKey      string    `json:"object_key"`
 	Bytes          int64     `json:"bytes"`
@@ -57,6 +58,7 @@ type Reservation struct {
 type ReserveInput struct {
 	OwnerID        string
 	IdempotencyKey string
+	Scope          string
 	Bytes          int64
 	ContentType    string
 	SHA256         string
@@ -161,6 +163,13 @@ func (s *Service) ReserveUpload(ctx context.Context, input ReserveInput) (Upload
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
 	input.SHA256 = strings.ToLower(strings.TrimSpace(input.SHA256))
+	input.Scope = strings.TrimSpace(input.Scope)
+	if input.Scope == "" {
+		input.Scope = "post_media"
+	}
+	if !validMediaScope(input.Scope) {
+		return UploadReservation{}, errors.New("unsupported media scope")
+	}
 	if !validOwnerID(input.OwnerID) || len(input.IdempotencyKey) < 8 || len(input.IdempotencyKey) > 128 || strings.ContainsAny(input.IdempotencyKey, "\r\n") {
 		return UploadReservation{}, errors.New("authenticated owner and an 8-128 character idempotency key are required")
 	}
@@ -185,7 +194,7 @@ func (s *Service) ReserveUpload(ctx context.Context, input ReserveInput) (Upload
 	if err != nil {
 		return UploadReservation{}, err
 	}
-	if reservation.OwnerID != input.OwnerID || reservation.Bytes != input.Bytes || reservation.ContentType != input.ContentType || reservation.ExpectedSHA256 != input.SHA256 {
+	if reservation.OwnerID != input.OwnerID || reservation.Bytes != input.Bytes || reservation.ContentType != input.ContentType || reservation.ExpectedSHA256 != input.SHA256 || reservation.Scope != input.Scope {
 		return UploadReservation{}, ErrReservationConflict
 	}
 	// A retry reuses the already reserved opaque key; it never allocates quota twice.
@@ -560,7 +569,7 @@ func (s *AppwriteStore) Reserve(ctx context.Context, input ReserveInput, id stri
 		if decodeErr != nil {
 			return Reservation{}, decodeErr
 		}
-		if existing.OwnerID != input.OwnerID || existing.Bytes != input.Bytes || existing.ContentType != input.ContentType || existing.ExpectedSHA256 != input.SHA256 {
+		if existing.OwnerID != input.OwnerID || existing.Bytes != input.Bytes || existing.ContentType != input.ContentType || existing.ExpectedSHA256 != input.SHA256 || existing.Scope != input.Scope {
 			return Reservation{}, ErrReservationConflict
 		}
 		return existing, nil
@@ -611,8 +620,8 @@ func (s *AppwriteStore) Reserve(ctx context.Context, input ReserveInput, id stri
 		rollback()
 		return Reservation{}, quotaError(err)
 	}
-	res := Reservation{ID: id, OwnerID: input.OwnerID, ObjectID: objectID, ObjectKey: objectKey, Bytes: input.Bytes, ReservedKiB: units, ContentType: input.ContentType, ExpectedSHA256: input.SHA256, Status: "reserved", ExpiresAt: expires}
-	data := map[string]any{"owner_id": res.OwnerID, "object_id": res.ObjectID, "object_key": res.ObjectKey, "bytes_decimal": fmt.Sprint(res.Bytes), "reserved_kib": res.ReservedKiB, "content_type": res.ContentType, "sha256_expected": res.ExpectedSHA256, "sha256_actual": res.SHA256, "status": res.Status, "expires_at": res.ExpiresAt.Format(time.RFC3339Nano)}
+	res := Reservation{ID: id, OwnerID: input.OwnerID, Scope: input.Scope, ObjectID: objectID, ObjectKey: objectKey, Bytes: input.Bytes, ReservedKiB: units, ContentType: input.ContentType, ExpectedSHA256: input.SHA256, Status: "reserved", ExpiresAt: expires}
+	data := map[string]any{"owner_id": res.OwnerID, "scope": res.Scope, "object_id": res.ObjectID, "object_key": res.ObjectKey, "bytes_decimal": fmt.Sprint(res.Bytes), "reserved_kib": res.ReservedKiB, "content_type": res.ContentType, "sha256_expected": res.ExpectedSHA256, "sha256_actual": res.SHA256, "status": res.Status, "expires_at": res.ExpiresAt.Format(time.RFC3339Nano)}
 	if err = s.db.CreateDocumentInTransaction(ctx, reservationCollection, id, data, tx); err != nil {
 		rollback()
 		return Reservation{}, err
@@ -663,6 +672,7 @@ func decodeReservation(raw []byte) (Reservation, error) {
 	var wire struct {
 		ID             string `json:"$id"`
 		OwnerID        string `json:"owner_id"`
+		Scope          string `json:"scope"`
 		ObjectID       string `json:"object_id"`
 		ObjectKey      string `json:"object_key"`
 		Bytes          string `json:"bytes_decimal"`
@@ -685,7 +695,7 @@ func decodeReservation(raw []byte) (Reservation, error) {
 	if err != nil {
 		return Reservation{}, errors.New("invalid reservation expiry")
 	}
-	if !validDocID(wire.ID) || !validOwnerID(wire.OwnerID) || !validDocID(wire.ObjectID) || !validObjectKey(wire.ObjectKey) || wire.ReservedKiB < 1 || wire.Status == "" || (wire.ExpectedSHA256 != "" && !validSHA256(wire.ExpectedSHA256)) || (wire.SHA256 != "" && !validSHA256(wire.SHA256)) {
+	if !validDocID(wire.ID) || !validOwnerID(wire.OwnerID) || !validMediaScope(wire.Scope) || !validDocID(wire.ObjectID) || !validObjectKey(wire.ObjectKey) || wire.ReservedKiB < 1 || wire.Status == "" || (wire.ExpectedSHA256 != "" && !validSHA256(wire.ExpectedSHA256)) || (wire.SHA256 != "" && !validSHA256(wire.SHA256)) {
 		return Reservation{}, errors.New("Appwrite reservation document is incomplete")
 	}
 	var lease time.Time
@@ -695,7 +705,7 @@ func decodeReservation(raw []byte) (Reservation, error) {
 			return Reservation{}, errors.New("invalid reservation lease expiry")
 		}
 	}
-	return Reservation{ID: wire.ID, OwnerID: wire.OwnerID, ObjectID: wire.ObjectID, ObjectKey: wire.ObjectKey, Bytes: bytes, ReservedKiB: wire.ReservedKiB, ContentType: wire.ContentType, ExpectedSHA256: wire.ExpectedSHA256, SHA256: wire.SHA256, Status: wire.Status, ExpiresAt: expires, LeaseExpiresAt: lease}, nil
+	return Reservation{ID: wire.ID, OwnerID: wire.OwnerID, Scope: wire.Scope, ObjectID: wire.ObjectID, ObjectKey: wire.ObjectKey, Bytes: bytes, ReservedKiB: wire.ReservedKiB, ContentType: wire.ContentType, ExpectedSHA256: wire.ExpectedSHA256, SHA256: wire.SHA256, Status: wire.Status, ExpiresAt: expires, LeaseExpiresAt: lease}, nil
 }
 
 func (s *AppwriteStore) ClaimReservation(ctx context.Context, id, expectedStatus, nextStatus string, fields map[string]any) (Reservation, error) {
@@ -841,6 +851,15 @@ func appwriteAndQuery(queries ...[]byte) []byte {
 	return encoded
 }
 
+func validMediaScope(v string) bool {
+	switch v {
+	case "post_media", "story_media", "direct_message", "profile_media", "avatar":
+		return true
+	default:
+		return false
+	}
+}
+
 func validReservationStatus(v string) bool {
 	switch v {
 	case "reserved", "verifying", "uploaded_primary", "protected", "expiring", "expired":
@@ -914,7 +933,12 @@ func (s *AppwriteStore) CommitProtected(ctx context.Context, r Reservation, b2Bu
 		rollback()
 		return err
 	}
-	mediaData := map[string]any{"owner_id": r.OwnerID, "object_id": r.ObjectID, "object_key": r.ObjectKey, "namespace": "media-private", "bytes_decimal": fmt.Sprint(r.Bytes), "mime_type": r.ContentType, "sha256": r.SHA256, "visibility": "private", "status": "ready", "created_at": now}
+	createdAt := time.Now().UTC()
+	mediaData, metadataErr := protectedMediaMetadata(r, createdAt)
+	if metadataErr != nil {
+		rollback()
+		return metadataErr
+	}
 	if err = s.db.CreateDocumentInTransaction(ctx, mediaCollection, r.ObjectID, mediaData, tx); err != nil {
 		rollback()
 		return err
@@ -927,6 +951,29 @@ func (s *AppwriteStore) CommitProtected(ctx context.Context, r Reservation, b2Bu
 		}
 	}
 	return s.db.UpdateTransaction(ctx, tx, true)
+}
+
+func protectedMediaMetadata(r Reservation, createdAt time.Time) (map[string]any, error) {
+	if !validMediaScope(r.Scope) || !validOwnerID(r.OwnerID) || !validDocID(r.ObjectID) || !validObjectKey(r.ObjectKey) || r.Bytes < 1 || !validSHA256(r.SHA256) {
+		return nil, errors.New("reservation has incomplete protected media metadata")
+	}
+	retentionClass := "permanent"
+	archiveAfter := createdAt.UTC().Add(30 * 24 * time.Hour).Format(time.RFC3339Nano)
+	data := map[string]any{
+		"owner_id": r.OwnerID, "object_id": r.ObjectID, "object_key": r.ObjectKey,
+		"namespace": "media-private", "bytes_decimal": fmt.Sprint(r.Bytes), "mime_type": r.ContentType,
+		"sha256": r.SHA256, "visibility": "private", "status": "ready", "scope": r.Scope,
+		"retention_class": retentionClass, "retention_scope": r.Scope, "lifecycle_state": "active",
+		"archive_state": "pending", "archive_after": archiveAfter,
+		"retention_policy_version": RetentionPolicyVersion, "lifecycle_attempts": 0,
+		"created_at": createdAt.UTC().Format(time.RFC3339Nano),
+	}
+	if r.Scope == "story_media" {
+		data["retention_class"] = "story"
+		data["story_expires_at"] = createdAt.UTC().Add(24 * time.Hour).Format(time.RFC3339Nano)
+		delete(data, "archive_after")
+	}
+	return data, nil
 }
 
 func (s *AppwriteStore) GetMediaRecord(ctx context.Context, objectID string) (MediaRecord, error) {
