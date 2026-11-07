@@ -405,6 +405,10 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var visibility, assetStatus, storageNamespace string
+	if storageNamespace == "legacy-media" && s.media == nil {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Legacy media is no longer served by this runtime", id))
+		return
+	}
 	if err := s.db.QueryRow(r.Context(), `select visibility, status, storage_namespace from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus, &storageNamespace); err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
@@ -477,6 +481,9 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		if storageNamespace != "legacy-media" && s.virtualStorage == nil && s.dataCentreMedia == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "Some media objects require the virtual storage provider", id))
 			return
+		}
+		if storageNamespace == "legacy-media" && s.media == nil {
+			continue
 		}
 		if visibility == "public" {
 			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
