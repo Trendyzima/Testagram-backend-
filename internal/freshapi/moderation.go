@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,7 +39,7 @@ func NewHTTPModerationService(baseURL, apiKey string, client *http.Client) (*HTT
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	apiKey = strings.TrimSpace(apiKey)
 	u, err := url.Parse(baseURL)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLocalHost(u.Hostname()))) {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && moderationLocalHost(u.Hostname()))) {
 		return nil, errors.New("moderation endpoint must be HTTPS (HTTP only on localhost) and contain no credentials, query or fragment")
 	}
 	if len(apiKey) < 16 || strings.ContainsAny(apiKey, "\r\n") {
@@ -151,4 +152,12 @@ func (s *HTTPModerationService) Analyze(ctx context.Context, content string) (Mo
 		Action: action,
 		Reason: reason,
 	}, nil
+}
+
+func moderationLocalHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
