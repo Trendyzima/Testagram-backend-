@@ -581,12 +581,50 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var actualType, etag string
 	var size int64
-	if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+	if storageNamespace != "legacy-media" && s.virtualStorage == nil && s.dataCentreMedia == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This upload intent requires the virtual storage provider", id))
 		return
 	}
-	if storageNamespace != "legacy-media" {
-		info, verifyErr := s.virtualStorage.VerifyUpload(ctx, userID, storageNamespace, body.Key, body.ContentType, intentMaxBytes)
+	if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+		if strings.TrimSpace(body.ChecksumSHA256) == "" {
+			writeJSON(w, http.StatusBadRequest, errorBody("MEDIA_CHECKSUM_REQUIRED", "checksum_sha256 is required and must be the SHA-256 of the uploaded bytes", id))
+			return
+		}
+		if _, verifyErr := s.dataCentreMedia.Verify(ctx, userID, storageNamespace, body.Key, body.ContentType, body.ChecksumSHA256, intentMaxBytes); verifyErr != nil {
+			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Data Centre could not queue media verification and replica recovery", id))
+			return
+		}
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			mediaState, statusErr := s.dataCentreMedia.Status(ctx, userID, storageNamespace, body.Key)
+			if statusErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_REPLICA_STATUS_UNAVAILABLE", "Data Centre media verification status is temporarily unavailable", id))
+				return
+			}
+			if mediaState.Status == "protected" {
+				actualType, size, etag = mediaState.ContentType, mediaState.SizeBytes, mediaState.SHA256
+				break
+			}
+			if mediaState.Status == "replication_failed" {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_REPLICA_FAILED", "Media is uploaded but its durable replica is not ready; retry completion", id))
+				return
+			}
+			if mediaState.Status == "deleted" || mediaState.Status == "delete_pending" {
+				writeJSON(w, http.StatusConflict, errorBody("MEDIA_OBJECT_DELETING", "Media object is being deleted and cannot be completed", id))
+				return
+			}
+			if !time.Now().Before(deadline) || ctx.Err() != nil {
+				writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "replication_pending", "retry_after_ms": 1000}, "error": nil, "request_id": id})
+				return
+			}
+			select {
+			case <-ctx.Done():
+				writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "replication_pending", "retry_after_ms": 1000}, "error": nil, "request_id": id})
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	} else if storageNamespace != "legacy-media" {(ctx, userID, storageNamespace, body.Key, body.ContentType, intentMaxBytes)
 		if verifyErr != nil {
 			if errors.Is(verifyErr, virtualstorage.ErrNotFound) {
 				writeJSON(w, http.StatusConflict, errorBody("MEDIA_UPLOAD_NOT_FOUND", "Upload is not present in object storage yet", id))
