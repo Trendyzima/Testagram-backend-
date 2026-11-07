@@ -33,6 +33,7 @@ type RetentionPolicy struct {
 type RetentionCandidate struct {
 	ObjectID string
 	Class string
+	Scope string // post_media or story_media; direct messages and profile media are excluded
 	CreatedAt time.Time
 	DeletedAt time.Time
 	StoryExpiry time.Time
