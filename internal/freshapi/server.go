@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/posts", s.createPost)
 	mux.HandleFunc("POST /v1/moderation/check", s.moderateContent)
 	if s.internalToken != "" {
+		mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationReadyz)
 		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
 		mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActor)
 		mux.HandleFunc("GET /internal/v1/federation/actors/by-id/{userID}", s.federationActorByID)
@@ -246,6 +247,27 @@ func (s *Server) requireFederationService(w http.ResponseWriter, r *http.Request
 // federationActor exposes only explicitly federation-enabled local profiles.
 // Appwrite Auth status is checked independently so suspended/deleted accounts
 // cannot remain discoverable merely because their profile document exists.
+func (s *Server) federationReadyz(w http.ResponseWriter, r *http.Request) {
+	if !s.requireFederationService(w, r) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	for _, collection := range []string{"profiles", "backend_outbox"} {
+		if _, err := s.db.ListDocumentsWithQueries(ctx, collection, []string{
+			mustQuery("limit", "", 1),
+		}, 1); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "Federation identity or outbox dependency is unavailable")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]string{"identity": "appwrite", "outbox": "ready"},
+		"error": nil,
+	})
+}
+
 func (s *Server) federationActor(w http.ResponseWriter, r *http.Request) {
 	if !s.requireFederationService(w, r) {
 		return
