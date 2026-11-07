@@ -334,7 +334,6 @@ func (s *Server) writeFederationActorProfile(w http.ResponseWriter, r *http.Requ
 		"federation_enabled": true,
 	})
 }
-}
 
 func (s *Server) getFederationPreference(w http.ResponseWriter, r *http.Request) {
 	a, status, err := s.authenticate(r)
