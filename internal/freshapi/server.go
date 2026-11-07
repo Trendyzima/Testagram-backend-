@@ -174,7 +174,12 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
 		return
 	}
-	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{`{"method":"limit","values":[1]}`}, 1); err != nil {
+	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{
+		mustQuery("equal", "event_type", "testagram.post.published"),
+		mustQuery("equal", "federation_eligible", true),
+		mustQuery("orderAsc", "created_at"),
+		mustQuery("limit", "", 1),
+	}, 1); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
 		return
 	}
