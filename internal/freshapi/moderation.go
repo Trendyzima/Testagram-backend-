@@ -136,8 +136,8 @@ func (s *HTTPModerationService) Analyze(ctx context.Context, content string) (Mo
 		action = "flag"
 	}
 	reason := strings.TrimSpace(parsed.Reason)
-	if len(reason) > 120 {
-		reason = reason[:120]
+	if utf8.RuneCountInString(reason) > 120 {
+		reason = string([]rune(reason)[:120])
 	}
 	return ModerationResult{
 		OverallScore: *parsed.OverallScore,
