@@ -1,14 +1,18 @@
 package freshapi
 
 import (
+	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -21,6 +25,9 @@ type identityApprovalPayload struct {
 	BirthDate      string `json:"birth_date"`
 	SessionID      string `json:"session_id"`
 	Fingerprint    string `json:"fingerprint"`
+	Username       string `json:"username"`
+	DisplayName    string `json:"display_name"`
+	PolicyVersion  string `json:"policy_version"`
 	IssuedAt       int64  `json:"issued_at"`
 	ExpiresAt      int64  `json:"expires_at"`
 }
@@ -28,28 +35,28 @@ type identityApprovalPayload struct {
 var identityFingerprintPattern = regexp.MustCompile("^[a-f0-9]{64}$")
 var identitySessionPattern = regexp.MustCompile("^[A-Za-z0-9_-]{8,128}$")
 
-func (s *Server) identityApproval(w http.ResponseWriter, r *http.Request) {
-	a, status, err := s.authenticate(r)
-	if err != nil {
-		writeError(w, status, err.Error())
+func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.Request) {
+	if s.identitySecret == "" || s.appwriteServerKey == "" {
+		writeError(w, http.StatusServiceUnavailable, "Appwrite identity registration is not configured")
 		return
 	}
-	if s.identitySecret == "" {
-		writeError(w, http.StatusServiceUnavailable, "identity approval is not configured")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, 12<<10)
 	var input struct {
-		Token string `json:"identity_approval_token"`
+		Token    string `json:"identity_approval_token"`
+		Password string `json:"password"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid identity approval payload")
+		writeError(w, http.StatusBadRequest, "invalid identity registration payload")
 		return
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "identity approval must contain one JSON object")
+		writeError(w, http.StatusBadRequest, "identity registration must contain one JSON object")
+		return
+	}
+	if len(input.Password) < 8 || len(input.Password) > 256 {
+		writeError(w, http.StatusBadRequest, "password must contain between 8 and 256 characters")
 		return
 	}
 	approval, err := s.verifyIdentityApprovalToken(input.Token)
@@ -57,8 +64,8 @@ func (s *Server) identityApproval(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "identity approval token is invalid or expired")
 		return
 	}
-	if !strings.EqualFold(strings.TrimSpace(approval.Email), strings.TrimSpace(a.Email)) {
-		writeError(w, http.StatusForbidden, "identity approval does not belong to this Appwrite account")
+	if !identityFingerprintPattern.MatchString(approval.Fingerprint) || !identitySessionPattern.MatchString(approval.SessionID) {
+		writeError(w, http.StatusForbidden, "identity approval evidence reference is invalid")
 		return
 	}
 	birthDate, err := time.Parse("2006-01-02", approval.BirthDate)
@@ -67,43 +74,108 @@ func (s *Server) identityApproval(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "identity approval does not satisfy the adult account policy")
 		return
 	}
-	if !identityFingerprintPattern.MatchString(approval.Fingerprint) || !identitySessionPattern.MatchString(approval.SessionID) {
-		writeError(w, http.StatusForbidden, "identity approval evidence reference is invalid")
+	if approval.PolicyVersion != currentLegalPolicyVersion {
+		writeError(w, http.StatusForbidden, "identity approval does not include the current legal policy version")
 		return
 	}
-	raw, err := s.db.GetDocument(r.Context(), "profiles", a.ID)
+	handle := strings.ToLower(strings.TrimSpace(approval.Username))
+	if len(handle) < 3 || len(handle) > 30 || !validHandle(handle) {
+		writeError(w, http.StatusBadRequest, "identity registration username is invalid")
+		return
+	}
+	displayName := strings.TrimSpace(approval.DisplayName)
+	if displayName == "" || len(displayName) > 80 {
+		displayName = handle
+	}
+
+	userBody, _ := json.Marshal(map[string]any{
+		"userId": "unique()",
+		"email": approval.Email,
+		"password": input.Password,
+		"name": displayName,
+		"emailVerification": true,
+	})
+	createReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, strings.TrimRight(s.endpoint, "/")+"/users", bytes.NewReader(userBody))
 	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Appwrite account service unavailable")
+		return
+	}
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("X-Appwrite-Project", s.projectID)
+	createReq.Header.Set("X-Appwrite-Key", s.appwriteServerKey)
+	createResp, err := s.httpClient.Do(createReq)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Appwrite account service unavailable")
+		return
+	}
+	defer createResp.Body.Close()
+	if createResp.StatusCode == http.StatusConflict {
+		writeError(w, http.StatusConflict, "EMAIL_ALREADY_REGISTERED")
+		return
+	}
+	if createResp.StatusCode < 200 || createResp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(createResp.Body, 4<<10))
+		writeError(w, http.StatusServiceUnavailable, "Appwrite account could not be created")
+		return
+	}
+	var created struct {
+		ID string `json:"$id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(createResp.Body, 64<<10)).Decode(&created); err != nil || !validUserID(created.ID) {
+		writeError(w, http.StatusServiceUnavailable, "Appwrite returned an invalid account")
+		return
+	}
+
+	acceptedAt := time.Unix(approval.IssuedAt, 0).UTC().Format(time.RFC3339Nano)
+	profile := map[string]any{
+		"user_id": created.ID,
+		"handle": handle,
+		"display_name": displayName,
+		"bio": "",
+		"federation_enabled": false,
+		"birth_date": approval.BirthDate,
+		"legal_terms_accepted_at": acceptedAt,
+		"legal_privacy_accepted_at": acceptedAt,
+		"legal_content_policy_accepted_at": acceptedAt,
+		"legal_age_confirmed_at": acceptedAt,
+		"legal_policy_version": currentLegalPolicyVersion,
+		"identity_verification_status": "approved",
+		"identity_verified_at": acceptedAt,
+		"identity_verification_id": approval.SessionID,
+		"identity_fingerprint_hash": approval.Fingerprint,
+		"created_at": now.Format(time.RFC3339Nano),
+		"updated_at": now.Format(time.RFC3339Nano),
+	}
+	if _, err := s.db.CreateDocument(r.Context(), "profiles", created.ID, profile, nil); err != nil {
+		s.deleteAppwriteUser(created.ID)
 		var apiErr appwritedb.HTTPError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			writeError(w, http.StatusConflict, "profile must be created before identity approval")
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+			writeError(w, http.StatusConflict, "IDENTITY_ALREADY_REGISTERED")
 		} else {
-			writeError(w, http.StatusServiceUnavailable, "profile service unavailable")
+			writeError(w, http.StatusServiceUnavailable, "account profile could not be provisioned")
 		}
 		return
 	}
-	var profile map[string]any
-	if err := json.Unmarshal(raw, &profile); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "profile is invalid")
-		return
-	}
-	if existing, _ := profile["identity_verification_id"].(string); existing != "" && existing != approval.SessionID {
-		writeError(w, http.StatusConflict, "this account already has a different identity verification record")
-		return
-	}
-	verifiedAt := time.Unix(approval.IssuedAt, 0).UTC().Format(time.RFC3339Nano)
-	_, err = s.db.UpdateDocument(r.Context(), "profiles", a.ID, map[string]any{
-		"birth_date": approval.BirthDate,
-		"identity_verification_status": "approved",
-		"identity_verified_at": verifiedAt,
-		"identity_verification_id": approval.SessionID,
-		"identity_fingerprint_hash": approval.Fingerprint,
-		"updated_at": now.Format(time.RFC3339Nano),
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"ok": true,
+		"data": map[string]any{"user_id": created.ID, "email": approval.Email, "email_verified": true},
+		"error": nil,
 	})
+}
+
+func (s *Server) deleteAppwriteUser(userID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, strings.TrimRight(s.endpoint, "/")+"/users/"+url.PathEscape(userID), nil)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "identity approval could not be recorded")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"status": "approved", "verified_at": verifiedAt}, "error": nil})
+	req.Header.Set("X-Appwrite-Project", s.projectID)
+	req.Header.Set("X-Appwrite-Key", s.appwriteServerKey)
+	resp, err := s.httpClient.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+	}
 }
 
 func (s *Server) verifyIdentityApprovalToken(raw string) (identityApprovalPayload, error) {
@@ -129,8 +201,13 @@ func (s *Server) verifyIdentityApprovalToken(raw string) (identityApprovalPayloa
 		return identityApprovalPayload{}, errors.New("invalid identity approval payload")
 	}
 	now := time.Now().UTC().Unix()
-	if payload.Email == "" || payload.IssuedAt > now+30 || payload.ExpiresAt <= now || payload.ExpiresAt-payload.IssuedAt > 15*60 {
+	if payload.Email == "" || len(payload.Email) > 254 || payload.Email != strings.ToLower(strings.TrimSpace(payload.Email)) ||
+		payload.IssuedAt > now+30 || payload.ExpiresAt <= now || payload.ExpiresAt-payload.IssuedAt > 15*60 {
 		return identityApprovalPayload{}, errors.New("identity approval token expired or outside allowed lifetime")
 	}
 	return payload, nil
+}
+
+func (p identityApprovalPayload) String() string {
+	return fmt.Sprintf("identity approval for %s", p.Email)
 }
