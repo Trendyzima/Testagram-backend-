@@ -65,7 +65,12 @@ func TestVerifyIdentityApprovalTokenRejectsTamperingAndExpiry(t *testing.T) {
 		IssuedAt: now, ExpiresAt: now + 900,
 	}
 	tampered := signedIdentityToken(t, secret, base)
-	tampered = tampered[:len(tampered)-1] + "0"
+	last := tampered[len(tampered)-1]
+	if last == '0' {
+		tampered = tampered[:len(tampered)-1] + "1"
+	} else {
+		tampered = tampered[:len(tampered)-1] + "0"
+	}
 	if _, err := api.verifyIdentityApprovalToken(tampered); err == nil {
 		t.Fatal("tampered identity token was accepted")
 	}
