@@ -16,6 +16,7 @@ import (
 
 func testServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
+	documents := map[string][]byte{}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -31,6 +32,22 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 					t.Errorf("decode: %v", err)
 				}
 				data := body["data"].(map[string]any)
+				if strings.Contains(r.URL.Path, "/collections/posts/") {
+					id := body["documentId"].(string)
+					if _, exists := documents[id]; exists {
+						http.Error(w, "document already exists", http.StatusConflict)
+						return
+					}
+					doc := map[string]any{"$id": id}
+					for key, value := range data {
+						doc[key] = value
+					}
+					encoded, _ := json.Marshal(doc)
+					documents[id] = encoded
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write(encoded)
+					return
+				}
 				if data["user_id"] != "new_user_1" {
 					t.Errorf("unexpected owner: %v", data["user_id"])
 				}
@@ -40,6 +57,11 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 			}
 		case strings.Contains(r.URL.Path, "/documents/"):
 			if r.Method == http.MethodGet {
+				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+				if saved, ok := documents[id]; ok {
+					_, _ = w.Write(saved)
+					return
+				}
 				http.Error(w, "not found", 404)
 				return
 			}
@@ -97,6 +119,72 @@ func TestProfileRejectsInvalidHandle(t *testing.T) {
 	api.Handler().ServeHTTP(rec, req)
 	if rec.Code != 400 {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreatePostUsesVerifiedIdentityAndIdempotency(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	create := func(content string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/posts", strings.NewReader(`{"content":"`+content+`","visibility":"public"}`))
+		req.Header.Set("Authorization", "Bearer valid-session")
+		req.Header.Set("Idempotency-Key", "post-create-key-001")
+		rec := httptest.NewRecorder()
+		api.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+	first := create("Hello Testagram")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", first.Code, first.Body.String())
+	}
+	var firstEnvelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if firstEnvelope.Data["author_id"] != "new_user_1" || firstEnvelope.Data["body"] != "Hello Testagram" || firstEnvelope.Data["visibility"] != "public" {
+		t.Fatalf("post not bound to authenticated identity or payload: %#v", firstEnvelope.Data)
+	}
+	second := create("Hello Testagram")
+	if second.Code != http.StatusOK {
+		t.Fatalf("idempotent replay status=%d body=%s", second.Code, second.Body.String())
+	}
+	var secondEnvelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &secondEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if secondEnvelope.Data["$id"] != firstEnvelope.Data["$id"] {
+		t.Fatalf("idempotent replay changed post ID: %v != %v", secondEnvelope.Data["$id"], firstEnvelope.Data["$id"])
+	}
+	conflict := create("Different content")
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("idempotency conflict status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestCreatePostRejectsMissingIdempotencyAndInvalidVisibility(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	for _, test := range []struct{ name, key, payload string }{
+		{"missing key", "", `{"content":"Hello","visibility":"public"}`},
+		{"invalid visibility", "post-create-key-002", `{"content":"Hello","visibility":"world"}`},
+		{"unknown field", "post-create-key-003", `{"content":"Hello","visibility":"public","author_id":"attacker"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/posts", strings.NewReader(test.payload))
+			req.Header.Set("Authorization", "Bearer valid-session")
+			if test.key != "" {
+				req.Header.Set("Idempotency-Key", test.key)
+			}
+			rec := httptest.NewRecorder()
+			api.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
