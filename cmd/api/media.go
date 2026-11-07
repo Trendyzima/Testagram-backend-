@@ -474,14 +474,18 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mediaURL := ""
-		if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+		if storageNamespace != "legacy-media" && s.virtualStorage == nil && s.dataCentreMedia == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "Some media objects require the virtual storage provider", id))
 			return
 		}
 		if visibility == "public" {
 			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
 		} else if visibility == "private" {
-			if storageNamespace != "legacy-media" {
+			if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+				var grant datacentreclient.DownloadGrant
+				grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
+				mediaURL = grant.URL
+			} else if storageNamespace != "legacy-media" {
 				mediaURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
 			} else {
 				mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
