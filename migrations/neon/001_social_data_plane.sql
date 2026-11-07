@@ -56,6 +56,44 @@ CREATE TABLE IF NOT EXISTS testagram.blocks (
 );
 CREATE INDEX IF NOT EXISTS blocks_reverse_idx ON testagram.blocks (blocked_id,blocker_id);
 
+CREATE TABLE IF NOT EXISTS testagram.likes (
+ post_id TEXT NOT NULL REFERENCES testagram.posts(id),
+ user_id TEXT NOT NULL REFERENCES testagram.profiles(user_id),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY (post_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS likes_user_cursor_idx ON testagram.likes (user_id,created_at DESC,post_id);
+
+CREATE TABLE IF NOT EXISTS testagram.comments (
+ id TEXT PRIMARY KEY,
+ post_id TEXT NOT NULL REFERENCES testagram.posts(id),
+ author_id TEXT NOT NULL REFERENCES testagram.profiles(user_id),
+ parent_id TEXT REFERENCES testagram.comments(id),
+ body TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('published','hidden','deleted')),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS comments_post_cursor_idx ON testagram.comments (post_id,created_at DESC,id DESC) WHERE status='published';
+CREATE INDEX IF NOT EXISTS comments_author_cursor_idx ON testagram.comments (author_id,created_at DESC,id DESC);
+
+CREATE TABLE IF NOT EXISTS testagram.reposts (
+ post_id TEXT NOT NULL REFERENCES testagram.posts(id),
+ user_id TEXT NOT NULL REFERENCES testagram.profiles(user_id),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY (post_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS reposts_user_cursor_idx ON testagram.reposts (user_id,created_at DESC,post_id);
+
+CREATE TABLE IF NOT EXISTS testagram.bookmarks (
+ post_id TEXT NOT NULL REFERENCES testagram.posts(id),
+ user_id TEXT NOT NULL REFERENCES testagram.profiles(user_id),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY (post_id,user_id)
+);
+CREATE INDEX IF NOT EXISTS bookmarks_user_cursor_idx ON testagram.bookmarks (user_id,created_at DESC,post_id);
+
 CREATE TABLE IF NOT EXISTS testagram.backend_outbox (
  event_id TEXT PRIMARY KEY,
  event_type TEXT NOT NULL,
