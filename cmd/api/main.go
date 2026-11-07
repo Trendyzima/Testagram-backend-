@@ -62,6 +62,7 @@ type service struct {
 	platformErrors      atomic.Uint64
 	algorithmRequests   atomic.Uint64
 	algorithmFailures   atomic.Uint64
+	federationInternalToken string
 	upstream            *http.Client
 	platform            *platformclient.Client
 	media               *media.Signer
@@ -477,6 +478,12 @@ func (s *service) routes() http.Handler {
 	}
 	mux.HandleFunc("OPTIONS /api/identity/link", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/link", s.linkAppwriteIdentity)
+	mux.HandleFunc("OPTIONS /api/me/federation", s.mediaPreflight)
+	mux.HandleFunc("GET /api/me/federation", s.federationPreference)
+	mux.HandleFunc("PUT /api/me/federation", s.federationPreference)
+	mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationInternalReady)
+	mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActorByHandle)
+	mux.HandleFunc("GET /internal/v1/federation/actors/by-id/{user_id}", s.federationActorByID)
 	mux.HandleFunc("OPTIONS /api/feed/home", s.mediaPreflight)
 	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/feed/public", s.mediaPreflight)
@@ -1232,7 +1239,11 @@ func main() {
 			log.Printf("durable replication relay enabled")
 		}
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, replicationReceiver: replicationReceiver}
+	federationInternalToken := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_TOKEN"))
+	if federationInternalToken != "" && len(federationInternalToken) < 32 {
+		log.Fatal("FEDERATION_INTERNAL_TOKEN must contain at least 32 characters")
+	}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationInternalToken, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
