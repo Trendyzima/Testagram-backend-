@@ -223,7 +223,13 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	if s.neon != nil {
 		neonStatus = "ready"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "post_write": "ready", "outbox": "ready"})
+	moderationStatus := "not_configured"
+	postWriteStatus := "disabled_moderation_unconfigured"
+	if s.moderation != nil {
+		moderationStatus = "ready"
+		postWriteStatus = "ready"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "moderation": moderationStatus, "post_write": postWriteStatus, "outbox": "ready"})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
