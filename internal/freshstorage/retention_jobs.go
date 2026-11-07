@@ -2,6 +2,7 @@ package freshstorage
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -94,7 +95,7 @@ func (r *AppwriteRetentionJobs) Enqueue(ctx context.Context, decision RetentionD
 }
 
 func (r *AppwriteRetentionJobs) Claim(ctx context.Context, id, worker string, now time.Time, lease time.Duration) (RetentionJob, error) {
-	if !validDocID(id) || !validOwnerID(worker) || lease < 30*time.Second || lease > 15*time.Minute {
+	if !validDocID(id) || !validDocID(worker) || lease < 30*time.Second || lease > 15*time.Minute {
 		return RetentionJob{}, errors.New("invalid retention job claim")
 	}
 	tx, err := r.db.CreateTransaction(ctx, 120)
@@ -116,6 +117,10 @@ func (r *AppwriteRetentionJobs) Claim(ctx context.Context, id, worker string, no
 		rollback()
 		return RetentionJob{}, err
 	}
+	if job.Policy != RetentionPolicyVersion {
+		rollback()
+		return RetentionJob{}, errors.New("retention job policy version is not supported by this worker")
+	}
 	if job.Status == "completed" {
 		rollback()
 		return RetentionJob{}, errors.New("retention job is already completed")
@@ -132,10 +137,14 @@ func (r *AppwriteRetentionJobs) Claim(ctx context.Context, id, worker string, no
 		rollback()
 		return RetentionJob{}, errors.New("retention job is not due")
 	}
-	tokenBytes := sha256.Sum256([]byte(id + "\x00" + worker + "\x00" + now.UTC().Format(time.RFC3339Nano)))
+	tokenBytes := make([]byte, 32)
+	if _, err = rand.Read(tokenBytes); err != nil {
+		rollback()
+		return RetentionJob{}, fmt.Errorf("generate retention lease token: %w", err)
+	}
 	job.Status = "running"
 	job.WorkerID = worker
-	job.LeaseToken = hex.EncodeToString(tokenBytes[:])
+	job.LeaseToken = hex.EncodeToString(tokenBytes)
 	job.LeaseUntil = now.UTC().Add(lease)
 	job.Attempts++
 	job.UpdatedAt = now.UTC()
@@ -151,7 +160,7 @@ func (r *AppwriteRetentionJobs) Claim(ctx context.Context, id, worker string, no
 }
 
 func (r *AppwriteRetentionJobs) Complete(ctx context.Context, claimed RetentionJob, now time.Time) error {
-	return r.finish(ctx, claimed, map[string]any{"status": "completed", "completed_at": now.UTC().Format(time.RFC3339Nano), "updated_at": now.UTC().Format(time.RFC3339Nano), "lease_token": "", "lease_until": "", "worker_id": ""})
+	return r.finish(ctx, claimed, now, map[string]any{"status": "completed", "completed_at": now.UTC().Format(time.RFC3339Nano), "updated_at": now.UTC().Format(time.RFC3339Nano), "lease_token": "", "lease_until": "", "worker_id": ""})
 }
 func (r *AppwriteRetentionJobs) Retry(ctx context.Context, claimed RetentionJob, cause error, now time.Time) error {
 	message := "retry requested"
@@ -161,9 +170,9 @@ func (r *AppwriteRetentionJobs) Retry(ctx context.Context, claimed RetentionJob,
 	if len(message) > 1000 {
 		message = message[:1000]
 	}
-	return r.finish(ctx, claimed, map[string]any{"status": "retry", "last_error": message, "updated_at": now.UTC().Format(time.RFC3339Nano), "lease_token": "", "lease_until": "", "worker_id": ""})
+	return r.finish(ctx, claimed, now, map[string]any{"status": "retry", "last_error": message, "updated_at": now.UTC().Format(time.RFC3339Nano), "lease_token": "", "lease_until": "", "worker_id": ""})
 }
-func (r *AppwriteRetentionJobs) finish(ctx context.Context, claimed RetentionJob, fields map[string]any) error {
+func (r *AppwriteRetentionJobs) finish(ctx context.Context, claimed RetentionJob, now time.Time, fields map[string]any) error {
 	if claimed.ID == "" || claimed.LeaseToken == "" {
 		return ErrRetentionLeaseLost
 	}
@@ -182,7 +191,7 @@ func (r *AppwriteRetentionJobs) finish(ctx context.Context, claimed RetentionJob
 		rollback()
 		return err
 	}
-	if current.Status != "running" || current.LeaseToken != claimed.LeaseToken || current.WorkerID != claimed.WorkerID {
+	if current.Status != "running" || current.LeaseToken != claimed.LeaseToken || current.WorkerID != claimed.WorkerID || !current.LeaseUntil.After(now.UTC()) {
 		rollback()
 		return ErrRetentionLeaseLost
 	}
