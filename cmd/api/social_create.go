@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -34,13 +35,8 @@ type socialCreatedPost struct {
 var socialIdempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{16,128}$`)
 
 func socialPostRequestHash(input socialCreatePostRequest) string {
-	raw := input.Content + "\n" + input.Visibility + "\n"
-	if input.Sensitive {
-		raw += "true"
-	} else {
-		raw += "false"
-	}
-	sum := sha256.Sum256([]byte(raw))
+	raw, _ := json.Marshal(input)
+	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -116,7 +112,7 @@ func (s *service) socialCreatePost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existingPostID == "" {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_IDEMPOTENCY_INCOMPLETE", "The previous post request is not yet recoverable; retry with the same key", requestID))
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDEMPOTENT_POST_UNAVAILABLE", "The original post is no longer available; use a new key for a new post", requestID))
 			return
 		}
 		var post socialCreatedPost
