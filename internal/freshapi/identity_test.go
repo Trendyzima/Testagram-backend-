@@ -1,11 +1,14 @@
 package freshapi
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -85,5 +88,65 @@ func TestIdentitySecretsRejectWeakOrMultilineValues(t *testing.T) {
 	}
 	if err := api.WithAppwriteServerKey("key\r\ninjected"); err == nil {
 		t.Fatal("multiline Appwrite key accepted")
+	}
+}
+
+func TestRegisterIdentityVerifiedAccountCreatesAppwriteUserAndProfile(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	secret := strings.Repeat("k", 48)
+	if err := api.WithIdentitySecret(secret); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.WithAppwriteServerKey("appwrite-test-server-key"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Unix()
+	payload := identityApprovalPayload{
+		Email: "new@example.com", BirthDate: "1990-01-01",
+		SessionID: "session_12345678", Fingerprint: strings.Repeat("c", 64),
+		Username: "new_user", DisplayName: "New User", PolicyVersion: currentLegalPolicyVersion,
+		IssuedAt: now, ExpiresAt: now + 900,
+	}
+	body, _ := json.Marshal(map[string]any{
+		"identity_approval_token": signedIdentityToken(t, secret, payload),
+		"password": "correct-horse-battery-staple",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("registration status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			UserID        string `json:"user_id"`
+			EmailVerified bool   `json:"email_verified"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.OK || response.Data.UserID != "new_user_1" || !response.Data.EmailVerified {
+		t.Fatalf("unexpected registration response: %+v", response)
+	}
+}
+
+func TestRegisterIdentityVerifiedAccountRejectsInvalidApprovalBeforeAppwriteCall(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	if err := api.WithIdentitySecret(strings.Repeat("k", 48)); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.WithAppwriteServerKey("appwrite-test-server-key"); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"identity_approval_token":"invalid.token","password":"correct-horse-battery-staple"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("invalid approval status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
