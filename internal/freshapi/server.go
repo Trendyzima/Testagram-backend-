@@ -27,6 +27,7 @@ type MediaService interface {
 	ReserveUpload(context.Context, freshstorage.ReserveInput) (freshstorage.UploadReservation, error)
 	CompleteUpload(context.Context, string, string) error
 	DownloadURL(context.Context, string, string) (string, error)
+	RestoreArchive(context.Context, string, string) error
 }
 
 func (s *Server) WithStorage(storage MediaService) *Server {
@@ -79,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /v1/media/uploads/reservations", s.reserveMediaUpload)
 		mux.HandleFunc("POST /v1/media/uploads/{reservationID}/complete", s.completeMediaUpload)
 		mux.HandleFunc("GET /v1/media/{objectID}/download", s.downloadMedia)
+		mux.HandleFunc("POST /v1/media/{objectID}/restore", s.restoreMedia)
 	}
 	return securityHeaders(s.cors(mux))
 }
@@ -189,6 +191,19 @@ func (s *Server) downloadMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"url": url, "expires_in_seconds": 120, "visibility": "private"})
+}
+
+func (s *Server) restoreMedia(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if err = s.storage.RestoreArchive(r.Context(), a.ID, r.PathValue("objectID")); err != nil {
+		writeStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "restored"})
 }
 
 func writeStorageError(w http.ResponseWriter, err error) {
