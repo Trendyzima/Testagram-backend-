@@ -175,6 +175,10 @@ func TestCreatePostUsesVerifiedIdentityAndIdempotency(t *testing.T) {
 	if outbox == nil || outbox["actor_id"] != "new_user_1" || outbox["federation_eligible"] != true {
 		t.Fatalf("public post outbox event missing or invalid: %#v", outbox)
 	}
+	payload, ok := outbox["payload"].(map[string]any)
+	if !ok || payload["id"] != outbox["object_id"] || payload["author_id"] != "new_user_1" || payload["content"] != "Hello Testagram" {
+		t.Fatalf("outbox event is missing the authorized post snapshot: %#v", outbox["payload"])
+	}
 	var firstEnvelope struct {
 		Data map[string]any `json:"data"`
 	}
