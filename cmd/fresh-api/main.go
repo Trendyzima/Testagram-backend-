@@ -9,12 +9,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshfeed"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(runHealthcheck())
+	}
 	endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT")), "/")
 	project := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
 	database := strings.TrimSpace(os.Getenv("APPWRITE_DATABASE_ID"))
@@ -39,6 +44,7 @@ func main() {
 	if err := api.WithAllowedOrigins(allowedOrigins); err != nil {
 		log.Fatal(err)
 	}
+	var mediaSigner freshfeed.MediaSigner
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("FRESH_MEDIA_ENABLED")), "true") {
 		if configured := strings.TrimSpace(os.Getenv("TESTAGRAM_STORAGE_POOL_BYTES")); configured != "" {
 			poolBytes, parseErr := strconv.ParseInt(configured, 10, 64)
@@ -71,8 +77,32 @@ func main() {
 			log.Fatal(err)
 		}
 		api.WithStorage(media)
+		mediaSigner = media
 		log.Printf("fresh Appwrite media lifecycle enabled (B2 primary, R2 verified replica)")
 	}
+
+	var ranker *algorithmclient.Client
+	algorithmEndpoint := strings.TrimSpace(os.Getenv("ALGORITHM_ENDPOINT"))
+	algorithmToken := strings.TrimSpace(os.Getenv("ALGORITHM_INTERNAL_TOKEN"))
+	if algorithmEndpoint != "" || algorithmToken != "" {
+		if algorithmEndpoint == "" || algorithmToken == "" {
+			log.Fatal("ALGORITHM_ENDPOINT and ALGORITHM_INTERNAL_TOKEN must be configured together")
+		}
+		ranker, err = algorithmclient.New(algorithmEndpoint, algorithmToken, 1200*time.Millisecond)
+		if err != nil {
+			log.Fatalf("configure private Algorithm client: %v", err)
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("FEED_RANKING_REQUIRED")), "true") && ranker == nil {
+		log.Fatal("FEED_RANKING_REQUIRED is true but Algorithm is not configured")
+	}
+	feed, err := freshfeed.New(db, ranker, mediaSigner)
+	if err != nil {
+		log.Fatal(err)
+	}
+	feed.RequireRanker(strings.EqualFold(strings.TrimSpace(os.Getenv("FEED_RANKING_REQUIRED")), "true"))
+	api.WithFeed(feed)
+
 	addr := strings.TrimSpace(os.Getenv("FRESH_API_ADDR"))
 	if addr == "" {
 		addr = ":8081"
@@ -80,4 +110,17 @@ func main() {
 	server := &http.Server{Addr: addr, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Printf("fresh Appwrite API listening on %s", addr)
 	log.Fatal(server.ListenAndServe())
+}
+
+func runHealthcheck() int {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:8081/readyz")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
