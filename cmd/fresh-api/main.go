@@ -35,6 +35,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if token := strings.TrimSpace(os.Getenv("FRESH_FEDERATION_INTERNAL_TOKEN")); token != "" {
+		if err := api.WithInternalToken(token); err != nil {
+			log.Fatal(err)
+		}
+	}
 	var allowedOrigins []string
 	for _, origin := range strings.Split(os.Getenv("FRESH_API_ALLOWED_ORIGINS"), ",") {
 		if strings.TrimSpace(origin) != "" {
