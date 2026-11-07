@@ -81,11 +81,14 @@ func (p RetentionPolicy) Decide(c RetentionCandidate, now time.Time) (RetentionD
 	var due,eligibilityTime time.Time
 	switch c.Class {
 	case "permanent":
+		if c.Scope != "post_media" { return RetentionDecision{}, false }
 		action=RetentionArchive; eligibilityTime=c.CreatedAt; due=c.CreatedAt.UTC().Add(p.ArchiveAfter)
 	case "story":
+		if c.Scope != "story_media" { return RetentionDecision{}, false }
 		action=RetentionExpireStory; eligibilityTime=c.CreatedAt; due=c.StoryExpiry
 		if due.IsZero(){due=c.CreatedAt.UTC().Add(p.StoryTTL)}
 	case "user_deleted":
+		if c.Scope != "post_media" && c.Scope != "story_media" { return RetentionDecision{}, false }
 		if c.DeletedAt.IsZero(){return RetentionDecision{},false}
 		action=RetentionPurgeDeleted; eligibilityTime=c.DeletedAt; due=c.DeletedAt.UTC().Add(p.RecoveryWindow)
 	default:
