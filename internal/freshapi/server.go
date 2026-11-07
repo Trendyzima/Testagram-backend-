@@ -2,15 +2,22 @@ package freshapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshfeed"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
@@ -20,7 +27,14 @@ type Server struct {
 	projectID      string
 	httpClient     *http.Client
 	storage        MediaService
+	feed           HomeFeedService
 	allowedOrigins map[string]struct{}
+	internalToken  string
+}
+
+type HomeFeedService interface {
+	Home(context.Context, string, int, string) (freshfeed.Result, error)
+	Ready(context.Context) error
 }
 
 type MediaService interface {
@@ -28,6 +42,20 @@ type MediaService interface {
 	CompleteUpload(context.Context, string, string) error
 	DownloadURL(context.Context, string, string) (string, error)
 	RestoreArchive(context.Context, string, string) error
+}
+
+func (s *Server) WithFeed(feed HomeFeedService) *Server {
+	s.feed = feed
+	return s
+}
+
+func (s *Server) WithInternalToken(token string) error {
+	token = strings.TrimSpace(token)
+	if len(token) < 32 || strings.ContainsAny(token, "\r\n") {
+		return errors.New("federation internal token must contain at least 32 characters")
+	}
+	s.internalToken = token
+	return nil
 }
 
 func (s *Server) WithStorage(storage MediaService) *Server {
@@ -71,11 +99,14 @@ func New(db *appwritedb.Client, endpoint, projectID string, client *http.Client)
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, 200, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite"})
-	})
+	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
+	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
+	mux.HandleFunc("POST /v1/posts", s.createPost)
+	if s.internalToken != "" {
+		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
+	}
 	if s.storage != nil {
 		mux.HandleFunc("POST /v1/media/uploads/reservations", s.reserveMediaUpload)
 		mux.HandleFunc("POST /v1/media/uploads/{reservationID}/complete", s.completeMediaUpload)
@@ -132,6 +163,274 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	if s.feed == nil {
+		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.feed.Ready(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
+		return
+	}
+	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{
+		mustQuery("equal", "event_type", "testagram.post.published"),
+		mustQuery("equal", "federation_eligible", true),
+		mustQuery("orderAsc", "created_at"),
+		mustQuery("limit", "", 1),
+	}, 1); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready", "post_write": "ready", "outbox": "ready"})
+}
+
+func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if s.feed == nil {
+		writeError(w, http.StatusServiceUnavailable, "feed service is not configured")
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 50 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 50")
+			return
+		}
+		limit = parsed
+	}
+	cursor := strings.TrimSpace(r.URL.Query().Get("before"))
+	if freshfeed.ValidateCursor(cursor) != nil {
+		writeError(w, http.StatusBadRequest, "invalid feed cursor")
+		return
+	}
+	result, err := s.feed.Home(r.Context(), a.ID, limit, cursor)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "feed is temporarily unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"data":  result,
+		"error": nil,
+	})
+}
+
+func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	provided := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
+	if !strings.HasPrefix(authorization, "Bearer ") || len(provided) != len(s.internalToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.internalToken)) != 1 {
+		writeError(w, http.StatusUnauthorized, "internal service authentication required")
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 99 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 99")
+			return
+		}
+		limit = parsed
+	}
+	queries := []string{
+		mustQuery("equal", "event_type", "testagram.post.published"),
+		mustQuery("equal", "federation_eligible", true),
+		mustQuery("orderAsc", "created_at"),
+		mustQuery("limit", "", limit+1),
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("after")); raw != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil || !validOutboxDocumentID(string(decoded)) {
+			writeError(w, http.StatusBadRequest, "invalid outbox cursor")
+			return
+		}
+		queries = append(queries, mustQuery("cursorAfter", "", string(decoded)))
+	}
+	documents, err := s.db.ListDocumentsWithQueries(r.Context(), "backend_outbox", queries, limit+1)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "federation outbox is temporarily unavailable")
+		return
+	}
+	hasMore := len(documents) > limit
+	if hasMore {
+		documents = documents[:limit]
+	}
+	var nextCursor string
+	if hasMore && len(documents) > 0 {
+		var last struct {
+			ID string `json:"$id"`
+		}
+		if err := json.Unmarshal(documents[len(documents)-1], &last); err != nil || !validOutboxDocumentID(last.ID) {
+			writeError(w, http.StatusServiceUnavailable, "federation outbox returned an invalid event")
+			return
+		}
+		nextCursor = base64.RawURLEncoding.EncodeToString([]byte(last.ID))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"events": documents, "next_cursor": nextCursor, "has_more": hasMore}, "error": nil})
+}
+
+func validOutboxDocumentID(value string) bool {
+	if len(value) < 1 || len(value) > 36 || !((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= '0' && value[0] <= '9')) {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return value != "unique()"
+}
+
+func mustQuery(method, column string, values ...any) string {
+	query := map[string]any{"method": method, "values": values}
+	if column != "" {
+		query["column"] = column
+	}
+	encoded, _ := json.Marshal(query)
+	return string(encoded)
+}
+
+func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) < 8 || len(idempotencyKey) > 128 || strings.ContainsAny(idempotencyKey, "\r\n") {
+		writeError(w, http.StatusBadRequest, "an 8-128 character Idempotency-Key is required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var input struct {
+		Content    string `json:"content"`
+		Visibility string `json:"visibility"`
+		Sensitive  bool   `json:"sensitive"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid post payload")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "post payload must contain one JSON object")
+		return
+	}
+	input.Content = strings.TrimSpace(input.Content)
+	input.Visibility = strings.ToLower(strings.TrimSpace(input.Visibility))
+	if !utf8.ValidString(input.Content) || input.Content == "" || utf8.RuneCountInString(input.Content) > 5000 {
+		writeError(w, http.StatusBadRequest, "post content must contain between 1 and 5000 valid Unicode characters")
+		return
+	}
+	switch input.Visibility {
+	case "public", "followers", "private":
+	default:
+		writeError(w, http.StatusBadRequest, "visibility must be public, followers, or private")
+		return
+	}
+	canonical, err := json.Marshal(input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid post payload")
+		return
+	}
+	requestHash := sha256.Sum256(canonical)
+	keyHash := sha256.Sum256([]byte(idempotencyKey))
+	postHash := sha256.Sum256([]byte(a.ID + "\x00" + idempotencyKey))
+	postID := "p_" + hex.EncodeToString(postHash[:16])
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	data := map[string]any{
+		"author_id":            a.ID,
+		"body":                 input.Content,
+		"visibility":           input.Visibility,
+		"status":               "published",
+		"sensitive":            input.Sensitive,
+		"idempotency_key_hash": hex.EncodeToString(keyHash[:]),
+		"request_hash":         hex.EncodeToString(requestHash[:]),
+		"created_at":           now,
+		"updated_at":           now,
+	}
+	tx, err := s.db.CreateTransaction(r.Context(), 120)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "post transaction could not be started")
+		return
+	}
+	rollback := func() { _ = s.db.UpdateTransaction(context.Background(), tx, false) }
+	if err = s.db.CreateDocumentInTransaction(r.Context(), "posts", postID, data, tx); err != nil {
+		rollback()
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+			existing, readErr := s.db.GetDocument(r.Context(), "posts", postID)
+			if readErr == nil {
+				var saved map[string]any
+				if json.Unmarshal(existing, &saved) == nil && saved["author_id"] == a.ID && saved["idempotency_key_hash"] == hex.EncodeToString(keyHash[:]) && saved["request_hash"] == hex.EncodeToString(requestHash[:]) {
+					public, sanitizeErr := publicPostDocument(existing)
+					if sanitizeErr != nil {
+						writeError(w, http.StatusServiceUnavailable, "post could not be read")
+						return
+					}
+					writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": public, "error": nil})
+					return
+				}
+				writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different post")
+				return
+			}
+		}
+		writeError(w, http.StatusServiceUnavailable, "post could not be saved")
+		return
+	}
+	eventID := "evt_" + hex.EncodeToString(postHash[:16])
+	federationEligible := input.Visibility == "public" && !input.Sensitive
+	event := map[string]any{
+		"event_id": eventID, "event_type": "testagram.post.published", "schema_version": 1,
+		"occurred_at": now, "actor_id": a.ID, "object_id": postID, "visibility": input.Visibility,
+		"federation_eligible": federationEligible, "created_at": now,
+		"payload": map[string]any{"id": postID, "author_id": a.ID, "content": input.Content, "visibility": input.Visibility, "sensitive": input.Sensitive, "created_at": now},
+	}
+	if err = s.db.CreateDocumentInTransaction(r.Context(), "backend_outbox", eventID, event, tx); err != nil {
+		rollback()
+		writeError(w, http.StatusServiceUnavailable, "post event could not be recorded")
+		return
+	}
+	if err = s.db.UpdateTransaction(r.Context(), tx, true); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "post transaction could not be committed")
+		return
+	}
+	created := map[string]any{"$id": postID}
+	for key, value := range data {
+		created[key] = value
+	}
+	encoded, err := json.Marshal(created)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "post could not be encoded")
+		return
+	}
+	public, sanitizeErr := publicPostDocument(encoded)
+	if sanitizeErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "post could not be read")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": public, "error": nil})
+}
+
+func publicPostDocument(raw []byte) (json.RawMessage, error) {
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil || document == nil {
+		return nil, errors.New("invalid Appwrite post document")
+	}
+	delete(document, "idempotency_key_hash")
+	delete(document, "request_hash")
+	encoded, err := json.Marshal(document)
+	return json.RawMessage(encoded), err
+}
+
 func (s *Server) reserveMediaUpload(w http.ResponseWriter, r *http.Request) {
 	a, status, err := s.authenticate(r)
 	if err != nil {
@@ -143,6 +442,7 @@ func (s *Server) reserveMediaUpload(w http.ResponseWriter, r *http.Request) {
 		Bytes       int64  `json:"bytes"`
 		ContentType string `json:"content_type"`
 		SHA256      string `json:"sha256"`
+		Scope       string `json:"scope"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -154,7 +454,7 @@ func (s *Server) reserveMediaUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "upload reservation must contain one JSON object")
 		return
 	}
-	result, err := s.storage.ReserveUpload(r.Context(), freshstorage.ReserveInput{OwnerID: a.ID, IdempotencyKey: r.Header.Get("Idempotency-Key"), Bytes: input.Bytes, ContentType: input.ContentType, SHA256: input.SHA256})
+	result, err := s.storage.ReserveUpload(r.Context(), freshstorage.ReserveInput{OwnerID: a.ID, IdempotencyKey: r.Header.Get("Idempotency-Key"), Scope: input.Scope, Bytes: input.Bytes, ContentType: input.ContentType, SHA256: input.SHA256})
 	if err != nil {
 		writeStorageError(w, err)
 		return

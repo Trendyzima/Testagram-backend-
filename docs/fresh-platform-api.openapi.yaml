@@ -17,7 +17,8 @@ paths:
     get:
       security: []
       responses:
-        '200': { description: Readiness }
+        '200': { description: Appwrite feed schema and required private ranker are ready }
+        '503': { description: Required Appwrite collections/indexes or Algorithm service are unavailable }
   /v1/me:
     get:
       summary: Read authenticated Appwrite user profile
@@ -35,9 +36,94 @@ paths:
       responses:
         '200': { description: Profile updated }
         '401': { description: Invalid or expired Appwrite JWT }
+  /internal/v1/federation/outbox:
+    get:
+      operationId: listFederationOutbox
+      summary: Read public, non-sensitive post events for the trusted Federation service
+      security:
+        - federationInternalBearer: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 99, default: 50 }
+        - in: query
+          name: after
+          schema: { type: string, description: Base64url encoded Appwrite outbox document ID }
+      responses:
+        "200": { description: Bounded durable outbox page }
+        "401": { description: Invalid internal service token }
+        "503": { description: Outbox unavailable }
+  /v1/posts:
+    post:
+      operationId: createPost
+      summary: Create an authenticated text post
+      security:
+        - appwriteJWT: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content, visibility]
+              properties:
+                content: { type: string, minLength: 1, maxLength: 5000 }
+                visibility: { type: string, enum: [public, followers, private] }
+                sensitive: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Post created
+        "200":
+          description: Idempotent replay of the original post
+        "400":
+          description: Invalid post or idempotency key
+        "409":
+          description: Idempotency key reused with a different payload
+        "401":
+          description: Invalid Appwrite session
+  /v1/feed/home:
+    get:
+      summary: Read authenticated home feed
+      description: Backend applies follow, block, account visibility and post visibility rules before optionally calling the private Algorithm ranker.
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - in: query
+          name: before
+          required: false
+          schema: { type: string, maxLength: 256 }
+      responses:
+        '200': { description: Authorized home feed page with next_cursor, has_more and ranking_mode }
+        '400': { description: Invalid pagination parameters }
+        '401': { description: Invalid or expired Appwrite JWT }
+        '503': { description: Feed dependencies unavailable; no unfiltered fallback is returned }
   /v1/media/uploads/reservations:
     post:
       summary: Reserve media quota and obtain upload capability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [bytes, content_type]
+              properties:
+                bytes: { type: integer, minimum: 1 }
+                content_type: { type: string, maxLength: 128 }
+                sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+                scope: { type: string, enum: [post_media, story_media, direct_message, profile_media, avatar], default: post_media }
       parameters:
         - in: header
           name: Idempotency-Key
@@ -55,8 +141,22 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '204': { description: Upload finalized }
+        '200': { description: Upload finalized }
         '401': { description: Invalid or expired Appwrite JWT }
+  /v1/media/{objectID}/restore:
+    post:
+      summary: Restore an owner-authorized archived media object
+      parameters:
+        - in: path
+          name: objectID
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Archive restored and verified }
+        '401': { description: Invalid or expired Appwrite JWT }
+        '403': { description: Caller does not own the media object }
+        '410': { description: Recovery deadline has passed }
+        '503': { description: Archive provider unavailable or verification failed }
   /v1/media/{objectID}/download:
     get:
       summary: Obtain authorized short-lived media URL
@@ -68,21 +168,12 @@ paths:
       responses:
         '200': { description: Signed media delivery URL }
         '401': { description: Invalid or expired Appwrite JWT }
-  /internal/v1/feed/rank:
-    post:
-      security:
-        - serviceBearer: []
-      summary: Backend-only ranking contract (Algorithm service)
-      responses:
-        '200': { description: Ranked submitted candidate IDs }
-        '401': { description: Invalid service credential }
 components:
   securitySchemes:
+    federationInternalBearer:
+      type: http
+      scheme: bearer
     appwriteJWT:
       type: http
       scheme: bearer
       bearerFormat: Appwrite JWT
-    serviceBearer:
-      type: http
-      scheme: bearer
-      bearerFormat: Rotatable service credential

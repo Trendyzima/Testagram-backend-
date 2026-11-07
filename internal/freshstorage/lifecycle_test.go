@@ -30,7 +30,7 @@ func TestReserveKiBCeilingsNeverUndercount(t *testing.T) {
 }
 
 func TestDecodeReservationRejectsMalformedAndPreservesStringByteCount(t *testing.T) {
-	raw := json.RawMessage(`{"$id":"res_123","owner_id":"user_123","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"5368709120","reserved_kib":5242880,"content_type":"video/mp4","sha256_expected":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256_actual":"","status":"reserved","expires_at":"2026-11-07T12:00:00Z"}`)
+	raw := json.RawMessage(`{"$id":"res_123","owner_id":"user_123","scope":"post_media","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"5368709120","reserved_kib":5242880,"content_type":"video/mp4","sha256_expected":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256_actual":"","status":"reserved","expires_at":"2026-11-07T12:00:00Z"}`)
 	got, err := decodeReservation(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +40,32 @@ func TestDecodeReservationRejectsMalformedAndPreservesStringByteCount(t *testing
 	}
 	if _, err := decodeReservation([]byte(`{"$id":"x","owner_id":"u","bytes_decimal":"12x","reserved_kib":1,"expires_at":"bad"}`)); err == nil {
 		t.Fatal("malformed reservation accepted")
+	}
+}
+
+func TestProtectedMediaMetadataAppliesRetentionClassAndScope(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	base := Reservation{OwnerID: "user_123", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1024, ContentType: "image/jpeg", SHA256: strings.Repeat("a", 64)}
+	post := base
+	post.Scope = "post_media"
+	postData, err := protectedMediaMetadata(post, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if postData["retention_class"] != "permanent" || postData["scope"] != "post_media" || postData["lifecycle_state"] != "active" || postData["archive_after"] != now.Add(30*24*time.Hour).Format(time.RFC3339Nano) {
+		t.Fatalf("post media lifecycle metadata incomplete: %#v", postData)
+	}
+	story := base
+	story.Scope = "story_media"
+	storyData, err := protectedMediaMetadata(story, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storyData["retention_class"] != "story" || storyData["scope"] != "story_media" || storyData["story_expires_at"] != now.Add(24*time.Hour).Format(time.RFC3339Nano) {
+		t.Fatalf("story media lifecycle metadata incomplete: %#v", storyData)
+	}
+	if _, err := protectedMediaMetadata(Reservation{OwnerID: "user_123", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1, ContentType: "image/jpeg", SHA256: strings.Repeat("a", 64), Scope: "unknown"}, now); err == nil {
+		t.Fatal("unknown media scope accepted")
 	}
 }
 
@@ -178,7 +204,7 @@ func (m *memoryStore) Reserve(_ context.Context, in ReserveInput, id string, exp
 	if m.reservation.ID != "" {
 		return m.reservation, nil
 	}
-	m.reservation = Reservation{ID: id, OwnerID: in.OwnerID, ObjectID: "med_test", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: in.Bytes, ReservedKiB: reserveKiB(in.Bytes), ContentType: in.ContentType, ExpectedSHA256: in.SHA256, Status: "reserved", ExpiresAt: expires}
+	m.reservation = Reservation{ID: id, OwnerID: in.OwnerID, Scope: in.Scope, ObjectID: "med_test", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: in.Bytes, ReservedKiB: reserveKiB(in.Bytes), ContentType: in.ContentType, ExpectedSHA256: in.SHA256, Status: "reserved", ExpiresAt: expires}
 	return m.reservation, nil
 }
 func (m *memoryStore) GetReservation(_ context.Context, id string) (Reservation, error) {
@@ -232,6 +258,33 @@ func (m *memoryStore) MediaKey(_ context.Context, owner, id string) (string, err
 		return "", ErrNotReady
 	}
 	return m.reservation.ObjectKey, nil
+}
+
+func TestReserveUploadDefaultsScopeAndRejectsUnsupportedScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer server.Close()
+	b2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "b2", SecretKey: "secret", Region: "us-west-004"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "r2", SecretKey: "secret", Region: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &memoryStore{}
+	service, err := NewService(store, ProviderSet{B2: b2, B2Bucket: "b2-bucket", R2: r2, R2Bucket: "r2-bucket"}, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReserveUpload(context.Background(), ReserveInput{OwnerID: "user_123", IdempotencyKey: "upload-default-scope", Bytes: 1024, ContentType: "image/jpeg"}); err != nil {
+		t.Fatal(err)
+	}
+	if store.reservation.Scope != "post_media" {
+		t.Fatalf("default media scope=%q", store.reservation.Scope)
+	}
+	if _, err := service.ReserveUpload(context.Background(), ReserveInput{OwnerID: "user_123", IdempotencyKey: "upload-invalid-scope", Scope: "unknown", Bytes: 1024, ContentType: "image/jpeg"}); err == nil {
+		t.Fatal("unsupported media scope accepted")
+	}
 }
 
 func TestServiceCompletesB2UploadOnlyAfterVerifiedR2Replica(t *testing.T) {
@@ -486,7 +539,7 @@ func TestCommitProtectedAtomicallyMovesQuotaAndWritesReplicaLedger(t *testing.T)
 			if r.URL.Query().Get("transactionId") != "tx_commit" {
 				t.Errorf("reservation not read in transaction")
 			}
-			_, _ = w.Write([]byte(`{"$id":"res_123","owner_id":"user_123","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"1000","reserved_kib":1,"content_type":"image/jpeg","sha256_expected":"","sha256_actual":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"uploaded_primary","expires_at":"2026-11-07T12:00:00Z","lease_expires_at":"2026-11-07T13:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"$id":"res_123","owner_id":"user_123","scope":"post_media","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"1000","reserved_kib":1,"content_type":"image/jpeg","sha256_expected":"","sha256_actual":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"uploaded_primary","expires_at":"2026-11-07T12:00:00Z","lease_expires_at":"2026-11-07T13:00:00Z"}`))
 		case r.Method == http.MethodPatch && (strings.HasSuffix(path, "/reserved_kib/decrement") || strings.HasSuffix(path, "/used_kib/increment")):
 			quotaOps++
 			if r.URL.Query().Get("transactionId") != "tx_commit" {
@@ -528,7 +581,7 @@ func TestCommitProtectedAtomicallyMovesQuotaAndWritesReplicaLedger(t *testing.T)
 		t.Fatal(err)
 	}
 	store, _ := NewAppwriteStore(db)
-	r := Reservation{ID: "res_123", OwnerID: "user_123", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1000, ReservedKiB: 1, ContentType: "image/jpeg", SHA256: strings.Repeat("a", 64), Status: "uploaded_primary"}
+	r := Reservation{ID: "res_123", OwnerID: "user_123", Scope: "post_media", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1000, ReservedKiB: 1, ContentType: "image/jpeg", SHA256: strings.Repeat("a", 64), Status: "uploaded_primary"}
 	if err := store.CommitProtected(context.Background(), r, "b2-bucket", "r2-bucket"); err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +601,7 @@ func TestCommitProtectedRejectsConcurrentExpiryClaim(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/databases/transactions":
 			_, _ = w.Write([]byte(`{"$id":"tx_race"}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/storage_reservations/documents/res_123"):
-			_, _ = w.Write([]byte(`{"$id":"res_123","owner_id":"user_123","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"1000","reserved_kib":1,"content_type":"image/jpeg","sha256_actual":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"expiring","expires_at":"2026-11-07T12:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"$id":"res_123","owner_id":"user_123","scope":"post_media","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"1000","reserved_kib":1,"content_type":"image/jpeg","sha256_actual":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"expiring","expires_at":"2026-11-07T12:00:00Z"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/databases/transactions/tx_race":
 			_, _ = w.Write([]byte(`{"$id":"tx_race","status":"rolled_back"}`))
 		case strings.Contains(r.URL.Path, "/reserved_kib/") || strings.Contains(r.URL.Path, "/used_kib/"):
@@ -564,7 +617,7 @@ func TestCommitProtectedRejectsConcurrentExpiryClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := NewAppwriteStore(db)
-	r := Reservation{ID: "res_123", OwnerID: "user_123", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1000, ReservedKiB: 1, ContentType: "image/jpeg", SHA256: strings.Repeat("a", 64), Status: "uploaded_primary"}
+	r := Reservation{ID: "res_123", OwnerID: "user_123", Scope: "post_media", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1000, ReservedKiB: 1, ContentType: "image/jpeg", SHA256: strings.Repeat("a", 64), Status: "uploaded_primary"}
 	if err := store.CommitProtected(context.Background(), r, "b2-bucket", "r2-bucket"); err == nil {
 		t.Fatal("expiry race was allowed to commit protected media")
 	}
@@ -590,7 +643,7 @@ func TestAppwriteExpiryQueriesUseDocumentAPIJSONFormat(t *testing.T) {
 		if err := json.Unmarshal(raw, &child); err != nil {
 			t.Fatal(err)
 		}
-		if child["method"] == nil || child["attribute"] == nil {
+		if child["method"] == nil || child["column"] == nil {
 			t.Fatalf("invalid Appwrite REST query child: %s", raw)
 		}
 	}
@@ -608,7 +661,7 @@ func TestReleaseExpiredReservationRequiresExpiryClaimAndReleasesBothQuotas(t *te
 		case r.Method == http.MethodPost && path == "/v1/databases/transactions":
 			_, _ = w.Write([]byte(`{"$id":"tx_expire"}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/storage_reservations/documents/res_123"):
-			_, _ = w.Write([]byte(`{"$id":"res_123","owner_id":"user_123","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"1000","reserved_kib":1,"content_type":"image/jpeg","status":"expiring","expires_at":"2026-11-07T12:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"$id":"res_123","owner_id":"user_123","scope":"post_media","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"1000","reserved_kib":1,"content_type":"image/jpeg","status":"expiring","expires_at":"2026-11-07T12:00:00Z"}`))
 		case r.Method == http.MethodPatch && strings.HasSuffix(path, "/reserved_kib/decrement"):
 			decrements++
 			if r.URL.Query().Get("transactionId") != "tx_expire" {
@@ -640,7 +693,7 @@ func TestReleaseExpiredReservationRequiresExpiryClaimAndReleasesBothQuotas(t *te
 		t.Fatal(err)
 	}
 	store, _ := NewAppwriteStore(db)
-	r := Reservation{ID: "res_123", OwnerID: "user_123", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1000, ReservedKiB: 1, Status: "expiring"}
+	r := Reservation{ID: "res_123", OwnerID: "user_123", Scope: "post_media", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1000, ReservedKiB: 1, Status: "expiring"}
 	if err := store.ReleaseExpiredReservation(context.Background(), r); err != nil {
 		t.Fatal(err)
 	}

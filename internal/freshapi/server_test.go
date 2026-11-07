@@ -3,17 +3,31 @@ package freshapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshfeed"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
+type mockAppwriteState struct {
+	documents            map[string][]byte
+	transactionCommitted bool
+	outboxQueries        []string
+}
+
 func testServer(t *testing.T) (*Server, *httptest.Server) {
+	api, mock, _ := testServerWithState(t)
+	return api, mock
+}
+
+func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
+	state := &mockAppwriteState{documents: map[string][]byte{}}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -22,13 +36,46 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 				return
 			}
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/databases/transactions":
+			_, _ = w.Write([]byte(`{"$id":"tx_posts"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/databases/transactions/tx_posts":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			state.transactionCommitted = body["commit"] == true
+			_, _ = w.Write([]byte(`{"$id":"tx_posts","status":"committed"}`))
 		case strings.HasSuffix(r.URL.Path, "/documents"):
+			if r.Method == http.MethodGet {
+				if strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
+					state.outboxQueries = append(state.outboxQueries, r.URL.Query()["queries[]"]...)
+				}
+				_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
+				return
+			}
 			if r.Method == http.MethodPost {
 				var body map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Errorf("decode: %v", err)
 				}
 				data := body["data"].(map[string]any)
+				if strings.Contains(r.URL.Path, "/collections/posts/") || strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
+					if r.URL.Query().Get("transactionId") != "tx_posts" {
+						t.Errorf("transactional document missing transaction ID: %s", r.URL.RawQuery)
+					}
+					id := body["documentId"].(string)
+					if _, exists := state.documents[id]; exists {
+						http.Error(w, "document already exists", http.StatusConflict)
+						return
+					}
+					doc := map[string]any{"$id": id}
+					for key, value := range data {
+						doc[key] = value
+					}
+					encoded, _ := json.Marshal(doc)
+					state.documents[id] = encoded
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write(encoded)
+					return
+				}
 				if data["user_id"] != "new_user_1" {
 					t.Errorf("unexpected owner: %v", data["user_id"])
 				}
@@ -38,6 +85,11 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 			}
 		case strings.Contains(r.URL.Path, "/documents/"):
 			if r.Method == http.MethodGet {
+				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+				if saved, ok := state.documents[id]; ok {
+					_, _ = w.Write(saved)
+					return
+				}
 				http.Error(w, "not found", 404)
 				return
 			}
@@ -57,7 +109,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return api, mock
+	return api, mock, state
 }
 
 func TestProfileRequiresAppwriteSession(t *testing.T) {
@@ -98,6 +150,90 @@ func TestProfileRejectsInvalidHandle(t *testing.T) {
 	}
 }
 
+func TestCreatePostUsesVerifiedIdentityAndIdempotency(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	create := func(content string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/posts", strings.NewReader(`{"content":"`+content+`","visibility":"public"}`))
+		req.Header.Set("Authorization", "Bearer valid-session")
+		req.Header.Set("Idempotency-Key", "post-create-key-001")
+		rec := httptest.NewRecorder()
+		api.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+	first := create("Hello Testagram")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", first.Code, first.Body.String())
+	}
+	if !state.transactionCommitted || len(state.documents) != 2 {
+		t.Fatalf("post and durable outbox event were not committed atomically: committed=%v docs=%d", state.transactionCommitted, len(state.documents))
+	}
+	var outbox map[string]any
+	for _, raw := range state.documents {
+		var doc map[string]any
+		_ = json.Unmarshal(raw, &doc)
+		if doc["event_type"] == "testagram.post.published" {
+			outbox = doc
+		}
+	}
+	if outbox == nil || outbox["actor_id"] != "new_user_1" || outbox["federation_eligible"] != true {
+		t.Fatalf("public post outbox event missing or invalid: %#v", outbox)
+	}
+	payload, ok := outbox["payload"].(map[string]any)
+	if !ok || payload["id"] != outbox["object_id"] || payload["author_id"] != "new_user_1" || payload["content"] != "Hello Testagram" {
+		t.Fatalf("outbox event is missing the authorized post snapshot: %#v", outbox["payload"])
+	}
+	var firstEnvelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if firstEnvelope.Data["author_id"] != "new_user_1" || firstEnvelope.Data["body"] != "Hello Testagram" || firstEnvelope.Data["visibility"] != "public" {
+		t.Fatalf("post not bound to authenticated identity or payload: %#v", firstEnvelope.Data)
+	}
+	second := create("Hello Testagram")
+	if second.Code != http.StatusOK {
+		t.Fatalf("idempotent replay status=%d body=%s", second.Code, second.Body.String())
+	}
+	var secondEnvelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &secondEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if secondEnvelope.Data["$id"] != firstEnvelope.Data["$id"] {
+		t.Fatalf("idempotent replay changed post ID: %v != %v", secondEnvelope.Data["$id"], firstEnvelope.Data["$id"])
+	}
+	conflict := create("Different content")
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("idempotency conflict status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestCreatePostRejectsMissingIdempotencyAndInvalidVisibility(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	for _, test := range []struct{ name, key, payload string }{
+		{"missing key", "", `{"content":"Hello","visibility":"public"}`},
+		{"invalid visibility", "post-create-key-002", `{"content":"Hello","visibility":"world"}`},
+		{"unknown field", "post-create-key-003", `{"content":"Hello","visibility":"public","author_id":"attacker"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/posts", strings.NewReader(test.payload))
+			req.Header.Set("Authorization", "Bearer valid-session")
+			if test.key != "" {
+				req.Header.Set("Idempotency-Key", test.key)
+			}
+			rec := httptest.NewRecorder()
+			api.Handler().ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 type fakeMediaService struct {
 	reserveInput              freshstorage.ReserveInput
 	completeOwner, completeID string
@@ -127,7 +263,7 @@ func TestFreshMediaEndpointsUseAuthenticatedAppwriteOwner(t *testing.T) {
 	defer mock.Close()
 	media := &fakeMediaService{}
 	api.WithStorage(media)
-	reserve := httptest.NewRequest(http.MethodPost, "/v1/media/uploads/reservations", strings.NewReader(`{"bytes":1024,"content_type":"image/jpeg","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`))
+	reserve := httptest.NewRequest(http.MethodPost, "/v1/media/uploads/reservations", strings.NewReader(`{"bytes":1024,"content_type":"image/jpeg","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","scope":"story_media"}`))
 	reserve.Header.Set("Authorization", "Bearer valid-session")
 	reserve.Header.Set("Idempotency-Key", "upload-key-123")
 	reserveRec := httptest.NewRecorder()
@@ -135,7 +271,7 @@ func TestFreshMediaEndpointsUseAuthenticatedAppwriteOwner(t *testing.T) {
 	if reserveRec.Code != http.StatusCreated {
 		t.Fatalf("reserve status=%d body=%s", reserveRec.Code, reserveRec.Body.String())
 	}
-	if media.reserveInput.OwnerID != "new_user_1" || media.reserveInput.IdempotencyKey != "upload-key-123" {
+	if media.reserveInput.OwnerID != "new_user_1" || media.reserveInput.IdempotencyKey != "upload-key-123" || media.reserveInput.Scope != "story_media" {
 		t.Fatalf("owner/idempotency not bound to verified session: %#v", media.reserveInput)
 	}
 	complete := httptest.NewRequest(http.MethodPost, "/v1/media/uploads/res_123/complete", nil)
@@ -204,5 +340,136 @@ func TestFreshAPICORSAllowsOnlyConfiguredOriginsAndHeaders(t *testing.T) {
 	api.Handler().ServeHTTP(badHeaderRec, badHeader)
 	if badHeaderRec.Code != http.StatusForbidden {
 		t.Fatalf("unapproved request header accepted: %d", badHeaderRec.Code)
+	}
+}
+
+type fakeHomeFeed struct {
+	viewer string
+	limit  int
+	cursor string
+	err    error
+}
+
+func (f *fakeHomeFeed) Home(_ context.Context, viewer string, limit int, cursor string) (freshfeed.Result, error) {
+	f.viewer, f.limit, f.cursor = viewer, limit, cursor
+	return freshfeed.Result{Posts: []map[string]any{{"id": "post_1"}}, NextCursor: "next", HasMore: true, RankingMode: "chronological"}, f.err
+}
+
+func (f *fakeHomeFeed) Ready(context.Context) error { return f.err }
+
+func TestHomeFeedRequiresVerifiedAppwriteIdentityAndUsesBoundedPagination(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	feed := &fakeHomeFeed{}
+	api.WithFeed(feed)
+
+	unauthenticated := httptest.NewRequest(http.MethodGet, "/v1/feed/home", nil)
+	unauthenticatedRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(unauthenticatedRec, unauthenticated)
+	if unauthenticatedRec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated feed status=%d", unauthenticatedRec.Code)
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/v1/feed/home?limit=51", nil)
+	invalid.Header.Set("Authorization", "Bearer valid-session")
+	invalidRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit status=%d", invalidRec.Code)
+	}
+	invalidCursor := httptest.NewRequest(http.MethodGet, "/v1/feed/home?before=not-base64", nil)
+	invalidCursor.Header.Set("Authorization", "Bearer valid-session")
+	invalidCursorRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(invalidCursorRec, invalidCursor)
+	if invalidCursorRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cursor status=%d", invalidCursorRec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/feed/home?limit=12&before=Y3Vyc29yXzE", nil)
+	req.Header.Set("Authorization", "Bearer valid-session")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feed status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if feed.viewer != "new_user_1" || feed.limit != 12 || feed.cursor != "Y3Vyc29yXzE" {
+		t.Fatalf("feed received unverified or incorrect inputs: %#v", feed)
+	}
+	if !strings.Contains(rec.Body.String(), "post_1") || !strings.Contains(rec.Body.String(), "chronological") {
+		t.Fatalf("feed response shape mismatch: %s", rec.Body.String())
+	}
+}
+
+func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	if err := api.WithInternalToken("too-short"); err == nil {
+		t.Fatal("short Federation service token accepted")
+	}
+	if err := api.WithInternalToken(strings.Repeat("t", 32)); err != nil {
+		t.Fatal(err)
+	}
+	unauthorized := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox", nil)
+	unauthorizedRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(unauthorizedRec, unauthorized)
+	if unauthorizedRec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing service token status=%d", unauthorizedRec.Code)
+	}
+	invalid := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=100", nil)
+	invalid.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 32))
+	invalidRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(invalidRec, invalid)
+	if invalidRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit status=%d", invalidRec.Code)
+	}
+	valid := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=10", nil)
+	valid.Header.Set("Authorization", "Bearer "+strings.Repeat("t", 32))
+	validRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(validRec, valid)
+	if validRec.Code != http.StatusOK || !strings.Contains(validRec.Body.String(), `"events":[]`) {
+		t.Fatalf("valid outbox request status=%d body=%s", validRec.Code, validRec.Body.String())
+	}
+	joinedQueries := strings.Join(state.outboxQueries, " ")
+	if !strings.Contains(joinedQueries, `"column":"federation_eligible"`) || !strings.Contains(joinedQueries, `"values":[true]`) || !strings.Contains(joinedQueries, `testagram.post.published`) {
+		t.Fatalf("outbox query did not restrict results to eligible public post events: %s", joinedQueries)
+	}
+}
+
+func TestFederationOutboxIsNotMountedWithoutSecret(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox", nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("private route should not exist without token, status=%d", rec.Code)
+	}
+}
+
+func TestReadyzFailsUntilFeedDependenciesAreReady(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness without feed service status=%d", rec.Code)
+	}
+
+	feed := &fakeHomeFeed{}
+	api.WithFeed(feed)
+	readyReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	readyRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(readyRec, readyReq)
+	if readyRec.Code != http.StatusOK {
+		t.Fatalf("readiness with ready dependencies status=%d body=%s", readyRec.Code, readyRec.Body.String())
+	}
+
+	feed.err = errors.New("dependency unavailable")
+	failedReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	failedRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(failedRec, failedReq)
+	if failedRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness with failed dependency status=%d", failedRec.Code)
 	}
 }
