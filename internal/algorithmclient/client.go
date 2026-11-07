@@ -82,6 +82,27 @@ func New(endpoint, token string, timeout time.Duration) (*Client, error) {
 	return &Client{endpoint: endpoint, token: token, http: &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
+func (c *Client) Ready(ctx context.Context) error {
+	if c == nil {
+		return errors.New("algorithm client is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint+"/readyz", nil)
+	if err != nil {
+		return fmt.Errorf("create algorithm readiness request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("algorithm readiness request: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("algorithm readiness returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	if c == nil {
 		return Response{}, errors.New("algorithm client is not configured")
