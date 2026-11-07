@@ -685,8 +685,18 @@ func TestReadyzChecksConfiguredNeonHealth(t *testing.T) {
 	api.WithNeon(fakeNeonHealth{}, true)
 	ready := httptest.NewRecorder()
 	api.Handler().ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if ready.Code != http.StatusServiceUnavailable || !strings.Contains(ready.Body.String(), "canonical social repositories are not integrated") {
-		t.Fatalf("readiness must fail until Neon repositories are integrated; status=%d body=%s", ready.Code, ready.Body.String())
+	if ready.Code != http.StatusOK {
+		t.Fatalf("Appwrite login service should be ready when required Neon is reachable; status=%d body=%s", ready.Code, ready.Body.String())
+	}
+	if !strings.Contains(ready.Body.String(), `"social_data_plane":"connected_not_integrated"`) ||
+		!strings.Contains(ready.Body.String(), `"platform_ready":false`) {
+		t.Fatalf("service readiness must disclose that Neon product repositories are not integrated: %s", ready.Body.String())
+	}
+
+	platform := httptest.NewRecorder()
+	api.Handler().ServeHTTP(platform, httptest.NewRequest(http.MethodGet, "/readyz/platform", nil))
+	if platform.Code != http.StatusServiceUnavailable || !strings.Contains(platform.Body.String(), "canonical social repositories are not integrated") {
+		t.Fatalf("full platform readiness must remain blocked until Neon repositories are integrated; status=%d body=%s", platform.Code, platform.Body.String())
 	}
 }
 
