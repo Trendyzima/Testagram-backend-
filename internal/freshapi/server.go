@@ -213,42 +213,25 @@ func (s *Server) cors(next http.Handler) http.Handler {
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	if s.neonRequired && s.neon == nil {
-		writeError(w, http.StatusServiceUnavailable, "required Neon data plane is not configured")
-		return
-	}
-	if s.feed == nil {
-		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not configured")
-		return
-	}
+	// This is the public-edge service gate: it proves the identity/profile
+	// dependency is reachable. Feed ranking, federation and Neon product
+	// repositories must not prevent an existing approved user from logging in.
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	if s.neon != nil {
-		if err := s.neon.Ping(ctx); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "Neon PostgreSQL connectivity is not ready")
-			return
-		}
-	}
-	// /readyz is the process/service readiness gate used by the public edge.
-	// A connected Neon database is reported honestly as not yet integrated;
-	// it must not prevent Appwrite-backed identity and login endpoints from
-	// becoming reachable. Full product readiness remains a separate gate.
-	if err := s.feed.Ready(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
-		return
-	}
-	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{
-		mustQuery("equal", "event_type", "testagram.post.published"),
-		mustQuery("equal", "federation_eligible", true),
-		mustQuery("orderAsc", "created_at"),
+	if _, err := s.db.ListDocumentsWithQueries(ctx, "profiles", []string{
 		mustQuery("limit", "", 1),
 	}, 1); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
+		writeError(w, http.StatusServiceUnavailable, "Appwrite profile database is not ready")
 		return
 	}
+
 	neonStatus := "not_configured"
 	if s.neon != nil {
-		neonStatus = "connected_not_integrated"
+		if err := s.neon.Ping(ctx); err != nil {
+			neonStatus = "unavailable"
+		} else {
+			neonStatus = "connected_not_integrated"
+		}
 	}
 	moderationStatus := "not_configured"
 	postWriteStatus := "disabled_moderation_unconfigured"
@@ -263,10 +246,9 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		"social_data_plane": neonStatus,
 		"platform_ready": false,
 		"platform_readiness_path": "/readyz/platform",
-		"feed": "ready",
+		"authentication": "available",
 		"moderation": moderationStatus,
 		"post_write": postWriteStatus,
-		"outbox": "ready",
 	})
 }
 
@@ -283,6 +265,23 @@ func (s *Server) platformReadyz(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if err := s.neon.Ping(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Neon PostgreSQL connectivity is not ready")
+		return
+	}
+	if s.feed == nil {
+		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not configured")
+		return
+	}
+	if err := s.feed.Ready(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "feed or Algorithm dependencies are not ready")
+		return
+	}
+	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{
+		mustQuery("equal", "event_type", "testagram.post.published"),
+		mustQuery("equal", "federation_eligible", true),
+		mustQuery("orderAsc", "created_at"),
+		mustQuery("limit", "", 1),
+	}, 1); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
 		return
 	}
 	writeError(w, http.StatusServiceUnavailable, "Neon is reachable, but canonical social repositories are not integrated")
