@@ -527,7 +527,7 @@ func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
 		documents = documents[:limit]
 	}
 	var nextCursor string
-	if hasMore && len(documents) > 0 {
+	if len(documents) > 0 {
 		var last struct {
 			ID string `json:"$id"`
 		}
