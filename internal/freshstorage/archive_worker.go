@@ -51,6 +51,9 @@ func (w *ArchiveWorker) Run(ctx context.Context, job RetentionJob, dryRun bool) 
 	if media.Status != "ready" && media.Status != "archived" {
 		return fmt.Errorf("media state %q is not archivable", media.Status)
 	}
+	if media.RetentionClass != "permanent" || media.Scope != "post_media" {
+		return errors.New("only permanent post media is eligible for archive")
+	}
 	if dryRun {
 		return nil
 	}
