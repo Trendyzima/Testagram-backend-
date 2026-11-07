@@ -85,6 +85,8 @@ type MediaRecord struct {
 	Scope          string
 	RetentionClass string
 	DeletedAt      time.Time
+	CreatedAt      time.Time
+	StoryExpiry    time.Time
 	LifecycleState string
 }
 
@@ -819,11 +821,15 @@ func (s *AppwriteStore) ListExpiredReservations(ctx context.Context, now time.Ti
 }
 
 func appwriteEqualQuery(column string, value any) []byte {
-	encoded, _ := json.Marshal(map[string]any{"method": "equal", "column": column, "values": []any{value}})
+	encoded, _ := json.Marshal(map[string]any{"method": "equal", "attribute": column, "values": []any{value}})
 	return encoded
 }
 func appwriteLessThanEqualQuery(column string, value any) []byte {
-	encoded, _ := json.Marshal(map[string]any{"method": "lessThanEqual", "column": column, "values": []any{value}})
+	encoded, _ := json.Marshal(map[string]any{"method": "lessThanEqual", "attribute": column, "values": []any{value}})
+	return encoded
+}
+func appwriteGreaterThanEqualQuery(attribute string, value any) []byte {
+	encoded, _ := json.Marshal(map[string]any{"method": "greaterThanEqual", "attribute": attribute, "values": []any{value}})
 	return encoded
 }
 func appwriteAndQuery(queries ...[]byte) []byte {
@@ -945,6 +951,8 @@ func (s *AppwriteStore) GetMediaRecord(ctx context.Context, objectID string) (Me
 		Scope          string `json:"scope"`
 		RetentionClass string `json:"retention_class"`
 		DeletedAt      string `json:"deleted_at"`
+		CreatedAt      string `json:"created_at"`
+		StoryExpiry    string `json:"story_expires_at"`
 		LifecycleState string `json:"lifecycle_state"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
@@ -961,7 +969,20 @@ func (s *AppwriteStore) GetMediaRecord(ctx context.Context, objectID string) (Me
 			return MediaRecord{}, errors.New("invalid media deletion timestamp")
 		}
 	}
-	return MediaRecord{ObjectID: objectID, OwnerID: wire.OwnerID, ObjectKey: wire.ObjectKey, Bytes: bytes, ContentType: wire.ContentType, SHA256: wire.SHA256, Status: wire.Status, Scope: wire.Scope, RetentionClass: wire.RetentionClass, DeletedAt: deletedAt, LifecycleState: wire.LifecycleState}, nil
+	var createdAt, storyExpiry time.Time
+	if wire.CreatedAt != "" {
+		createdAt, err = time.Parse(time.RFC3339Nano, wire.CreatedAt)
+		if err != nil {
+			return MediaRecord{}, errors.New("invalid media creation timestamp")
+		}
+	}
+	if wire.StoryExpiry != "" {
+		storyExpiry, err = time.Parse(time.RFC3339Nano, wire.StoryExpiry)
+		if err != nil {
+			return MediaRecord{}, errors.New("invalid story media expiry timestamp")
+		}
+	}
+	return MediaRecord{ObjectID: objectID, OwnerID: wire.OwnerID, ObjectKey: wire.ObjectKey, Bytes: bytes, ContentType: wire.ContentType, SHA256: wire.SHA256, Status: wire.Status, Scope: wire.Scope, RetentionClass: wire.RetentionClass, DeletedAt: deletedAt, CreatedAt: createdAt, StoryExpiry: storyExpiry, LifecycleState: wire.LifecycleState}, nil
 }
 
 func (s *AppwriteStore) MarkReplicaState(ctx context.Context, objectID, provider, state string) error {
