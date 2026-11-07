@@ -18,6 +18,7 @@ required = {
     "/v1/me/profile": {"put"},
     "/v1/feed/home": {"get"},
     "/v1/posts": {"post"},
+    "/internal/v1/federation/outbox": {"get"},
     "/v1/media/uploads/reservations": {"post"},
     "/v1/media/uploads/{reservationID}/complete": {"post"},
     "/v1/media/{objectID}/download": {"get"},
