@@ -307,6 +307,15 @@ func TestServiceCompletesB2UploadOnlyAfterVerifiedR2Replica(t *testing.T) {
 	if !bytes.Equal(objects["r2-bucket/v1/0123456789abcdef0123456789abcdef"], payload) {
 		t.Fatal("repair did not restore exact R2 object bytes")
 	}
+	delete(objects, "r2-bucket/v1/0123456789abcdef0123456789abcdef")
+	fallbackURL, err := service.DownloadURL(context.Background(), "user_123", "med_test")
+	if err != nil {
+		t.Fatalf("download should fall back to verified B2 when R2 is missing: %v", err)
+	}
+	parsedFallback, err := url.Parse(fallbackURL)
+	if err != nil || !strings.Contains(parsedFallback.Path, "b2-bucket") {
+		t.Fatalf("expected direct B2 fallback URL, got %q (parse error %v)", fallbackURL, err)
+	}
 }
 
 func TestExpiredReservationDeletesCloudObjectsBeforeReleasingQuota(t *testing.T) {
@@ -445,7 +454,7 @@ func TestEnsureUserQuotaCreatesDefaultQuotaOnFirstUpload(t *testing.T) {
 
 func TestPrivateCDNURLSignatureMatchesWorkerContract(t *testing.T) {
 	now := time.Unix(1794052800, 0).UTC()
-	got, err := signPrivateMediaURL("https://media.testagram.example", "0123456789abcdef0123456789abcdef", "v1/0123456789abcdef0123456789abcdef", 120, now)
+	got, err := signPrivateMediaURL("https://media.testagram.example", "0123456789abcdef0123456789abcdef", "v1/0123456789abcdef0123456789abcdef", 3600, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,10 +462,10 @@ func TestPrivateCDNURLSignatureMatchesWorkerContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Path != "/private/v1/0123456789abcdef0123456789abcdef" || u.Query().Get("e") != strconv.FormatInt(now.Unix()+120, 10) || len(u.Query().Get("s")) != 64 {
+	if u.Path != "/private/v1/0123456789abcdef0123456789abcdef" || u.Query().Get("e") != strconv.FormatInt(now.Unix()+3600, 10) || len(u.Query().Get("s")) != 64 {
 		t.Fatalf("unexpected signed private CDN URL: %s", got)
 	}
-	if _, err := signPrivateMediaURL("http://media.example", "secret", "v1/0123456789abcdef0123456789abcdef", 120, now); err == nil {
+	if _, err := signPrivateMediaURL("http://media.example", "secret", "v1/0123456789abcdef0123456789abcdef", 3600, now); err == nil {
 		t.Fatal("insecure CDN URL accepted")
 	}
 }
