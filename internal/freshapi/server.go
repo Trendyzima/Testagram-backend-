@@ -325,6 +325,12 @@ func (s *Server) writeFederationActorProfile(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "local actor not found")
 		return
 	}
+	if created, _ := profile["federation_actor_created"].(bool); !created {
+		if _, err := s.db.UpdateDocument(r.Context(), "profiles", userID, map[string]any{"federation_actor_created": true}); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "local actor identity could not be locked")
+			return
+		}
+	}
 	displayName, _ := profile["display_name"].(string)
 	bio, _ := profile["bio"].(string)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -889,7 +895,21 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A conflict means this profile already exists; update only profile
 		// fields and preserve its independent federation preference.
-		raw, err = s.db.UpdateDocument(r.Context(), "profiles", a.ID, data)
+		existing, lookupErr := s.db.GetDocument(r.Context(), "profiles", a.ID)
+		if lookupErr == nil {
+			var current map[string]any
+			if json.Unmarshal(existing, &current) != nil {
+				writeError(w, http.StatusServiceUnavailable, "existing profile is invalid")
+				return
+			}
+			if federationHandleLocked(current, input.Handle) {
+				writeError(w, http.StatusConflict, "handle cannot be changed after your Fediverse actor has been created")
+				return
+			}
+			raw, err = s.db.UpdateDocument(r.Context(), "profiles", a.ID, data)
+		} else {
+			err = lookupErr
+		}
 	}
 	if err != nil {
 		writeError(w, 503, "profile could not be saved")
@@ -898,6 +918,12 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	_, _ = w.Write(raw)
+}
+
+func federationHandleLocked(profile map[string]any, requestedHandle string) bool {
+	created, _ := profile["federation_actor_created"].(bool)
+	currentHandle, _ := profile["handle"].(string)
+	return created && currentHandle != requestedHandle
 }
 
 func validUserID(v string) bool {
