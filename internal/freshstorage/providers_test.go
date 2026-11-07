@@ -51,3 +51,9 @@ func TestR2CannotBeConfiguredWithoutB2(t *testing.T) {
 		t.Fatal("R2 without B2 primary must fail closed")
 	}
 }
+
+func TestTargetPoolIs150GBDecimal(t *testing.T) {
+	if TargetPoolBytes != 150_000_000_000 {
+		t.Fatalf("TargetPoolBytes = %d, want 150,000,000,000", TargetPoolBytes)
+	}
+}
