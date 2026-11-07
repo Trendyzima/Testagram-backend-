@@ -439,7 +439,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -558,7 +558,13 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
 		return
 	}
-	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
+	var maxBytes int64
+	var ok bool
+	if s.dataCentreMedia != nil {
+		maxBytes, ok = s.mediaIntentFactory.MaxBytesForContentType(body.ContentType)
+	} else {
+		maxBytes, ok = s.media.MaxBytesForContentType(body.ContentType)
+	}
 	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
@@ -567,7 +573,11 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_INTENT_INVALID", "Stored upload limit is invalid", id))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	verifyTimeout := 8 * time.Second
+	if s.dataCentreMedia != nil {
+		verifyTimeout = 25 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
 	defer cancel()
 	var actualType, etag string
 	var size int64
