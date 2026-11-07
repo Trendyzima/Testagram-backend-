@@ -174,3 +174,52 @@ func TestGetDocumentInTransactionAndListDocumentsEncodeQueries(t *testing.T) {
 		t.Fatalf("documents=%d err=%v", len(docs), err)
 	}
 }
+
+func TestListDocumentsPageReturnsTotalAndUsesOffset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "10" || r.URL.Query().Get("offset") != "20" {
+			t.Errorf("unexpected pagination query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte("{\"documents\":[{\"$id\":\"m1\"}],\"total\":37}"))
+	}))
+	defer server.Close()
+	client, err := New(Config{Endpoint: server.URL + "/v1", ProjectID: "p", APIKey: "secret", DatabaseID: "db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, total, err := client.ListDocumentsPage(context.Background(), "media_objects", "{\"method\":\"greaterThanEqual\",\"column\":\"created_at\",\"values\":[\"2026-11-01T00:00:00Z\"]}", 10, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 || total != 37 {
+		t.Fatalf("docs=%d total=%d", len(docs), total)
+	}
+}
+
+func TestListDocumentsWithQueriesPreservesRepeatedParameters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries := r.URL.Query()["queries[]"]
+		if len(queries) != 2 {
+			t.Errorf("expected two repeated queries[] values, got %#v", queries)
+		}
+		if r.URL.Query().Get("limit") != "25" {
+			t.Errorf("unexpected limit: %s", r.URL.Query().Get("limit"))
+		}
+		_, _ = w.Write([]byte("{\"documents\":[{\"$id\":\"p1\"}]}"))
+	}))
+	defer server.Close()
+	client, err := New(Config{Endpoint: server.URL + "/v1", ProjectID: "p", APIKey: "secret", DatabaseID: "db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, err := client.ListDocumentsWithQueries(context.Background(), "posts", []string{
+		"{\"method\":\"equal\",\"column\":\"status\",\"values\":[\"published\"]}",
+		"{\"method\":\"orderDesc\",\"column\":\"created_at\"}",
+	}, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 || !strings.Contains(string(docs[0]), "p1") {
+		t.Fatalf("unexpected documents: %#v", docs)
+	}
+}
