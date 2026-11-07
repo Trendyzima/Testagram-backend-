@@ -150,3 +150,28 @@ func TestRegisterIdentityVerifiedAccountRejectsInvalidApprovalBeforeAppwriteCall
 		t.Fatalf("invalid approval status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestRegisterIdentityVerifiedAccountRejectsDuplicateFingerprint(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	state.identityFingerprintExists = true
+	secret := strings.Repeat("k", 48)
+	if err := api.WithIdentitySecret(secret); err != nil { t.Fatal(err) }
+	if err := api.WithAppwriteServerKey("appwrite-test-server-key"); err != nil { t.Fatal(err) }
+	now := time.Now().UTC().Unix()
+	payload := identityApprovalPayload{
+		Email: "duplicate@example.com", BirthDate: "1990-01-01",
+		SessionID: "session_12345678", Fingerprint: strings.Repeat("d", 64),
+		Username: "duplicate_user", DisplayName: "Duplicate User", PolicyVersion: currentLegalPolicyVersion,
+		IssuedAt: now, ExpiresAt: now + 900,
+	}
+	body, _ := json.Marshal(map[string]any{
+		"identity_approval_token": signedIdentityToken(t, secret, payload),
+		"password": "correct-horse-battery-staple",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict { t.Fatalf("duplicate fingerprint status=%d body=%s", rec.Code, rec.Body.String()) }
+	if state.createdAppwriteUsers != 0 { t.Fatalf("duplicate identity created %d Appwrite users", state.createdAppwriteUsers) }
+}
