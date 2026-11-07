@@ -108,6 +108,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
+	mux.HandleFunc("GET /v1/me/federation", s.getFederationPreference)
 	mux.HandleFunc("PUT /v1/me/federation", s.updateFederationPreference)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
@@ -297,6 +298,31 @@ func (s *Server) federationActor(w http.ResponseWriter, r *http.Request) {
 		"summary": strings.TrimSpace(bio),
 		"federation_enabled": true,
 	})
+}
+
+func (s *Server) getFederationPreference(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	raw, err := s.db.GetDocument(r.Context(), "profiles", a.ID)
+	if err != nil {
+		var apiErr appwritedb.HTTPError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			writeError(w, http.StatusNotFound, "profile not found")
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "profile service unavailable")
+		}
+		return
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "profile is invalid")
+		return
+	}
+	enabled, _ := profile["federation_enabled"].(bool)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"enabled": enabled}, "error": nil})
 }
 
 func (s *Server) updateFederationPreference(w http.ResponseWriter, r *http.Request) {
