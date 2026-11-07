@@ -93,6 +93,8 @@ func (c *Client) Ready(ctx context.Context) error {
 		return fmt.Errorf("create algorithm readiness request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Testagram-API-Version", "1")
+	req.Header.Set("X-Request-ID", newRequestID())
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("algorithm readiness request: %w", err)
@@ -151,8 +153,15 @@ func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	if len(output.Items) > input.Limit {
 		return Response{}, errors.New("algorithm service exceeded requested result limit")
 	}
+	allowed := make(map[string]struct{}, len(input.Candidates))
+	for _, candidate := range input.Candidates {
+		if strings.TrimSpace(candidate.ID) == "" { return Response{}, errors.New("algorithm request contains an empty candidate ID") }
+		if _, duplicate := allowed[candidate.ID]; duplicate { return Response{}, errors.New("algorithm request contains a duplicate candidate ID") }
+		allowed[candidate.ID] = struct{}{}
+	}
 	seen := make(map[string]struct{}, len(output.Items))
 	for _, item := range output.Items {
+		if _, supplied := allowed[item.ID]; !supplied { return Response{}, errors.New("algorithm service returned an ID outside the supplied candidate set") }
 		if strings.TrimSpace(item.ID) == "" || math.IsNaN(item.Score) || math.IsInf(item.Score, 0) || item.Score < 0 || item.Score > 1 {
 			return Response{}, errors.New("algorithm service returned an invalid ranked item")
 		}
