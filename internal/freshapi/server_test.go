@@ -14,9 +14,19 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
+type mockAppwriteState struct {
+	documents            map[string][]byte
+	transactionCommitted bool
+}
+
 func testServer(t *testing.T) (*Server, *httptest.Server) {
+	api, mock, _ := testServerWithState(t)
+	return api, mock
+}
+
+func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
-	documents := map[string][]byte{}
+	state := &mockAppwriteState{documents: map[string][]byte{}}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -25,16 +35,30 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 				return
 			}
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/databases/transactions":
+			_, _ = w.Write([]byte(`{"$id":"tx_posts"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/databases/transactions/tx_posts":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			state.transactionCommitted = body["commit"] == true
+			_, _ = w.Write([]byte(`{"$id":"tx_posts","status":"committed"}`))
 		case strings.HasSuffix(r.URL.Path, "/documents"):
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
+				return
+			}
 			if r.Method == http.MethodPost {
 				var body map[string]any
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Errorf("decode: %v", err)
 				}
 				data := body["data"].(map[string]any)
-				if strings.Contains(r.URL.Path, "/collections/posts/") {
+				if strings.Contains(r.URL.Path, "/collections/posts/") || strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
+					if r.URL.Query().Get("transactionId") != "tx_posts" {
+						t.Errorf("transactional document missing transaction ID: %s", r.URL.RawQuery)
+					}
 					id := body["documentId"].(string)
-					if _, exists := documents[id]; exists {
+					if _, exists := state.documents[id]; exists {
 						http.Error(w, "document already exists", http.StatusConflict)
 						return
 					}
@@ -43,7 +67,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 						doc[key] = value
 					}
 					encoded, _ := json.Marshal(doc)
-					documents[id] = encoded
+					state.documents[id] = encoded
 					w.WriteHeader(http.StatusCreated)
 					_, _ = w.Write(encoded)
 					return
@@ -58,7 +82,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 		case strings.Contains(r.URL.Path, "/documents/"):
 			if r.Method == http.MethodGet {
 				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-				if saved, ok := documents[id]; ok {
+				if saved, ok := state.documents[id]; ok {
 					_, _ = w.Write(saved)
 					return
 				}
@@ -81,7 +105,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return api, mock
+	return api, mock, state
 }
 
 func TestProfileRequiresAppwriteSession(t *testing.T) {
@@ -123,7 +147,7 @@ func TestProfileRejectsInvalidHandle(t *testing.T) {
 }
 
 func TestCreatePostUsesVerifiedIdentityAndIdempotency(t *testing.T) {
-	api, mock := testServer(t)
+	api, mock, state := testServerWithState(t)
 	defer mock.Close()
 	create := func(content string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/posts", strings.NewReader(`{"content":"`+content+`","visibility":"public"}`))
@@ -136,6 +160,20 @@ func TestCreatePostUsesVerifiedIdentityAndIdempotency(t *testing.T) {
 	first := create("Hello Testagram")
 	if first.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", first.Code, first.Body.String())
+	}
+	if !state.transactionCommitted || len(state.documents) != 2 {
+		t.Fatalf("post and durable outbox event were not committed atomically: committed=%v docs=%d", state.transactionCommitted, len(state.documents))
+	}
+	var outbox map[string]any
+	for _, raw := range state.documents {
+		var doc map[string]any
+		_ = json.Unmarshal(raw, &doc)
+		if doc["event_type"] == "testagram.post.published" {
+			outbox = doc
+		}
+	}
+	if outbox == nil || outbox["actor_id"] != "new_user_1" || outbox["federation_eligible"] != true {
+		t.Fatalf("public post outbox event missing or invalid: %#v", outbox)
 	}
 	var firstEnvelope struct {
 		Data map[string]any `json:"data"`
