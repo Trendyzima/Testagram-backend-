@@ -126,8 +126,8 @@ The retention policy and schema are defined in `fresh-media-retention-lifecycle.
 Every worker must use durable Appwrite jobs, transactional claim/lease ownership, expired-lease reclamation, bounded retries/backoff, append-only audit records, and an independent kill switch. No browser or node runs these jobs.
 
 ## Current code status
-- Pure evaluator: implemented in `internal/freshstorage/retention_policy.go`.
-- Evaluator tests: implemented in `internal/freshstorage/retention_policy_test.go`.
+- Pure evaluator: implemented in `internal/freshstorage/retention_policy.go`; only `post_media` and `story_media` scopes are eligible. Direct messages, avatars and profile media are rejected by the evaluator.
+- Evaluator tests: implemented in `internal/freshstorage/retention_policy_test.go`, including explicit profile-media and direct-message exclusion.
 - Existing upload reservation expiry remains separate and must not be reused for ready media.
 - Concrete Appwrite job repository, provider archive adapter, story/reference integration, replica-aware purge, restore API, and executable scheduled workers remain pending.
 - Retention is disabled and dry-run by default. No destructive operation is authorized by this commit.
