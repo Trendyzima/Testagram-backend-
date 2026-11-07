@@ -12,14 +12,12 @@ func TestPublicHomeFeedIsAnonymousButRequiresCanonicalStore(t *testing.T) {
 }
 
 func TestPublicHomeFeedRejectsInvalidLimit(t *testing.T) {
-	s := &service{db: nil}
+	s := &service{}
 	r := httptest.NewRequest(http.MethodGet, "/api/feed/public?limit=1000", nil)
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
-	// The handler reports an unavailable store before querying; the input
-	// validator is exercised in integration tests with a configured database.
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("public feed without database status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("public feed invalid limit status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 }
 
