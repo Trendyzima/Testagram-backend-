@@ -159,7 +159,11 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready"})
+	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{`{"method":"limit","values":[1]}`}, 1); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready", "post_write": "ready", "outbox": "ready"})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
@@ -258,8 +262,14 @@ func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
 		"created_at":           now,
 		"updated_at":           now,
 	}
-	raw, err := s.db.CreateDocument(r.Context(), "posts", postID, data, nil)
+	tx, err := s.db.CreateTransaction(r.Context(), 120)
 	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "post transaction could not be started")
+		return
+	}
+	rollback := func() { _ = s.db.UpdateTransaction(context.Background(), tx, false) }
+	if err = s.db.CreateDocumentInTransaction(r.Context(), "posts", postID, data, tx); err != nil {
+		rollback()
 		var apiErr appwritedb.HTTPError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
 			existing, readErr := s.db.GetDocument(r.Context(), "posts", postID)
@@ -281,7 +291,32 @@ func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "post could not be saved")
 		return
 	}
-	public, sanitizeErr := publicPostDocument(raw)
+	eventID := "evt_" + hex.EncodeToString(postHash[:16])
+	federationEligible := input.Visibility == "public" && !input.Sensitive
+	event := map[string]any{
+		"event_id": eventID, "event_type": "testagram.post.published", "schema_version": 1,
+		"occurred_at": now, "actor_id": a.ID, "object_id": postID, "visibility": input.Visibility,
+		"federation_eligible": federationEligible, "created_at": now,
+	}
+	if err = s.db.CreateDocumentInTransaction(r.Context(), "backend_outbox", eventID, event, tx); err != nil {
+		rollback()
+		writeError(w, http.StatusServiceUnavailable, "post event could not be recorded")
+		return
+	}
+	if err = s.db.UpdateTransaction(r.Context(), tx, true); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "post transaction could not be committed")
+		return
+	}
+	created := map[string]any{"$id": postID}
+	for key, value := range data {
+		created[key] = value
+	}
+	encoded, err := json.Marshal(created)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "post could not be encoded")
+		return
+	}
+	public, sanitizeErr := publicPostDocument(encoded)
 	if sanitizeErr != nil {
 		writeError(w, http.StatusServiceUnavailable, "post could not be read")
 		return
