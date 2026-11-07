@@ -756,3 +756,23 @@ func TestFederationOutboxReturnsDurableCursorOnFinalPage(t *testing.T) {
 		t.Fatalf("final page cursor=%q has_more=%v, want cursor=%q and false", payload.Data.NextCursor, payload.Data.HasMore, want)
 	}
 }
+
+
+func TestCapabilitiesRequireAuthenticatedAppwriteSession(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/capabilities", strings.NewReader(`{"capability":"testagram.posts.list","input":{}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Testagram-API-Version", "1")
+	request.Header.Set("X-Request-ID", "capability-auth-test")
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthenticated capability request to fail with 401, got %d: %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("X-Testagram-API-Version") != "1" || response.Header().Get("X-Request-ID") != "capability-auth-test" {
+		t.Fatalf("API contract headers missing: %#v", response.Header())
+	}
+}
