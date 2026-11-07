@@ -190,7 +190,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				writeError(w, http.StatusForbidden, "CORS method is not allowed")
 				return
 			}
-			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true}
+			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true, "x-request-id": true, "x-testagram-api-version": true}
 			for _, header := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				if header = strings.ToLower(strings.TrimSpace(header)); header != "" && !allowedHeaders[header] {
 					writeError(w, http.StatusForbidden, "CORS request header is not allowed")
@@ -198,7 +198,8 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				}
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept, X-Request-ID, X-Testagram-API-Version")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Testagram-API-Version, Retry-After")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.Header().Add("Vary", "Access-Control-Request-Method")
 			w.Header().Add("Vary", "Access-Control-Request-Headers")
