@@ -30,6 +30,7 @@ type Server struct {
 	feed           HomeFeedService
 	allowedOrigins map[string]struct{}
 	internalToken  string
+	moderation     ContentModeration
 }
 
 type HomeFeedService interface {
@@ -46,6 +47,11 @@ type MediaService interface {
 
 func (s *Server) WithFeed(feed HomeFeedService) *Server {
 	s.feed = feed
+	return s
+}
+
+func (s *Server) WithModeration(moderation ContentModeration) *Server {
+	s.moderation = moderation
 	return s
 }
 
@@ -104,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
+	mux.HandleFunc("POST /v1/moderation/check", s.moderateContent)
 	if s.internalToken != "" {
 		mux.HandleFunc("GET /internal/v1/federation/outbox", s.federationOutbox)
 	}
@@ -297,6 +304,42 @@ func mustQuery(method, column string, values ...any) string {
 	return string(encoded)
 }
 
+func (s *Server) moderateContent(w http.ResponseWriter, r *http.Request) {
+	if _, status, err := s.authenticate(r); err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if s.moderation == nil {
+		writeError(w, http.StatusServiceUnavailable, "content moderation is not configured")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 24<<10)
+	var input struct {
+		Content string `json:"content"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid moderation payload")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "moderation payload must contain one JSON object")
+		return
+	}
+	input.Content = strings.TrimSpace(input.Content)
+	if !utf8.ValidString(input.Content) || utf8.RuneCountInString(input.Content) < 3 || utf8.RuneCountInString(input.Content) > 5000 {
+		writeError(w, http.StatusBadRequest, "moderation content must contain 3-5000 valid Unicode characters")
+		return
+	}
+	result, err := s.moderation.Analyze(r.Context(), input.Content)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "content moderation is temporarily unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": result, "error": nil})
+}
+
 func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
 	a, status, err := s.authenticate(r)
 	if err != nil {
@@ -345,6 +388,47 @@ func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
 	keyHash := sha256.Sum256([]byte(idempotencyKey))
 	postHash := sha256.Sum256([]byte(a.ID + "\x00" + idempotencyKey))
 	postID := "p_" + hex.EncodeToString(postHash[:16])
+
+	// Resolve an already-committed idempotent retry before calling an external
+	// moderator. A provider outage must not turn a successful earlier write into
+	// an unrecoverable client retry.
+	existing, readErr := s.db.GetDocument(r.Context(), "posts", postID)
+	if readErr == nil {
+		var saved map[string]any
+		if json.Unmarshal(existing, &saved) != nil {
+			writeError(w, http.StatusServiceUnavailable, "existing post could not be read")
+			return
+		}
+		if saved["author_id"] != a.ID || saved["idempotency_key_hash"] != hex.EncodeToString(keyHash[:]) || saved["request_hash"] != hex.EncodeToString(requestHash[:]) {
+			writeError(w, http.StatusConflict, "Idempotency-Key was already used for a different post")
+			return
+		}
+		public, sanitizeErr := publicPostDocument(existing)
+		if sanitizeErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "existing post could not be read")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": public, "error": nil})
+		return
+	}
+	var readAPIError appwritedb.HTTPError
+	if !errors.As(readErr, &readAPIError) || readAPIError.StatusCode != http.StatusNotFound {
+		writeError(w, http.StatusServiceUnavailable, "post idempotency lookup is unavailable")
+		return
+	}
+	if s.moderation == nil {
+		writeError(w, http.StatusServiceUnavailable, "content moderation is not configured")
+		return
+	}
+	moderation, moderationErr := s.moderation.Analyze(r.Context(), input.Content)
+	if moderationErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "content moderation is temporarily unavailable")
+		return
+	}
+	if moderation.Action != "pass" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"ok": false, "data": moderation, "error": map[string]string{"code": "CONTENT_REQUIRES_REVIEW", "message": moderation.Reason}})
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	data := map[string]any{
 		"author_id":            a.ID,
