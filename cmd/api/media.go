@@ -253,7 +253,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.db == nil || (s.virtualStorage == nil && s.media == nil) {
+	if s.db == nil || (s.virtualStorage == nil && s.media == nil && s.dataCentreMedia == nil) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Bounded upload gateway is unavailable", id))
 		return
 	}
@@ -278,7 +278,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		from testagram_media.upload_intents where object_key=$1`, key).
 		Scan(&ownerID, &contentType, &namespace, &visibility, &maxBytes, &intentStatus, &expiresAt)
 	if err != nil || ownerID != userID || intentStatus != "issued" || !time.Now().Before(expiresAt) || maxBytes < 1 ||
-		(namespace == "legacy-media" && s.media == nil) || (namespace != "legacy-media" && s.virtualStorage == nil) {
+		(namespace == "legacy-media" && s.media == nil) || (namespace != "legacy-media" && s.virtualStorage == nil && s.dataCentreMedia == nil) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
@@ -330,6 +330,10 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	var target string
 	if namespace == "legacy-media" {
 		target, err = s.media.PresignObjectPut(userID, key, visibility, contentType, 10*time.Minute, time.Now())
+	} else if s.dataCentreMedia != nil {
+		var grant datacentreclient.UploadGrant
+		grant, err = s.dataCentreMedia.CreateUploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
+		target = grant.UploadURL
 	} else {
 		target, err = s.virtualStorage.UploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
 	}
