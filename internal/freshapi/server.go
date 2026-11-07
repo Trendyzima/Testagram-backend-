@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshfeed"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
@@ -20,7 +22,13 @@ type Server struct {
 	projectID      string
 	httpClient     *http.Client
 	storage        MediaService
+	feed           HomeFeedService
 	allowedOrigins map[string]struct{}
+}
+
+type HomeFeedService interface {
+	Home(context.Context, string, int, string) (freshfeed.Result, error)
+	Ready(context.Context) error
 }
 
 type MediaService interface {
@@ -28,6 +36,11 @@ type MediaService interface {
 	CompleteUpload(context.Context, string, string) error
 	DownloadURL(context.Context, string, string) (string, error)
 	RestoreArchive(context.Context, string, string) error
+}
+
+func (s *Server) WithFeed(feed HomeFeedService) *Server {
+	s.feed = feed
+	return s
 }
 
 func (s *Server) WithStorage(storage MediaService) *Server {
@@ -71,11 +84,10 @@ func New(db *appwritedb.Client, endpoint, projectID string, client *http.Client)
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, 200, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite"})
-	})
+	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
+	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
 	if s.storage != nil {
 		mux.HandleFunc("POST /v1/media/uploads/reservations", s.reserveMediaUpload)
 		mux.HandleFunc("POST /v1/media/uploads/{reservationID}/complete", s.completeMediaUpload)
@@ -129,6 +141,56 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	if s.feed == nil {
+		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not configured")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.feed.Ready(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready"})
+}
+
+func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
+	a, status, err := s.authenticate(r)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	if s.feed == nil {
+		writeError(w, http.StatusServiceUnavailable, "feed service is not configured")
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 50 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 50")
+			return
+		}
+		limit = parsed
+	}
+	cursor := strings.TrimSpace(r.URL.Query().Get("before"))
+	if freshfeed.ValidateCursor(cursor) != nil {
+		writeError(w, http.StatusBadRequest, "invalid feed cursor")
+		return
+	}
+	result, err := s.feed.Home(r.Context(), a.ID, limit, cursor)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "feed is temporarily unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    true,
+		"data":  result,
+		"error": nil,
 	})
 }
 
