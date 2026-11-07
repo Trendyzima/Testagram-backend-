@@ -214,7 +214,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// Public-edge readiness must prove only that the Appwrite identity/profile
 	// dependency needed by login is available. Feed, Algorithm, Federation and
 	// Neon product-data health are reported separately and cannot block login.
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	if _, err := s.db.ListDocumentsWithQueries(ctx, "profiles", []string{
 		mustQuery("limit", "", 1),
