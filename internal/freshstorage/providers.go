@@ -17,6 +17,8 @@ type ProviderSet struct {
 	B2Bucket              string
 	R2                    virtualstorage.Provider
 	R2Bucket              string
+	Archive               virtualstorage.Provider
+	ArchiveBucket         string
 	MediaCDNBaseURL       string
 	MediaCDNSigningSecret string
 }
@@ -31,6 +33,10 @@ func FromEnv() (ProviderSet, error) {
 	out.R2, out.R2Bucket, err = providerFromEnv("CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_REGION", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_BUCKET", "auto")
 	if err != nil {
 		return ProviderSet{}, fmt.Errorf("Cloudflare R2: %w", err)
+	}
+	out.Archive, out.ArchiveBucket, err = providerFromEnv("ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY", "ARCHIVE_S3_BUCKET", "us-east-1")
+	if err != nil {
+		return ProviderSet{}, fmt.Errorf("archive provider: %w", err)
 	}
 	out.MediaCDNBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_BASE_URL")), "/")
 	out.MediaCDNSigningSecret = strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_SIGNING_SECRET"))
