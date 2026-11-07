@@ -18,11 +18,6 @@ import (
 func (s *service) publicHomeFeed(w http.ResponseWriter, r *http.Request) {
 	requestID := requestID(r)
 	w.Header().Set("Cache-Control", "public, max-age=10, stale-while-revalidate=30")
-	if s.db == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_STORE_UNAVAILABLE", "Feed storage is unavailable", requestID))
-		return
-	}
-
 	limit := 20
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -35,6 +30,10 @@ func (s *service) publicHomeFeed(w http.ResponseWriter, r *http.Request) {
 	cursor, err := decodeHomeFeedCursor(r.URL.Query().Get("before"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CURSOR", "Feed cursor is invalid", requestID))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_STORE_UNAVAILABLE", "Feed storage is unavailable", requestID))
 		return
 	}
 
