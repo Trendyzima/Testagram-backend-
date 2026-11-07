@@ -2,6 +2,7 @@ package freshstorage
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +56,29 @@ func TestR2CannotBeConfiguredWithoutB2(t *testing.T) {
 func TestTargetPoolIs150GBDecimal(t *testing.T) {
 	if TargetPoolBytes != 150_000_000_000 {
 		t.Fatalf("TargetPoolBytes = %d, want 150,000,000,000", TargetPoolBytes)
+	}
+}
+
+func TestFromEnvValidatesPrivateCloudflareMediaSigningPair(t *testing.T) {
+	t.Setenv("B2_S3_ENDPOINT", "")
+	t.Setenv("B2_S3_ACCESS_KEY_ID", "")
+	t.Setenv("B2_S3_SECRET_ACCESS_KEY", "")
+	t.Setenv("B2_S3_BUCKET", "")
+	t.Setenv("CLOUDFLARE_R2_ENDPOINT", "")
+	t.Setenv("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
+	t.Setenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
+	t.Setenv("CLOUDFLARE_R2_BUCKET", "")
+	t.Setenv("CLOUDFLARE_MEDIA_BASE_URL", "https://media.testagram.example")
+	t.Setenv("CLOUDFLARE_MEDIA_SIGNING_SECRET", "")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("incomplete Cloudflare URL/signing-secret pair was accepted")
+	}
+	t.Setenv("CLOUDFLARE_MEDIA_SIGNING_SECRET", strings.Repeat("x", 32))
+	if _, err := FromEnv(); err != nil {
+		t.Fatalf("valid private CDN configuration rejected: %v", err)
+	}
+	t.Setenv("CLOUDFLARE_MEDIA_BASE_URL", "http://media.testagram.example")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("insecure Cloudflare media origin was accepted")
 	}
 }
