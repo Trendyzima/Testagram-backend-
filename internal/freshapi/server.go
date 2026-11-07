@@ -202,9 +202,17 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if s.neon != nil {
 		if err := s.neon.Ping(ctx); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "Neon data plane is not ready")
+			writeError(w, http.StatusServiceUnavailable, "Neon PostgreSQL connectivity is not ready")
 			return
 		}
+	}
+	// A successful PostgreSQL ping proves connectivity only. The current
+	// handlers still read and write canonical profiles/posts through Appwrite;
+	// do not advertise the Neon social data plane as production-ready until
+	// those repositories and their transactional outbox are actually wired.
+	if s.neonRequired {
+		writeError(w, http.StatusServiceUnavailable, "Neon is reachable, but canonical social repositories are not integrated")
+		return
 	}
 	if err := s.feed.Ready(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
@@ -221,7 +229,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	neonStatus := "not_configured"
 	if s.neon != nil {
-		neonStatus = "ready"
+		neonStatus = "connected_not_integrated"
 	}
 	moderationStatus := "not_configured"
 	postWriteStatus := "disabled_moderation_unconfigured"
