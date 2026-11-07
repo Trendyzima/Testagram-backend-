@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -86,7 +87,8 @@ func (s *service) socialCreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_CREATE_FAILED", "Post could not be saved", requestID))
@@ -156,6 +158,5 @@ func (s *service) socialCreatePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	post.LegacyID, post.UserID, post.Body, post.Status = post.ID, post.AuthorID, post.Content, "published"
-	w.Header().Set("Location", "/api/social/posts/"+post.ID)
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": post, "error": nil, "request_id": requestID})
 }
