@@ -397,7 +397,7 @@ func (s *Server) updateFederationPreference(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "federation preference could not be saved")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"federation_enabled": *input.Enabled}, "error": nil})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"enabled": *input.Enabled}, "error": nil})
 }
 
 func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
