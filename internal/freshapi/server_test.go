@@ -728,7 +728,7 @@ func TestHandlerRejectsUnsafeRequestIDAndGeneratesOne(t *testing.T) {
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
 	got := rec.Header().Get("X-Request-ID")
-	if got == "" || strings.ContainsAny(got, "\\r\\n") || got == "bad\\r\\nvalue" {
+	if got == "" || strings.ContainsAny(got, "\r\n") || got == "bad\r\nvalue" {
 		t.Fatalf("unsafe request ID was not replaced: %q", got)
 	}
 }
