@@ -8,7 +8,7 @@ All collections use document security enabled with no broad collection-level pub
 
 | Collection | Initial attributes | Required indexes |
 |---|---|---|
-| profiles | user_id string(36), handle string(30), display_name string(80), bio string(280), avatar_object_id string(128), created_at datetime, updated_at datetime | unique user_id; unique handle |
+| profiles | user_id string(36), handle string(30), display_name string(80), bio string(280), avatar_object_id string(128), birth_date string(10), legal_terms_accepted_at datetime, legal_privacy_accepted_at datetime, legal_content_policy_accepted_at datetime, legal_age_confirmed_at datetime, legal_policy_version string(32), identity_verification_status enum (pending, under_review, approved, rejected, blocked), identity_verified_at datetime, identity_verification_id string(128), identity_fingerprint_hash string(64), federation_enabled boolean, created_at datetime, updated_at datetime | unique user_id; unique handle; unique identity_verification_id; unique identity_fingerprint_hash |
 | account_settings | user_id string(36), profile_visibility enum (public, private), message_privacy enum, created_at datetime, updated_at datetime | unique user_id |
 | follows | follower_id string(36), followed_id string(36), state enum (pending, accepted, rejected), created_at datetime | unique follower_id+followed_id; followed_id+state; follower_id+state; follower_id+state+created_at; follower_id+followed_id+state |
 | blocks | blocker_id string(36), blocked_id string(36), created_at datetime | unique blocker_id+blocked_id; blocked_id; blocker_id+created_at; blocked_id+created_at; blocked_id+blocker_id |
@@ -61,3 +61,11 @@ The independent cold archive uses `ARCHIVE_S3_*` credentials and a bucket distin
 Retention must stay disabled and dry-run by default. Never run archive/story expiry against pre-rollout records; never purge user-deleted media before the 30-day recovery deadline. Direct messages, avatars, profile media, text-only posts, and legacy Supabase records are out of scope.
 
 The story and user-deletion workers set `media_objects.lifecycle_state=purging` before replica deletion. Attachment writers must transactionally reject new references to purging media; that attachment-writer guard is a required pre-production integration gate. The purge worker only reclaims quota after all listed replica documents are `deleted` and are re-read in the quota-release transaction. A node replica currently blocks the purge because node transport/deletion is not yet implemented.
+
+## Identity and account-creation invariants
+
+- Every fresh user API request requires a valid Appwrite JWT, an active Appwrite account, emailVerification=true, and a canonical profiles document whose identity_verification_status is approved.
+- A missing profile or a pending/rejected/blocked identity status is denied by the Backend. Do not create user accounts directly from the browser or set identity status from client-controlled Appwrite preferences.
+- New accounts are created only through POST /v1/identity/register. The Backend verifies a short-lived HMAC-signed identity approval assertion, checks adult eligibility and the current legal-policy version, creates the Appwrite user with verified email, then creates the canonical profile with approved identity and legal-consent metadata.
+- IDENTITY_PREAUTH_SECRET must be shared only between the trusted identity-approval issuer and Backend. It must never appear in browser/mobile configuration.
+- Store only the HMAC fingerprint and verification session reference. Never store raw national identity numbers or document images in the profiles collection.

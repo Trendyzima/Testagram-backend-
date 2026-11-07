@@ -35,6 +35,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := api.WithAppwriteServerKey(key); err != nil {
+		log.Fatal(err)
+	}
+	if identitySecret := strings.TrimSpace(os.Getenv("IDENTITY_PREAUTH_SECRET")); identitySecret != "" {
+		if err := api.WithIdentitySecret(identitySecret); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	// Publishing remains unavailable unless the private moderation provider is
 	// configured. The post handler also enforces this server-side (not just UI).
