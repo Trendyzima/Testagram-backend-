@@ -24,8 +24,8 @@ paths:
       summary: Check whether the Backend can serve its currently enabled routes, including login
       description: A reachable Neon database is reported as connected_not_integrated until canonical social repositories are deployed. This endpoint is the process/edge readiness gate, not proof of full product readiness.
       responses:
-        '200': { description: Appwrite identity, enabled feed dependencies and outbox are ready; response reports social_data_plane and platform_ready=false when Neon repositories are not integrated }
-        '503': { description: Required Neon connection, Appwrite collections/indexes, feed or Algorithm dependency is unavailable }
+        '200': { description: Appwrite profile storage is reachable for approved-user login; response reports social_data_plane and platform_ready=false when Neon repositories are not integrated }
+        '503': { description: Appwrite profile storage is unavailable }
   /readyz/platform:
     get:
       security: []
