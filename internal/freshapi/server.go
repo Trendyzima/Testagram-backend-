@@ -1041,6 +1041,7 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 	// Federation is opt-in. Set the default only on first profile creation;
 	// ordinary profile edits must never revoke or silently re-enable consent.
 	createData["federation_enabled"] = false
+	createData["identity_verification_status"] = "pending"
 	raw, err := s.db.CreateDocument(r.Context(), "profiles", a.ID, createData, nil)
 	if err != nil {
 		// A conflict means this profile already exists; update only profile
