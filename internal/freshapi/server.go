@@ -137,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
 	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("GET /readyz/platform", s.platformReadyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
 	if s.identitySecret != "" && s.appwriteServerKey != "" { mux.HandleFunc("POST /v1/identity/register", s.registerIdentityVerifiedAccount) }
@@ -228,14 +229,10 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// A successful PostgreSQL ping proves connectivity only. The current
-	// handlers still read and write canonical profiles/posts through Appwrite;
-	// do not advertise the Neon social data plane as production-ready until
-	// those repositories and their transactional outbox are actually wired.
-	if s.neonRequired {
-		writeError(w, http.StatusServiceUnavailable, "Neon is reachable, but canonical social repositories are not integrated")
-		return
-	}
+	// /readyz is the process/service readiness gate used by the public edge.
+	// A connected Neon database is reported honestly as not yet integrated;
+	// it must not prevent Appwrite-backed identity and login endpoints from
+	// becoming reachable. Full product readiness remains a separate gate.
 	if err := s.feed.Ready(ctx); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
 		return
@@ -259,7 +256,36 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		moderationStatus = "ready"
 		postWriteStatus = "ready"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "social_data_plane": neonStatus, "feed": "ready", "moderation": moderationStatus, "post_write": postWriteStatus, "outbox": "ready"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"identity": "appwrite",
+		"database": "appwrite",
+		"social_data_plane": neonStatus,
+		"platform_ready": false,
+		"platform_readiness_path": "/readyz/platform",
+		"feed": "ready",
+		"moderation": moderationStatus,
+		"post_write": postWriteStatus,
+		"outbox": "ready",
+	})
+}
+
+// platformReadyz is intentionally stricter than process readiness. The edge
+// may serve login while this endpoint remains unavailable; product rollout
+// must not be declared complete until canonical Neon repositories and their
+// transactional outbox are integrated and verified.
+func (s *Server) platformReadyz(w http.ResponseWriter, r *http.Request) {
+	if !s.neonRequired || s.neon == nil {
+		writeError(w, http.StatusServiceUnavailable, "Neon is not configured as the required canonical social data plane")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.neon.Ping(ctx); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Neon PostgreSQL connectivity is not ready")
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, "Neon is reachable, but canonical social repositories are not integrated")
 }
 
 // capabilities is an authenticated, versioned fail-closed boundary. A
