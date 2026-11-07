@@ -16,9 +16,19 @@ paths:
   /readyz:
     get:
       security: []
+      summary: Check the Appwrite login service and public API process
+      description: Checks the Appwrite Auth account endpoint and profile database needed for session authorization. Neon, Algorithm, Federation and feed readiness do not gate login. A configured Neon data plane is reported as configured_not_checked.
       responses:
-        '200': { description: Appwrite/feed/outbox are ready; response reports social_data_plane, moderation and post_write capability states }
-        '503': { description: Required Neon connection, Appwrite collections/indexes, feed or Algorithm dependency is unavailable }
+        '200': { description: Appwrite Auth endpoint and profile store are ready; authentication is available and platform_ready remains false until the strict readiness endpoint passes }
+        '503': { description: Appwrite profile database is unavailable }
+  /readyz/platform:
+    get:
+      security: []
+      summary: Check full product data-plane readiness
+      description: Strict rollout gate for required Neon connectivity, feed schema/ranking dependencies and the durable Federation outbox. A reachable Neon database alone is not proof that canonical social repositories are integrated.
+      responses:
+        '200': { description: All configured product data-plane dependencies are ready }
+        '503': { description: Neon, feed, Algorithm or Federation outbox dependency is unavailable or canonical Neon repositories are not integrated }
   /v1/me:
     get:
       summary: Read authenticated Appwrite user profile
