@@ -190,13 +190,7 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
 		return
 	}
-	postWrite := "blocked_moderation_unconfigured"
-	moderationStatus := "unavailable"
-	if s.moderation != nil {
-		postWrite = "ready"
-		moderationStatus = "ready"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready", "post_write": postWrite, "moderation": moderationStatus, "outbox": "ready"})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready", "post_write": "ready", "outbox": "ready"})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
