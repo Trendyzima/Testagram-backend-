@@ -217,7 +217,7 @@ func TestFreshMediaEndpointsUseAuthenticatedAppwriteOwner(t *testing.T) {
 	defer mock.Close()
 	media := &fakeMediaService{}
 	api.WithStorage(media)
-	reserve := httptest.NewRequest(http.MethodPost, "/v1/media/uploads/reservations", strings.NewReader(`{"bytes":1024,"content_type":"image/jpeg","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`))
+	reserve := httptest.NewRequest(http.MethodPost, "/v1/media/uploads/reservations", strings.NewReader(`{"bytes":1024,"content_type":"image/jpeg","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","scope":"story_media"}`))
 	reserve.Header.Set("Authorization", "Bearer valid-session")
 	reserve.Header.Set("Idempotency-Key", "upload-key-123")
 	reserveRec := httptest.NewRecorder()
@@ -225,7 +225,7 @@ func TestFreshMediaEndpointsUseAuthenticatedAppwriteOwner(t *testing.T) {
 	if reserveRec.Code != http.StatusCreated {
 		t.Fatalf("reserve status=%d body=%s", reserveRec.Code, reserveRec.Body.String())
 	}
-	if media.reserveInput.OwnerID != "new_user_1" || media.reserveInput.IdempotencyKey != "upload-key-123" {
+	if media.reserveInput.OwnerID != "new_user_1" || media.reserveInput.IdempotencyKey != "upload-key-123" || media.reserveInput.Scope != "story_media" {
 		t.Fatalf("owner/idempotency not bound to verified session: %#v", media.reserveInput)
 	}
 	complete := httptest.NewRequest(http.MethodPost, "/v1/media/uploads/res_123/complete", nil)
