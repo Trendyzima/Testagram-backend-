@@ -820,8 +820,9 @@ func writeStorageError(w http.ResponseWriter, err error) {
 }
 
 type account struct {
-	ID     string `json:"$id"`
-	Status bool   `json:"status"`
+	ID                string `json:"$id"`
+	Status            bool   `json:"status"`
+	EmailVerification bool   `json:"emailVerification"`
 }
 
 func (s *Server) authenticate(r *http.Request) (account, int, error) {
@@ -855,6 +856,9 @@ func (s *Server) authenticate(r *http.Request) (account, int, error) {
 	var a account
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&a); err != nil || !validUserID(a.ID) || !a.Status {
 		return account{}, 401, errors.New("Appwrite account is invalid or disabled")
+	}
+	if !a.EmailVerification {
+		return account{}, http.StatusForbidden, errors.New("EMAIL_NOT_VERIFIED")
 	}
 	return a, 200, nil
 }
