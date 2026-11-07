@@ -168,6 +168,120 @@ paths:
       responses:
         '200': { description: Signed media delivery URL }
         '401': { description: Invalid or expired Appwrite JWT }
+  /v1/me/legal:
+    get:
+      summary: Read authenticated legal-consent status
+      responses:
+        '200': {description: Current accepted policy version and consent timestamps}
+        '401': {description: Invalid Appwrite JWT}
+    put:
+      summary: Record age confirmation and current legal consents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [birth_date, terms, privacy, content_policy, age_confirmed]
+              properties:
+                birth_date: {type: string, format: date}
+                terms: {type: boolean, const: true}
+                privacy: {type: boolean, const: true}
+                content_policy: {type: boolean, const: true}
+                age_confirmed: {type: boolean, const: true}
+      responses:
+        '200': {description: Consent recorded}
+        '400': {description: Consent or age confirmation invalid}
+        '401': {description: Invalid Appwrite JWT}
+  /v1/me/federation:
+    get:
+      summary: Read current user's opt-in Federation preference
+      responses:
+        '200': {description: Federation preference}
+        '401': {description: Invalid Appwrite JWT}
+    put:
+      summary: Update current user's Federation preference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        '200': {description: Preference updated}
+        '400': {description: Invalid preference}
+        '401': {description: Invalid Appwrite JWT}
+  /v1/moderation/check:
+    post:
+      summary: Analyze text content before publication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content]
+              properties:
+                content: {type: string, minLength: 1, maxLength: 5000}
+      responses:
+        '200': {description: Moderation decision}
+        '400': {description: Invalid content}
+        '401': {description: Invalid Appwrite JWT}
+        '503': {description: Moderation dependency unavailable}
+  /v1/media/{objectID}/download:
+    get:
+      summary: Obtain a short-lived owner-authorized media delivery URL
+      parameters:
+        - in: path
+          name: objectID
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        '200': {description: Short-lived signed media URL}
+        '401': {description: Invalid Appwrite JWT}
+        '403': {description: Caller is not authorized to access the media}
+        '404': {description: Media object not found}
+  /internal/v1/federation/readyz:
+    get:
+      security:
+        - federationInternalBearer: []
+      summary: Verify Backend dependencies required by Federation
+      responses:
+        '200': {description: Backend Federation dependency is ready}
+        '401': {description: Invalid internal service token}
+        '503': {description: Federation dependency unavailable}
+  /internal/v1/federation/actors/{handle}:
+    get:
+      security:
+        - federationInternalBearer: []
+      summary: Resolve an eligible local ActivityPub actor by handle
+      parameters:
+        - in: path
+          name: handle
+          required: true
+          schema: {type: string, minLength: 3, maxLength: 30}
+      responses:
+        '200': {description: Federation-enabled local actor}
+        '401': {description: Invalid internal service token}
+        '404': {description: Actor unavailable or Federation disabled}
+  /internal/v1/federation/actors/by-id/{userID}:
+    get:
+      security:
+        - federationInternalBearer: []
+      summary: Resolve an eligible local ActivityPub actor by Appwrite user ID
+      parameters:
+        - in: path
+          name: userID
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 36}
+      responses:
+        '200': {description: Federation-enabled local actor}
+        '401': {description: Invalid internal service token}
+        '404': {description: Actor unavailable or Federation disabled}
 components:
   securitySchemes:
     federationInternalBearer:
