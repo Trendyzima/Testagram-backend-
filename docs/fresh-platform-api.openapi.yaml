@@ -36,6 +36,43 @@ paths:
       responses:
         '200': { description: Profile updated }
         '401': { description: Invalid or expired Appwrite JWT }
+  /v1/posts:
+    post:
+      operationId: createPost
+      summary: Create an authenticated text post
+      security:
+        - appwriteJWT: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content, visibility]
+              properties:
+                content: { type: string, minLength: 1, maxLength: 5000 }
+                visibility: { type: string, enum: [public, followers, private] }
+                sensitive: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Post created
+        "200":
+          description: Idempotent replay of the original post
+        "400":
+          description: Invalid post or idempotency key
+        "409":
+          description: Idempotency key reused with a different payload
+        "401":
+          description: Invalid Appwrite session
   /v1/feed/home:
     get:
       summary: Read authenticated home feed
