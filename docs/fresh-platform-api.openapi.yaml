@@ -94,6 +94,19 @@ paths:
   /v1/media/uploads/reservations:
     post:
       summary: Reserve media quota and obtain upload capability
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [bytes, content_type]
+              properties:
+                bytes: { type: integer, minimum: 1 }
+                content_type: { type: string, maxLength: 128 }
+                sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+                scope: { type: string, enum: [post_media, story_media, direct_message, profile_media, avatar], default: post_media }
       parameters:
         - in: header
           name: Idempotency-Key
