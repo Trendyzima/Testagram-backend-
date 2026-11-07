@@ -15,7 +15,7 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := New(server.URL, "unit-test-secret-that-is-long-enough-for-api-that-is-long-enough-for-api", time.Second)
+	client, err := New(server.URL, "unit-test-secret-that-is-long-enough-for-api", time.Second)
 	if err != nil { t.Fatal(err) }
 	return client
 }
