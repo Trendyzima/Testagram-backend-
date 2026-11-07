@@ -43,18 +43,21 @@ func main() {
 	neonRequired := strings.EqualFold(strings.TrimSpace(os.Getenv("NEON_REQUIRED")), "true")
 	var neonClient *neondb.Client
 	if neonURL == "" {
-		if neonRequired {
-			log.Fatal("NEON_REQUIRED is true but NEON_DATABASE_URL is not configured")
-		}
+		log.Printf("Neon social data plane is not configured; Appwrite authentication remains available and /readyz/platform will stay unavailable")
 	} else {
 		neonClient, err = neondb.Open(context.Background(), neondb.Config{
 			URL: neonURL, MaxOpenConns: 8, MaxIdleConns: 2,
 			ConnMaxLifetime: 15 * time.Minute, ConnectTimeout: 5 * time.Second,
 		})
 		if err != nil {
-			log.Fatalf("configure Neon social data plane: %v", err)
+			// Neon is a product-data dependency, not an identity issuer. Keep the
+			// Appwrite login API alive during a Neon outage; strict product
+			// readiness remains false and feed writes/reads fail closed.
+			log.Printf("Neon social data plane unavailable; keeping Appwrite authentication online: %v", err)
+			neonClient = nil
+		} else {
+			defer neonClient.Close()
 		}
-		defer neonClient.Close()
 	}
 	api.WithNeon(neonClient, neonRequired)
 
