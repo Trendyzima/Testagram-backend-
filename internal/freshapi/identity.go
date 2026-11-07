@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -208,6 +207,3 @@ func (s *Server) verifyIdentityApprovalToken(raw string) (identityApprovalPayloa
 	return payload, nil
 }
 
-func (p identityApprovalPayload) String() string {
-	return fmt.Sprintf("identity approval for %s", p.Email)
-}
