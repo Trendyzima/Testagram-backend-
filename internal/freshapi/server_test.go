@@ -17,6 +17,7 @@ import (
 type mockAppwriteState struct {
 	documents            map[string][]byte
 	transactionCommitted bool
+	outboxQueries        []string
 }
 
 func testServer(t *testing.T) (*Server, *httptest.Server) {
@@ -44,6 +45,9 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			_, _ = w.Write([]byte(`{"$id":"tx_posts","status":"committed"}`))
 		case strings.HasSuffix(r.URL.Path, "/documents"):
 			if r.Method == http.MethodGet {
+				if strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
+					state.outboxQueries = append(state.outboxQueries, r.URL.Query()["queries[]"]...)
+				}
 				_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 				return
 			}
@@ -397,8 +401,11 @@ func TestHomeFeedRequiresVerifiedAppwriteIdentityAndUsesBoundedPagination(t *tes
 }
 
 func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T) {
-	api, mock := testServer(t)
+	api, mock, state := testServerWithState(t)
 	defer mock.Close()
+	if err := api.WithInternalToken("too-short"); err == nil {
+		t.Fatal("short Federation service token accepted")
+	}
 	if err := api.WithInternalToken(strings.Repeat("t", 32)); err != nil {
 		t.Fatal(err)
 	}
@@ -421,6 +428,10 @@ func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T
 	api.Handler().ServeHTTP(validRec, valid)
 	if validRec.Code != http.StatusOK || !strings.Contains(validRec.Body.String(), `"events":[]`) {
 		t.Fatalf("valid outbox request status=%d body=%s", validRec.Code, validRec.Body.String())
+	}
+	joinedQueries := strings.Join(state.outboxQueries, " ")
+	if !strings.Contains(joinedQueries, `"column":"federation_eligible"`) || !strings.Contains(joinedQueries, `"values":[true]`) || !strings.Contains(joinedQueries, `testagram.post.published`) {
+		t.Fatalf("outbox query did not restrict results to eligible public post events: %s", joinedQueries)
 	}
 }
 
