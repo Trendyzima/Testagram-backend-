@@ -783,3 +783,26 @@ func TestHomeFeedCursorRoundTripAndValidation(t *testing.T) {
 		t.Fatal("expected invalid cursor rejection")
 	}
 }
+
+func TestPublicHomeFeedIsAnonymousButRequiresCanonicalStore(t *testing.T) {
+	s := &service{}
+	r := httptest.NewRequest(http.MethodGet, "/api/feed/public?limit=12", nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("public feed without database status = %d, want %d: %s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	if strings.Contains(strings.ToLower(w.Body.String()), "authentication") {
+		t.Fatalf("public feed unexpectedly requires authentication: %s", w.Body.String())
+	}
+}
+
+func TestPublicHomeFeedRejectsInvalidLimit(t *testing.T) {
+	s := &service{}
+	r := httptest.NewRequest(http.MethodGet, "/api/feed/public?limit=1000", nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("public feed invalid limit status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
