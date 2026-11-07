@@ -590,7 +590,7 @@ func TestAppwriteExpiryQueriesUseDocumentAPIJSONFormat(t *testing.T) {
 		if err := json.Unmarshal(raw, &child); err != nil {
 			t.Fatal(err)
 		}
-		if child["method"] == nil || child["column"] == nil {
+		if child["method"] == nil || child["attribute"] == nil {
 			t.Fatalf("invalid Appwrite REST query child: %s", raw)
 		}
 	}
