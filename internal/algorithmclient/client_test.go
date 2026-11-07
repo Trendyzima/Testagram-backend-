@@ -123,3 +123,20 @@ func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestReadyChecksAlgorithmServiceHealth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/readyz" || r.Method != http.MethodGet {
+			t.Fatalf("unexpected readiness request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Ready(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
