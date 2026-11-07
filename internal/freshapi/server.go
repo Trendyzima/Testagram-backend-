@@ -803,11 +803,16 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "profile fields are invalid")
 		return
 	}
-	data := map[string]any{"user_id": a.ID, "display_name": input.DisplayName, "handle": input.Handle, "bio": input.Bio, "federation_enabled": false, "updated_at": time.Now().UTC().Format(time.RFC3339Nano)}
-	raw, err := s.db.CreateDocument(r.Context(), "profiles", a.ID, data, nil)
+	data := map[string]any{"user_id": a.ID, "display_name": input.DisplayName, "handle": input.Handle, "bio": input.Bio, "updated_at": time.Now().UTC().Format(time.RFC3339Nano)}
+	createData := map[string]any{}
+	for key, value := range data { createData[key] = value }
+	// Federation is opt-in. Set the default only on first profile creation;
+	// ordinary profile edits must never revoke or silently re-enable consent.
+	createData["federation_enabled"] = false
+	raw, err := s.db.CreateDocument(r.Context(), "profiles", a.ID, createData, nil)
 	if err != nil {
-		// A conflict means this profile already exists; update only the
-		// authenticated user's deterministic profile document.
+		// A conflict means this profile already exists; update only profile
+		// fields and preserve its independent federation preference.
 		raw, err = s.db.UpdateDocument(r.Context(), "profiles", a.ID, data)
 	}
 	if err != nil {
