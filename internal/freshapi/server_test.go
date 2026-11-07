@@ -2,6 +2,7 @@ package freshapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,6 +20,7 @@ type mockAppwriteState struct {
 	documents            map[string][]byte
 	transactionCommitted bool
 	outboxQueries        []string
+	outboxDocuments      [][]byte
 	profileFederationEnabled bool
 	accountActive bool
 }
@@ -72,6 +74,13 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				}
 				if strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
 					state.outboxQueries = append(state.outboxQueries, r.URL.Query()["queries[]"]...)
+					documents := make([]json.RawMessage, 0, len(state.outboxDocuments))
+					for _, document := range state.outboxDocuments {
+						documents = append(documents, json.RawMessage(document))
+					}
+					encoded, _ := json.Marshal(map[string]any{"documents": documents, "total": len(documents)})
+					_, _ = w.Write(encoded)
+					return
 				}
 				_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 				return
@@ -531,6 +540,38 @@ func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T
 	}
 }
 
+func TestFederationOutboxReturnsCursorForFinalNonEmptyPage(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	state.outboxDocuments = [][]byte{[]byte(`{"$id":"evt_last_page_01","event_type":"testagram.post.published"}`)}
+	const token = "federation-service-token-that-is-long-enough"
+	if err := api.WithInternalToken(token); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=10", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("outbox status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			NextCursor string `json:"next_cursor"`
+			HasMore    bool   `json:"has_more"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(response.Data.NextCursor)
+	if err != nil || string(decoded) != "evt_last_page_01" {
+		t.Fatalf("final page cursor=%q decoded=%q err=%v", response.Data.NextCursor, decoded, err)
+	}
+	if response.Data.HasMore {
+		t.Fatal("single-event page should not report more results")
+	}
+}
 func TestFederationOutboxIsNotMountedWithoutSecret(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
