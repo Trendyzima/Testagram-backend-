@@ -21,6 +21,7 @@ type mockAppwriteState struct {
 	outboxQueries            []string
 	profileFederationEnabled bool
 	accountActive            bool
+	emailVerified             bool
 	profileUpdates           map[string]map[string]any
 }
 
@@ -40,7 +41,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 
 func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
-	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, profileUpdates: map[string]map[string]any{}}
+	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, emailVerified: true, profileUpdates: map[string]map[string]any{}}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -48,7 +49,7 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				http.Error(w, "unauthorized", 401)
 				return
 			}
-			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true}`))
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true,"emailVerification":`+strconv.FormatBool(state.emailVerified)+`}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/new_user_1":
 			status := state.accountActive
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":`+strconv.FormatBool(status)+`}`))
@@ -214,6 +215,20 @@ func TestUpdateFederationPreferenceRequiresAuthenticatedProfile(t *testing.T) {
 	api.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":true`) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFreshAPIRejectsUnverifiedAppwriteEmail(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	state.emailVerified = false
+	// The fake Appwrite endpoint below reads the mutable state for this response.
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer valid-session")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "EMAIL_NOT_VERIFIED") {
+		t.Fatalf("unverified Appwrite account status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
