@@ -17,12 +17,12 @@ import (
 )
 
 type mockAppwriteState struct {
-	documents            map[string][]byte
-	transactionCommitted bool
-	outboxQueries        []string
-	outboxDocuments      [][]byte
+	documents                map[string][]byte
+	transactionCommitted     bool
+	outboxQueries            []string
+	outboxDocuments          [][]byte
 	profileFederationEnabled bool
-	accountActive             bool
+	accountActive            bool
 }
 
 type staticModeration struct {
