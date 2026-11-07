@@ -562,6 +562,10 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
+	if storageNamespace == "legacy-media" && s.media == nil {
+		writeJSON(w, http.StatusGone, errorBody("LEGACY_MEDIA_RETIRED", "Legacy media storage is no longer available on this runtime", id))
+		return
+	}
 	if strings.TrimSpace(body.Visibility) == "" {
 		body.Visibility = intentVisibility
 	}
@@ -1465,6 +1469,9 @@ func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, ke
 			return errors.New("virtual storage provider is required for this namespace")
 		}
 		return s.virtualStorage.Delete(ctx, userID, userID, storageNamespace, key)
+	}
+	if s.media == nil {
+		return errors.New("legacy media storage is not configured")
 	}
 	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
 	if err != nil {
