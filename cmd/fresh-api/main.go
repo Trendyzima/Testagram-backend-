@@ -35,6 +35,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Publishing remains unavailable unless the private moderation provider is
+	// configured. The post handler also enforces this server-side (not just UI).
+	moderationKey := strings.TrimSpace(os.Getenv("ONSPACE_AI_API_KEY"))
+	if moderationKey != "" {
+		moderationBase := strings.TrimSpace(os.Getenv("ONSPACE_AI_BASE_URL"))
+		if moderationBase == "" {
+			moderationBase = "https://ai.onspace.ai/v1"
+		}
+		moderation, moderationErr := freshapi.NewHTTPModerationService(moderationBase, moderationKey, nil)
+		if moderationErr != nil {
+			log.Fatalf("configure content moderation: %v", moderationErr)
+		}
+		api.WithModeration(moderation)
+		log.Printf("fresh post moderation enabled")
+	} else {
+		log.Printf("fresh post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
+	}
 	if token := strings.TrimSpace(os.Getenv("FRESH_FEDERATION_INTERNAL_TOKEN")); token != "" {
 		if err := api.WithInternalToken(token); err != nil {
 			log.Fatal(err)
