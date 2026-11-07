@@ -718,7 +718,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
 			set status='cleanup_pending', expires_at=now(), updated_at=now()
 			where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
-		if storageNamespace == "legacy-media" || s.virtualStorage == nil {
+		if storageNamespace == "legacy-media" || (s.virtualStorage == nil && s.dataCentreMedia == nil) {
 			if deleteErr := s.deleteMediaObject(r.Context(), userID, body.Key, body.Visibility); deleteErr == nil {
 				_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
 					set status='expired', updated_at=now() where object_key=$1 and owner_id=$2 and status='cleanup_pending'`, body.Key, userID)
@@ -865,7 +865,7 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorBody("MODERATION_UNAUTHORIZED", "A valid operator moderation token is required", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -1357,7 +1357,7 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -1444,6 +1444,16 @@ func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility
 
 func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
 	if storageNamespace != "" && storageNamespace != "legacy-media" {
+		if s.dataCentreMedia != nil {
+			status, err := s.dataCentreMedia.Delete(ctx, userID, userID, storageNamespace, key)
+			if err != nil {
+				return err
+			}
+			if status != "deleted" {
+				return errors.New("Data Centre media deletion remains pending")
+			}
+			return nil
+		}
 		if s.virtualStorage == nil {
 			return errors.New("virtual storage provider is required for this namespace")
 		}
@@ -1498,7 +1508,7 @@ type mediaCleanupObject struct {
 }
 
 func (s *service) cleanupMediaBatch(ctx context.Context) error {
-	if s.db == nil || s.media == nil {
+	if s.db == nil || (s.media == nil && s.dataCentreMedia == nil) {
 		return nil
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
