@@ -9,12 +9,12 @@ All collections use document security enabled with no broad collection-level pub
 | Collection | Initial attributes | Required indexes |
 |---|---|---|
 | profiles | user_id string(36), handle string(30), display_name string(80), bio string(280), avatar_object_id string(128), created_at datetime, updated_at datetime | unique user_id; unique handle |
-| account_settings | user_id string(36), profile_visibility enum, message_privacy enum, created_at datetime, updated_at datetime | unique user_id |
-| follows | follower_id string(36), followed_id string(36), state enum, created_at datetime | unique follower_id+followed_id; followed_id+state; follower_id+state |
-| blocks | blocker_id string(36), blocked_id string(36), created_at datetime | unique blocker_id+blocked_id; blocked_id |
-| posts | author_id string(36), body string(10000), visibility enum, status enum, created_at datetime, updated_at datetime | author_id+created_at; visibility+status+created_at |
+| account_settings | user_id string(36), profile_visibility enum (public, private), message_privacy enum, created_at datetime, updated_at datetime | unique user_id |
+| follows | follower_id string(36), followed_id string(36), state enum (pending, accepted, rejected), created_at datetime | unique follower_id+followed_id; followed_id+state; follower_id+state; follower_id+state+created_at; follower_id+followed_id+state |
+| blocks | blocker_id string(36), blocked_id string(36), created_at datetime | unique blocker_id+blocked_id; blocked_id; blocker_id+created_at; blocked_id+created_at; blocked_id+blocker_id |
+| posts | author_id string(36), body string(10000), visibility enum (public, followers, private), status enum (draft, published, deleted), sensitive boolean, created_at datetime, updated_at datetime | author_id+created_at; status+created_at; visibility+status+created_at |
 | stories | author_id string(36), body string(10000), visibility enum, status enum (active, expired, deleted), expires_at datetime, created_at datetime, updated_at datetime, expired_at datetime | status+expires_at; author_id+created_at |
-| post_media | post_id string(36), owner_id string(36), object_id string(128), media_type enum, position integer, created_at datetime | post_id+position; unique object_id+created_at |
+| post_media | post_id string(36), owner_id string(36), object_id string(128), media_type enum (image, video, audio), position integer, created_at datetime | post_id+position; unique object_id+created_at |
 | likes | post_id string(36), user_id string(36), created_at datetime | unique post_id+user_id; user_id+created_at |
 | comments | post_id string(36), author_id string(36), parent_id string(36), body string(5000), status enum, created_at datetime | post_id+created_at; author_id+created_at |
 | reposts | post_id string(36), user_id string(36), created_at datetime | unique post_id+user_id; user_id+created_at |
@@ -31,6 +31,8 @@ All collections use document security enabled with no broad collection-level pub
 | media_lifecycle_audit | job_key string(64), object_id string(128), action string(32), outcome string(32), provider string(32), bytes_decimal string(20), sha256 string(64), details string(1000), created_at datetime | object_id+created_at; job_key+created_at |
 | story_media | story_id string(36), object_id string(128), position integer, created_at datetime | story_id+position; object_id+created_at |
 | retention_jobs | job_key string(64), object_id string(128), action enum (expire_story, archive, purge_deleted), policy_version string(32), due_at datetime, status enum (pending, running, retry, completed), worker_id string(128), lease_token string(64), lease_until datetime, attempts integer, last_error string(1000), created_at datetime, updated_at datetime, completed_at datetime | unique job_key; status+due_at; status+lease_until; object_id+action |
+
+The feed readiness probe checks the collections and composite indexes used by its queries; Backend /readyz remains unavailable until these indexes are usable. The feed reader also requires a composite `posts(status, created_at DESC)` index for the published-post scan. The Backend separately loads candidate-scoped follow and block queries and fails closed if those relationship collections cannot be read.
 
 ## Implementation constraints
 
