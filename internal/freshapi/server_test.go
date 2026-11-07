@@ -16,6 +16,7 @@ import (
 )
 
 type mockAppwriteState struct {
+	authUnavailable          bool
 	documents                map[string][]byte
 	transactionCommitted     bool
 	outboxQueries            []string
@@ -49,6 +50,10 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
+			if state.authUnavailable && r.Header.Get("X-Appwrite-JWT") == "" {
+				http.Error(w, "Appwrite Auth unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			if r.Header.Get("X-Appwrite-JWT") != "valid-session" {
 				http.Error(w, "unauthorized", 401)
 				return
@@ -629,6 +634,17 @@ func TestFederationOutboxIsNotMountedWithoutSecret(t *testing.T) {
 	api.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("private route should not exist without token, status=%d", rec.Code)
+	}
+}
+
+func TestReadyzFailsWhenAppwriteAuthIsUnavailable(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	state.authUnavailable = true
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "Appwrite Auth service is not ready") {
+		t.Fatalf("login readiness must fail when Appwrite Auth is unreachable; status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
