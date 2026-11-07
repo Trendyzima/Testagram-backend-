@@ -36,6 +36,23 @@ paths:
       responses:
         '200': { description: Profile updated }
         '401': { description: Invalid or expired Appwrite JWT }
+  /internal/v1/federation/outbox:
+    get:
+      operationId: listFederationOutbox
+      summary: Read public, non-sensitive post events for the trusted Federation service
+      security:
+        - federationInternalBearer: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 99, default: 50 }
+        - in: query
+          name: after
+          schema: { type: string, description: Base64url encoded Appwrite outbox document ID }
+      responses:
+        "200": { description: Bounded durable outbox page }
+        "401": { description: Invalid internal service token }
+        "503": { description: Outbox unavailable }
   /v1/posts:
     post:
       operationId: createPost
@@ -153,6 +170,9 @@ paths:
         '401': { description: Invalid or expired Appwrite JWT }
 components:
   securitySchemes:
+    federationInternalBearer:
+      type: http
+      scheme: bearer
     appwriteJWT:
       type: http
       scheme: bearer
