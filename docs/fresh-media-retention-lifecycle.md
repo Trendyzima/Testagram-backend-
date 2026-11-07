@@ -117,13 +117,13 @@ Implemented in the Backend branch (still a draft PR; no merge/deployment):
 - Archive worker: streams B2 to a separately configured `ARCHIVE_S3_*` provider; the S3 adapter independently checks destination size/content type and reads back SHA-256 before recording the archive replica. It intentionally does not delete active copies.
 - User-deletion purge worker: requires the deletion event's 30-day recovery deadline, refuses live references and unsupported/unmanaged replicas, verifies every provider object is absent, then transactionally rechecks replica-ledger state before quota release. A lifecycle `purging` state is set before object deletion to reduce concurrent mutation risk.
 - Archive restore path: authenticated `POST /v1/media/{objectID}/restore`, plus automatic restore-to-hot fallback when both active copies are unavailable. Restores B2 then R2 with independent read-back verification before marking replicas verified.
-- One-job executable dispatcher: `go run ./cmd/fresh-retention-worker` accepts a trusted scheduler-supplied job ID and worker ID. It refuses to run unless retention is explicitly enabled and dry-run is false.
+- One-job executable dispatcher: `go run ./cmd/fresh-retention-worker` accepts a trusted scheduler-supplied job ID and worker ID. It renews a 10-minute lease every 2 minutes and refuses to run unless retention is explicitly enabled and dry-run is false.
 
 Still required before production:
-- A complete candidate scanner/enqueuer that enumerates only newly eligible Appwrite media and produces dry-run reports with object counts, bytes, reference counts and action breakdowns.
+- Live staging runs of the candidate scanner/enqueuer. The scanner is now implemented at `cmd/fresh-retention-scan`; it pages Appwrite media by `created_at` and `deleted_at`, reports per-action counts/logical bytes, supports separate offsets for both scans, and creates deterministic jobs only when explicitly enabled with dry-run disabled. Local HTTP-fake tests verify the rollout cutoff and fresh deletion-event behavior. It does not yet report provider reference counts or live staging data.
 - A user-delete API that immediately marks media `user_deleted`, removes/detaches its post/story attachment references safely, and a restore action that restores user-deleted media before its deadline. The purge worker currently expects this canonical state to have been written by the owner-deletion workflow.
 - Transactional attachment/reference writers that refuse to attach media once `lifecycle_state=purging`; this closes the race between reference scanning and deletion.
-- QStash/cron scheduling, exponential retry/backoff, lease renewal for long transfers, dead-letter/blocked handling, independent kill switches and append-only operation audit records.
+- QStash/cron scheduling, exponential retry/backoff, dead-letter/blocked handling, independent kill switches and append-only operation audit records.
 - Live Appwrite transaction/concurrency tests and staging B2/R2/archive end-to-end tests. Current tests use local HTTP fakes and `httptest`; they are not live-provider evidence.
 - Node replica deletion/verification transport. Any `node` replica currently blocks quota reclamation rather than being silently ignored.
 - Full archive lifecycle reconciliation and backup/disaster-recovery tests.
