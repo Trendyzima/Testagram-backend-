@@ -227,11 +227,10 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 
 	neonStatus := "not_configured"
 	if s.neon != nil {
-		if err := s.neon.Ping(ctx); err != nil {
-			neonStatus = "unavailable"
-		} else {
-			neonStatus = "connected_not_integrated"
-		}
+		// Do not synchronously probe Neon on the login readiness path. A slow
+		// or unavailable social database must not delay Appwrite authentication.
+		// The strict /readyz/platform endpoint performs the live Neon probe.
+		neonStatus = "configured_not_checked"
 	}
 	moderationStatus := "not_configured"
 	postWriteStatus := "disabled_moderation_unconfigured"
