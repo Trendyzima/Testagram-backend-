@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"strconv"
 	"testing"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/appwritedb"
@@ -18,6 +19,8 @@ type mockAppwriteState struct {
 	documents            map[string][]byte
 	transactionCommitted bool
 	outboxQueries        []string
+	profileFederationEnabled bool
+	accountActive bool
 }
 
 type staticModeration struct {
@@ -36,7 +39,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 
 func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
-	state := &mockAppwriteState{documents: map[string][]byte{}}
+	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -45,6 +48,9 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				return
 			}
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/new_user_1":
+			status := state.accountActive
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":`+strconv.FormatBool(status)+`}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/databases/transactions":
 			_, _ = w.Write([]byte(`{"$id":"tx_posts"}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/databases/transactions/tx_posts":
@@ -54,6 +60,16 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			_, _ = w.Write([]byte(`{"$id":"tx_posts","status":"committed"}`))
 		case strings.HasSuffix(r.URL.Path, "/documents"):
 			if r.Method == http.MethodGet {
+				if strings.Contains(r.URL.Path, "/collections/profiles/") {
+					if strings.Contains(strings.Join(r.URL.Query()["queries[]"], " "), "tester") {
+						profile := map[string]any{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","bio":"A test profile","federation_enabled":state.profileFederationEnabled}
+						encoded, _ := json.Marshal(map[string]any{"documents":[]any{profile},"total":1})
+						_, _ = w.Write(encoded)
+					} else {
+						_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
+					}
+					return
+				}
 				if strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
 					state.outboxQueries = append(state.outboxQueries, r.URL.Query()["queries[]"]...)
 				}
@@ -94,6 +110,10 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			}
 		case strings.Contains(r.URL.Path, "/documents/"):
 			if r.Method == http.MethodGet {
+				if strings.Contains(r.URL.Path, "/collections/profiles/documents/") {
+					_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","federation_enabled":`+strconv.FormatBool(state.profileFederationEnabled)+`}`))
+					return
+				}
 				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 				if saved, ok := state.documents[id]; ok {
 					_, _ = w.Write(saved)
@@ -120,6 +140,52 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 	}
 	api.WithModeration(staticModeration{result: ModerationResult{OverallScore: 0, Action: "pass"}})
 	return api, mock, state
+}
+
+func TestFederationActorRequiresInternalServiceToken(t *testing.T) {
+	api, mock, _ := testServerWithState(t)
+	defer mock.Close()
+	if err := api.WithInternalToken(strings.Repeat("s", 40)); err != nil { t.Fatal(err) }
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/actors/tester", nil)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized { t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String()) }
+}
+
+func TestFederationActorRequiresExplicitOptInAndActiveAppwriteAccount(t *testing.T) {
+	for _, tc := range []struct{name string; enabled, active bool; want int}{
+		{"not opted in", false, true, http.StatusNotFound},
+		{"disabled account", true, false, http.StatusNotFound},
+		{"opted in active account", true, true, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api, mock, state := testServerWithState(t)
+			defer mock.Close()
+			state.profileFederationEnabled = tc.enabled
+			state.accountActive = tc.active
+			if err := api.WithInternalToken(strings.Repeat("s", 40)); err != nil { t.Fatal(err) }
+			req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/actors/tester", nil)
+			req.Header.Set("Authorization", "Bearer "+strings.Repeat("s", 40))
+			rec := httptest.NewRecorder()
+			api.Handler().ServeHTTP(rec, req)
+			if rec.Code != tc.want { t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.want, rec.Body.String()) }
+			if tc.want == http.StatusOK && (!strings.Contains(rec.Body.String(), `"user_id":"new_user_1"`) || strings.Contains(rec.Body.String(), "email")) {
+				t.Fatalf("unexpected actor response: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestUpdateFederationPreferenceRequiresAuthenticatedProfile(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+	req := httptest.NewRequest(http.MethodPut, "/v1/me/federation", strings.NewReader(`{"enabled":true}`))
+	req.Header.Set("Authorization", "Bearer valid-session")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"federation_enabled":true`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestProfileRequiresAppwriteSession(t *testing.T) {

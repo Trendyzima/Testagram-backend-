@@ -46,6 +46,32 @@ func TestCreateDocumentUsesServerCredentialsAndPayload(t *testing.T) {
 	}
 }
 
+func TestGetUserUsesServerCredentialsAndReturnsAccountStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/users/user_123" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("X-Appwrite-Key") != "server-secret" {
+			t.Fatal("server API key was not used")
+		}
+		_, _ = w.Write([]byte(`{"$id":"user_123","status":true}`))
+	}))
+	defer server.Close()
+	client, err := New(Config{Endpoint: server.URL+"/v1", ProjectID:"project_1", APIKey:"server-secret", DatabaseID:"main_db"})
+	if err != nil { t.Fatal(err) }
+	user, err := client.GetUser(context.Background(), "user_123")
+	if err != nil { t.Fatal(err) }
+	if user.ID != "user_123" || !user.Status { t.Fatalf("unexpected user: %#v", user) }
+}
+
+func TestGetUserRejectsInvalidID(t *testing.T) {
+	client, err := New(Config{Endpoint:"https://appwrite.example/v1", ProjectID:"project_1", APIKey:"server-secret", DatabaseID:"main_db"})
+	if err != nil { t.Fatal(err) }
+	if _, err := client.GetUser(context.Background(), "../admin"); err == nil {
+		t.Fatal("invalid user ID accepted")
+	}
+}
+
 func TestNewRejectsNonLocalHTTPAndInvalidEndpoint(t *testing.T) {
 	_, err := New(Config{Endpoint: "http://example.com/v1", ProjectID: "p", APIKey: "secret", DatabaseID: "db"})
 	if err == nil {
