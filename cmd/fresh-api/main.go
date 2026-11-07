@@ -14,6 +14,7 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshfeed"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
+	"github.com/Trendyzima/Testagram-backend-/internal/neondb"
 )
 
 func main() {
@@ -35,6 +36,25 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	neonURL := strings.TrimSpace(os.Getenv("NEON_DATABASE_URL"))
+	neonRequired := strings.EqualFold(strings.TrimSpace(os.Getenv("NEON_REQUIRED")), "true")
+	var neonClient *neondb.Client
+	if neonURL == "" {
+		if neonRequired {
+			log.Fatal("NEON_REQUIRED is true but NEON_DATABASE_URL is not configured")
+		}
+	} else {
+		neonClient, err = neondb.Open(context.Background(), neondb.Config{
+			URL: neonURL, MaxOpenConns: 8, MaxIdleConns: 2,
+			ConnMaxLifetime: 15 * time.Minute, ConnectTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			log.Fatalf("configure Neon social data plane: %v", err)
+		}
+		defer neonClient.Close()
+	}
+	api.WithNeon(neonClient, neonRequired)
 
 	// Publishing remains unavailable unless the private moderation provider is
 	// configured. The post handler also enforces this server-side (not just UI).
