@@ -27,6 +27,7 @@ type socialCreatedPost struct {
 	Body       string    `json:"body"`
 	Visibility string    `json:"visibility"`
 	Sensitive  bool      `json:"sensitive"`
+	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -125,7 +126,7 @@ func (s *service) socialCreatePost(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENT_POST_UNAVAILABLE", "The original post is no longer available", requestID))
 			return
 		}
-		post.LegacyID, post.UserID, post.Body = post.ID, post.AuthorID, post.Content
+		post.LegacyID, post.UserID, post.Body, post.Status = post.ID, post.AuthorID, post.Content, "published"
 		if err := tx.Commit(ctx); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_READ_FAILED", "The original post could not be returned", requestID))
 			return
