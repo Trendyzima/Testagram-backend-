@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -288,6 +289,40 @@ type failingFeedRanker struct{}
 func (failingFeedRanker) Rank(context.Context, algorithmclient.Request) (algorithmclient.Response, error) {
 	return algorithmclient.Response{}, errors.New("ranker offline")
 }
+
+type malformedFeedRanker struct{ kind string }
+
+func (r malformedFeedRanker) Rank(_ context.Context, in algorithmclient.Request) (algorithmclient.Response, error) {
+	items := make([]algorithmclient.RankedItem, 0, len(in.Candidates))
+	for _, candidate := range in.Candidates {
+		items = append(items, algorithmclient.RankedItem{ID: candidate.ID, Score: 0.5})
+	}
+	if len(items) < 2 {
+		return algorithmclient.Response{}, errors.New("test requires at least two candidates")
+	}
+	switch r.kind {
+	case "duplicate":
+		items[1].ID = items[0].ID
+	case "unknown":
+		items[0].ID = "forged-post-id"
+	case "nan":
+		items[0].Score = math.NaN()
+	}
+	return algorithmclient.Response{Items: items}, nil
+}
+func TestRequiredRankerRejectsDuplicateUnknownAndInvalidScores(t *testing.T) {
+	for _, kind := range []string{"duplicate", "unknown", "nan"} {
+		service, err := New(newFixtureFeedStore(), malformedFeedRanker{kind: kind}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		service.RequireRanker(true)
+		if _, err := service.Home(context.Background(), "viewer", 10, ""); err == nil {
+			t.Fatalf("malformed Algorithm response %q was accepted", kind)
+		}
+	}
+}
+
 func TestRequiredRankerFailsClosedInsteadOfSilentlyFallingBack(t *testing.T) {
 	for _, ranker := range []Ranker{nil, failingFeedRanker{}, noOpRanker{}} {
 		service, err := New(newFixtureFeedStore(), ranker, nil)
