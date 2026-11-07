@@ -35,6 +35,12 @@ jobs:
         run: go vet ./...
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/api ./admin-console
+      - name: Build fresh Appwrite API container
+        run: docker build -f Dockerfile.fresh -t testagram-backend-fresh-ci .
+      - name: Validate fresh Backend OpenAPI contract
+        run: |
+          python -m pip install --disable-pip-version-check PyYAML
+          python scripts/validate-fresh-openapi.py
       - name: Validate staff console JavaScript syntax
         run: node --check admin-console/web/app.js
       - name: Check formatting of changed API Go files
