@@ -21,7 +21,7 @@ type mockAppwriteState struct {
 	outboxQueries            []string
 	profileFederationEnabled bool
 	accountActive            bool
-	emailVerified             bool
+	emailVerified            bool
 	profileUpdates           map[string]map[string]any
 }
 
