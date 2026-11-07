@@ -34,3 +34,11 @@ func TestIssueRejectsWeakSecretAndLongTTL(t *testing.T) {
 	if _,err:=Issue("short","user","conversation",now,time.Minute); err==nil { t.Fatal("weak secret accepted") }
 	if _,err:=Issue("0123456789abcdef0123456789abcdef","user","conversation",now,10*time.Minute); err==nil { t.Fatal("long lifetime accepted") }
 }
+
+func TestSignPublishRequiresSecretAndBoundsBody(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	signature, err := SignPublish(secret, []byte("{\"event_id\":\"e1\"}"))
+	if err != nil || signature == "" { t.Fatalf("expected publish signature, got %q, %v", signature, err) }
+	if _, err := SignPublish("short", []byte("{}")); err == nil { t.Fatal("weak publish secret accepted") }
+	if _, err := SignPublish(secret, make([]byte, 64*1024+1)); err == nil { t.Fatal("oversized event accepted") }
+}
