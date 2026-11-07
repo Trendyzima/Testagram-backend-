@@ -183,7 +183,7 @@ func TestUpdateFederationPreferenceRequiresAuthenticatedProfile(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer valid-session")
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"federation_enabled":true`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":true`) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
