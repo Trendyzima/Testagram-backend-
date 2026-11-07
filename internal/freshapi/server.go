@@ -216,10 +216,16 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// Neon product-data health are reported separately and cannot block login.
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	authReady := make(chan error, 1)
+	go func() { authReady <- s.appwriteAuthReady(ctx) }()
 	if _, err := s.db.ListDocumentsWithQueries(ctx, "profiles", []string{
 		mustQuery("limit", "", 1),
 	}, 1); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Appwrite profile database is not ready")
+		return
+	}
+	if err := <-authReady; err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Appwrite Auth service is not ready")
 		return
 	}
 	neonStatus := "not_configured"
@@ -249,6 +255,28 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 // Neon connectivity, feed collections/ranking dependencies and the durable
 // Federation outbox. It remains unavailable until canonical Neon repositories
 // are actually integrated, even if the database accepts connections.
+
+// appwriteAuthReady probes the same Appwrite account endpoint used by login.
+// An anonymous 401/403 is expected and proves that the Auth API is reachable;
+// transport failures and server/configuration errors keep the public edge closed.
+func (s *Server) appwriteAuthReady(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoint+"/account", nil)
+	if err != nil {
+		return errors.New("could not create Appwrite Auth readiness request")
+	}
+	req.Header.Set("X-Appwrite-Project", s.projectID)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return errors.New("Appwrite Auth endpoint could not be reached")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
+		(resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices) {
+		return nil
+	}
+	return errors.New("Appwrite Auth endpoint returned an unhealthy status")
+}
+
 func (s *Server) platformReadyz(w http.ResponseWriter, r *http.Request) {
 	if !s.neonRequired || s.neon == nil {
 		writeError(w, http.StatusServiceUnavailable, "Neon is not configured as the required canonical social data plane")
