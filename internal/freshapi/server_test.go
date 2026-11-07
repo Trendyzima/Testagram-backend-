@@ -21,6 +21,7 @@ type mockAppwriteState struct {
 	outboxQueries        []string
 	profileFederationEnabled bool
 	accountActive bool
+	profileUpdates map[string]map[string]any
 }
 
 type staticModeration struct {
@@ -39,7 +40,7 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 
 func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
-	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true}
+	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, profileUpdates: map[string]map[string]any{}}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
@@ -123,7 +124,15 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				return
 			}
 			if r.Method == http.MethodPatch {
-				_, _ = w.Write([]byte(`{"$id":"new_user_1","display_name":"Updated"}`))
+				var body struct {
+					Data map[string]any `json:"data"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				if strings.Contains(r.URL.Path, "/collections/profiles/documents/") {
+					state.profileUpdates["new_user_1"] = body.Data
+				}
+				encoded, _ := json.Marshal(map[string]any{"$id": "new_user_1", "data": body.Data})
+				_, _ = w.Write(encoded)
 				return
 			}
 		default:
@@ -496,6 +505,48 @@ func TestHomeFeedRequiresVerifiedAppwriteIdentityAndUsesBoundedPagination(t *tes
 	}
 }
 
+func TestLegalConsentRequiresAllPoliciesAndAdultBirthDate(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	missing := httptest.NewRequest(http.MethodPut, "/v1/me/legal", strings.NewReader(`{"birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true}`))
+	missing.Header.Set("Authorization", "Bearer valid-session")
+	missingRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(missingRec, missing)
+	if missingRec.Code != http.StatusBadRequest {
+		t.Fatalf("missing consent flags status=%d body=%s", missingRec.Code, missingRec.Body.String())
+	}
+	minor := httptest.NewRequest(http.MethodPut, "/v1/me/legal", strings.NewReader(`{"birth_date":"2015-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true}`))
+	minor.Header.Set("Authorization", "Bearer valid-session")
+	minorRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(minorRec, minor)
+	if minorRec.Code != http.StatusForbidden {
+		t.Fatalf("minor consent status=%d body=%s", minorRec.Code, minorRec.Body.String())
+	}
+	if len(state.profileUpdates) != 0 {
+		t.Fatalf("invalid consent changed profile: %#v", state.profileUpdates)
+	}
+}
+
+func TestLegalConsentPersistsVersionedAcceptanceOnAuthenticatedProfile(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	req := httptest.NewRequest(http.MethodPut, "/v1/me/legal", strings.NewReader(`{"birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true}`))
+	req.Header.Set("Authorization", "Bearer valid-session")
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"accepted":true`) {
+		t.Fatalf("legal consent status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	updated := state.profileUpdates["new_user_1"]
+	for _, key := range []string{"birth_date", "legal_terms_accepted_at", "legal_privacy_accepted_at", "legal_content_policy_accepted_at", "legal_age_confirmed_at", "legal_policy_version"} {
+		if updated[key] == nil || updated[key] == "" {
+			t.Fatalf("legal consent field %q was not persisted: %#v", key, updated)
+		}
+	}
+	if updated["birth_date"] != "1990-01-01" || updated["legal_policy_version"] != "2026-09" {
+		t.Fatalf("unexpected legal consent values: %#v", updated)
+	}
+}
 func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T) {
 	api, mock, state := testServerWithState(t)
 	defer mock.Close()
