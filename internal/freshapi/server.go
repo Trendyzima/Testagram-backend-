@@ -498,10 +498,14 @@ func (s *Server) writeFederationActorProfile(w http.ResponseWriter, r *http.Requ
 	displayName, _ := profile["display_name"].(string)
 	bio, _ := profile["bio"].(string)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_id": userID, "handle": handle,
-		"display_name": strings.TrimSpace(displayName),
-		"summary": strings.TrimSpace(bio),
-		"federation_enabled": true,
+		"ok": true,
+		"data": map[string]any{
+			"user_id": userID, "handle": handle,
+			"display_name": strings.TrimSpace(displayName),
+			"summary": strings.TrimSpace(bio),
+			"federation_enabled": true,
+		},
+		"error": nil,
 	})
 }
 
@@ -610,7 +614,7 @@ func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
 		documents = documents[:limit]
 	}
 	var nextCursor string
-	if hasMore && len(documents) > 0 {
+	if len(documents) > 0 {
 		var last struct {
 			ID string `json:"$id"`
 		}

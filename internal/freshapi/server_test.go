@@ -2,6 +2,7 @@ package freshapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,6 +21,7 @@ type mockAppwriteState struct {
 	documents                map[string][]byte
 	transactionCommitted     bool
 	outboxQueries            []string
+	outboxDocuments          []json.RawMessage
 	profileFederationEnabled bool
 	accountActive            bool
 	emailVerified            bool
@@ -103,6 +105,11 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				}
 				if strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
 					state.outboxQueries = append(state.outboxQueries, r.URL.Query()["queries[]"]...)
+					if len(state.outboxDocuments) > 0 {
+						encoded, _ := json.Marshal(map[string]any{"documents": state.outboxDocuments, "total": len(state.outboxDocuments)})
+						_, _ = w.Write(encoded)
+						return
+					}
 				}
 				_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 				return
@@ -228,8 +235,24 @@ func TestFederationActorRequiresExplicitOptInAndActiveAppwriteAccount(t *testing
 			rec := httptest.NewRecorder()
 			api.Handler().ServeHTTP(rec, req)
 			if rec.Code != tc.want { t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.want, rec.Body.String()) }
-			if tc.want == http.StatusOK && (!strings.Contains(rec.Body.String(), `"user_id":"new_user_1"`) || strings.Contains(rec.Body.String(), "email")) {
-				t.Fatalf("unexpected actor response: %s", rec.Body.String())
+			if tc.want == http.StatusOK {
+				var response struct {
+					OK   bool `json:"ok"`
+					Data struct {
+						UserID            string `json:"user_id"`
+						Handle            string `json:"handle"`
+						DisplayName       string `json:"display_name"`
+						Summary           string `json:"summary"`
+						FederationEnabled bool   `json:"federation_enabled"`
+					} `json:"data"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+					t.Fatalf("decode Federation actor envelope: %v", err)
+				}
+				if !response.OK || response.Data.UserID != "new_user_1" || response.Data.Handle != "tester" ||
+					!response.Data.FederationEnabled || strings.Contains(rec.Body.String(), "email") {
+					t.Fatalf("unexpected actor response: %s", rec.Body.String())
+				}
 			}
 		})
 	}
@@ -744,3 +767,37 @@ func TestReadyzDoesNotClaimPostPublishingWhenModerationIsDisabled(t *testing.T) 
 		t.Fatalf("readiness overstated publishing capability: %s", rec.Body.String())
 	}
 }
+
+func TestFederationOutboxReturnsCursorForFinalPage(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	const token = "federation-internal-token-with-at-least-32-characters"
+	if err := api.WithInternalToken(token); err != nil {
+		t.Fatal(err)
+	}
+	const eventID = "evt_12345678901234567890123456789012"
+	state.outboxDocuments = []json.RawMessage{json.RawMessage(`{"$id":"` + eventID + `","event_type":"testagram.post.published","actor_id":"user_123","object_id":"post_123","federation_eligible":true,"created_at":"2026-11-07T20:00:00Z","payload":{"id":"post_123"}}`)}
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=10", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Events     []json.RawMessage `json:"events"`
+			NextCursor string            `json:"next_cursor"`
+			HasMore    bool              `json:"has_more"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode outbox response: %v", err)
+	}
+	wantCursor := base64.RawURLEncoding.EncodeToString([]byte(eventID))
+	if !response.OK || len(response.Data.Events) != 1 || response.Data.HasMore || response.Data.NextCursor != wantCursor {
+		t.Fatalf("outbox final-page cursor response = %+v, want cursor %q and has_more=false", response, wantCursor)
+	}
+}
+
