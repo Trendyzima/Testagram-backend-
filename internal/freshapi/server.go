@@ -328,8 +328,8 @@ func (s *Server) moderateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Content = strings.TrimSpace(input.Content)
-	if !utf8.ValidString(input.Content) || utf8.RuneCountInString(input.Content) < 3 || utf8.RuneCountInString(input.Content) > 5000 {
-		writeError(w, http.StatusBadRequest, "moderation content must contain 3-5000 valid Unicode characters")
+	if !utf8.ValidString(input.Content) || input.Content == "" || utf8.RuneCountInString(input.Content) > 5000 {
+		writeError(w, http.StatusBadRequest, "moderation content must contain 1-5000 valid Unicode characters")
 		return
 	}
 	result, err := s.moderation.Analyze(r.Context(), input.Content)
