@@ -114,7 +114,7 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 		case strings.Contains(r.URL.Path, "/documents/"):
 			if r.Method == http.MethodGet {
 				if strings.Contains(r.URL.Path, "/collections/profiles/documents/") {
-					_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","federation_enabled":`+strconv.FormatBool(state.profileFederationEnabled)+`}`))
+					_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","federation_enabled":`+strconv.FormatBool(state.profileFederationEnabled)+`,"identity_verification_status":"`+state.profileIdentityStatus+`"}`))
 					return
 				}
 				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
