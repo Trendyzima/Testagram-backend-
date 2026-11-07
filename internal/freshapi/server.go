@@ -30,9 +30,9 @@ type Server struct {
 	feed           HomeFeedService
 	allowedOrigins map[string]struct{}
 	internalToken  string
-	identitySecret   string
+	identitySecret    string
 	appwriteServerKey string
-	moderation       ContentModeration
+	moderation        ContentModeration
 }
 
 type HomeFeedService interface {
