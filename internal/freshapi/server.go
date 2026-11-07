@@ -218,10 +218,16 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	// repositories must not prevent an existing approved user from logging in.
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
+	authReady := make(chan error, 1)
+	go func() { authReady <- s.appwriteAuthReady(ctx) }()
 	if _, err := s.db.ListDocumentsWithQueries(ctx, "profiles", []string{
 		mustQuery("limit", "", 1),
 	}, 1); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Appwrite profile database is not ready")
+		return
+	}
+	if err := <-authReady; err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Appwrite Auth service is not ready")
 		return
 	}
 
@@ -255,6 +261,28 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 // may serve login while this endpoint remains unavailable; product rollout
 // must not be declared complete until canonical Neon repositories and their
 // transactional outbox are integrated and verified.
+
+// appwriteAuthReady probes the same Appwrite account endpoint used by login.
+// An anonymous 401/403 is expected and proves that the Auth API is reachable;
+// transport failures and server/configuration errors keep the public edge closed.
+func (s *Server) appwriteAuthReady(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoint+"/account", nil)
+	if err != nil {
+		return errors.New("could not create Appwrite Auth readiness request")
+	}
+	req.Header.Set("X-Appwrite-Project", s.projectID)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return errors.New("Appwrite Auth endpoint could not be reached")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
+		(resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices) {
+		return nil
+	}
+	return errors.New("Appwrite Auth endpoint returned an unhealthy status")
+}
+
 func (s *Server) platformReadyz(w http.ResponseWriter, r *http.Request) {
 	if !s.neonRequired || s.neon == nil {
 		writeError(w, http.StatusServiceUnavailable, "Neon is not configured as the required canonical social data plane")
