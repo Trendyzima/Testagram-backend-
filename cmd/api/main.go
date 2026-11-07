@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
@@ -65,6 +66,8 @@ type service struct {
 	upstream            *http.Client
 	platform            *platformclient.Client
 	media               *media.Signer
+	mediaIntentFactory  *media.IntentFactory
+	dataCentreMedia     *datacentreclient.Client
 	virtualStorage      *virtualstorage.Manager
 	algorithm           *algorithmclient.Client
 	replicationReceiver http.Handler
@@ -1143,12 +1146,33 @@ func main() {
 			log.Printf("private Testagram feed ranking integration enabled")
 		}
 	}
+	var dataCentreMedia *datacentreclient.Client
+	dataCentreURL := strings.TrimSpace(os.Getenv("DATA_CENTRE_MEDIA_API_URL"))
+	dataCentreToken := strings.TrimSpace(os.Getenv("FRESH_DATA_CENTRE_INTERNAL_TOKEN"))
+	if dataCentreURL != "" || dataCentreToken != "" {
+		dataCentreMedia, err = datacentreclient.New(dataCentreURL, dataCentreToken, &http.Client{Timeout: 10 * time.Second})
+		if err != nil {
+			log.Fatalf("configure private Data Centre media client: %v", err)
+		}
+		if dataCentreMedia != nil {
+			log.Printf("private Data Centre media lifecycle integration enabled")
+		}
+	}
+	var mediaIntentFactory *media.IntentFactory
+	if dataCentreMedia != nil {
+		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{
+			MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 10 * time.Minute,
+		})
+		if err != nil {
+			log.Fatalf("configure media upload intent policy: %v", err)
+		}
+	}
 	var mediaSigner *media.Signer
 	// MEDIA_S3_* is the documented deployment contract. R2_* and legacy MINIO_*
 	// variables remain accepted to avoid breaking existing self-hosted installs.
 	mediaAccessKey := env("MEDIA_S3_ACCESS_KEY", env("R2_ACCESS_KEY_ID", env("MINIO_MEDIA_ACCESS_KEY", "")))
 	mediaSecretKey := env("MEDIA_S3_SECRET_KEY", env("R2_SECRET_ACCESS_KEY", env("MINIO_MEDIA_SECRET_KEY", "")))
-	if mediaAccessKey != "" || mediaSecretKey != "" {
+	if dataCentreMedia == nil && (mediaAccessKey != "" || mediaSecretKey != "") {
 		if mediaAccessKey == "" || mediaSecretKey == "" {
 			log.Fatal("MEDIA_S3_ACCESS_KEY and MEDIA_S3_SECRET_KEY must be configured together")
 		}
@@ -1170,7 +1194,7 @@ func main() {
 		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
 	var virtualStorageManager *virtualstorage.Manager
-	if strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true") {
+	if dataCentreMedia == nil && strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true") {
 		if mediaSigner == nil {
 			log.Fatal("VIRTUAL_STORAGE_ENABLED requires the S3-compatible media credentials and endpoint")
 		}
@@ -1232,7 +1256,7 @@ func main() {
 			log.Printf("durable replication relay enabled")
 		}
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, replicationReceiver: replicationReceiver}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, virtualStorage: virtualStorageManager, algorithm: algorithm, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
