@@ -125,7 +125,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		if rows.Err()!=nil{fail("MESSAGES_LIST_FAILED","Could not read conversation messages",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"items":items,"next_cursor":nil});return true
 	case "testagram.messages.send_encrypted":
-		conversationID:=str("conversation_id");ciphertext:=str("ciphertext");nonce:=str("nonce");clientID:=str("client_message_id");epoch:=intVal("e2ee_epoch",1,1,1<<30)
+		conversationID:=str("conversation_id");ciphertext:=str("ciphertext");nonce:=str("nonce");clientID:=str("client_message_id");if clientID==""{clientID=strings.TrimPrefix(newCallRoom(),"testagram-")};epoch:=intVal("e2ee_epoch",1,1,1<<30)
 		if !socialUUIDPattern.MatchString(conversationID)||ciphertext==""||len(ciphertext)>32768||nonce==""||len(nonce)>512||epoch<1||clientID==""||len(clientID)>128{fail("INVALID_MESSAGE","Encrypted message fields are invalid",http.StatusBadRequest);return true}
 		var id string;e:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.messages(conversation_id,sender_id,body,client_message_id,reply_to_message_id,shared_post_id,ciphertext,nonce,aad,e2ee_enabled,e2ee_version,e2ee_epoch)
 			SELECT $1,$2,'',$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,TRUE,'v1',$9
@@ -172,6 +172,30 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			WHERE m.id=$1 AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=m.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`,id,userID,string(raw))
 		if e!=nil{fail("MESSAGE_ATTACHMENT_FAILED","Could not attach media to message",http.StatusServiceUnavailable);return true};if tag.RowsAffected()!=1{fail("MESSAGE_NOT_FOUND","Message was not found in an active conversation",http.StatusNotFound);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"attachment":attachment});return true
+	case "testagram.calls.list":
+		conversationID:=str("conversation_id")
+		if !socialUUIDPattern.MatchString(conversationID){fail("INVALID_CONVERSATION","A valid conversation ID is required",http.StatusBadRequest);return true}
+		rows,e:=s.db.Query(ctx,`SELECT c.id::text,c.conversation_id::text,c.created_by::text,c.room_name,c.kind,c.status,c.e2ee_enabled,c.e2ee_epoch,c.metadata,c.created_at
+			FROM testagram_local.call_sessions c
+			WHERE c.conversation_id=$1 AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)
+			ORDER BY c.created_at DESC LIMIT 50`,conversationID,userID)
+		if e!=nil{fail("CALL_HISTORY_FAILED","Could not load call history",http.StatusServiceUnavailable);return true}
+		defer rows.Close();items:=make([]map[string]any,0)
+		for rows.Next(){var id,cid,creator,room,kind,state string;var encrypted bool;var epoch int64;var metadata []byte;var created time.Time
+			if rows.Scan(&id,&cid,&creator,&room,&kind,&state,&encrypted,&epoch,&metadata,&created)!=nil{fail("CALL_HISTORY_FAILED","Could not read call history",http.StatusServiceUnavailable);return true}
+			var meta any;_ = json.Unmarshal(metadata,&meta)
+			items=append(items,map[string]any{"id":id,"call_id":id,"conversation_id":cid,"created_by":creator,"provider":"testagram-p2p","room_name":room,"kind":kind,"status":state,"e2ee_enabled":encrypted,"e2ee_epoch":epoch,"metadata":meta,"created_at":created})
+		}
+		if rows.Err()!=nil{fail("CALL_HISTORY_FAILED","Could not read call history",http.StatusServiceUnavailable);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
+	case "testagram.calls.get":
+		id:=str("call_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_CALL","A valid call ID is required",http.StatusBadRequest);return true}
+		var cid,creator,room,kind,state string;var encrypted bool;var epoch int64;var metadata []byte;var created time.Time
+		e:=s.db.QueryRow(ctx,`SELECT c.conversation_id::text,c.created_by::text,c.room_name,c.kind,c.status,c.e2ee_enabled,c.e2ee_epoch,c.metadata,c.created_at
+			FROM testagram_local.call_sessions c WHERE c.id=$1 AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`,id,userID).Scan(&cid,&creator,&room,&kind,&state,&encrypted,&epoch,&metadata,&created)
+		if e!=nil{fail("CALL_NOT_FOUND","Call was not found or access is denied",http.StatusNotFound);return true}
+		var meta any;_ = json.Unmarshal(metadata,&meta)
+		writeJSON(w,http.StatusOK,map[string]any{"id":id,"call_id":id,"conversation_id":cid,"created_by":creator,"provider":"testagram-p2p","room_name":room,"kind":kind,"status":state,"e2ee_enabled":encrypted,"e2ee_epoch":epoch,"metadata":meta,"created_at":created});return true
 	case "testagram.calls.create":
 		conversationID:=str("conversation_id");kind:=str("kind");if kind==""{kind="video"};if !socialUUIDPattern.MatchString(conversationID)||(kind!="voice"&&kind!="video"&&kind!="screen"){fail("INVALID_CALL","Call details are invalid",http.StatusBadRequest);return true}
 		room:=newCallRoom()
