@@ -1,5 +1,6 @@
 -- Testagram canonical application data plane on Neon PostgreSQL.
 -- Additive foundation only. Does not read, mutate, or delete Appwrite documents.
+-- Apply through the Neon schema CI contract before enabling product writes.
 -- Appwrite account IDs remain immutable text foreign keys.
 
 BEGIN;
