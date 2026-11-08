@@ -70,7 +70,7 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	name:=strings.TrimSpace(body.Capability)
 	switch name {
 	case "testagram.wallet.balance","testagram.wallet.transactions.list","testagram.wallet.transfer","testagram.wallet.tip",
-		"testagram.audio_spaces.list_live","testagram.audio_spaces.create","testagram.audio_spaces.join",
+		"testagram.audio_spaces.list_live","testagram.audio_spaces.my_status","testagram.audio_spaces.create","testagram.audio_spaces.join",
 		"testagram.audio_spaces.leave","testagram.audio_spaces.request_speaker","testagram.audio_spaces.decide_speaker",
 		"testagram.audio_spaces.end","testagram.audio_spaces.superchat":
 	default:return false
@@ -120,6 +120,16 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 		defer rows.Close();items:=make([]map[string]any,0)
 		for rows.Next(){var id,host,title,description,username,display,avatar string;var count,max int;var started *time.Time;if rows.Scan(&id,&host,&title,&description,&count,&max,&started,&username,&display,&avatar)!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true};items=append(items,map[string]any{"id":id,"host_id":host,"title":title,"description":description,"listener_count":count,"max_audience":max,"started_at":started,"host":map[string]any{"id":host,"username":username,"display_name":display,"avatar_url":avatar}})}
 		if rows.Err()!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
+	case "testagram.audio_spaces.my_status":
+		id:=str("space_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_SPACE","A valid Space ID is required",http.StatusBadRequest);return true}
+		var role,requestStatus string
+		e:=s.db.QueryRow(ctx,`SELECT COALESCE(p.role,''),COALESCE(r.status,'none')
+			FROM testagram_local.audio_spaces s
+			LEFT JOIN testagram_local.audio_space_participants p ON p.space_id=s.id AND p.user_id=$2 AND p.left_at IS NULL
+			LEFT JOIN testagram_local.audio_space_speaker_requests r ON r.space_id=s.id AND r.user_id=$2
+			WHERE s.id=$1`,id,userID).Scan(&role,&requestStatus)
+		if e!=nil{fail("SPACE_STATUS_FAILED","Could not load Space membership",http.StatusServiceUnavailable);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"role":role,"speaker_request_status":requestStatus,"joined":role!=""});return true
 	case "testagram.audio_spaces.create":
 		title:=str("title");description:=str("description");if len(title)==0||len(title)>120||len(description)>2000{fail("INVALID_SPACE","Space title or description is invalid",http.StatusBadRequest);return true}
 		max:=1000;if v,ok:=in["max_audience"].(float64);ok{max=int(v)};if max<2||max>10000{fail("INVALID_SPACE","Audience limit must be between 2 and 10000",http.StatusBadRequest);return true}
