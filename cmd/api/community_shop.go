@@ -9,8 +9,10 @@ func (s *service) communityShopList(w http.ResponseWriter,r *http.Request) {
  id:=requestID(r);if !s.cors(w,r){writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return}
  if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("MARKETPLACE_UNAVAILABLE","Marketplace is unavailable",id));return}
  communityID:=r.PathValue("community_id");if !socialUUIDPattern.MatchString(communityID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_ID","Community ID is invalid",id));return}
- var keyword string
- if err:=s.db.QueryRow(r.Context(),"SELECT split_part(name,' ',1) FROM testagram_local.communities WHERE id=$1::uuid AND visibility='public'",communityID).Scan(&keyword);err==pgx.ErrNoRows{http.NotFound(w,r);return}else if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_SHOP_FAILED","Community shop could not be loaded",id));return}
+ uid:=""
+ if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))),"bearer "){var ok bool;uid,_,ok=s.socialAuth(w,r);if !ok{return}}
+ var keyword,visibility string
+ if err:=s.db.QueryRow(r.Context(),`SELECT split_part(c.name,' ',1),c.visibility FROM testagram_local.communities c WHERE c.id=$1::uuid AND (c.visibility='public' OR EXISTS(SELECT 1 FROM testagram_local.community_memberships m WHERE m.community_id=c.id AND m.user_id=NULLIF($2,'')::uuid AND m.status='active'))`,communityID,uid).Scan(&keyword,&visibility);err==pgx.ErrNoRows{http.NotFound(w,r);return}else if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_SHOP_FAILED","Community shop could not be loaded",id));return}
  rows,err:=s.db.Query(r.Context(),`SELECT p.id::text,p.name,p.description,p.price::text,p.image_url,p.avg_rating,p.review_count,p.external_link,p.owner_id::text,a.username,a.avatar_key
  FROM testagram_local.marketplace_products p JOIN testagram_local.accounts a ON a.user_id=p.owner_id
  WHERE p.is_active AND (p.is_featured OR p.name ILIKE '%'||$1||'%')
@@ -29,6 +31,9 @@ func (s *service) communityBadgesList(w http.ResponseWriter,r *http.Request) {
  id:=requestID(r);if !s.cors(w,r){writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return}
  if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_BADGES_UNAVAILABLE","Community badges are unavailable",id));return}
  communityID:=r.PathValue("community_id");if !socialUUIDPattern.MatchString(communityID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_ID","Community ID is invalid",id));return}
+ uid:="";if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))),"bearer "){var ok bool;uid,_,ok=s.socialAuth(w,r);if !ok{return}}
+ var visible bool
+ if err:=s.db.QueryRow(r.Context(),`SELECT c.visibility='public' OR EXISTS(SELECT 1 FROM testagram_local.community_memberships m WHERE m.community_id=c.id AND m.user_id=NULLIF($2,'')::uuid AND m.status='active') FROM testagram_local.communities c WHERE c.id=$1::uuid`,communityID,uid).Scan(&visible);err==pgx.ErrNoRows||err!=nil||!visible{http.NotFound(w,r);return}
  rows,err:=s.db.Query(r.Context(),`SELECT b.id::text,b.owner_id::text,b.badge_tier,b.contribution_score,b.minted_at,a.username,a.avatar_key
  FROM testagram_local.community_badges b JOIN testagram_local.accounts a ON a.user_id=b.owner_id
  WHERE b.community_id=$1::uuid ORDER BY b.issued_at DESC LIMIT 100`,communityID)
