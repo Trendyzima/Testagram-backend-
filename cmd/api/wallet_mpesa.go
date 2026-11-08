@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type mpesaCallbackEnvelope struct {
@@ -121,7 +123,7 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 		tx,err:=s.db.Begin(ctx);if err!=nil{fail("TOPUP_PERSIST_FAILED","M-Pesa accepted the request but Backend could not persist it",http.StatusServiceUnavailable);return true};defer func(){_ = tx.Rollback(context.Background())}()
 		_,err=tx.Exec(ctx,`UPDATE testagram_local.wallet_topups SET checkout_request_id=$2,merchant_request_id=$3,status='pending',provider_response=$4::jsonb,updated_at=now() WHERE id=$1`,topupID,checkoutID,merchantID,string(responseBody))
 		if err==nil{_,err=tx.Exec(ctx,`INSERT INTO testagram_local.wallet_transactions(user_id,topup_id,kind,amount,currency,status,provider,provider_order_id,provider_reference,provider_status,metadata)
-			VALUES($1,$2,'deposit',$3,'KES','pending','mpesa',$4,$5,'PENDING',jsonb_build_object('phone',$6,'amount_kes',$3)) ON CONFLICT(user_id,topup_id) DO NOTHING`,userID,topupID,amount,checkoutID,requestReference,phone)}
+			VALUES($1,$2,'deposit',$3,'KES','pending','mpesa',$4,$5,'PENDING',jsonb_build_object('phone',$6,'amount_kes',$3)) ON CONFLICT DO NOTHING`,userID,topupID,amount,checkoutID,requestReference,phone)}
 		if err==nil{err=tx.Commit(ctx)}
 		if err!=nil{fail("TOPUP_PERSIST_FAILED","M-Pesa accepted the request but Backend could not persist the settlement record; do not retry",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusAccepted,map[string]any{"status":"pending","checkout_request_id":checkoutID,"merchant_request_id":merchantID,"request_reference":requestReference,"amount_kes":amount,"currency":"KES","duplicate":false});return true
@@ -133,8 +135,11 @@ func mathFloor(value float64) float64 { if value<0{return -1};return float64(int
 
 func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 	r.Body=http.MaxBytesReader(w,r.Body,32<<10)
+	rawBody,readErr:=io.ReadAll(r.Body)
+	if readErr!=nil{writeJSON(w,http.StatusBadRequest,map[string]any{"ResultCode":1,"ResultDesc":"Invalid callback"});return}
 	var input mpesaCallbackEnvelope
-	if err:=json.NewDecoder(r.Body).Decode(&input);err!=nil{writeJSON(w,http.StatusBadRequest,map[string]any{"ResultCode":1,"ResultDesc":"Invalid callback"});return}
+	decoder:=json.NewDecoder(bytes.NewReader(rawBody));decoder.UseNumber()
+	if err:=decoder.Decode(&input);err!=nil{writeJSON(w,http.StatusBadRequest,map[string]any{"ResultCode":1,"ResultDesc":"Invalid callback"});return}
 	cb:=input.Body.Callback;checkout:=strings.TrimSpace(cb.CheckoutRequestID)
 	if checkout==""{writeJSON(w,http.StatusBadRequest,map[string]any{"ResultCode":1,"ResultDesc":"Missing CheckoutRequestID"});return}
 	ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
@@ -143,7 +148,7 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 	if err!=nil{writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Top-up record unavailable; retry callback"});return}
 	if state=="settled"{writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Already settled"});return}
 	if cb.ResultCode!=0{
-		tx,e:=s.db.Begin(ctx);if e==nil{_,e=tx.Exec(ctx,"UPDATE testagram_local.wallet_topups SET status='failed',result_code=$2,result_description=$3,callback_data=$4::jsonb,updated_at=now() WHERE id=$1 AND status='pending'",topupID,cb.ResultCode,cb.ResultDesc,callbackRaw(r));if e==nil{_,e=tx.Exec(ctx,"UPDATE testagram_local.wallet_transactions SET status='failed',provider_status=$2 WHERE topup_id=$1",topupID,cb.ResultDesc)};if e==nil{e=tx.Commit(ctx)};_ = tx.Rollback(context.Background())}
+		tx,e:=s.db.Begin(ctx);if e==nil{_,e=tx.Exec(ctx,"UPDATE testagram_local.wallet_topups SET status='failed',result_code=$2,result_description=$3,callback_data=$4::jsonb,updated_at=now() WHERE id=$1 AND status='pending'",topupID,cb.ResultCode,cb.ResultDesc,string(rawBody));if e==nil{_,e=tx.Exec(ctx,"UPDATE testagram_local.wallet_transactions SET status='failed',provider_status=$2 WHERE topup_id=$1",topupID,cb.ResultDesc)};if e==nil{e=tx.Commit(ctx)};_ = tx.Rollback(context.Background())}
 		if e!=nil{writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Failed payment update; retry callback"});return}
 		writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Accepted"});return
 	}
@@ -158,7 +163,11 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 	if lockedState=="settled"{writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Already settled"});return}
 	if lockedState!="pending"{writeJSON(w,http.StatusConflict,map[string]any{"ResultCode":1,"ResultDesc":"Top-up is not pending"});return}
 	_,err=tx.Exec(ctx,"UPDATE testagram_local.wallet_topups SET status='settled',receipt_number=$2,result_code=0,result_description=$3,callback_data=$4::jsonb,settled_at=now(),updated_at=now() WHERE id=$1",topupID,receipt,cb.ResultDesc,callbackRaw(r))
-	if err==nil{_,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1 AND status='active'",userID,amountRaw)}
+	if err==nil{
+		var walletTag pgconn.CommandTag
+		walletTag,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1 AND status='active'",userID,amountRaw)
+		if err==nil&&walletTag.RowsAffected()!=1{err=errors.New("wallet is unavailable for settlement")}
+	}
 	if err==nil{_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,topup_id,user_id,direction,amount,currency) VALUES(NULL,$1,$2,'credit',$3,'KES')",topupID,userID,amountRaw)}
 	if err==nil{_,err=tx.Exec(ctx,"UPDATE testagram_local.wallet_transactions SET status='completed',provider_status='SUCCESS',metadata=metadata||jsonb_build_object('receipt_number',$2) WHERE topup_id=$1",topupID,receipt)}
 	if err==nil{_,err=tx.Exec(ctx,`INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
@@ -169,7 +178,6 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Accepted"})
 }
 
-func callbackRaw(r *http.Request) string { return "{}" }
 
 func verifyMpesaSuccess(ctx context.Context,checkout string) error {
 	base,shortcode,passkey,key,secret,_,err:=mpesaConfiguration();if err!=nil{return err}
