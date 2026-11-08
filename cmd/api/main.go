@@ -503,6 +503,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("OPTIONS /api/communities", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/communities/{path...}", s.mediaPreflight)
+	mux.HandleFunc("GET /api/hashtags", s.hashtagsSearch)
 	mux.HandleFunc("GET /api/hashtags/trending", s.hashtagsTrending)
 	mux.HandleFunc("GET /api/hashtags/followed", s.hashtagFollowedList)
 	mux.HandleFunc("GET /api/hashtags/{tag}", s.hashtagResolve)
