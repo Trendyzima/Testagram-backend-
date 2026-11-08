@@ -223,12 +223,19 @@ func (s *service) communityPosts(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	offset := 0
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		if n, parseErr := strconv.Atoi(raw); parseErr == nil && n > 0 {
+			if n > 10000/limit { n = 10000/limit }
+			offset = n * limit
+		}
+	}
 	rows, err := s.db.Query(r.Context(), `SELECT p.id::text,p.author_id::text,a.username,a.display_name,a.avatar_key,
 		p.text,p.media_ids,p.visibility,p.likes_count,p.replies_count,p.reposts_count,p.created_at
 		FROM testagram_local.posts p JOIN testagram_local.accounts a ON a.user_id=p.author_id
 		WHERE p.community_id=$1::uuid AND p.deleted_at IS NULL
 		AND ($2<>'public' OR p.visibility='public')
-		ORDER BY p.created_at DESC,p.id DESC LIMIT $3`, communityID, visibility, limit)
+		ORDER BY p.created_at DESC,p.id DESC LIMIT $3 OFFSET $4`, communityID, visibility, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("COMMUNITY_POSTS_FAILED", "Community posts could not be loaded", id))
 		return
