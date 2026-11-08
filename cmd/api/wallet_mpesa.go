@@ -70,6 +70,7 @@ func mpesaTimestamp() string { return time.Now().In(time.FixedZone("EAT",3*60*60
 func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,requestID string,body capabilityRequest) bool {
 	name:=strings.TrimSpace(body.Capability)
 	switch name {case "testagram.wallet.mpesa.stk_push","testagram.wallet.mpesa.status":default:return false}
+	if s.db==nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("DATABASE_UNAVAILABLE","Wallet service is unavailable",requestID)); return true }
 	userID,status,authErr:=s.authenticatedMediaUser(r)
 	if authErr!=nil||!socialUUIDPattern.MatchString(userID){if authErr==nil{status=http.StatusUnauthorized};writeJSON(w,status,errorBody("AUTH_REQUIRED","A valid authenticated session is required",requestID));return true}
 	ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
