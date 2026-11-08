@@ -374,10 +374,16 @@ jobs:
           INSERT INTO testagram_local.community_memberships(community_id,user_id,role,status)
           SELECT id,'123e4567-e89b-42d3-a456-426614174004','member','active'
           FROM testagram_local.communities WHERE slug='ci-community';
+          INSERT INTO testagram_local.posts(author_id,community_id,text,visibility)
+          SELECT '123e4567-e89b-42d3-a456-426614174000',id,'Community CI post','public'
+          FROM testagram_local.communities WHERE slug='ci-community';
           DO $community$
           BEGIN
             IF (SELECT member_count FROM testagram_local.communities WHERE slug='ci-community') <> 2 THEN
               RAISE EXCEPTION 'community membership trigger did not maintain member_count';
+            END IF;
+            IF (SELECT count(*) FROM testagram_local.posts WHERE community_id=(SELECT id FROM testagram_local.communities WHERE slug='ci-community') AND deleted_at IS NULL) <> 1 THEN
+              RAISE EXCEPTION 'community post was not persisted against canonical community';
             END IF;
             IF (SELECT count(*) FROM testagram_local.community_memberships WHERE community_id=(SELECT id FROM testagram_local.communities WHERE slug='ci-community')) <> 2 THEN
               RAISE EXCEPTION 'community owner/member rows were not persisted';
