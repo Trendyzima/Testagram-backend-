@@ -173,7 +173,7 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 		walletTag,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1 AND status='active'",userID,amountRaw)
 		if err==nil&&walletTag.RowsAffected()!=1{err=errors.New("wallet is unavailable for settlement")}
 	}
-	if err==nil{_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,topup_id,user_id,direction,amount,currency) VALUES(NULL,$1,$2,'credit',$3,'KES')",topupID,userID,walletAmountRaw)}
+	if err==nil{_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,topup_id,user_id,direction,amount,currency) VALUES(NULL,$1,$2,'credit',$3,$4)",topupID,userID,walletAmountRaw,walletCurrency)}
 	if err==nil{_,err=tx.Exec(ctx,"UPDATE testagram_local.wallet_transactions SET status='completed',provider_status='SUCCESS',metadata=metadata||jsonb_build_object('receipt_number',$2) WHERE topup_id=$1",topupID,receipt)}
 	if err==nil{_,err=tx.Exec(ctx,`INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
 		VALUES($1,NULL,'wallet.topup.completed',jsonb_build_object('topup_id',$2,'amount',$3,'currency',$4,'amount_kes',$5,'receipt_number',$6),'wallet-topup:'||$2)
