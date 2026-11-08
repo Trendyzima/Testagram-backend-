@@ -228,7 +228,9 @@ func TestAuthenticatedUnmigratedCapabilityNeverUsesSharedPublicCache(t *testing.
 	s.routes().ServeHTTP(w, r)
 	if w.Code != http.StatusNotImplemented { t.Fatalf("status=%d body=%s", w.Code, w.Body.String()) }
 	if cacheGets != 0 || cacheSets != 0 { t.Fatalf("authenticated response touched shared cache: gets=%d sets=%d", cacheGets, cacheSets) }
-}func testMediaSigner(t *testing.T) *media.Signer {
+}
+
+func testMediaSigner(t *testing.T) *media.Signer {
 	t.Helper()
 	signer, err := media.NewSigner(media.Config{
 		Endpoint: "https://media.testagram.site", SigningHost: "object-storage:9000",
