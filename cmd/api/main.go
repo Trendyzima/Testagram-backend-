@@ -793,6 +793,9 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
 		return
 	}
+	if s.nativeSocialCapability(w, r, id, body) {
+		return
+	}
 	if s.localProductCapability(w, r, id, body) {
 		return
 	}
