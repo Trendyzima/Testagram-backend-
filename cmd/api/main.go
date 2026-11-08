@@ -508,6 +508,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/communities/{community_id}/leave", s.communityLeave)
 	mux.HandleFunc("GET /api/communities/{community_id}/posts", s.communityPostsList)
 	mux.HandleFunc("POST /api/communities/{community_id}/posts", s.communityPostsCreate)
+	mux.HandleFunc("POST /api/scheduled-posts", s.scheduledPostCreate)
 	mux.HandleFunc("GET /api/communities/{community_id}/chat", s.communityChatList)
 	mux.HandleFunc("POST /api/communities/{community_id}/chat", s.communityChatSend)
 	mux.HandleFunc("POST /api/communities/{community_id}/chat/{message_id}/reactions", s.communityChatReact)
