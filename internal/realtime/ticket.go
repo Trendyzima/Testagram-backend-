@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	issuer   = "testagram-backend"
+	issuer = "testagram-backend"
 	audience = "testagram-realtime"
-	scope    = "conversation:read"
+	scopeConversation = "conversation:read"
+	scopeMedia = "media:signal"
 )
 
 type Claims struct {
@@ -29,12 +30,16 @@ type Claims struct {
 }
 
 func Issue(secret, subject, conversationID string, now time.Time, ttl time.Duration) (string, error) {
+	return IssueScoped(secret, subject, conversationID, scopeConversation, now, ttl)
+}
+
+func IssueScoped(secret, subject, roomID, ticketScope string, now time.Time, ttl time.Duration) (string, error) {
 	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
 		return "", errors.New("realtime ticket secret must contain at least 32 characters")
 	}
 	subject = strings.TrimSpace(subject)
-	conversationID = strings.TrimSpace(conversationID)
-	if subject == "" || len(subject) > 128 || conversationID == "" || len(conversationID) > 128 {
+	roomID = strings.TrimSpace(roomID)
+	if subject == "" || len(subject) > 128 || roomID == "" || len(roomID) > 128 || (ticketScope != scopeConversation && ticketScope != scopeMedia) {
 		return "", errors.New("realtime ticket subject and conversation ID are required and bounded")
 	}
 	if ttl < 30*time.Second || ttl > 5*time.Minute {
@@ -46,7 +51,7 @@ func Issue(secret, subject, conversationID string, now time.Time, ttl time.Durat
 	}
 	claims := Claims{
 		Issuer: issuer, Audience: audience, Subject: subject,
-		ConversationID: conversationID, Scope: scope,
+		ConversationID: roomID, Scope: ticketScope,
 		TokenID:  base64.RawURLEncoding.EncodeToString(jti),
 		IssuedAt: now.Unix(), ExpiresAt: now.Add(ttl).Unix(),
 	}
@@ -84,7 +89,7 @@ func Verify(secret, token, expectedConversationID string, now time.Time) (Claims
 		return Claims{}, errors.New("invalid realtime ticket claims")
 	}
 	nowUnix := now.Unix()
-	if claims.Issuer != issuer || claims.Audience != audience || claims.Scope != scope ||
+	if claims.Issuer != issuer || claims.Audience != audience || (claims.Scope != scopeConversation && claims.Scope != scopeMedia) ||
 		claims.Subject == "" || claims.ConversationID == "" || claims.TokenID == "" ||
 		claims.ConversationID != expectedConversationID || claims.IssuedAt > nowUnix+30 ||
 		claims.ExpiresAt <= nowUnix || claims.ExpiresAt <= claims.IssuedAt ||
