@@ -276,7 +276,7 @@ func (m *memoryStore) MediaKey(_ context.Context, owner, id string) (string, err
 func TestReserveUploadDefaultsScopeAndRejectsUnsupportedScope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
 	defer server.Close()
-	b2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "b2", SecretKey: "secret", Region: "us-west-004"})
+	b2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "b2", SecretKey: "secret", Region: "us-east-005"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,6 +297,26 @@ func TestReserveUploadDefaultsScopeAndRejectsUnsupportedScope(t *testing.T) {
 	}
 	if _, err := service.ReserveUpload(context.Background(), ReserveInput{OwnerID: "user_123", IdempotencyKey: "upload-invalid-scope", Scope: "unknown", Bytes: 1024, ContentType: "image/jpeg"}); err == nil {
 		t.Fatal("unsupported media scope accepted")
+	}
+}
+
+func TestReserveUploadReturnsSelectedR2Origin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer server.Close()
+	b2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "b2", SecretKey: "secret", Region: "us-east-005"})
+	if err != nil { t.Fatal(err) }
+	r2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "r2", SecretKey: "secret", Region: "auto"})
+	if err != nil { t.Fatal(err) }
+	store := &memoryStore{}
+	service, err := NewService(store, ProviderSet{B2: b2, B2Bucket: "b2-bucket", R2: r2, R2Bucket: "r2-bucket", PrimaryProvider: "r2"}, 1<<20)
+	if err != nil { t.Fatal(err) }
+	reservation, err := service.ReserveUpload(context.Background(), ReserveInput{OwnerID: "user_123", IdempotencyKey: "upload-r2-origin", Bytes: 1024, ContentType: "image/jpeg"})
+	if err != nil { t.Fatal(err) }
+	if reservation.PrimaryProvider != "r2" || store.reservation.PrimaryProvider != "r2" {
+		t.Fatalf("R2 origin was not returned and persisted: response=%q stored=%q", reservation.PrimaryProvider, store.reservation.PrimaryProvider)
+	}
+	if reservation.UploadURL == "" || reservation.UploadMethod != "PUT" {
+		t.Fatalf("R2-origin reservation did not return a direct upload URL: %#v", reservation)
 	}
 }
 
