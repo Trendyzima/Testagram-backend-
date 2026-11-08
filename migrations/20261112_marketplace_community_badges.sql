@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS testagram_local.marketplace_products (
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE testagram_local.marketplace_products
+ ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other' CHECK(length(category)<=48),
+ ADD COLUMN IF NOT EXISTS views_count BIGINT NOT NULL DEFAULT 0 CHECK(views_count>=0);
 CREATE INDEX IF NOT EXISTS testagram_marketplace_active_featured_idx ON testagram_local.marketplace_products(is_featured,sales_count DESC,created_at DESC) WHERE is_active;
 CREATE INDEX IF NOT EXISTS testagram_marketplace_active_name_idx ON testagram_local.marketplace_products(lower(name)) WHERE is_active;
 ALTER TABLE testagram_local.community_badges
