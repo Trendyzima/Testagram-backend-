@@ -1083,9 +1083,9 @@ func runReplicationApplyWorker(ctx context.Context, store *replication.Store) {
 
 func main() {
 	addr := env("LISTEN_ADDR", ":8080")
-	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	databaseURL := env("DATABASE_URL", strings.TrimSpace(os.Getenv("NEON_DATABASE_URL")))
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		log.Fatal("DATABASE_URL (or NEON_DATABASE_URL) is required")
 	}
 
 	poolConfig, err := pgxpool.ParseConfig(databaseURL)
