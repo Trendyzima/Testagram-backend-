@@ -66,3 +66,15 @@ func TestSignPublishRequiresSecretAndBoundsBody(t *testing.T) {
 		t.Fatal("oversized event accepted")
 	}
 }
+
+func TestIssueScopedMediaSignalTicket(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	secret := "0123456789abcdef0123456789abcdef"
+	token, err := IssueScoped(secret, "appwrite-user-2", "call-room-1", "media:signal", now, 2*time.Minute)
+	if err != nil { t.Fatal(err) }
+	claims, err := Verify(secret, token, "call-room-1", now.Add(time.Second))
+	if err != nil { t.Fatal(err) }
+	if claims.Scope != "media:signal" || claims.Subject != "appwrite-user-2" {
+		t.Fatalf("unexpected media ticket claims: %+v", claims)
+	}
+}
