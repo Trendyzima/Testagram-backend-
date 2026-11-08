@@ -513,6 +513,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
+	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
 	// Browser uploads use cross-origin PUT with Authorization and Content-Type,
@@ -797,6 +798,9 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.nativeCommunicationCapability(w, r, id, body) {
+		return
+	}
+	if s.nativeMPesaCapability(w, r, id, body) {
 		return
 	}
 	if s.nativeWalletSpaceCapability(w, r, id, body) {
