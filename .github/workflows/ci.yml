@@ -353,7 +353,8 @@ jobs:
             migrations/20261116_hashtag_challenges.sql \
             migrations/20261117_discovery_media_threads.sql \
             migrations/20261118_stories.sql \
-            migrations/20261119_messaging_core.sql; do
+            migrations/20261119_messaging_core.sql \
+            migrations/20261120_marketplace_categories.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
