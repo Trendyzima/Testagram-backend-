@@ -1,9 +1,12 @@
 package freshstorage
 
 import (
+	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func clear(t *testing.T) {
@@ -100,7 +103,6 @@ func TestArchiveProviderRequiresCompleteIndependentConfiguration(t *testing.T) {
 		t.Fatalf("archive provider not configured: %#v", p)
 	}
 }
-
 
 func TestBackblazeDefaultRegionMatchesUsEast005Endpoint(t *testing.T) {
 	clear(t)
