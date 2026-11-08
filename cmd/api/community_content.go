@@ -18,6 +18,7 @@ type communityProfileUpdate struct {
 	BannerURL   *string  `json:"banner_url"`
 	Category    *string  `json:"category"`
 	Rules       []string `json:"rules"`
+	PinnedPostIDs []string `json:"pinned_post_ids"`
 }
 
 type communityPostInput struct {
@@ -173,7 +174,7 @@ func (s *service) communityMembers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		items = append(items, map[string]any{"id": memberID, "user_id": memberID, "username": username,
-			"display_name": displayName, "avatar_url": avatarKey, "role": role, "status": "active", "joined_at": joinedAt})
+			"display_name": displayName, "avatar_url": avatarKey, "role": role, "status": "active", "joined_at": joinedAt, "user_profiles": map[string]any{"id": memberID, "username": username, "avatar_url": avatarKey, "verified": false}})
 	}
 	if err = rows.Err(); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("COMMUNITY_MEMBERS_FAILED", "Community member records could not be read", id))
@@ -308,8 +309,8 @@ func (s *service) communityProfileUpdate(w http.ResponseWriter, r *http.Request)
 	_,err=s.db.Exec(r.Context(),`UPDATE testagram_local.communities SET
 		name=COALESCE($2,name),description=COALESCE($3,description),icon_url=COALESCE($4,icon_url),
 		banner_url=COALESCE($5,banner_url),category=COALESCE($6,category),
-		rules=COALESCE($7::jsonb,rules),updated_at=now() WHERE id=$1::uuid`,
-		communityID,nullableTrimmed(in.Name),nullableString(in.Description),nullableString(in.IconURL),nullableString(in.BannerURL),nullableString(in.Category),rulesJSON)
+		rules=COALESCE($7::jsonb,rules),pinned_post_ids=COALESCE($8::jsonb,pinned_post_ids),updated_at=now() WHERE id=$1::uuid`,
+		communityID,nullableTrimmed(in.Name),nullableString(in.Description),nullableString(in.IconURL),nullableString(in.BannerURL),nullableString(in.Category),rulesJSON,pinnedJSON)
 	if err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_UPDATE_FAILED","Community profile could not be updated",id));return}
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"updated":true,"community_id":communityID}})
 }
@@ -338,4 +339,61 @@ func (s *service) communityPostModerate(w http.ResponseWriter,r *http.Request) {
 	if err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_POST_MODERATION_FAILED","Post could not be moderated",id));return}
 	if tag.RowsAffected()==0 {http.NotFound(w,r);return}
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"post_id":postID,"moderated":true}})
+}
+
+type communityRoleInput struct {
+	Role string `json:"role"`
+}
+
+func (s *service) communityMemberRole(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := s.socialAuth(w, r)
+	if !ok { return }
+	if !s.socialWriteAllowed(w, r, userID, id, "community_member_role", 10) { return }
+	communityID, memberID := r.PathValue("community_id"), r.PathValue("member_id")
+	if !socialUUIDPattern.MatchString(communityID) || !socialUUIDPattern.MatchString(memberID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_COMMUNITY_MEMBER", "Community or member ID is invalid", id)); return
+	}
+	var actorRole string
+	err := s.db.QueryRow(r.Context(), `SELECT role FROM testagram_local.community_memberships
+		WHERE community_id=$1::uuid AND user_id=$2::uuid AND status='active'`, communityID, userID).Scan(&actorRole)
+	if err != nil || actorRole != "owner" {
+		writeJSON(w, http.StatusForbidden, errorBody("COMMUNITY_OWNER_REQUIRED", "Only the community owner can change member roles", id)); return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	defer r.Body.Close()
+	var in communityRoleInput
+	if err = decodeSingleJSON(r.Body, &in); err != nil || (in.Role != "member" && in.Role != "moderator") {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_COMMUNITY_ROLE", "Role must be member or moderator", id)); return
+	}
+	tag, err := s.db.Exec(r.Context(), `UPDATE testagram_local.community_memberships
+		SET role=$3 WHERE community_id=$1::uuid AND user_id=$2::uuid AND status='active' AND role<>'owner'`,
+		communityID, memberID, in.Role)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("COMMUNITY_ROLE_UPDATE_FAILED", "Member role could not be updated", id)); return
+	}
+	if tag.RowsAffected() == 0 { http.NotFound(w, r); return }
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"user_id": memberID, "role": in.Role}})
+}
+
+func (s *service) communityMemberRemove(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := s.socialAuth(w, r)
+	if !ok { return }
+	if !s.socialWriteAllowed(w, r, userID, id, "community_member_remove", 10) { return }
+	communityID, memberID := r.PathValue("community_id"), r.PathValue("member_id")
+	if !socialUUIDPattern.MatchString(communityID) || !socialUUIDPattern.MatchString(memberID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_COMMUNITY_MEMBER", "Community or member ID is invalid", id)); return
+	}
+	var actorRole string
+	err := s.db.QueryRow(r.Context(), `SELECT role FROM testagram_local.community_memberships
+		WHERE community_id=$1::uuid AND user_id=$2::uuid AND status='active'`, communityID, userID).Scan(&actorRole)
+	if err != nil || actorRole != "owner" {
+		writeJSON(w, http.StatusForbidden, errorBody("COMMUNITY_OWNER_REQUIRED", "Only the community owner can remove members", id)); return
+	}
+	tag, err := s.db.Exec(r.Context(), `DELETE FROM testagram_local.community_memberships
+		WHERE community_id=$1::uuid AND user_id=$2::uuid AND role<>'owner'`, communityID, memberID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("COMMUNITY_MEMBER_REMOVE_FAILED", "Community member could not be removed", id)); return
+	}
+	if tag.RowsAffected() == 0 { http.NotFound(w, r); return }
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"user_id": memberID, "removed": true}})
 }
