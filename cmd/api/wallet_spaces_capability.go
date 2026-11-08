@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
 func moneyAmount(value any) (string, float64, bool) {
@@ -116,13 +117,31 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 		if e=tx.Commit(ctx);e!=nil{fail("TRANSFER_FAILED","Wallet transfer could not be committed",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"transfer_id":id,"status":"completed","duplicate":duplicate,"amount":amount,"currency":"KES"});return true
 	case "testagram.audio_spaces.list_live":
-		rows,e:=s.db.Query(ctx,`SELECT s.id::text,s.host_id::text,s.title,s.description,s.listener_count,s.max_audience,s.started_at,a.username,a.display_name,a.avatar_key
+		rows,e:=s.db.Query(ctx,`SELECT s.id::text,s.host_id::text,s.title,s.description,s.listener_count,s.max_audience,s.started_at,a.username,a.display_name,a.avatar_key,
+			EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=s.host_id AND f.status='accepted')
 			FROM testagram_local.audio_spaces s JOIN testagram_local.accounts a ON a.user_id=s.host_id
-			WHERE s.status='live' ORDER BY s.listener_count DESC,s.started_at DESC LIMIT 50`)
+			WHERE s.status='live' AND a.account_status='active'
+			  AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b WHERE
+			    (b.blocker_id=$1 AND b.blocked_id=s.host_id) OR (b.blocker_id=s.host_id AND b.blocked_id=$1))
+			ORDER BY s.listener_count DESC,s.started_at DESC LIMIT 50`,userID)
 		if e!=nil{fail("SPACES_LIST_FAILED","Could not load live Spaces",http.StatusServiceUnavailable);return true}
-		defer rows.Close();items:=make([]map[string]any,0)
-		for rows.Next(){var id,host,title,description,username,display,avatar string;var count,max int;var started *time.Time;if rows.Scan(&id,&host,&title,&description,&count,&max,&started,&username,&display,&avatar)!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true};items=append(items,map[string]any{"id":id,"host_id":host,"title":title,"description":description,"listener_count":count,"max_audience":max,"started_at":started,"host":map[string]any{"id":host,"username":username,"display_name":display,"avatar_url":avatar}})}
-		if rows.Err()!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
+		defer rows.Close();items:=make([]map[string]any,0);candidates:=make([]algorithmclient.Candidate,0)
+		for rows.Next(){var id,host,title,description,username,display,avatar string;var count,max int;var started *time.Time;var following bool
+			if rows.Scan(&id,&host,&title,&description,&count,&max,&started,&username,&display,&avatar,&following)!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true}
+			created:=time.Now().UTC();if started!=nil{created=*started}
+			items=append(items,map[string]any{"id":id,"host_id":host,"title":title,"description":description,"listener_count":count,"max_audience":max,"started_at":started,"is_live":true,"host":map[string]any{"id":host,"username":username,"display_name":display,"avatar_url":avatar}})
+			quality:=0.0;if max>0{quality=math.Min(1,float64(count)/float64(max))}
+			candidates=append(candidates,algorithmclient.Candidate{ID:id,AuthorID:host,CreatedAt:created,Visible:true,Features:algorithmclient.Features{Following:following,InterestAffinity:quality,Quality:quality,Conversation:math.Min(1,float64(count)/10),ReportRisk:0}})
+		}
+		if rows.Err()!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true}
+		// Algorithm ranks only this already-authorized candidate set. Backend keeps
+		// ownership of privacy filtering and hydrates the returned IDs from SQL.
+		if s.algorithm!=nil&&len(candidates)>0{
+			s.algorithmRequests.Add(1)
+			ranked,rankErr:=s.algorithm.Rank(ctx,algorithmclient.Request{Now:time.Now().UTC(),Candidates:candidates,Limit:min(50,len(candidates)),AllowSensitive:false})
+			if rankErr==nil{byID:=make(map[string]map[string]any,len(items));for _,item:=range items{byID[item["id"].(string)]=item};ordered:=make([]map[string]any,0,len(ranked.Items));for _,rankedItem:=range ranked.Items{if item,ok:=byID[rankedItem.ID];ok{item["ranking_score"]=rankedItem.Score;item["ranking_reasons"]=rankedItem.Reasons;ordered=append(ordered,item)}};if len(ordered)>0{items=ordered}}else{s.algorithmFailures.Add(1)}
+		}
+		writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
 	case "testagram.audio_spaces.pending_speaker_requests":
 		id:=str("space_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_SPACE","A valid Space ID is required",http.StatusBadRequest);return true}
 		var host bool;if e:=s.db.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_local.audio_spaces WHERE id=$1 AND host_id=$2 AND status='live')",id,userID).Scan(&host);e!=nil||!host{fail("HOST_ONLY","Only the host can view speaker requests",http.StatusForbidden);return true}
