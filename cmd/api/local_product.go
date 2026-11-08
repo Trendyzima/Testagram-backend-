@@ -2,14 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -43,62 +39,6 @@ func localCapabilityName(name string) bool {
 		return true
 	}
 	return false
-}
-func localJWTSubject(authorization string) (string, error) {
-	parts := strings.Fields(authorization)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", errors.New("bearer token required")
-	}
-	secrets := []string{strings.TrimSpace(os.Getenv("SUPABASE_JWT_SECRET")), strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))}
-	if secrets[0] == "" && secrets[1] == "" {
-		return "", errors.New("local JWT verification is not configured")
-	}
-	segments := strings.Split(parts[1], ".")
-	if len(segments) != 3 {
-		return "", errors.New("invalid token")
-	}
-	hb, err := base64.RawURLEncoding.DecodeString(segments[0])
-	if err != nil {
-		return "", errors.New("invalid token header")
-	}
-	var header map[string]any
-	if json.Unmarshal(hb, &header) != nil || header["alg"] != "HS256" {
-		return "", errors.New("only HS256 local verification is configured")
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(segments[2])
-	if err != nil {
-		return "", errors.New("invalid token signature")
-	}
-	signed := []byte(segments[0] + "." + segments[1])
-	validSignature := false
-	for _, secret := range secrets {
-		if secret == "" {
-			continue
-		}
-		mac := hmac.New(sha256.New, []byte(secret))
-		_, _ = mac.Write(signed)
-		if hmac.Equal(sig, mac.Sum(nil)) {
-			validSignature = true
-			break
-		}
-	}
-	if !validSignature {
-		return "", errors.New("invalid token signature")
-	}
-	pb, err := base64.RawURLEncoding.DecodeString(segments[1])
-	if err != nil {
-		return "", errors.New("invalid token claims")
-	}
-	var claims map[string]any
-	if json.Unmarshal(pb, &claims) != nil {
-		return "", errors.New("invalid token claims")
-	}
-	sub, _ := claims["sub"].(string)
-	exp, ok := claims["exp"].(float64)
-	if !ok || exp <= float64(time.Now().Unix()) || !localUUIDPattern.MatchString(sub) {
-		return "", errors.New("invalid or expired token claims")
-	}
-	return strings.ToLower(sub), nil
 }
 func (s *service) localProductCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
 	if !localProductEnabled() || !localCapabilityName(body.Capability) {
