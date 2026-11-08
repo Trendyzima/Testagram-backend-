@@ -1300,6 +1300,7 @@ func main() {
 	go svc.runMediaJanitor(signalCtx)
 	if federationWorker != nil { go federationWorker.Run(signalCtx) }
 	go svc.runStorageDeletionWorker(signalCtx)
+	go svc.runCommunicationOutbox(signalCtx)
 	if replicationApplyEnabled {
 		if replicationStore == nil {
 			log.Fatal("REPLICATION_APPLY_ENABLED requires replication configuration and database access")
