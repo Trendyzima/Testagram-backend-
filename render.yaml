@@ -37,7 +37,7 @@ services:
       - key: FRESH_MEDIA_PRIMARY_PROVIDER
         value: r2
       - key: B2_S3_ENDPOINT
-        sync: false
+        value: https://s3.us-east-005.backblazeb2.com
       - key: B2_S3_REGION
         value: us-east-005
       - key: B2_S3_BUCKET
@@ -47,11 +47,11 @@ services:
       - key: B2_S3_SECRET_ACCESS_KEY
         sync: false
       - key: CLOUDFLARE_R2_ENDPOINT
-        sync: false
+        value: https://77dbe7a859196105dc84fbb6b7094019.r2.cloudflarestorage.com
       - key: CLOUDFLARE_R2_REGION
         value: auto
       - key: CLOUDFLARE_R2_BUCKET
-        sync: false
+        value: testagram-media
       - key: CLOUDFLARE_R2_ACCESS_KEY_ID
         sync: false
       - key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
