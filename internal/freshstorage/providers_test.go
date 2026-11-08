@@ -8,7 +8,7 @@ import (
 
 func clear(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_REGION", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_BUCKET", "ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY", "ARCHIVE_S3_BUCKET"} {
+	for _, k := range []string{"B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_REGION", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_BUCKET", "ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY", "ARCHIVE_S3_BUCKET", "CLOUDFLARE_MEDIA_BASE_URL", "CLOUDFLARE_MEDIA_SIGNING_SECRET", "FRESH_MEDIA_PRIMARY_PROVIDER"} {
 		old, ok := os.LookupEnv(k)
 		_ = os.Unsetenv(k)
 		t.Cleanup(func() {
@@ -41,16 +41,45 @@ func TestPartialB2ConfigurationFailsClosed(t *testing.T) {
 	}
 }
 
-func TestR2CannotBeConfiguredWithoutB2(t *testing.T) {
+func TestR2CannotLaunchMediaWithoutB2(t *testing.T) {
 	clear(t)
 	_ = os.Setenv("CLOUDFLARE_R2_ENDPOINT", "https://account.r2.cloudflarestorage.com")
 	_ = os.Setenv("CLOUDFLARE_R2_ACCESS_KEY_ID", "key")
 	_ = os.Setenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "secret")
 	_ = os.Setenv("CLOUDFLARE_R2_BUCKET", "media")
 	p, err := FromEnv()
-	if err == nil || p.R2 != nil {
-		t.Fatal("R2 without B2 primary must fail closed")
+	if err != nil || p.R2 == nil {
+		t.Fatalf("R2 should configure independently; media readiness still requires B2: %v", err)
 	}
+	if err := p.ReadyForMedia(); err == nil {
+		t.Fatal("media must remain unavailable until both independent providers are configured")
+	}
+}
+
+
+func TestR2CanBeSelectedAsPrimaryWithBothProviders(t *testing.T) {
+	clear(t)
+	for key, value := range map[string]string{
+		"B2_S3_ENDPOINT": "https://s3.us-west-004.backblazeb2.com",
+		"B2_S3_ACCESS_KEY_ID": "b2-key",
+		"B2_S3_SECRET_ACCESS_KEY": "b2-secret",
+		"B2_S3_BUCKET": "testagram-b2",
+		"CLOUDFLARE_R2_ENDPOINT": "https://account.r2.cloudflarestorage.com",
+		"CLOUDFLARE_R2_ACCESS_KEY_ID": "r2-key",
+		"CLOUDFLARE_R2_SECRET_ACCESS_KEY": "r2-secret",
+		"CLOUDFLARE_R2_BUCKET": "testagram-r2",
+		"FRESH_MEDIA_PRIMARY_PROVIDER": "r2",
+	} { t.Setenv(key, value) }
+	p, err := FromEnv()
+	if err != nil { t.Fatal(err) }
+	if err := p.ReadyForMedia(); err != nil { t.Fatal(err) }
+	if p.PrimaryProvider != "r2" { t.Fatalf("primary provider=%q, want r2", p.PrimaryProvider) }
+}
+
+func TestInvalidPrimaryProviderFailsClosed(t *testing.T) {
+	clear(t)
+	t.Setenv("FRESH_MEDIA_PRIMARY_PROVIDER", "third-party")
+	if _, err := FromEnv(); err == nil { t.Fatal("unsupported primary provider accepted") }
 }
 
 func TestTargetPoolIs150GBDecimal(t *testing.T) {
