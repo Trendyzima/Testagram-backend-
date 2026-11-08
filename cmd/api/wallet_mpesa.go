@@ -81,25 +81,28 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 	switch name {
 	case "testagram.wallet.mpesa.status":
 		checkout:=str("checkout_request_id");if checkout==""||len(checkout)>128{fail("INVALID_CHECKOUT_REQUEST","A valid checkout request ID is required",http.StatusBadRequest);return true}
-		var state,receipt,amount string;var created time.Time
-		err:=s.db.QueryRow(ctx,`SELECT status,COALESCE(receipt_number,''),amount_kes::text,created_at FROM testagram_local.wallet_topups WHERE checkout_request_id=$1 AND user_id=$2`,checkout,userID).Scan(&state,&receipt,&amount,&created)
+		var state,receipt,amount,walletAmount,currency string;var created time.Time
+		err:=s.db.QueryRow(ctx,`SELECT status,COALESCE(receipt_number,''),amount_kes::text,wallet_amount::text,wallet_currency,created_at FROM testagram_local.wallet_topups WHERE checkout_request_id=$1 AND user_id=$2`,checkout,userID).Scan(&state,&receipt,&amount,&walletAmount,&currency,&created)
 		if err!=nil{fail("TOPUP_NOT_FOUND","M-Pesa top-up was not found",http.StatusNotFound);return true}
-		writeJSON(w,http.StatusOK,map[string]any{"status":state,"checkout_request_id":checkout,"receipt_number":receipt,"amount_kes":amount,"created_at":created});return true
+		writeJSON(w,http.StatusOK,map[string]any{"status":state,"checkout_request_id":checkout,"receipt_number":receipt,"amount_kes":amount,"wallet_amount":walletAmount,"currency":strings.TrimSpace(currency),"created_at":created});return true
 	case "testagram.wallet.mpesa.stk_push":
 		phone,ok:=normalizeMpesaPhone(str("phone"));if !ok{fail("INVALID_PHONE","Enter a valid Kenyan Safaricom number",http.StatusBadRequest);return true}
+		walletCurrency:=strings.ToUpper(str("currency"));if walletCurrency==""{walletCurrency="KES"};if walletCurrency!="KES"&&walletCurrency!="USD"{fail("INVALID_CURRENCY","M-Pesa top-ups support KES or USD wallets",http.StatusBadRequest);return true}
 		amountRaw:=input["amount_kes"];var amount float64
 		switch v:=amountRaw.(type){case float64:amount=v;case string:amount,_=strconv.ParseFloat(strings.TrimSpace(v),64)}
 		if amount<10||amount>150000||amount!=mathFloor(amount){fail("INVALID_AMOUNT","M-Pesa top-ups must be whole KES amounts between 10 and 150,000",http.StatusBadRequest);return true}
 		key:=str("idempotency_key");if key==""{key=strings.TrimSpace(r.Header.Get("Idempotency-Key"))};if len(key)<8||len(key)>128{fail("INVALID_IDEMPOTENCY_KEY","A valid idempotency key is required",http.StatusBadRequest);return true}
 		base,shortcode,passkey,consumerKey,consumerSecret,callback,configErr:=mpesaConfiguration();if configErr!=nil{fail("MPESA_NOT_CONFIGURED","M-Pesa STK Push is not configured on Backend",http.StatusServiceUnavailable);return true}
-		if _,err:=s.db.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING",userID);err!=nil{fail("WALLET_UNAVAILABLE","Wallet is unavailable",http.StatusServiceUnavailable);return true}
+		if _,err:=s.db.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",userID,walletCurrency);err!=nil{fail("WALLET_UNAVAILABLE","Wallet is unavailable",http.StatusServiceUnavailable);return true}
 		var walletStatus,currency string
-		if err:=s.db.QueryRow(ctx,"SELECT status,currency FROM testagram_local.wallets WHERE user_id=$1",userID).Scan(&walletStatus,&currency);err!=nil||walletStatus!="active"||strings.TrimSpace(currency)!="KES"{fail("WALLET_UNAVAILABLE","An active KES wallet is required for M-Pesa top-ups",http.StatusConflict);return true}
+		if err:=s.db.QueryRow(ctx,"SELECT status,currency FROM testagram_local.wallets WHERE user_id=$1",userID).Scan(&walletStatus,&currency);err!=nil||walletStatus!="active"||strings.TrimSpace(currency)!=walletCurrency{fail("WALLET_UNAVAILABLE","An active wallet in the selected currency is required",http.StatusConflict);return true}
+		walletAmount:=amount;fxRate:=1.0
+		if walletCurrency=="USD"{fxRate,_=strconv.ParseFloat(strings.TrimSpace(os.Getenv("MPESA_USD_KES_RATE")),64);if fxRate<=0{fail("FX_RATE_UNAVAILABLE","M-Pesa USD/KES rate is not configured",http.StatusServiceUnavailable);return true};walletAmount=mathRound2(amount/fxRate)}
 		reference:="TS"+strings.TrimPrefix(newCallRoom(),"testagram-")[:18]
 		var topupID,requestReference,state string;var checkout *string
-		err:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.wallet_topups(user_id,amount_kes,phone_e164,idempotency_key,request_reference)
-			VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,idempotency_key) DO NOTHING
-			RETURNING id::text,request_reference,status,checkout_request_id`,userID,amount,phone,key,reference).Scan(&topupID,&requestReference,&state,&checkout)
+		err:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.wallet_topups(user_id,amount_kes,wallet_amount,wallet_currency,fx_rate,phone_e164,idempotency_key,request_reference)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(user_id,idempotency_key) DO NOTHING
+			RETURNING id::text,request_reference,status,checkout_request_id`,userID,amount,walletAmount,walletCurrency,fxRate,phone,key,reference).Scan(&topupID,&requestReference,&state,&checkout)
 		if err==pgx.ErrNoRows{
 			err=s.db.QueryRow(ctx,"SELECT id::text,request_reference,status,checkout_request_id FROM testagram_local.wallet_topups WHERE user_id=$1 AND idempotency_key=$2",userID,key).Scan(&topupID,&requestReference,&state,&checkout)
 			if err!=nil{fail("TOPUP_IDEMPOTENCY_FAILED","Could not recover the prior M-Pesa request",http.StatusServiceUnavailable);return true}
@@ -123,13 +126,15 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 		tx,err:=s.db.Begin(ctx);if err!=nil{fail("TOPUP_PERSIST_FAILED","M-Pesa accepted the request but Backend could not persist it",http.StatusServiceUnavailable);return true};defer func(){_ = tx.Rollback(context.Background())}()
 		_,err=tx.Exec(ctx,`UPDATE testagram_local.wallet_topups SET checkout_request_id=$2,merchant_request_id=$3,status='pending',provider_response=$4::jsonb,updated_at=now() WHERE id=$1`,topupID,checkoutID,merchantID,string(responseBody))
 		if err==nil{_,err=tx.Exec(ctx,`INSERT INTO testagram_local.wallet_transactions(user_id,topup_id,kind,amount,currency,status,provider,provider_order_id,provider_reference,provider_status,metadata)
-			VALUES($1,$2,'deposit',$3,'KES','pending','mpesa',$4,$5,'PENDING',jsonb_build_object('phone',$6,'amount_kes',$3)) ON CONFLICT DO NOTHING`,userID,topupID,amount,checkoutID,requestReference,phone)}
+			VALUES($1,$2,'deposit',$3,$4,'pending','mpesa',$5,$6,'PENDING',jsonb_build_object('phone',$7,'amount_kes',$8,'fx_rate',$9)) ON CONFLICT DO NOTHING`,userID,topupID,walletAmount,walletCurrency,checkoutID,requestReference,phone,amount,fxRate)}
 		if err==nil{err=tx.Commit(ctx)}
 		if err!=nil{fail("TOPUP_PERSIST_FAILED","M-Pesa accepted the request but Backend could not persist the settlement record; do not retry",http.StatusServiceUnavailable);return true}
-		writeJSON(w,http.StatusAccepted,map[string]any{"status":"pending","checkout_request_id":checkoutID,"merchant_request_id":merchantID,"request_reference":requestReference,"amount_kes":amount,"currency":"KES","duplicate":false});return true
+		writeJSON(w,http.StatusAccepted,map[string]any{"status":"pending","checkout_request_id":checkoutID,"merchant_request_id":merchantID,"request_reference":requestReference,"amount_kes":amount,"wallet_amount":walletAmount,"currency":walletCurrency,"fx_rate":fxRate,"duplicate":false});return true
 	}
 	return true
 }
+
+func mathRound2(value float64) float64 { return float64(int64(value*100+0.5))/100 }
 
 func mathFloor(value float64) float64 { if value<0{return -1};return float64(int64(value)) }
 
@@ -143,8 +148,8 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 	cb:=input.Body.Callback;checkout:=strings.TrimSpace(cb.CheckoutRequestID)
 	if checkout==""{writeJSON(w,http.StatusBadRequest,map[string]any{"ResultCode":1,"ResultDesc":"Missing CheckoutRequestID"});return}
 	ctx,cancel:=context.WithTimeout(r.Context(),15*time.Second);defer cancel()
-	var userID,phone,amountRaw,state string;var topupID string
-	err:=s.db.QueryRow(ctx,`SELECT id::text,user_id::text,phone_e164,amount_kes::text,status FROM testagram_local.wallet_topups WHERE checkout_request_id=$1`,checkout).Scan(&topupID,&userID,&phone,&amountRaw,&state)
+	var userID,phone,amountRaw,walletAmountRaw,walletCurrency,state string;var topupID string
+	err:=s.db.QueryRow(ctx,`SELECT id::text,user_id::text,phone_e164,amount_kes::text,wallet_amount::text,wallet_currency,status FROM testagram_local.wallet_topups WHERE checkout_request_id=$1`,checkout).Scan(&topupID,&userID,&phone,&amountRaw,&walletAmountRaw,&walletCurrency,&state)
 	if err!=nil{writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Top-up record unavailable; retry callback"});return}
 	if state=="settled"{writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Already settled"});return}
 	if cb.ResultCode!=0{
@@ -168,11 +173,11 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 		walletTag,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1 AND status='active'",userID,amountRaw)
 		if err==nil&&walletTag.RowsAffected()!=1{err=errors.New("wallet is unavailable for settlement")}
 	}
-	if err==nil{_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,topup_id,user_id,direction,amount,currency) VALUES(NULL,$1,$2,'credit',$3,'KES')",topupID,userID,amountRaw)}
+	if err==nil{_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,topup_id,user_id,direction,amount,currency) VALUES(NULL,$1,$2,'credit',$3,'KES')",topupID,userID,walletAmountRaw)}
 	if err==nil{_,err=tx.Exec(ctx,"UPDATE testagram_local.wallet_transactions SET status='completed',provider_status='SUCCESS',metadata=metadata||jsonb_build_object('receipt_number',$2) WHERE topup_id=$1",topupID,receipt)}
 	if err==nil{_,err=tx.Exec(ctx,`INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
-		VALUES($1,NULL,'wallet.topup.completed',jsonb_build_object('topup_id',$2,'amount_kes',$3,'receipt_number',$4),'wallet-topup:'||$2)
-		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,userID,topupID,amountRaw,receipt)}
+		VALUES($1,NULL,'wallet.topup.completed',jsonb_build_object('topup_id',$2,'amount',$3,'currency',$4,'amount_kes',$5,'receipt_number',$6),'wallet-topup:'||$2)
+		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,userID,topupID,walletAmountRaw,walletCurrency,amountRaw,receipt)}
 	if err==nil{err=tx.Commit(ctx)}
 	if err!=nil{writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Settlement failed; retry callback"});return}
 	writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Accepted"})
