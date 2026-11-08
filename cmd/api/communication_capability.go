@@ -233,14 +233,17 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		conversationID:=str("conversation_id");kind:=str("kind");if kind==""{kind="video"};if !socialUUIDPattern.MatchString(conversationID)||(kind!="voice"&&kind!="video"&&kind!="screen"){fail("INVALID_CALL","Call details are invalid",http.StatusBadRequest);return true}
 		room:=newCallRoom()
 		var id string;e:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind)
-			SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL) RETURNING id::text`,conversationID,userID,room,kind).Scan(&id)
+			SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)
+			AND (SELECT count(*) FROM testagram_local.conversation_members WHERE conversation_id=$1 AND left_at IS NULL)=2 RETURNING id::text`,conversationID,userID,room,kind).Scan(&id)
 		if errors.Is(e,pgx.ErrNoRows){fail("CONVERSATION_ACCESS_DENIED","Conversation membership is required",http.StatusForbidden);return true};if e!=nil{fail("CALL_CREATE_FAILED","Could not create call session",http.StatusServiceUnavailable);return true}
 		_,_=s.db.Exec(ctx,"INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",id,userID)
 		writeJSON(w,http.StatusCreated,map[string]any{"call_id":id,"provider":"testagram-p2p","room_name":room,"kind":kind,"status":"ringing","conversation_id":conversationID,"e2ee_enabled":true});return true
 	case "testagram.calls.join":
 		id:=str("call_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_CALL","A valid call ID is required",http.StatusBadRequest);return true}
 		tag,e:=s.db.Exec(ctx,`UPDATE testagram_local.call_sessions c SET status=CASE WHEN c.status='ringing' THEN 'active' ELSE c.status END,started_at=COALESCE(c.started_at,now())
-			WHERE c.id=$1 AND c.status IN ('ringing','active') AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`,id,userID)
+			WHERE c.id=$1 AND c.status IN ('ringing','active') AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)
+			AND (EXISTS(SELECT 1 FROM testagram_local.call_participants mine WHERE mine.call_id=c.id AND mine.user_id=$2 AND mine.left_at IS NULL)
+				OR (SELECT count(*) FROM testagram_local.call_participants active WHERE active.call_id=c.id AND active.left_at IS NULL)<2)`,id,userID)
 		if e!=nil{fail("CALL_JOIN_FAILED","Could not join call",http.StatusServiceUnavailable);return true};if tag.RowsAffected()!=1{fail("CALL_NOT_AVAILABLE","Call is unavailable or access is denied",http.StatusNotFound);return true}
 		_,_=s.db.Exec(ctx,"INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2) ON CONFLICT(call_id,user_id) DO UPDATE SET joined_at=now(),left_at=NULL",id,userID)
 		writeJSON(w,http.StatusOK,map[string]any{"call_id":id,"joined":true});return true
