@@ -107,7 +107,9 @@ func TestCapabilityGatewayDoesNotProxyRetiredSupabase(t *testing.T) {
 	if w.Header().Get("Access-Control-Allow-Origin") != "https://testagram.site" {
 		t.Fatalf("unexpected CORS origin: %q", w.Header().Get("Access-Control-Allow-Origin"))
 	}
-}func TestUnifiedSearchRequiresLinkedAppwriteIdentity(t *testing.T) {
+}
+
+func TestUnifiedSearchRequiresLinkedAppwriteIdentity(t *testing.T) {
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
 	upstreamCalls := 0
