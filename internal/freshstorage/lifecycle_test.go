@@ -384,6 +384,49 @@ func TestServiceCompletesB2UploadOnlyAfterVerifiedR2Replica(t *testing.T) {
 	}
 }
 
+
+func TestServiceCompletesR2OriginAndCreatesVerifiedB2Replica(t *testing.T) {
+	payload := []byte("r2-origin-media")
+	hash := sha256.Sum256(payload)
+	expected := hex.EncodeToString(hash[:])
+	key := "v1/0123456789abcdef0123456789abcdef"
+	objects := map[string][]byte{"r2-bucket/" + key: append([]byte(nil), payload...)}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		objectKey := strings.TrimPrefix(r.URL.Path, "/")
+		switch r.Method {
+		case http.MethodHead:
+			body, ok := objects[objectKey]
+			if !ok { http.NotFound(w, r); return }
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.Header().Set("Content-Type", "image/jpeg")
+		case http.MethodGet:
+			body, ok := objects[objectKey]
+			if !ok { http.NotFound(w, r); return }
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write(body)
+		case http.MethodPut:
+			body, err := io.ReadAll(r.Body)
+			if err != nil { t.Errorf("read B2 replica: %v", err); return }
+			objects[objectKey] = body
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unsupported", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	b2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "b2", SecretKey: "secret", Region: "us-west-004"})
+	if err != nil { t.Fatal(err) }
+	r2, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: server.URL, AccessKey: "r2", SecretKey: "secret", Region: "auto"})
+	if err != nil { t.Fatal(err) }
+	store := &memoryStore{reservation: Reservation{ID: "res_r2", OwnerID: "user_123", ObjectID: "med_r2", ObjectKey: key, Bytes: int64(len(payload)), ReservedKiB: 1, ContentType: "image/jpeg", ExpectedSHA256: expected, PrimaryProvider: "r2", Status: "reserved", ExpiresAt: time.Now().Add(time.Minute)}}
+	service, err := NewService(store, ProviderSet{B2: b2, B2Bucket: "b2-bucket", R2: r2, R2Bucket: "r2-bucket", PrimaryProvider: "r2"}, 1<<20)
+	if err != nil { t.Fatal(err) }
+	if err := service.CompleteUpload(context.Background(), "user_123", "res_r2"); err != nil { t.Fatal(err) }
+	if !store.primaryMarked || !store.committed || store.reservation.Status != "protected" { t.Fatalf("R2-origin state machine did not complete: %#v", store) }
+	if !bytes.Equal(objects["b2-bucket/"+key], payload) { t.Fatal("B2 replica differs from verified R2 origin") }
+}
+
 func TestExpiredReservationDeletesCloudObjectsBeforeReleasingQuota(t *testing.T) {
 	payload := []byte("expired-media")
 	objects := map[string][]byte{"b2-bucket/v1/0123456789abcdef0123456789abcdef": payload}
