@@ -1,0 +1,61 @@
+-- Backend-owned local hashtags, post indexing, and follow graph.
+BEGIN;
+CREATE TABLE IF NOT EXISTS testagram_local.hashtags (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ tag TEXT NOT NULL UNIQUE CHECK (tag ~ '^[a-z0-9_]{1,64}$'),
+ usage_count BIGINT NOT NULL DEFAULT 0 CHECK (usage_count>=0),
+ follower_count BIGINT NOT NULL DEFAULT 0 CHECK (follower_count>=0),
+ federated_post_count BIGINT NOT NULL DEFAULT 0 CHECK (federated_post_count>=0),
+ last_used_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS testagram_local.post_hashtags (
+ post_id UUID NOT NULL REFERENCES testagram_local.posts(id) ON DELETE CASCADE,
+ hashtag_id UUID NOT NULL REFERENCES testagram_local.hashtags(id) ON DELETE CASCADE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(post_id,hashtag_id)
+);
+CREATE INDEX IF NOT EXISTS testagram_local_post_hashtags_tag_idx ON testagram_local.post_hashtags(hashtag_id,created_at DESC,post_id);
+CREATE TABLE IF NOT EXISTS testagram_local.hashtag_follows (
+ user_id UUID NOT NULL REFERENCES testagram_local.accounts(user_id) ON DELETE CASCADE,
+ hashtag_id UUID NOT NULL REFERENCES testagram_local.hashtags(id) ON DELETE CASCADE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY(user_id,hashtag_id)
+);
+CREATE INDEX IF NOT EXISTS testagram_local_hashtag_follows_tag_idx ON testagram_local.hashtag_follows(hashtag_id,created_at DESC);
+CREATE OR REPLACE FUNCTION testagram_local.adjust_hashtag_post_count()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,testagram_local
+AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  UPDATE testagram_local.hashtags SET usage_count=usage_count+1,last_used_at=now(),updated_at=now() WHERE id=NEW.hashtag_id;
+  RETURN NEW;
+ END IF;
+ UPDATE testagram_local.hashtags SET usage_count=GREATEST(0,usage_count-1),updated_at=now() WHERE id=OLD.hashtag_id;
+ RETURN OLD;
+END;
+$$;
+CREATE OR REPLACE FUNCTION testagram_local.adjust_hashtag_follower_count()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,testagram_local
+AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN UPDATE testagram_local.hashtags SET follower_count=follower_count+1,updated_at=now() WHERE id=NEW.hashtag_id; RETURN NEW; END IF;
+ UPDATE testagram_local.hashtags SET follower_count=GREATEST(0,follower_count-1),updated_at=now() WHERE id=OLD.hashtag_id; RETURN OLD;
+END;
+$$;
+DROP TRIGGER IF EXISTS testagram_local_post_hashtag_count ON testagram_local.post_hashtags;
+CREATE TRIGGER testagram_local_post_hashtag_count AFTER INSERT OR DELETE ON testagram_local.post_hashtags FOR EACH ROW EXECUTE FUNCTION testagram_local.adjust_hashtag_post_count();
+DROP TRIGGER IF EXISTS testagram_local_hashtag_follow_count ON testagram_local.hashtag_follows;
+CREATE TRIGGER testagram_local_hashtag_follow_count AFTER INSERT OR DELETE ON testagram_local.hashtag_follows FOR EACH ROW EXECUTE FUNCTION testagram_local.adjust_hashtag_follower_count();
+DO $grants$
+BEGIN
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+  GRANT SELECT,INSERT,DELETE ON testagram_local.hashtags,testagram_local.post_hashtags,testagram_local.hashtag_follows TO testagram_app;
+ END IF;
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  GRANT SELECT,INSERT,DELETE ON testagram_local.hashtags,testagram_local.post_hashtags,testagram_local.hashtag_follows TO service_role;
+ END IF;
+END;
+$grants$;
+COMMIT;
