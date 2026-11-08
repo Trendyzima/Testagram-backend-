@@ -29,6 +29,10 @@ func TestCommunityRoutesRequireCanonicalDatabase(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/communities", ""},
 		{http.MethodGet, "/api/communities/00000000-0000-4000-8000-000000000001/posts", ""},
+		{http.MethodGet, "/api/communities/00000000-0000-4000-8000-000000000001/chat", ""},
+		{http.MethodGet, "/api/social/polls/00000000-0000-4000-8000-000000000001", ""},
+		{http.MethodGet, "/api/social/posts/00000000-0000-4000-8000-000000000001/poll", ""},
+		{http.MethodGet, "/api/scheduled-posts", ""},
 		{http.MethodPost, "/api/communities", `{"name":"Kenya Tech Hub","slug":"kenya-tech-hub"}`},
 		{http.MethodPost, "/api/communities/00000000-0000-4000-8000-000000000001/join", `{}`},
 		{http.MethodDelete, "/api/communities/00000000-0000-4000-8000-000000000001/leave", ""},
