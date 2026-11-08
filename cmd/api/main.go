@@ -506,6 +506,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/communities", s.communitiesCreate)
 	mux.HandleFunc("POST /api/communities/{community_id}/join", s.communityJoin)
 	mux.HandleFunc("DELETE /api/communities/{community_id}/leave", s.communityLeave)
+	mux.HandleFunc("GET /api/communities/{community_id}/posts", s.communityPostsList)
+	mux.HandleFunc("POST /api/communities/{community_id}/posts", s.communityPostsCreate)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
