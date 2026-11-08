@@ -801,3 +801,39 @@ func TestFederationOutboxReturnsCursorForFinalPage(t *testing.T) {
 	}
 }
 
+
+
+func TestAPIContractHeaders(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.Header.Set("X-Request-ID", "client-request-123")
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("health status = %d, want 200", response.Code)
+	}
+	if got := response.Header().Get("X-Request-ID"); got != "client-request-123" {
+		t.Fatalf("X-Request-ID = %q, want client-request-123", got)
+	}
+	if got := response.Header().Get("X-Testagram-API-Version"); got != "1" {
+		t.Fatalf("X-Testagram-API-Version = %q, want 1", got)
+	}
+}
+
+func TestAPIContractHeadersReplaceUnsafeRequestID(t *testing.T) {
+	api, mock := testServer(t)
+	defer mock.Close()
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.Header.Set("X-Request-ID", "bad\r\ninjected")
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+
+	got := response.Header().Get("X-Request-ID")
+	if !validRequestID(got) || got == "bad\r\ninjected" {
+		t.Fatalf("unsafe request ID was not replaced: %q", got)
+	}
+}
