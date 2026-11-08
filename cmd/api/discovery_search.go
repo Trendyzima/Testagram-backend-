@@ -55,6 +55,5 @@ func (s *service) searchPublic(w http.ResponseWriter,r *http.Request) {
    communities=append(communities,map[string]any{"id":cid,"slug":slug,"name":slug,"display_name":name,"description":description,"member_count":members,"icon_url":icon})
   };if err=rows.Err();err!=nil{rows.Close();writeJSON(w,503,errorBody("SEARCH_FAILED","Community results could not be read",id));return};rows.Close()
  }
- _=pgx.ErrNoRows
  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"users":users,"hashtags":hashtags,"posts":posts,"communities":communities,"next_cursor":nil}})
 }
