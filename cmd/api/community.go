@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
+	"strconv"
 	"regexp"
 	"strings"
 	"time"
@@ -38,11 +38,9 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 	if raw:=r.URL.Query().Get("limit"); raw!="" { if n,err:=strconv.Atoi(raw); err==nil { if n<1 {n=1}; if n>100 {n=100}; limit=n } }
 	userID := ""
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))),"bearer ") {
-		var status int
 		var ok bool
 		userID,_,ok=s.socialAuth(w,r)
 		if !ok { return }
-		_ = status
 	}
 	sortBy := r.URL.Query().Get("sort")
 	order := "c.member_count DESC,c.created_at DESC,c.id DESC"
@@ -57,11 +55,12 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var cid,slug,name,description,visibility,icon,banner,owner,created string
 		var members int64
+		var createdAt time.Time
 		var isMember bool
-		if err=rows.Scan(&cid,&slug,&name,&description,&visibility,&icon,&banner,&members,&owner,&created,&isMember); err!=nil {
+		if err=rows.Scan(&cid,&slug,&name,&description,&visibility,&icon,&banner,&members,&owner,&createdAt,&isMember); err!=nil {
 			writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_LIST_FAILED","Community records could not be read",id)); return
 		}
-		items=append(items,map[string]any{"id":cid,"name":slug,"slug":slug,"display_name":name,"description":description,"visibility":visibility,"is_private":visibility=="private","icon_url":icon,"banner_url":banner,"member_count":members,"owner_id":owner,"created_at":created,"is_member":isMember})
+		items=append(items,map[string]any{"id":cid,"name":slug,"slug":slug,"display_name":name,"description":description,"visibility":visibility,"is_private":visibility=="private","icon_url":icon,"banner_url":banner,"member_count":members,"owner_id":owner,"created_at":createdAt,"is_member":isMember})
 	}
 	if err=rows.Err(); err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_LIST_FAILED","Community records could not be read",id)); return }
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
@@ -101,9 +100,10 @@ func (s *service) communityJoin(w http.ResponseWriter,r *http.Request) {
 	err:=s.db.QueryRow(ctx,"SELECT visibility FROM testagram_local.communities WHERE id=$1::uuid",communityID).Scan(&visibility)
 	if err==pgx.ErrNoRows { http.NotFound(w,r); return }; if err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_LOOKUP_FAILED","Community is unavailable",id));return}
 	if visibility!="public" {writeJSON(w,http.StatusForbidden,errorBody("PRIVATE_COMMUNITY","This community requires an invitation",id));return}
-	_,err=s.db.Exec(ctx,`INSERT INTO testagram_local.community_memberships(community_id,user_id,role,status) VALUES($1::uuid,$2::uuid,'member','active')
+	tag,err:=s.db.Exec(ctx,`INSERT INTO testagram_local.community_memberships(community_id,user_id,role,status) VALUES($1::uuid,$2::uuid,'member','active')
 		ON CONFLICT(community_id,user_id) DO UPDATE SET status='active' WHERE testagram_local.community_memberships.status<>'banned'`,communityID,userID)
 	if err!=nil {writeJSON(w,http.StatusConflict,errorBody("COMMUNITY_JOIN_FAILED","Community membership could not be saved",id));return}
+	if tag.RowsAffected()==0 {writeJSON(w,http.StatusForbidden,errorBody("COMMUNITY_BANNED","You cannot join this community",id));return}
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"community_id":communityID,"joined":true}})
 }
 
