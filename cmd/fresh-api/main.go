@@ -125,7 +125,7 @@ func main() {
 		}
 		api.WithStorage(media)
 		mediaSigner = media
-		log.Printf("fresh Appwrite media lifecycle enabled (B2 primary, R2 verified replica)")
+		log.Printf("fresh Appwrite media lifecycle enabled (%s upload origin; both B2 and R2 replicas verified)", providers.PrimaryProvider)
 	}
 
 	var ranker *algorithmclient.Client
