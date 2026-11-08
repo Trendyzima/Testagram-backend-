@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -137,4 +136,3 @@ func (s *service) pollVote(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"poll_id":pollID,"option_id":strings.ToLower(in.OptionID),"voted":true},"error":nil,"request_id":requestID})
 }
 
-var _ = json.Valid
