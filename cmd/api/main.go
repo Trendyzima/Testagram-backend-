@@ -539,6 +539,7 @@ func (s *service) routes() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
+		w.Header().Set("X-Testagram-API-Version", "1")
 		s.requests.Add(1)
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
