@@ -341,6 +341,7 @@ jobs:
             migrations/20261106_social_core.sql \
             migrations/20261108_community_core.sql \
             migrations/20261108_hashtags.sql \
+            migrations/20261108_discovery_fields.sql \
             migrations/20261109_community_posts.sql \
             migrations/20261110_community_chat.sql \
             migrations/20261111_scheduled_posts.sql \
