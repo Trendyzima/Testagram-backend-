@@ -364,6 +364,12 @@ jobs:
           INSERT INTO testagram_local.accounts(user_id,username,display_name)
           VALUES ('123e4567-e89b-42d3-a456-426614174004','ci_social_user','Social User'),
                  ('123e4567-e89b-42d3-a456-426614174005','ci_protected_user','Protected User');
+          UPDATE testagram_local.accounts SET is_creator=TRUE,creator_tier='bronze',verified=TRUE,verified_tier='blue'
+          WHERE user_id='123e4567-e89b-42d3-a456-426614174000';
+          UPDATE testagram_local.posts SET is_video=TRUE,views_count=12
+          WHERE id='123e4567-e89b-42d3-a456-426614174001';
+          INSERT INTO testagram_local.threads(owner_id,title,content,is_published)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','CI thread','Thread schema test',TRUE);
           UPDATE testagram_local.accounts SET protected_account=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174005';
           INSERT INTO testagram_local.follows(follower_id,following_id,status)
           VALUES ('123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174004','accepted'),
@@ -418,6 +424,15 @@ jobs:
             END IF;
             IF (SELECT reposts_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 1 THEN
               RAISE EXCEPTION 'repost count trigger failed';
+            END IF;
+            IF NOT (SELECT is_creator AND verified AND creator_tier='bronze' AND verified_tier='blue' FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174000') THEN
+              RAISE EXCEPTION 'creator/verification discovery metadata was not persisted';
+            END IF;
+            IF NOT (SELECT is_video AND views_count=12 FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') THEN
+              RAISE EXCEPTION 'post discovery metadata was not persisted';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_local.threads WHERE owner_id='123e4567-e89b-42d3-a456-426614174000' AND is_published) THEN
+              RAISE EXCEPTION 'thread discovery record was not persisted';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM testagram_local.bookmarks WHERE user_id='123e4567-e89b-42d3-a456-426614174004') THEN
               RAISE EXCEPTION 'bookmark insert failed';
