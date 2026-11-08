@@ -499,6 +499,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/social/posts/{post_id}/bookmarks", s.socialBookmark)
 	mux.HandleFunc("DELETE /api/social/posts/{post_id}/bookmarks", s.socialUnbookmark)
 	mux.HandleFunc("GET /api/social/notifications", s.socialNotifications)
+	mux.HandleFunc("POST /api/social/notifications", s.socialNotificationCreate)
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("OPTIONS /api/communities", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/communities/{path...}", s.mediaPreflight)
