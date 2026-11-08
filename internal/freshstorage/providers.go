@@ -60,10 +60,10 @@ func FromEnv() (ProviderSet, error) {
 
 func (p ProviderSet) ReadyForMedia() error {
 	if p.B2 == nil || p.B2Bucket == "" {
-		return errors.New("Backblaze B2 primary storage is not configured")
+		return errors.New("Backblaze B2 replica storage is not configured")
 	}
 	if p.R2 == nil || p.R2Bucket == "" {
-		return errors.New("Cloudflare R2 additional storage is not configured")
+		return errors.New("Cloudflare R2 replica storage is not configured")
 	}
 	return nil
 }
