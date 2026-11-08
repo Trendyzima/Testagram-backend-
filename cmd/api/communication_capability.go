@@ -76,7 +76,8 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		var conversationID string
 		e:=s.db.QueryRow(ctx,`SELECT c.conversation_id::text FROM testagram_local.call_sessions c
 			WHERE c.id=$1 AND c.status IN ('ringing','active')
-			AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`,roomID,userID).Scan(&conversationID)
+			AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)
+			AND EXISTS(SELECT 1 FROM testagram_local.call_participants cp WHERE cp.call_id=c.id AND cp.user_id=$2 AND cp.left_at IS NULL)`,roomID,userID).Scan(&conversationID)
 		if e!=nil{fail("CALL_NOT_AVAILABLE","Call is unavailable or access is denied",http.StatusForbidden);return true}
 		secret:=strings.TrimSpace(os.Getenv("REALTIME_TICKET_SECRET"))
 		publicURL:=strings.TrimRight(strings.TrimSpace(os.Getenv("REALTIME_PUBLIC_URL")),"/")
