@@ -99,16 +99,19 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	fail:=func(code,msg string,status int){writeJSON(w,status,errorBody(code,msg,requestID))}
 	switch name {
 	case "testagram.wallet.balance":
-		currency:=strings.ToUpper(str("currency"));if currency==""{currency="KES"};if currency!="KES"&&currency!="USD"{fail("INVALID_CURRENCY","Wallet currency must be KES or USD",http.StatusBadRequest);return true};_,err=s.db.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",userID,currency)
+		requestedCurrency:=strings.ToUpper(str("currency"));if requestedCurrency==""{requestedCurrency="KES"};if requestedCurrency!="KES"&&requestedCurrency!="USD"{fail("INVALID_CURRENCY","Wallet currency must be KES or USD",http.StatusBadRequest);return true};_,err=s.db.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",userID,requestedCurrency)
 		if err!=nil{fail("WALLET_READ_FAILED","Could not load wallet",http.StatusServiceUnavailable);return true}
-		var balance,currency,state string
-		err=s.db.QueryRow(ctx,"SELECT balance::text,currency,status FROM testagram_local.wallets WHERE user_id=$1",userID).Scan(&balance,&currency,&state)
+		var balance,walletCurrency,state string
+		err=s.db.QueryRow(ctx,"SELECT balance::text,currency,status FROM testagram_local.wallets WHERE user_id=$1",userID).Scan(&balance,&walletCurrency,&state)
 		if err!=nil{fail("WALLET_READ_FAILED","Could not load wallet",http.StatusServiceUnavailable);return true}
-		writeJSON(w,http.StatusOK,map[string]any{"id":userID,"user_id":userID,"balance":balance,"currency":strings.TrimSpace(currency),"status":state});return true
+		writeJSON(w,http.StatusOK,map[string]any{"id":userID,"user_id":userID,"balance":balance,"currency":strings.TrimSpace(walletCurrency),"status":state});return true
 	case "testagram.wallet.transactions.list":
 		limit:=50;if v,ok:=in["limit"].(float64);ok{limit=int(v)};if limit<1||limit>100{fail("INVALID_LIMIT","Limit must be between 1 and 100",http.StatusBadRequest);return true}
-		rows,e:=s.db.Query(ctx,`SELECT t.id::text,t.kind,t.amount::text,t.currency,t.created_at,x.id::text,x.sender_id::text,x.recipient_id::text,x.note
-			FROM testagram_local.wallet_transactions t JOIN testagram_local.wallet_transfers x ON x.id=t.transfer_id
+		rows,e:=s.db.Query(ctx,`SELECT t.id::text,t.kind,t.amount::text,t.currency,t.created_at,
+			COALESCE(x.id::text,top.id::text,''),COALESCE(x.sender_id::text,''),COALESCE(x.recipient_id::text,''),COALESCE(x.note,top.receipt_number,'')
+			FROM testagram_local.wallet_transactions t
+			LEFT JOIN testagram_local.wallet_transfers x ON x.id=t.transfer_id
+			LEFT JOIN testagram_local.wallet_topups top ON top.id=t.topup_id
 			WHERE t.user_id=$1 ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit)
 		if e!=nil{fail("WALLET_HISTORY_FAILED","Could not load wallet history",http.StatusServiceUnavailable);return true}
 		defer rows.Close();items:=make([]map[string]any,0)
@@ -124,7 +127,8 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 		if e==pgx.ErrNoRows{fail("INSUFFICIENT_FUNDS_OR_WALLET_UNAVAILABLE","Wallets are unavailable, frozen, or insufficiently funded",http.StatusConflict);return true}
 		if e!=nil{if e==errWalletIdempotencyConflict{fail("IDEMPOTENCY_CONFLICT","Idempotency key was already used for a different transfer",http.StatusConflict)}else{fail("TRANSFER_FAILED","Wallet transfer could not be completed",http.StatusServiceUnavailable)};return true}
 		if e=tx.Commit(ctx);e!=nil{fail("TRANSFER_FAILED","Wallet transfer could not be committed",http.StatusServiceUnavailable);return true}
-		writeJSON(w,http.StatusOK,map[string]any{"transfer_id":id,"status":"completed","duplicate":duplicate,"amount":amount,"currency":"KES"});return true
+		var walletCurrency string;_ = s.db.QueryRow(ctx,"SELECT currency FROM testagram_local.wallets WHERE user_id=$1",userID).Scan(&walletCurrency)
+		writeJSON(w,http.StatusOK,map[string]any{"transfer_id":id,"status":"completed","duplicate":duplicate,"amount":amount,"currency":strings.TrimSpace(walletCurrency)});return true
 	case "testagram.audio_spaces.list_live":
 		rows,e:=s.db.Query(ctx,`SELECT s.id::text,s.host_id::text,s.title,s.description,s.listener_count,s.max_audience,s.started_at,a.username,a.display_name,a.avatar_key,
 			EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=s.host_id AND f.status='accepted')
