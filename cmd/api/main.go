@@ -794,6 +794,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if body.Capability == "testagram.search.unified" && s.nativeUnifiedSearch(w, r, id, body.Input) { return }
 	if s.nativeCommunicationCapability(w, r, id, body) { return }
 	if s.nativePushCapability(w, r, id, body) { return }
+	if s.nativeHashtagCapability(w, r, id, body) { return }
 	if s.nativeMPesaCapability(w, r, id, body) { return }
 	if s.nativeWalletSpaceCapability(w, r, id, body) { return }
 	if s.nativeSocialCapability(w, r, id, body) { return }
