@@ -167,10 +167,10 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 	if err=tx.QueryRow(ctx,"SELECT status FROM testagram_local.wallet_topups WHERE id=$1 FOR UPDATE",topupID).Scan(&lockedState);err!=nil{writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Settlement unavailable"});return}
 	if lockedState=="settled"{writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Already settled"});return}
 	if lockedState!="pending"{writeJSON(w,http.StatusConflict,map[string]any{"ResultCode":1,"ResultDesc":"Top-up is not pending"});return}
-	_,err=tx.Exec(ctx,"UPDATE testagram_local.wallet_topups SET status='settled',receipt_number=$2,result_code=0,result_description=$3,callback_data=$4::jsonb,settled_at=now(),updated_at=now() WHERE id=$1",topupID,receipt,cb.ResultDesc,callbackRaw(r))
+	_,err=tx.Exec(ctx,"UPDATE testagram_local.wallet_topups SET status='settled',receipt_number=$2,result_code=0,result_description=$3,callback_data=$4::jsonb,settled_at=now(),updated_at=now() WHERE id=$1",topupID,receipt,cb.ResultDesc,string(rawBody))
 	if err==nil{
 		var walletTag pgconn.CommandTag
-		walletTag,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1 AND status='active'",userID,amountRaw)
+		walletTag,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1 AND status='active'",userID,walletAmountRaw)
 		if err==nil&&walletTag.RowsAffected()!=1{err=errors.New("wallet is unavailable for settlement")}
 	}
 	if err==nil{_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,topup_id,user_id,direction,amount,currency) VALUES(NULL,$1,$2,'credit',$3,$4)",topupID,userID,walletAmountRaw,walletCurrency)}
