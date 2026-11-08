@@ -62,5 +62,6 @@ func (s *service) communityEventRSVP(w http.ResponseWriter,r *http.Request) {
  } else {http.Error(w,"method not allowed",http.StatusMethodNotAllowed);return}
  var attending bool
  if err:=s.db.QueryRow(r.Context(),"SELECT EXISTS(SELECT 1 FROM testagram_local.community_event_rsvps WHERE event_id=$1::uuid AND user_id=$2::uuid)",eid,uid).Scan(&attending);err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("EVENT_RSVP_FAILED","Event RSVP state could not be read",id));return}
+ if r.Method==http.MethodPost&&!attending{writeJSON(w,http.StatusForbidden,errorBody("COMMUNITY_MEMBERSHIP_REQUIRED","Join this community before RSVPing",id));return}
  writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"event_id":eid,"attending":attending}})
 }
