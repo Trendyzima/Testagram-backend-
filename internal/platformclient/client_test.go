@@ -15,7 +15,7 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := New(server.URL, "unit-test-secret", time.Second)
+	client, err := New(server.URL, "unit-test-secret-that-is-long-enough-for-api", time.Second)
 	if err != nil { t.Fatal(err) }
 	return client
 }
@@ -23,6 +23,9 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 func TestNewRequiresValidURLAndToken(t *testing.T) {
 	if _, err := New("not-a-url", "token", time.Second); err == nil { t.Fatal("expected URL validation error") }
 	if _, err := New("http://localhost", "", time.Second); err == nil { t.Fatal("expected token validation error") }
+	if _, err := New("http://example.com", strings.Repeat("u", 40), time.Second); err == nil { t.Fatal("expected public plaintext HTTP to be rejected") }
+	if _, err := New("https://user:pass@example.com", strings.Repeat("u", 40), time.Second); err == nil { t.Fatal("expected URL credentials to be rejected") }
+	if _, err := New("https://example.com/path", strings.Repeat("u", 40), time.Second); err == nil { t.Fatal("expected path-prefixed URL to be rejected") }
 }
 
 func TestCacheSetSendsBearerAndTTL(t *testing.T) {
@@ -90,4 +93,13 @@ func TestNonSuccessReturnsStatusError(t *testing.T) {
 	var status *StatusError
 	if !errors.As(err, &status) || status.StatusCode != http.StatusUnauthorized { t.Fatalf("expected status error, got %v", err) }
 	if !strings.Contains(err.Error(), "401") { t.Fatalf("unexpected error: %v", err) }
+}
+
+func TestRejectsInvalidPlatformInputsBeforeNetworkCall(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) { t.Errorf("unexpected network request: %s %s", r.Method, r.URL) })
+	if _, err := client.Get(context.Background(), "bad key"); err == nil { t.Fatal("expected invalid cache key rejection") }
+	if err := client.Set(context.Background(), "cache-key", strings.Repeat("x", (256<<10)+1), time.Minute); err == nil { t.Fatal("expected oversized cache value rejection") }
+	if err := client.Delete(context.Background(), "bad/key"); err == nil { t.Fatal("expected invalid cache key character rejection") }
+	if _, err := client.Enqueue(context.Background(), "", map[string]string{"id":"1"}); err == nil { t.Fatal("expected invalid queue name rejection") }
+	if _, err := client.Enqueue(context.Background(), "mail", map[string]string{}); err == nil { t.Fatal("expected empty queue payload rejection") }
 }
