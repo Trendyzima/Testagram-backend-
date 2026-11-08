@@ -1184,3 +1184,32 @@ func (s *service) socialFollowState(w http.ResponseWriter, r *http.Request) {
 		"request_id": requestID,
 	})
 }
+
+type socialNotificationCreateInput struct {
+	Kind string `json:"kind"`
+	Payload map[string]any `json:"payload"`
+	EventKey string `json:"event_key"`
+}
+
+func (s *service) socialNotificationCreate(w http.ResponseWriter,r *http.Request) {
+	userID,id,ok:=s.socialAuth(w,r);if !ok{return}
+	if !s.socialWriteAllowed(w,r,userID,id,"social-notification-create",120){return}
+	r.Body=http.MaxBytesReader(w,r.Body,12<<10);defer r.Body.Close()
+	var in socialNotificationCreateInput
+	if err:=decodeSingleJSON(r.Body,&in);err!=nil||len(in.Kind)<1||len(in.Kind)>48||len(in.EventKey)<1||len(in.EventKey)>256||len(in.Payload)>32 {
+		writeJSON(w,http.StatusBadRequest,errorBody("INVALID_NOTIFICATION","Notification payload is invalid",id));return
+	}
+	payload,err:=json.Marshal(in.Payload)
+	if err!=nil||len(payload)>8192 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_NOTIFICATION","Notification payload is too large",id));return}
+	var notificationID string
+	var created bool
+	err=s.db.QueryRow(r.Context(),`INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
+		VALUES($1::uuid,$1::uuid,$2,$3::jsonb,$4)
+		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING
+		RETURNING id::text`,userID,in.Kind,string(payload),in.EventKey).Scan(&notificationID)
+	if err==pgx.ErrNoRows {
+		err=s.db.QueryRow(r.Context(),`SELECT id::text FROM testagram_local.notifications WHERE recipient_id=$1::uuid AND event_key=$2`,userID,in.EventKey).Scan(&notificationID)
+	} else if err==nil {created=true}
+	if err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("NOTIFICATION_CREATE_FAILED","Notification could not be saved",id));return}
+	writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":map[string]any{"id":notificationID,"created":created}})
+}
