@@ -12,6 +12,15 @@ This deployment is intentionally separate from the legacy PostgreSQL/Supabase AP
 
 The fresh API implements health/readiness, authenticated profile read/write, and an opt-in private media upload lifecycle. Set FRESH_MEDIA_ENABLED=true only after provisioning all media collections, attributes and indexes described in the schema. The media API requires both Backblaze B2 and Cloudflare R2 credentials and fails startup if either provider is incomplete. Set `FRESH_MEDIA_PRIMARY_PROVIDER=b2` or `r2` to choose which provider receives new direct browser uploads; the chosen provider is persisted on each reservation, while the other provider receives a verified full replica. Existing reservations without this field remain B2-origin for backwards compatibility.
 
+
+## Appwrite identity + Neon PostgreSQL data plane
+
+Appwrite remains the identity provider: the browser/mobile client signs in with Appwrite, sends a short-lived Appwrite JWT to Backend, and Backend validates it against Appwrite. Appwrite also currently stores the fresh profile, legal-consent, feed, media-reservation, quota and replica-ledger documents.
+
+Neon is connected in the fresh API through the bounded `internal/neondb` pgx pool. Set `NEON_DATABASE_URL` to the Neon pooled connection string (TLS required) and `NEON_REQUIRED=true` so `/readyz/platform` fails closed when Neon is unavailable. The additive Neon schema is in `migrations/neon/001_social_data_plane.sql` and `migrations/neon/002_federation_outbox.sql`; apply those migrations to the dedicated Neon database using a migration-capable operator account before enabling Neon-dependent features. Use a separate least-privilege runtime role and never put the URL in frontend variables.
+
+**Important integration boundary:** the current fresh API uses Neon for connectivity/readiness only; its profile, post and home-feed CRUD still uses Appwrite DocumentsDB. The canonical Neon social repositories and transactional write/read cutover are not yet complete, so do not treat Neon as the live source of truth for posts yet. Federation has its own Neon-backed inbox/outbox store in the federated-content repository. The intended division is Appwrite for authentication/identity and Neon for canonical social/product data, with media bytes in B2 + R2. Keep `/readyz/platform` as the production gate until the Backend social repositories, migrations, outbox handoff and end-to-end consistency tests are complete.
+
 ## Dual object storage: B2 + Cloudflare R2
 
 Cloudflare R2 is a real object-storage provider in this architecture. It stores the actual image/video/audio/file bytes in a private R2 bucket, just as Backblaze B2 stores a complete copy. Cloudflare Workers/CDN provide a delivery and authorization layer in front of R2; CDN cache is not counted as a storage replica.
