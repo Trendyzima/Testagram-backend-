@@ -54,6 +54,7 @@ AS $
 DECLARE match_row TEXT[];
 BEGIN
  DELETE FROM testagram_local.post_hashtags WHERE post_id=NEW.id;
+ IF NEW.deleted_at IS NOT NULL THEN RETURN NEW; END IF;
  FOR match_row IN SELECT regexp_matches(lower(COALESCE(NEW.text,'')),'#([a-z0-9_]{1,64})','g') LOOP
   INSERT INTO testagram_local.hashtags(tag) VALUES(match_row[1]) ON CONFLICT(tag) DO NOTHING;
   INSERT INTO testagram_local.post_hashtags(post_id,hashtag_id)
@@ -64,8 +65,22 @@ BEGIN
 END;
 $;
 DROP TRIGGER IF EXISTS testagram_local_posts_hashtag_index ON testagram_local.posts;
-CREATE TRIGGER testagram_local_posts_hashtag_index AFTER INSERT OR UPDATE OF text ON testagram_local.posts
-FOR EACH ROW WHEN (NEW.deleted_at IS NULL) EXECUTE FUNCTION testagram_local.index_post_hashtags();
+CREATE TRIGGER testagram_local_posts_hashtag_index AFTER INSERT OR UPDATE OF text,deleted_at ON testagram_local.posts
+FOR EACH ROW EXECUTE FUNCTION testagram_local.index_post_hashtags();
+
+-- Backfill existing visible posts so the first API read is complete.
+WITH extracted AS (
+ SELECT p.id AS post_id, lower(matches[1]) AS tag
+ FROM testagram_local.posts p
+ CROSS JOIN LATERAL regexp_matches(lower(COALESCE(p.text,'')),'#([a-z0-9_]{1,64})','g') AS matches
+ WHERE p.deleted_at IS NULL
+), inserted AS (
+ INSERT INTO testagram_local.hashtags(tag)
+ SELECT DISTINCT tag FROM extracted ON CONFLICT(tag) DO NOTHING RETURNING id,tag
+)
+INSERT INTO testagram_local.post_hashtags(post_id,hashtag_id)
+SELECT e.post_id,h.id FROM extracted e JOIN testagram_local.hashtags h ON h.tag=e.tag
+ON CONFLICT(post_id,hashtag_id) DO NOTHING;
 DO $grants$
 BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
