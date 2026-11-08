@@ -140,6 +140,7 @@ func mathRound2(value float64) float64 { return float64(int64(value*100+0.5))/10
 func mathFloor(value float64) float64 { if value<0{return -1};return float64(int64(value)) }
 
 func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
+	if s.db == nil { writeJSON(w,http.StatusServiceUnavailable,map[string]any{"ResultCode":1,"ResultDesc":"Wallet settlement is unavailable"}); return }
 	r.Body=http.MaxBytesReader(w,r.Body,32<<10)
 	rawBody,readErr:=io.ReadAll(r.Body)
 	if readErr!=nil{writeJSON(w,http.StatusBadRequest,map[string]any{"ResultCode":1,"ResultDesc":"Invalid callback"});return}
