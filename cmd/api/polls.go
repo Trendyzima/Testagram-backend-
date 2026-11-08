@@ -96,3 +96,14 @@ func (s *service) pollVote(w http.ResponseWriter,r *http.Request) {
 	if err=tx.Commit(ctx);err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("POLL_VOTE_FAILED","Vote could not be committed",id));return}
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"poll_id":pollID,"option_id":in.OptionID,"voted":true}})
 }
+
+func (s *service) pollGetByPost(w http.ResponseWriter,r *http.Request) {
+	postID:=r.PathValue("post_id")
+	if !socialUUIDPattern.MatchString(postID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POST_ID","Post ID is invalid",requestID(r)));return}
+	var pollID string
+	err:=s.db.QueryRow(r.Context(),`SELECT id::text FROM testagram_local.polls WHERE post_id=$1::uuid`,postID).Scan(&pollID)
+	if err==pgx.ErrNoRows{http.NotFound(w,r);return}
+	if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("POLL_READ_FAILED","Poll could not be loaded",requestID(r)));return}
+	r.SetPathValue("poll_id",pollID)
+	s.pollGet(w,r)
+}
