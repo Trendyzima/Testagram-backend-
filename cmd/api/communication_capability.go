@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/Trendyzima/Testagram-backend-/internal/realtime"
 )
 
 func newCallRoom() string {
@@ -25,6 +27,18 @@ func newCallRoom() string {
 func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
 	name := strings.TrimSpace(body.Capability)
 	switch name {
+	case "testagram.realtime.ticket":
+		conversationID:=str("conversation_id")
+		if !socialUUIDPattern.MatchString(conversationID){fail("INVALID_CONVERSATION","A valid conversation ID is required",http.StatusBadRequest);return true}
+		var member bool
+		if e:=s.db.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)",conversationID,userID).Scan(&member);e!=nil{fail("REALTIME_AUTHORIZATION_FAILED","Could not verify conversation access",http.StatusServiceUnavailable);return true}
+		if !member{fail("CONVERSATION_ACCESS_DENIED","Conversation membership is required",http.StatusForbidden);return true}
+		secret:=strings.TrimSpace(os.Getenv("REALTIME_TICKET_SECRET"))
+		publicURL:=strings.TrimRight(strings.TrimSpace(os.Getenv("REALTIME_PUBLIC_URL")),"/")
+		if secret==""||publicURL==""{fail("REALTIME_NOT_CONFIGURED","Secure realtime delivery is not configured",http.StatusServiceUnavailable);return true}
+		ticket,e:=realtime.Issue(secret,userID,conversationID,time.Now(),2*time.Minute)
+		if e!=nil{fail("REALTIME_TICKET_FAILED","Could not issue realtime access",http.StatusServiceUnavailable);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"ticket":ticket,"websocket_url":publicURL+"/v1/realtime/conversations/"+conversationID,"expires_in":120});return true
 	case "testagram.conversations.list", "testagram.conversations.create",
 		"testagram.messages.list", "testagram.messages.send_encrypted",
 		"testagram.messages.edit_encrypted", "testagram.messages.delete",
