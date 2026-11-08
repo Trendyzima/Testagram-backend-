@@ -60,9 +60,9 @@ func (s *service) nativeHashtagCapability(w http.ResponseWriter, r *http.Request
     if !socialUUIDPattern.MatchString(hashtagID) { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_HASHTAG_ID","A valid hashtag ID is required",requestID)); return true }
     following,_:=input["following"].(bool)
     if following {
-      _,err=s.db.Exec(ctx,"INSERT INTO testagram_local.hashtag_follows(user_id,hashtag_id) VALUES($1,$2) ON CONFLICT(user_id,hashtag_id) DO NOTHING",userID,hashtagID)
+      _,err=s.db.Exec(ctx,`WITH inserted AS (INSERT INTO testagram_local.hashtag_follows(user_id,hashtag_id) VALUES($1,$2) ON CONFLICT(user_id,hashtag_id) DO NOTHING RETURNING hashtag_id) UPDATE testagram_local.hashtags h SET follower_count=follower_count+1 FROM inserted i WHERE h.id=i.hashtag_id`,userID,hashtagID)
     } else {
-      _,err=s.db.Exec(ctx,"DELETE FROM testagram_local.hashtag_follows WHERE user_id=$1 AND hashtag_id=$2",userID,hashtagID)
+      _,err=s.db.Exec(ctx,`WITH removed AS (DELETE FROM testagram_local.hashtag_follows WHERE user_id=$1 AND hashtag_id=$2 RETURNING hashtag_id) UPDATE testagram_local.hashtags h SET follower_count=GREATEST(0,follower_count-1) FROM removed r WHERE h.id=r.hashtag_id`,userID,hashtagID)
     }
     if err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("HASHTAG_FOLLOW_WRITE_FAILED","Could not update hashtag follow",requestID)); return true }
     writeJSON(w,http.StatusOK,map[string]any{"following":following})
