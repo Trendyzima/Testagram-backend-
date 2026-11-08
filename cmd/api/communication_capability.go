@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +13,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 )
+
+func newCallRoom() string {
+	var entropy [16]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return "testagram-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return "testagram-" + hex.EncodeToString(entropy[:])
+}
 
 func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
 	name := strings.TrimSpace(body.Capability)
@@ -99,7 +109,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		conversationID:=str("conversation_id");if !socialUUIDPattern.MatchString(conversationID){fail("INVALID_CONVERSATION","A valid conversation ID is required",http.StatusBadRequest);return true}
 		limit:=intVal("limit",50,1,100);if limit<1{fail("INVALID_LIMIT","Limit must be between 1 and 100",http.StatusBadRequest);return true}
 		cursor:=str("cursor")
-		rows,e:=s.db.Query(ctx,`SELECT m.id::text,m.conversation_id::text,m.sender_id::text,m.body,m.created_at,m.edited_at,m.deleted_at,m.reply_to_message_id::text,m.shared_post_id::text,m.client_message_id,m.delivered_at,m.read_at,m.e2ee_enabled,m.e2ee_version,m.e2ee_epoch,m.ciphertext,m.nonce,m.aad,m.attachment_metadata,
+		rows,e:=s.db.Query(ctx,`SELECT m.id::text,m.conversation_id::text,m.sender_id::text,m.body,m.created_at,m.edited_at,m.deleted_at,m.reply_to_message_id::text,m.shared_post_id::text,m.client_message_id,m.delivered_at,m.read_at,m.e2ee_enabled,COALESCE(m.e2ee_version,''),m.e2ee_epoch,COALESCE(m.ciphertext,''),COALESCE(m.nonce,''),COALESCE(m.aad,''),m.attachment_metadata,
 			jsonb_build_object('id',a.user_id,'username',a.username,'display_name',a.display_name,'avatar_url',a.avatar_key)
 			FROM testagram_local.messages m JOIN testagram_local.conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=$1 AND cm.left_at IS NULL
 			JOIN testagram_local.accounts a ON a.user_id=m.sender_id
@@ -164,7 +174,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		writeJSON(w,http.StatusOK,map[string]any{"attachment":attachment});return true
 	case "testagram.calls.create":
 		conversationID:=str("conversation_id");kind:=str("kind");if kind==""{kind="video"};if !socialUUIDPattern.MatchString(conversationID)||(kind!="voice"&&kind!="video"&&kind!="screen"){fail("INVALID_CALL","Call details are invalid",http.StatusBadRequest);return true}
-		room:="testagram-"+strings.ReplaceAll(newUUID(),"-","")
+		room:=newCallRoom()
 		var id string;e:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind)
 			SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL) RETURNING id::text`,conversationID,userID,room,kind).Scan(&id)
 		if errors.Is(e,pgx.ErrNoRows){fail("CONVERSATION_ACCESS_DENIED","Conversation membership is required",http.StatusForbidden);return true};if e!=nil{fail("CALL_CREATE_FAILED","Could not create call session",http.StatusServiceUnavailable);return true}
