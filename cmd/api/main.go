@@ -802,6 +802,11 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if s.localProductCapability(w, r, id, body) {
 		return
 	}
+
+	// Fresh-mode capability dispatch is Backend-owned. Never proxy unknown
+	// capabilities to the retired Supabase RPC gateway.
+	writeJSON(w, http.StatusNotImplemented, errorBody("CAPABILITY_NOT_IMPLEMENTED", "This capability has not yet been migrated to the Testagram Backend", id))
+	return
 	if supabaseURL == "" || publishableKey == "" {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("BACKEND_NOT_CONFIGURED", "Capability gateway is not configured", id))
 		return
