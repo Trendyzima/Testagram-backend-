@@ -513,6 +513,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
+	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
 	// Browser uploads use cross-origin PUT with Authorization and Content-Type,
@@ -793,9 +794,19 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
 		return
 	}
+	if body.Capability == "testagram.search.unified" && s.nativeUnifiedSearch(w, r, id, body.Input) { return }
+	if s.nativeCommunicationCapability(w, r, id, body) { return }
+	if s.nativeMPesaCapability(w, r, id, body) { return }
+	if s.nativeWalletSpaceCapability(w, r, id, body) { return }
+	if s.nativeSocialCapability(w, r, id, body) { return }
 	if s.localProductCapability(w, r, id, body) {
 		return
 	}
+
+	// Fresh-mode capability dispatch is Backend-owned. Never proxy unknown
+	// capabilities to the retired Supabase RPC gateway.
+	writeJSON(w, http.StatusNotImplemented, errorBody("CAPABILITY_NOT_IMPLEMENTED", "This capability has not yet been migrated to the Testagram Backend", id))
+	return
 	if supabaseURL == "" || publishableKey == "" {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("BACKEND_NOT_CONFIGURED", "Capability gateway is not configured", id))
 		return
