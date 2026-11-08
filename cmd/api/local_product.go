@@ -32,6 +32,7 @@ type localPostInput struct {
 	Visibility string   `json:"visibility"`
 	MediaIDs   []string `json:"media_ids"`
 	Language   string   `json:"language"`
+	IsVideo    bool     `json:"is_video"`
 }
 
 func localProductEnabled() bool {
@@ -155,7 +156,7 @@ func (s *service) localProductCapability(w http.ResponseWriter, r *http.Request,
 		}
 		media, _ := json.Marshal(in.MediaIDs)
 		var id string
-		err = s.db.QueryRow(ctx, "INSERT INTO testagram_local.posts(author_id,text,visibility,media_ids,language) VALUES($1::uuid,$2,$3,$4::jsonb,$5) RETURNING id::text", userID, in.Text, in.Visibility, string(media), in.Language).Scan(&id)
+		err = s.db.QueryRow(ctx, "INSERT INTO testagram_local.posts(author_id,text,visibility,media_ids,language,is_video) VALUES($1::uuid,$2,$3,$4::jsonb,$5,$6) RETURNING id::text", userID, in.Text, in.Visibility, string(media), in.Language, in.IsVideo).Scan(&id)
 		if err != nil {
 			writeJSON(w, http.StatusConflict, errorBody("POST_WRITE_FAILED", "Post could not be saved locally; create a local profile first", requestID))
 			return true
@@ -174,7 +175,7 @@ func (s *service) localProductCapability(w http.ResponseWriter, r *http.Request,
 		}
 		media, _ := json.Marshal(in.MediaIDs)
 		var id string
-		err = s.db.QueryRow(ctx, "UPDATE testagram_local.posts SET text=$3,visibility=$4,media_ids=$5::jsonb,language=$6,updated_at=now() WHERE id=$1::uuid AND author_id=$2::uuid AND deleted_at IS NULL RETURNING id::text", in.ID, userID, in.Text, in.Visibility, string(media), in.Language).Scan(&id)
+		err = s.db.QueryRow(ctx, "UPDATE testagram_local.posts SET text=$3,visibility=$4,media_ids=$5::jsonb,language=$6,is_video=$7,updated_at=now() WHERE id=$1::uuid AND author_id=$2::uuid AND deleted_at IS NULL RETURNING id::text", in.ID, userID, in.Text, in.Visibility, string(media), in.Language, in.IsVideo).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			http.NotFound(w, r)
 			return true
