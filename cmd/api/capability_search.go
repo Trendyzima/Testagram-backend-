@@ -97,7 +97,7 @@ func (s *service) nativeUnifiedSearch(w http.ResponseWriter, r *http.Request, re
 			  AND (p.text ILIKE $1 OR a.username ILIKE $1 OR a.display_name ILIKE $1)
 			  AND NOT EXISTS (SELECT 1 FROM testagram_local.blocks b WHERE
 			    (b.blocker_id=$2::uuid AND b.blocked_id=p.author_id) OR (b.blocker_id=p.author_id AND b.blocked_id=$2::uuid))
-			ORDER BY `+order+` OFFSET $3 LIMIT $4
+			ORDER BY ` + order + ` OFFSET $3 LIMIT $4`
 		rows, queryErr := s.db.Query(ctx, query, "%"+q+"%", userID, offset, limit)
 		if queryErr != nil {
 			writeJSON(w,http.StatusServiceUnavailable,errorBody("SEARCH_UNAVAILABLE","Post search is temporarily unavailable",requestID)); return true
