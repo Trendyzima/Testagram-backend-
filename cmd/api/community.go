@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"regexp"
@@ -60,7 +61,7 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items:=make([]map[string]any,0)
 	for rows.Next() {
-		var cid,slug,name,description,visibility,icon,banner,owner,created string
+		var cid,slug,name,description,visibility,icon,banner,owner string
 		var members int64
 		var createdAt time.Time
 		var isMember bool
