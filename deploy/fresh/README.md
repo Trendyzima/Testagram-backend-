@@ -38,7 +38,7 @@ Configure separate private buckets and credentials:
 - R2: CLOUDFLARE_R2_ENDPOINT, CLOUDFLARE_R2_REGION, CLOUDFLARE_R2_BUCKET, CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY
 - Worker: CLOUDFLARE_MEDIA_BASE_URL and CLOUDFLARE_MEDIA_SIGNING_SECRET
 
-The B2/R2 dual-origin lifecycle and reservation expiry state machine are implemented and locally tested. Run go run ./cmd/fresh-storage-expire from a trusted scheduler; it releases quota only after both provider objects are confirmed absent. For operator-triggered repair, set TESTAGRAM_REPAIR_OBJECT_ID and run go run ./cmd/fresh-storage-repair. The Cloudflare private-media Worker and matching Go signer are implemented but not deployed; configure its R2 binding, route, frontend origins and shared signing secret before enabling CDN delivery.
+The B2/R2 dual-origin lifecycle, persisted reservation origin, dual-copy verification and bidirectional repair path are implemented. Run the Backend CI workflow before enabling this in a live environment. Run go run ./cmd/fresh-storage-expire from a trusted scheduler; it releases quota only after both provider objects are confirmed absent. For operator-triggered repair, set TESTAGRAM_REPAIR_OBJECT_ID and run go run ./cmd/fresh-storage-repair. The Cloudflare private-media Worker and matching Go signer are implemented but not deployed; configure its R2 binding, route, frontend origins and shared signing secret before enabling CDN delivery.
 
 Scheduled replica repair, Android/computer node object transport, public-media caching and wiring the frontend upload service into post/message/profile screens are not yet production complete. Do not route production frontend traffic to this API until remaining integration and live staging tests pass.
 
@@ -46,7 +46,7 @@ Scheduled replica repair, Android/computer node object transport, public-media c
 
 Set FRESH_API_ALLOWED_ORIGINS to exact frontend origins (comma-separated, no paths or wildcards), for example https://app.example.com. The API rejects unlisted cross-origin requests and only permits required Authorization, Content-Type and Idempotency-Key headers.
 
-Because browser uploads currently go directly to B2, configure the B2 bucket CORS policy to allow the same frontend origin(s), method PUT, and request header Content-Type. R2 replication and private downloads are performed by Backend using server credentials and do not require browser access to R2. Do not expose either provider's credentials to browsers.
+Because browser uploads go directly to the selected primary provider, configure bucket CORS on both B2 and R2 to allow the exact frontend origin(s), method PUT, and request header Content-Type. The unselected provider receives its replica server-to-server. Do not expose either provider's credentials to browsers.
 
 ### Retention workers (not activated)
 
