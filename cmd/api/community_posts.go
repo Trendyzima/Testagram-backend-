@@ -69,6 +69,7 @@ func (s *service) communityPostsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) communityPostsCreate(w http.ResponseWriter,r *http.Request) {
+	if s.db==nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_DATABASE_UNAVAILABLE","Community data service is unavailable",requestID(r))); return }
 	userID,id,ok:=s.socialAuth(w,r);if !ok{return}
 	if !s.socialWriteAllowed(w,r,userID,id,"community_post_create",20){return}
 	communityID:=r.PathValue("community_id")
