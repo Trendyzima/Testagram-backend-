@@ -1050,6 +1050,7 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
+	go svc.runCommunicationOutbox(signalCtx)
 	if federationWorker != nil { go federationWorker.Run(signalCtx) }
 	go svc.runStorageDeletionWorker(signalCtx)
 	if replicationApplyEnabled {
