@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"math"
+		"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,14 +29,12 @@ func moneyAmount(value any) (string, float64, bool) {
 	return strconv.FormatFloat(n,'f',2,64),n,true
 }
 
+var errWalletIdempotencyConflict = errors.New("wallet idempotency key payload conflict")
+
 func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount, kind, note, key string) (string,bool,error) {
 	sum:=sha256.Sum256([]byte(strings.Join([]string{recipient,amount,"KES",kind,note},"\n")))
 	requestHash:=hex.EncodeToString(sum[:])
-	var existingID,existingHash string
-	err:=tx.QueryRow(ctx,"SELECT id::text,request_hash FROM testagram_local.wallet_transfers WHERE sender_id=$1 AND idempotency_key=$2",sender,key).Scan(&existingID,&existingHash)
-	if err==nil { if existingHash!=requestHash{return "",false,pgx.ErrTxCommitRollback};return existingID,true,nil }
-	if err!=pgx.ErrNoRows{return "",false,err}
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id) VALUES($1),($2) ON CONFLICT(user_id) DO NOTHING",sender,recipient)
+	_,err:=tx.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id) VALUES($1),($2) ON CONFLICT(user_id) DO NOTHING",sender,recipient)
 	if err!=nil{return "",false,err}
 	rows,err:=tx.Query(ctx,`SELECT w.user_id::text,w.balance::text,w.currency,w.status
 		FROM testagram_local.wallets w WHERE w.user_id=$1 OR w.user_id=$2 ORDER BY w.user_id FOR UPDATE`,sender,recipient)
@@ -44,6 +42,12 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 	balances:=map[string]float64{};currencies:=map[string]string{};statuses:=map[string]string{}
 	for rows.Next(){var id,balance,currency,status string;if err=rows.Scan(&id,&balance,&currency,&status);err!=nil{rows.Close();return "",false,err};v,e:=strconv.ParseFloat(balance,64);if e!=nil{rows.Close();return "",false,e};balances[id]=v;currencies[id]=strings.TrimSpace(currency);statuses[id]=status}
 	if err=rows.Err();err!=nil{rows.Close();return "",false,err};rows.Close()
+	// Recheck after acquiring both wallet row locks. Concurrent retries using
+	// the same idempotency key now observe the first committed transfer.
+	var existingID,existingHash string
+	err=tx.QueryRow(ctx,"SELECT id::text,request_hash FROM testagram_local.wallet_transfers WHERE sender_id=$1 AND idempotency_key=$2",sender,key).Scan(&existingID,&existingHash)
+	if err==nil { if existingHash!=requestHash{return "",false,errWalletIdempotencyConflict};return existingID,true,nil }
+	if err!=pgx.ErrNoRows{return "",false,err}
 	if len(balances)!=2||statuses[sender]!="active"||statuses[recipient]!="active"||currencies[sender]!=currencies[recipient]||currencies[sender]!="KES"{return "",false,pgx.ErrNoRows}
 	amountValue,_:=strconv.ParseFloat(amount,64)
 	if balances[sender]+0.000001<amountValue{return "",false,pgx.ErrNoRows}
@@ -105,7 +109,7 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 		kind:="transfer";if name=="testagram.wallet.tip"{kind="tip"}
 		id,duplicate,e:=walletTransferTx(ctx,tx,userID,recipient,amount,kind,note,key)
 		if e==pgx.ErrNoRows{fail("INSUFFICIENT_FUNDS_OR_WALLET_UNAVAILABLE","Wallets are unavailable, frozen, or insufficiently funded",http.StatusConflict);return true}
-		if e!=nil{if e==pgx.ErrTxCommitRollback{fail("IDEMPOTENCY_CONFLICT","Idempotency key was already used for a different transfer",http.StatusConflict)}else{fail("TRANSFER_FAILED","Wallet transfer could not be completed",http.StatusServiceUnavailable)};return true}
+		if e!=nil{if e==errWalletIdempotencyConflict{fail("IDEMPOTENCY_CONFLICT","Idempotency key was already used for a different transfer",http.StatusConflict)}else{fail("TRANSFER_FAILED","Wallet transfer could not be completed",http.StatusServiceUnavailable)};return true}
 		if e=tx.Commit(ctx);e!=nil{fail("TRANSFER_FAILED","Wallet transfer could not be committed",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"transfer_id":id,"status":"completed","duplicate":duplicate,"amount":amount,"currency":"KES"});return true
 	case "testagram.audio_spaces.list_live":
@@ -175,4 +179,3 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	return true
 }
 
-var _ = json.Valid
