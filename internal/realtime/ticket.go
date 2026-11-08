@@ -99,17 +99,3 @@ func Verify(secret, token, expectedConversationID string, now time.Time) (Claims
 	return claims, nil
 }
 
-// SignPublish signs the exact serialized event bytes. The Worker verifies
-// these bytes before parsing the event envelope; callers must not re-encode
-// the JSON between signing and sending it.
-func SignPublish(secret string, rawBody []byte) (string, error) {
-	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
-		return "", errors.New("realtime publish secret must contain at least 32 characters")
-	}
-	if len(rawBody) == 0 || len(rawBody) > 64*1024 {
-		return "", errors.New("realtime publish body must be between 1 byte and 64 KiB")
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write(rawBody)
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
-}
