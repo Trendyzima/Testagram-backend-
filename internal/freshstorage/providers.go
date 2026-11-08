@@ -21,6 +21,7 @@ type ProviderSet struct {
 	ArchiveBucket         string
 	MediaCDNBaseURL       string
 	MediaCDNSigningSecret string
+	PrimaryProvider       string
 }
 
 func FromEnv() (ProviderSet, error) {
@@ -40,6 +41,9 @@ func FromEnv() (ProviderSet, error) {
 	}
 	out.MediaCDNBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_BASE_URL")), "/")
 	out.MediaCDNSigningSecret = strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_SIGNING_SECRET"))
+	out.PrimaryProvider = strings.ToLower(strings.TrimSpace(os.Getenv("FRESH_MEDIA_PRIMARY_PROVIDER")))
+	if out.PrimaryProvider == "" { out.PrimaryProvider = "b2" }
+	if out.PrimaryProvider != "b2" && out.PrimaryProvider != "r2" { return ProviderSet{}, errors.New("FRESH_MEDIA_PRIMARY_PROVIDER must be b2 or r2") }
 	if (out.MediaCDNBaseURL == "") != (out.MediaCDNSigningSecret == "") {
 		return ProviderSet{}, errors.New("Cloudflare media CDN base URL and signing secret must be configured together")
 	}
@@ -50,9 +54,6 @@ func FromEnv() (ProviderSet, error) {
 		if len(out.MediaCDNSigningSecret) < 32 {
 			return ProviderSet{}, errors.New("Cloudflare media CDN signing secret must be at least 32 characters")
 		}
-	}
-	if out.R2 != nil && out.B2 == nil {
-		return ProviderSet{}, errors.New("Cloudflare R2 cannot be configured as a failover-only store: configure Backblaze B2 as the primary durable origin")
 	}
 	return out, nil
 }
