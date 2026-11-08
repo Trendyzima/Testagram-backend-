@@ -515,6 +515,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/communities/{slug}", s.communityDetail)
 	mux.HandleFunc("PATCH /api/communities/{community_id}", s.communityProfileUpdate)
 	mux.HandleFunc("GET /api/communities/{community_id}/members", s.communityMembers)
+	mux.HandleFunc("POST /api/communities/{community_id}/members/{member_id}/role", s.communityMemberRole)
+	mux.HandleFunc("DELETE /api/communities/{community_id}/members/{member_id}", s.communityMemberRemove)
 	mux.HandleFunc("GET /api/communities/{community_id}/posts", s.communityPosts)
 	mux.HandleFunc("POST /api/communities/{community_id}/posts", s.communityPostCreate)
 	mux.HandleFunc("POST /api/communities/{community_id}/posts/{post_id}/moderate", s.communityPostModerate)
