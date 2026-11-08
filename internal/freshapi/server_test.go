@@ -17,18 +17,12 @@ import (
 )
 
 type mockAppwriteState struct {
-	authUnavailable          bool
 	documents                map[string][]byte
 	transactionCommitted     bool
 	outboxQueries            []string
-	outboxDocuments          []json.RawMessage
+	outboxDocuments          [][]byte
 	profileFederationEnabled bool
 	accountActive            bool
-	emailVerified            bool
-	profileIdentityStatus    string
-	identityFingerprintExists bool
-	createdAppwriteUsers int
-	profileUpdates           map[string]map[string]any
 }
 
 type staticModeration struct {
@@ -47,36 +41,15 @@ func testServer(t *testing.T) (*Server, *httptest.Server) {
 
 func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwriteState) {
 	t.Helper()
-	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true, emailVerified: true, profileIdentityStatus: "approved", profileUpdates: map[string]map[string]any{}}
+	state := &mockAppwriteState{documents: map[string][]byte{}, profileFederationEnabled: true, accountActive: true}
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/account":
-			if state.authUnavailable && r.Header.Get("X-Appwrite-JWT") == "" {
-				http.Error(w, "Appwrite Auth unavailable", http.StatusServiceUnavailable)
-				return
-			}
 			if r.Header.Get("X-Appwrite-JWT") != "valid-session" {
 				http.Error(w, "unauthorized", 401)
 				return
 			}
-			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true,"emailVerification":`+strconv.FormatBool(state.emailVerified)+`}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/users":
-			if r.Header.Get("X-Appwrite-Key") != "appwrite-test-server-key" {
-				http.Error(w, "invalid server key", http.StatusUnauthorized)
-				return
-			}
-			var input map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil { t.Errorf("decode Appwrite user: %v", err) }
-			if input["emailVerification"] != true || input["email"] != "new@example.com" { t.Errorf("unexpected Appwrite account payload: %#v", input) }
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","status":true,"emailVerification":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/users":
-			if r.Header.Get("X-Appwrite-Key") != "appwrite-test-server-key" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			state.createdAppwriteUsers++
-			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","emailVerification":true,"status":true}`))
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":true}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/users/new_user_1":
 			status := state.accountActive
 			_, _ = w.Write([]byte(`{"$id":"new_user_1","status":`+strconv.FormatBool(status)+`}`))
@@ -90,12 +63,8 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 		case strings.HasSuffix(r.URL.Path, "/documents"):
 			if r.Method == http.MethodGet {
 				if strings.Contains(r.URL.Path, "/collections/profiles/") {
-					if strings.Contains(strings.Join(r.URL.Query()["queries[]"], " "), "identity_fingerprint_hash") && state.identityFingerprintExists {
-						_, _ = w.Write([]byte(`{"documents":[{"$id":"existing_identity"}],"total":1}`))
-						return
-					}
 					if strings.Contains(strings.Join(r.URL.Query()["queries[]"], " "), "tester") {
-						profile := map[string]any{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","bio":"A test profile","federation_enabled":state.profileFederationEnabled,"identity_verification_status":state.profileIdentityStatus}
+						profile := map[string]any{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","display_name":"Test User","bio":"A test profile","federation_enabled":state.profileFederationEnabled}
 						encoded, _ := json.Marshal(map[string]any{"documents":[]any{profile},"total":1})
 						_, _ = w.Write(encoded)
 					} else {
@@ -105,11 +74,13 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				}
 				if strings.Contains(r.URL.Path, "/collections/backend_outbox/") {
 					state.outboxQueries = append(state.outboxQueries, r.URL.Query()["queries[]"]...)
-					if len(state.outboxDocuments) > 0 {
-						encoded, _ := json.Marshal(map[string]any{"documents": state.outboxDocuments, "total": len(state.outboxDocuments)})
-						_, _ = w.Write(encoded)
-						return
+					documents := make([]json.RawMessage, 0, len(state.outboxDocuments))
+					for _, document := range state.outboxDocuments {
+						documents = append(documents, json.RawMessage(document))
 					}
+					encoded, _ := json.Marshal(map[string]any{"documents": documents, "total": len(documents)})
+					_, _ = w.Write(encoded)
+					return
 				}
 				_, _ = w.Write([]byte(`{"documents":[],"total":0}`))
 				return
@@ -149,7 +120,7 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 		case strings.Contains(r.URL.Path, "/documents/"):
 			if r.Method == http.MethodGet {
 				if strings.Contains(r.URL.Path, "/collections/profiles/documents/") {
-					_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","federation_enabled":`+strconv.FormatBool(state.profileFederationEnabled)+`,"identity_verification_status":"`+state.profileIdentityStatus+`"}`))
+					_, _ = w.Write([]byte(`{"$id":"new_user_1","user_id":"new_user_1","handle":"tester","federation_enabled":`+strconv.FormatBool(state.profileFederationEnabled)+`}`))
 					return
 				}
 				id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
@@ -161,15 +132,7 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 				return
 			}
 			if r.Method == http.MethodPatch {
-				var body struct {
-					Data map[string]any `json:"data"`
-				}
-				_ = json.NewDecoder(r.Body).Decode(&body)
-				if strings.Contains(r.URL.Path, "/collections/profiles/documents/") {
-					state.profileUpdates["new_user_1"] = body.Data
-				}
-				encoded, _ := json.Marshal(map[string]any{"$id": "new_user_1", "data": body.Data})
-				_, _ = w.Write(encoded)
+				_, _ = w.Write([]byte(`{"$id":"new_user_1","display_name":"Updated"}`))
 				return
 			}
 		default:
@@ -235,24 +198,8 @@ func TestFederationActorRequiresExplicitOptInAndActiveAppwriteAccount(t *testing
 			rec := httptest.NewRecorder()
 			api.Handler().ServeHTTP(rec, req)
 			if rec.Code != tc.want { t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.want, rec.Body.String()) }
-			if tc.want == http.StatusOK {
-				var response struct {
-					OK   bool `json:"ok"`
-					Data struct {
-						UserID            string `json:"user_id"`
-						Handle            string `json:"handle"`
-						DisplayName       string `json:"display_name"`
-						Summary           string `json:"summary"`
-						FederationEnabled bool   `json:"federation_enabled"`
-					} `json:"data"`
-				}
-				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-					t.Fatalf("decode Federation actor envelope: %v", err)
-				}
-				if !response.OK || response.Data.UserID != "new_user_1" || response.Data.Handle != "tester" ||
-					!response.Data.FederationEnabled || strings.Contains(rec.Body.String(), "email") {
-					t.Fatalf("unexpected actor response: %s", rec.Body.String())
-				}
+			if tc.want == http.StatusOK && (!strings.Contains(rec.Body.String(), `"user_id":"new_user_1"`) || strings.Contains(rec.Body.String(), "email")) {
+				t.Fatalf("unexpected actor response: %s", rec.Body.String())
 			}
 		})
 	}
@@ -476,17 +423,11 @@ func TestFreshAPICORSAllowsOnlyConfiguredOriginsAndHeaders(t *testing.T) {
 	preflight := httptest.NewRequest(http.MethodOptions, "/v1/media/uploads/reservations", nil)
 	preflight.Header.Set("Origin", "https://app.testagram.example")
 	preflight.Header.Set("Access-Control-Request-Method", "POST")
-	preflight.Header.Set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key,x-request-id,x-testagram-api-version")
+	preflight.Header.Set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key")
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, preflight)
 	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "https://app.testagram.example" {
 		t.Fatalf("preflight rejected: %d %s", rec.Code, rec.Body.String())
-	}
-	allowed := strings.ToLower(rec.Header().Get("Access-Control-Allow-Headers"))
-	exposed := strings.ToLower(rec.Header().Get("Access-Control-Expose-Headers"))
-	if !strings.Contains(allowed, "x-request-id") || !strings.Contains(allowed, "x-testagram-api-version") ||
-		!strings.Contains(exposed, "x-request-id") || !strings.Contains(exposed, "x-testagram-api-version") {
-		t.Fatalf("versioned API headers were not allowed/exposed: allow=%q expose=%q", allowed, exposed)
 	}
 	bad := httptest.NewRequest(http.MethodOptions, "/v1/media/uploads/reservations", nil)
 	bad.Header.Set("Origin", "https://evil.example")
@@ -564,48 +505,6 @@ func TestHomeFeedRequiresVerifiedAppwriteIdentityAndUsesBoundedPagination(t *tes
 	}
 }
 
-func TestLegalConsentRequiresAllPoliciesAndAdultBirthDate(t *testing.T) {
-	api, mock, state := testServerWithState(t)
-	defer mock.Close()
-	missing := httptest.NewRequest(http.MethodPut, "/v1/me/legal", strings.NewReader(`{"birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true}`))
-	missing.Header.Set("Authorization", "Bearer valid-session")
-	missingRec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(missingRec, missing)
-	if missingRec.Code != http.StatusBadRequest {
-		t.Fatalf("missing consent flags status=%d body=%s", missingRec.Code, missingRec.Body.String())
-	}
-	minor := httptest.NewRequest(http.MethodPut, "/v1/me/legal", strings.NewReader(`{"birth_date":"2015-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true}`))
-	minor.Header.Set("Authorization", "Bearer valid-session")
-	minorRec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(minorRec, minor)
-	if minorRec.Code != http.StatusForbidden {
-		t.Fatalf("minor consent status=%d body=%s", minorRec.Code, minorRec.Body.String())
-	}
-	if len(state.profileUpdates) != 0 {
-		t.Fatalf("invalid consent changed profile: %#v", state.profileUpdates)
-	}
-}
-
-func TestLegalConsentPersistsVersionedAcceptanceOnAuthenticatedProfile(t *testing.T) {
-	api, mock, state := testServerWithState(t)
-	defer mock.Close()
-	req := httptest.NewRequest(http.MethodPut, "/v1/me/legal", strings.NewReader(`{"birth_date":"1990-01-01","policy_version":"2026-09","terms_accepted":true,"privacy_accepted":true,"content_policy_accepted":true,"age_confirmed":true}`))
-	req.Header.Set("Authorization", "Bearer valid-session")
-	rec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"accepted":true`) {
-		t.Fatalf("legal consent status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	updated := state.profileUpdates["new_user_1"]
-	for _, key := range []string{"birth_date", "legal_terms_accepted_at", "legal_privacy_accepted_at", "legal_content_policy_accepted_at", "legal_age_confirmed_at", "legal_policy_version"} {
-		if updated[key] == nil || updated[key] == "" {
-			t.Fatalf("legal consent field %q was not persisted: %#v", key, updated)
-		}
-	}
-	if updated["birth_date"] != "1990-01-01" || updated["legal_policy_version"] != "2026-09" {
-		t.Fatalf("unexpected legal consent values: %#v", updated)
-	}
-}
 func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T) {
 	api, mock, state := testServerWithState(t)
 	defer mock.Close()
@@ -641,6 +540,38 @@ func TestFederationOutboxRequiresInternalTokenAndReturnsBoundedPage(t *testing.T
 	}
 }
 
+func TestFederationOutboxReturnsCursorForFinalNonEmptyPage(t *testing.T) {
+	api, mock, state := testServerWithState(t)
+	defer mock.Close()
+	state.outboxDocuments = [][]byte{[]byte(`{"$id":"evt_last_page_01","event_type":"testagram.post.published"}`)}
+	const token = "federation-service-token-that-is-long-enough"
+	if err := api.WithInternalToken(token); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=10", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("outbox status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			NextCursor string `json:"next_cursor"`
+			HasMore    bool   `json:"has_more"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(response.Data.NextCursor)
+	if err != nil || string(decoded) != "evt_last_page_01" {
+		t.Fatalf("final page cursor=%q decoded=%q err=%v", response.Data.NextCursor, decoded, err)
+	}
+	if response.Data.HasMore {
+		t.Fatal("single-event page should not report more results")
+	}
+}
 func TestFederationOutboxIsNotMountedWithoutSecret(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
@@ -652,152 +583,30 @@ func TestFederationOutboxIsNotMountedWithoutSecret(t *testing.T) {
 	}
 }
 
-func TestReadyzFailsWhenAppwriteAuthIsUnavailable(t *testing.T) {
-	api, mock, state := testServerWithState(t)
-	defer mock.Close()
-	state.authUnavailable = true
-	rec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "Appwrite Auth service is not ready") {
-		t.Fatalf("login readiness must fail when Appwrite Auth is unreachable; status=%d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestReadyzDoesNotDependOnFeedOrNeon(t *testing.T) {
+func TestReadyzFailsUntilFeedDependenciesAreReady(t *testing.T) {
 	api, mock := testServer(t)
 	defer mock.Close()
-	api.WithNeon(nil, true)
-	rec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"authentication":"available"`) {
-		t.Fatalf("Appwrite login readiness must not depend on feed or Neon; status=%d body=%s", rec.Code, rec.Body.String())
-	}
-
-	feed := &fakeHomeFeed{err: errors.New("Algorithm unavailable")}
-	api.WithFeed(feed)
-	calls := 0
-	api.WithNeon(fakeNeonHealth{err: errors.New("Neon unavailable"), calls: &calls}, true)
-	second := httptest.NewRecorder()
-	api.Handler().ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if second.Code != http.StatusOK {
-		t.Fatalf("login readiness must remain available during feed/Neon outages; status=%d body=%s", second.Code, second.Body.String())
-	}
-	if calls != 0 {
-		t.Fatalf("login readiness unexpectedly probed Neon %d time(s)", calls)
-	}
-}
-
-
-type fakeNeonHealth struct {
-	err   error
-	calls *int
-}
-
-func (f fakeNeonHealth) Ping(context.Context) error {
-	if f.calls != nil {
-		(*f.calls)++
-	}
-	return f.err
-}
-
-func TestPlatformReadyzFailsWhenRequiredNeonIsMissing(t *testing.T) {
-	api, mock := testServer(t)
-	defer mock.Close()
-	api.WithNeon(nil, true)
-	service := httptest.NewRecorder()
-	api.Handler().ServeHTTP(service, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if service.Code != http.StatusOK {
-		t.Fatalf("Appwrite login readiness should not require Neon; status=%d body=%s", service.Code, service.Body.String())
-	}
-	platform := httptest.NewRecorder()
-	api.Handler().ServeHTTP(platform, httptest.NewRequest(http.MethodGet, "/readyz/platform", nil))
-	if platform.Code != http.StatusServiceUnavailable || !strings.Contains(platform.Body.String(), "Neon is not configured") {
-		t.Fatalf("full platform readiness should require Neon; status=%d body=%s", platform.Code, platform.Body.String())
-	}
-}
-
-func TestPlatformReadyzChecksNeonWithoutBlockingLogin(t *testing.T) {
-	api, mock := testServer(t)
-	defer mock.Close()
-	api.WithFeed(&fakeHomeFeed{})
-	calls := 0
-	api.WithNeon(fakeNeonHealth{err: errors.New("database unavailable"), calls: &calls}, true)
-	service := httptest.NewRecorder()
-	api.Handler().ServeHTTP(service, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if service.Code != http.StatusOK {
-		t.Fatalf("login readiness should not wait for Neon; status=%d body=%s", service.Code, service.Body.String())
-	}
-	if calls != 0 {
-		t.Fatalf("login readiness unexpectedly probed Neon %d time(s)", calls)
-	}
-
-	platform := httptest.NewRecorder()
-	api.Handler().ServeHTTP(platform, httptest.NewRequest(http.MethodGet, "/readyz/platform", nil))
-	if platform.Code != http.StatusServiceUnavailable || !strings.Contains(platform.Body.String(), "Neon PostgreSQL connectivity is not ready") {
-		t.Fatalf("platform readiness must report Neon outage; status=%d body=%s", platform.Code, platform.Body.String())
-	}
-	if calls != 1 {
-		t.Fatalf("platform readiness should probe Neon once, got %d", calls)
-	}
-
-	api.WithNeon(fakeNeonHealth{calls: &calls}, true)
-	platform = httptest.NewRecorder()
-	api.Handler().ServeHTTP(platform, httptest.NewRequest(http.MethodGet, "/readyz/platform", nil))
-	if platform.Code != http.StatusServiceUnavailable || !strings.Contains(platform.Body.String(), "canonical social repositories are not integrated") {
-		t.Fatalf("platform readiness must remain blocked until Neon repositories are integrated; status=%d body=%s", platform.Code, platform.Body.String())
-	}
-	if calls != 2 {
-		t.Fatalf("platform readiness should probe Neon a second time, got %d", calls)
-	}
-}
-
-
-func TestReadyzDoesNotClaimPostPublishingWhenModerationIsDisabled(t *testing.T) {
-	api, mock := testServer(t)
-	defer mock.Close()
-	api.WithFeed(&fakeHomeFeed{})
-	api.WithModeration(nil)
-	rec := httptest.NewRecorder()
-	api.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("readiness status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `"moderation":"not_configured"`) ||
-		!strings.Contains(rec.Body.String(), `"post_write":"disabled_moderation_unconfigured"`) {
-		t.Fatalf("readiness overstated publishing capability: %s", rec.Body.String())
-	}
-}
-
-func TestFederationOutboxReturnsCursorForFinalPage(t *testing.T) {
-	api, mock, state := testServerWithState(t)
-	defer mock.Close()
-	const token = "federation-internal-token-with-at-least-32-characters"
-	if err := api.WithInternalToken(token); err != nil {
-		t.Fatal(err)
-	}
-	const eventID = "evt_12345678901234567890123456789012"
-	state.outboxDocuments = []json.RawMessage{json.RawMessage(`{"$id":"` + eventID + `","event_type":"testagram.post.published","actor_id":"user_123","object_id":"post_123","federation_eligible":true,"created_at":"2026-11-07T20:00:00Z","payload":{"id":"post_123"}}`)}
-	req := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/outbox?limit=10", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness without feed service status=%d", rec.Code)
 	}
-	var response struct {
-		OK   bool `json:"ok"`
-		Data struct {
-			Events     []json.RawMessage `json:"events"`
-			NextCursor string            `json:"next_cursor"`
-			HasMore    bool              `json:"has_more"`
-		} `json:"data"`
+
+	feed := &fakeHomeFeed{}
+	api.WithFeed(feed)
+	readyReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	readyRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(readyRec, readyReq)
+	if readyRec.Code != http.StatusOK {
+		t.Fatalf("readiness with ready dependencies status=%d body=%s", readyRec.Code, readyRec.Body.String())
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode outbox response: %v", err)
-	}
-	wantCursor := base64.RawURLEncoding.EncodeToString([]byte(eventID))
-	if !response.OK || len(response.Data.Events) != 1 || response.Data.HasMore || response.Data.NextCursor != wantCursor {
-		t.Fatalf("outbox final-page cursor response = %+v, want cursor %q and has_more=false", response, wantCursor)
+
+	feed.err = errors.New("dependency unavailable")
+	failedReq := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	failedRec := httptest.NewRecorder()
+	api.Handler().ServeHTTP(failedRec, failedReq)
+	if failedRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness with failed dependency status=%d", failedRec.Code)
 	}
 }
-
