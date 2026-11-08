@@ -338,7 +338,7 @@ jobs:
             migrations/20261019_testagram_media_replication_producers.sql \
             migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
-            migrations/20261106_social_core.sql; do
+            migrations/20261106_social_core.sql \\\n            migrations/20261108_community_core.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
@@ -364,6 +364,23 @@ jobs:
           VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174004');
           INSERT INTO testagram_local.bookmarks(user_id,post_id)
           VALUES ('123e4567-e89b-42d3-a456-426614174004','123e4567-e89b-42d3-a456-426614174001');
+          INSERT INTO testagram_local.communities(owner_id,slug,name,description,visibility)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','ci-community','CI Community','Community migration test','public');
+          INSERT INTO testagram_local.community_memberships(community_id,user_id,role,status)
+          SELECT id,'123e4567-e89b-42d3-a456-426614174000','owner','active'
+          FROM testagram_local.communities WHERE slug='ci-community';
+          INSERT INTO testagram_local.community_memberships(community_id,user_id,role,status)
+          SELECT id,'123e4567-e89b-42d3-a456-426614174004','member','active'
+          FROM testagram_local.communities WHERE slug='ci-community';
+          DO $community$
+          BEGIN
+            IF (SELECT member_count FROM testagram_local.communities WHERE slug='ci-community') <> 2 THEN
+              RAISE EXCEPTION 'community membership trigger did not maintain member_count';
+            END IF;
+            IF (SELECT count(*) FROM testagram_local.community_memberships WHERE community_id=(SELECT id FROM testagram_local.communities WHERE slug='ci-community')) <> 2 THEN
+              RAISE EXCEPTION 'community owner/member rows were not persisted';
+            END IF;
+          END $community$;
           DO $social$
           BEGIN
             IF (SELECT following_count FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174000') <> 1 THEN
