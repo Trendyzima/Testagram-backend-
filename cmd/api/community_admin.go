@@ -4,6 +4,7 @@ import (
  "encoding/json"
  "net/http"
  "strings"
+ "strconv"
  "time"
 
  "github.com/jackc/pgx/v5"
@@ -60,9 +61,9 @@ func (s *service) communityUpdate(w http.ResponseWriter,r *http.Request) {
  var in struct{DisplayName *string `json:"display_name"`;Description *string `json:"description"`;IconURL *string `json:"icon_url"`;BannerURL *string `json:"banner_url"`;Rules *[]string `json:"rules"`;Pinned *[]string `json:"pinned_post_ids"`}
  if err:=decodeSingleJSON(r.Body,&in);err!=nil{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_UPDATE","Community settings are invalid",id));return}
  if in.DisplayName!=nil&&(len(strings.TrimSpace(*in.DisplayName))<3||len(*in.DisplayName)>80)||in.Description!=nil&&len(*in.Description)>2000||in.IconURL!=nil&&len(*in.IconURL)>2048||in.BannerURL!=nil&&len(*in.BannerURL)>2048||in.Rules!=nil&&len(*in.Rules)>20||in.Pinned!=nil&&len(*in.Pinned)>3{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_UPDATE","Community settings exceed allowed limits",id));return}
- rulesJSON,pinsJSON:=[]byte("null"),[]byte("null")
- if in.Rules!=nil{for _,v:=range *in.Rules{if len(v)>240{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_RULES","Each rule must be at most 240 characters",id));return}};rulesJSON,_=json.Marshal(*in.Rules)}
- if in.Pinned!=nil{for _,v:=range *in.Pinned{if !socialUUIDPattern.MatchString(v){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PINNED_POST","Pinned post IDs must be valid",id));return}};pinsJSON,_=json.Marshal(*in.Pinned)}
+ var rulesJSON,pinsJSON any
+ if in.Rules!=nil{for _,v:=range *in.Rules{if len(v)>240{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_RULES","Each rule must be at most 240 characters",id));return}};raw,_:=json.Marshal(*in.Rules);rulesJSON=string(raw)}
+ if in.Pinned!=nil{for _,v:=range *in.Pinned{if !socialUUIDPattern.MatchString(v){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PINNED_POST","Pinned post IDs must be valid",id));return}};raw,_:=json.Marshal(*in.Pinned);pinsJSON=string(raw)}
  name:="";description:="";icon:="";banner:=""
  if in.DisplayName!=nil{name=strings.TrimSpace(*in.DisplayName)};if in.Description!=nil{description=strings.TrimSpace(*in.Description)};if in.IconURL!=nil{icon=*in.IconURL};if in.BannerURL!=nil{banner=*in.BannerURL}
  tag,err:=s.db.Exec(r.Context(),`UPDATE testagram_local.communities SET name=COALESCE(NULLIF($2,''),name),description=CASE WHEN $3::boolean THEN $4 ELSE description END,icon_url=CASE WHEN $5::boolean THEN $6 ELSE icon_url END,banner_url=CASE WHEN $7::boolean THEN $8 ELSE banner_url END,rules=COALESCE($9::jsonb,rules),pinned_post_ids=COALESCE($10::jsonb,pinned_post_ids),updated_at=now() WHERE id=$1::uuid`,cid,name,in.Description!=nil,description,in.IconURL!=nil,icon,in.BannerURL!=nil,banner,string(rulesJSON),string(pinsJSON))
