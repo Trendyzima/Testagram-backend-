@@ -155,6 +155,7 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 
 type UploadReservation struct {
 	ReservationID   string            `json:"reservation_id"`
+	PrimaryProvider string            `json:"primary_provider"`
 	ObjectID        string            `json:"object_id"`
 	UploadURL       string            `json:"upload_url"`
 	UploadMethod    string            `json:"upload_method"`
@@ -209,10 +210,10 @@ func (s *Service) ReserveUpload(ctx context.Context, input ReserveInput) (Upload
 		return UploadReservation{}, errors.New("storage reservation has no object key")
 	}
 	if reservation.Status == "protected" {
-		return UploadReservation{ReservationID: reservation.ID, ObjectID: reservation.ObjectID, ExpiresAt: reservation.ExpiresAt, ReservedBytes: reservation.Bytes, Status: "protected"}, nil
+		return UploadReservation{ReservationID: reservation.ID, PrimaryProvider: reservation.PrimaryProvider, ObjectID: reservation.ObjectID, ExpiresAt: reservation.ExpiresAt, ReservedBytes: reservation.Bytes, Status: "protected"}, nil
 	}
 	if reservation.Status == "uploaded_primary" {
-		return UploadReservation{ReservationID: reservation.ID, ObjectID: reservation.ObjectID, ExpiresAt: reservation.ExpiresAt, ReservedBytes: reservation.Bytes, Status: "uploaded_primary"}, nil
+		return UploadReservation{ReservationID: reservation.ID, PrimaryProvider: reservation.PrimaryProvider, ObjectID: reservation.ObjectID, ExpiresAt: reservation.ExpiresAt, ReservedBytes: reservation.Bytes, Status: "uploaded_primary"}, nil
 	}
 	if reservation.Status != "reserved" {
 		return UploadReservation{}, fmt.Errorf("reservation is %s and cannot accept another upload", reservation.Status)
@@ -225,7 +226,7 @@ func (s *Service) ReserveUpload(ctx context.Context, input ReserveInput) (Upload
 	if err != nil {
 		return UploadReservation{}, fmt.Errorf("create %s upload URL: %w", primaryName, err)
 	}
-	return UploadReservation{ReservationID: reservation.ID, ObjectID: reservation.ObjectID, UploadURL: uploadURL, UploadMethod: "PUT", RequiredHeaders: map[string]string{"Content-Type": reservation.ContentType}, ExpiresAt: reservation.ExpiresAt, ReservedBytes: reservation.Bytes, Status: "reserved"}, nil
+	return UploadReservation{ReservationID: reservation.ID, PrimaryProvider: primaryName, ObjectID: reservation.ObjectID, UploadURL: uploadURL, UploadMethod: "PUT", RequiredHeaders: map[string]string{"Content-Type": reservation.ContentType}, ExpiresAt: reservation.ExpiresAt, ReservedBytes: reservation.Bytes, Status: "reserved"}, nil
 }
 
 func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID string) error {
