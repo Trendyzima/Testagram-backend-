@@ -79,7 +79,7 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Request,requestID string,body capabilityRequest) bool {
 	name:=strings.TrimSpace(body.Capability)
 	switch name {
-	case "testagram.wallet.balance","testagram.wallet.transactions.list","testagram.wallet.transfer","testagram.wallet.tip",
+	case "testagram.wallet.balance","testagram.wallet.transactions.list","testagram.wallet.recipient.resolve","testagram.wallet.transfer","testagram.wallet.tip",
 		"testagram.audio_spaces.list_live","testagram.audio_spaces.pending_speaker_requests","testagram.audio_spaces.get","testagram.audio_spaces.my_status","testagram.audio_spaces.create","testagram.audio_spaces.join",
 		"testagram.audio_spaces.leave","testagram.audio_spaces.request_speaker","testagram.audio_spaces.decide_speaker",
 		"testagram.audio_spaces.end","testagram.audio_spaces.superchat":
@@ -122,6 +122,13 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 			items=append(items,map[string]any{"id":id,"kind":kind,"amount":amount,"currency":strings.TrimSpace(currency),"created_at":created,"transfer_id":transferID,"sender_id":sender,"recipient_id":recipient,"note":note,"status":state,"provider":strings.TrimSpace(provider),"receipt_number":receipt,"checkout_request_id":checkout,"phone":phone,"amount_kes":amountKES,"wallet_amount":walletAmount})
 		}
 		if rows.Err()!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
+	case "testagram.wallet.recipient.resolve":
+		username:=strings.TrimPrefix(strings.TrimSpace(str("username")),"@")
+		if len(username)<2||len(username)>30||!regexpWalletUsername.MatchString(username){fail("INVALID_RECIPIENT","Enter a valid Testagram username",http.StatusBadRequest);return true}
+		var recipientID,canonicalUsername string
+		err=s.db.QueryRow(ctx,"SELECT user_id::text,username FROM testagram_local.accounts WHERE lower(username)=lower($1) AND account_status='active'",username).Scan(&recipientID,&canonicalUsername)
+		if err!=nil||recipientID==userID{fail("RECIPIENT_NOT_FOUND","An active, different recipient account was not found",http.StatusNotFound);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"user_id":recipientID,"username":canonicalUsername});return true
 	case "testagram.wallet.transfer","testagram.wallet.tip":
 		recipient:=str("recipient_id");amount,_,ok:=moneyAmount(in["amount"]);key:=str("idempotency_key");note:=str("note")
 		if !socialUUIDPattern.MatchString(recipient)||recipient==userID||!ok||len(key)<8||len(key)>128||len(note)>280{fail("INVALID_TRANSFER","Recipient, amount, note or idempotency key is invalid",http.StatusBadRequest);return true}
