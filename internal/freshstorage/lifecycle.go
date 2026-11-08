@@ -268,7 +268,7 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 			return fmt.Errorf("verify %s object checksum: %w", primaryName, hashErr)
 		}
 		if reservation.ExpectedSHA256 != "" && actualHash != reservation.ExpectedSHA256 {
-			_ = s.b2.Delete(ctx, s.b2Bucket, reservation.ObjectKey)
+			_ = primary.Delete(ctx, primaryBucket, reservation.ObjectKey)
 			_, _ = s.store.ClaimReservation(context.Background(), reservation.ID, "verifying", "reserved", map[string]any{})
 			return virtualstorage.ErrChecksumMismatch
 		}
