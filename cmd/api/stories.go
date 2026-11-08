@@ -3,9 +3,9 @@ package main
 import (
  "net/http"
  "strings"
+ "strconv"
  "time"
  "net/url"
- "github.com/jackc/pgx/v5"
 )
 
 type storyCreateInput struct { MediaURL string `json:"media_url"`; MediaType string `json:"media_type"`; Caption string `json:"caption"`; ExpiresAt *time.Time `json:"expires_at"` }
@@ -28,7 +28,7 @@ func (s *service) storiesExplore(w http.ResponseWriter,r *http.Request) {
 }
 
 func (s *service) storyCreate(w http.ResponseWriter,r *http.Request) {
- uid,id,ok:=s.socialAuth(w,r);if !ok{return};if !s.socialWriteAllowed(w,r,uid,id,"story_create",10){return}
+ uid,id,ok:=s.socialAuth(w,r);if !ok{return};if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("STORIES_UNAVAILABLE","Stories are unavailable",id));return};if !s.socialWriteAllowed(w,r,uid,id,"story_create",10){return}
  r.Body=http.MaxBytesReader(w,r.Body,8<<10);defer r.Body.Close();var in storyCreateInput
  if err:=decodeSingleJSON(r.Body,&in);err!=nil{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_STORY","Story payload is invalid",id));return}
  parsed,err:=url.Parse(strings.TrimSpace(in.MediaURL))
@@ -42,7 +42,7 @@ func (s *service) storyCreate(w http.ResponseWriter,r *http.Request) {
 }
 
 func (s *service) storyViewCreate(w http.ResponseWriter,r *http.Request) {
- uid,id,ok:=s.socialAuth(w,r);if !ok{return};if !s.socialWriteAllowed(w,r,uid,id,"story_view",120){return}
+ uid,id,ok:=s.socialAuth(w,r);if !ok{return};if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("STORIES_UNAVAILABLE","Stories are unavailable",id));return};if !s.socialWriteAllowed(w,r,uid,id,"story_view",120){return}
  sid:=r.PathValue("story_id");if !socialUUIDPattern.MatchString(sid){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_STORY_ID","Story ID is invalid",id));return}
  tag,err:=s.db.Exec(r.Context(),`INSERT INTO testagram_local.story_views(story_id,viewer_id)
  SELECT id,$2::uuid FROM testagram_local.stories WHERE id=$1::uuid AND deleted_at IS NULL AND expires_at>now()
@@ -53,4 +53,3 @@ func (s *service) storyViewCreate(w http.ResponseWriter,r *http.Request) {
  writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"story_id":sid,"viewed":true,"created":tag.RowsAffected()>0,"views_count":count}})
 }
 
-var _ = pgx.ErrNoRows
