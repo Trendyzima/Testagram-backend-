@@ -1,0 +1,85 @@
+name: Neon social data plane schema
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "migrations/neon/**"
+      - ".github/workflows/neon-schema-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "migrations/neon/**"
+      - ".github/workflows/neon-schema-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-neon-schema-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-neon-schema-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-neon-schema-ci
+          exit 1
+      - name: Apply Neon migrations twice (idempotence)
+        run: |
+          set -euo pipefail
+          for pass in 1 2; do
+            docker exec -i testagram-neon-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/neon/001_social_data_plane.sql
+            docker exec -i testagram-neon-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/neon/002_federation_outbox.sql
+          done
+      - name: Verify canonical social tables, constraints and outbox indexes
+        run: |
+          docker exec -i testagram-neon-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $ci$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram' AND table_name='profiles') THEN
+              RAISE EXCEPTION 'Neon profiles table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram' AND table_name='posts') THEN
+              RAISE EXCEPTION 'Neon posts table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram' AND table_name='backend_outbox') THEN
+              RAISE EXCEPTION 'Neon Backend outbox missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_local' AND table_name='federation_outbox') THEN
+              RAISE EXCEPTION 'Neon Federation outbox missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram' AND indexname='posts_published_timeline_idx') THEN
+              RAISE EXCEPTION 'Neon public timeline index missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_local' AND indexname='federation_outbox_claim_idx') THEN
+              RAISE EXCEPTION 'Neon Federation claim index missing';
+            END IF;
+          END $ci$;
+          INSERT INTO testagram.profiles(user_id,handle,display_name)
+          VALUES ('appwrite-user-ci','ci_user','CI User');
+          INSERT INTO testagram.posts(id,author_id,body,visibility,idempotency_key_hash,request_hash)
+          VALUES ('post-ci','appwrite-user-ci','Neon schema integration test','public',repeat('a',64),repeat('b',64));
+          INSERT INTO testagram.backend_outbox(event_id,event_type,actor_id,object_id,visibility,payload)
+          VALUES ('event-ci','testagram.post.published','appwrite-user-ci','post-ci','public','{"post_id":"post-ci"}'::jsonb);
+          DO $verify$
+          BEGIN
+            IF (SELECT count(*) FROM testagram.posts WHERE id='post-ci' AND status='published') <> 1 THEN
+              RAISE EXCEPTION 'Neon post insert failed';
+            END IF;
+            IF (SELECT count(*) FROM testagram.backend_outbox WHERE event_id='event-ci') <> 1 THEN
+              RAISE EXCEPTION 'Neon transactional outbox table unavailable';
+            END IF;
+          END $verify$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-neon-schema-ci || true
