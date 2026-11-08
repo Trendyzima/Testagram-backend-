@@ -805,11 +805,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	// capabilities to the retired Supabase RPC gateway.
 	writeJSON(w, http.StatusNotImplemented, errorBody("CAPABILITY_NOT_IMPLEMENTED", "This capability has not yet been migrated to the Testagram Backend", id))
 	return
-	if supabaseURL == "" || publishableKey == "" {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("BACKEND_NOT_CONFIGURED", "Capability gateway is not configured", id))
-		return
-	}
-
 }
 
 func decodeSingleJSON(r io.Reader, dst any) error {
