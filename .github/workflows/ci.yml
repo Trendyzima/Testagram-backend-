@@ -343,6 +343,7 @@ jobs:
             migrations/20261109_community_posts.sql \
             migrations/20261110_community_chat.sql \
             migrations/20261111_scheduled_posts.sql \
+            migrations/20261113_post_polls.sql \
             migrations/20261112_community_badges.sql \
             migrations/20261112_marketplace_community_badges.sql \
             migrations/20261113_community_events.sql; do
