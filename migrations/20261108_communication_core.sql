@@ -115,6 +115,25 @@ CREATE TABLE IF NOT EXISTS testagram_local.communication_outbox (
 CREATE INDEX IF NOT EXISTS testagram_local_communication_outbox_pending_idx
   ON testagram_local.communication_outbox(next_attempt_at,created_at) WHERE status IN ('pending','failed');
 
+-- Message notifications are generated transactionally without exposing plaintext.
+CREATE OR REPLACE FUNCTION testagram_local.notify_conversation_members()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,testagram_local AS $
+BEGIN
+  INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
+  SELECT cm.user_id,NEW.sender_id,'message.received',
+    jsonb_build_object('message_id',NEW.id,'conversation_id',NEW.conversation_id,'encrypted',NEW.e2ee_enabled),
+    'message:'||NEW.id::text
+  FROM testagram_local.conversation_members cm
+  WHERE cm.conversation_id=NEW.conversation_id AND cm.user_id<>NEW.sender_id AND cm.left_at IS NULL
+  ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING;
+  RETURN NEW;
+END;
+$;
+DROP TRIGGER IF EXISTS testagram_local_message_notifications ON testagram_local.messages;
+CREATE TRIGGER testagram_local_message_notifications AFTER INSERT ON testagram_local.messages
+  FOR EACH ROW EXECUTE FUNCTION testagram_local.notify_conversation_members();
+REVOKE ALL ON FUNCTION testagram_local.notify_conversation_members() FROM PUBLIC;
+
 REVOKE ALL ON testagram_local.conversations,testagram_local.conversation_members,testagram_local.messages,
   testagram_local.message_reactions,testagram_local.message_stars,testagram_local.call_sessions,
   testagram_local.call_participants,testagram_local.communication_outbox FROM PUBLIC;
