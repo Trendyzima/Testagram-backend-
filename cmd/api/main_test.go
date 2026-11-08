@@ -85,9 +85,9 @@ func TestCapabilityRequiresBearerForPrivateCalls(t *testing.T) {
 }
 
 func TestCapabilityDoesNotFallbackToSupabase(t *testing.T) {
-	var upstreamCalls atomic.Int32
+	var upstreamCalls int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamCalls.Add(1)
+		upstreamCalls++
 		http.Error(w, "legacy upstream must not be called", http.StatusInternalServerError)
 	}))
 	defer upstream.Close()
@@ -104,7 +104,7 @@ func TestCapabilityDoesNotFallbackToSupabase(t *testing.T) {
 	if response.Code != http.StatusNotImplemented {
 		t.Fatalf("unsupported capability status = %d, want %d: %s", response.Code, http.StatusNotImplemented, response.Body.String())
 	}
-	if upstreamCalls.Load() != 0 {
+	if upstreamCalls != 0 {
 		t.Fatalf("legacy Supabase upstream was called %d times", upstreamCalls.Load())
 	}
 	if !strings.Contains(response.Body.String(), "CAPABILITY_NOT_IMPLEMENTED") {
