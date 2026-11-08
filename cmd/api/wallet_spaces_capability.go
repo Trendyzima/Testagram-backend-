@@ -63,6 +63,9 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 	if kind=="tip"{outKind,inKind="tip_out","tip_in"}else if kind=="superchat"{outKind,inKind="superchat_out","superchat_in"}
 	if _,err=tx.Exec(ctx,`INSERT INTO testagram_local.wallet_transactions(user_id,transfer_id,kind,amount,currency)
 		VALUES($1,$2,$3,$4,'KES'),($5,$2,$6,$4,'KES')`,sender,transferID,outKind,amount,recipient,inKind);err!=nil{return "",false,err}
+	if _,err=tx.Exec(ctx,`INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
+		VALUES($1,$2,'wallet.transfer.received',jsonb_build_object('transfer_id',$3,'amount',$4,'currency','KES','kind',$5),'wallet-transfer:'||$3)
+		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,recipient,sender,transferID,amount,kind);err!=nil{return "",false,err}
 	return transferID,false,nil
 }
 
