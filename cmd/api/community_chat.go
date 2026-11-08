@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -12,7 +13,8 @@ type communityChatInput struct { Message string `json:"message"` }
 type communityChatReactionInput struct { Emoji string `json:"emoji"` }
 
 func (s *service) communityChatList(w http.ResponseWriter,r *http.Request) {
-	id:=requestID(r); userID,_,ok:=s.socialAuth(w,r);if !ok{return}
+	id:=requestID(r); if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_DATABASE_UNAVAILABLE","Community chat service is unavailable",requestID(r)));return}
+	userID,_,ok:=s.socialAuth(w,r);if !ok{return}
 	communityID:=r.PathValue("community_id");if !socialUUIDPattern.MatchString(communityID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_ID","Community ID is invalid",id));return}
 	var member bool
 	if err:=s.db.QueryRow(r.Context(),`SELECT EXISTS(SELECT 1 FROM testagram_local.community_memberships WHERE community_id=$1::uuid AND user_id=$2::uuid AND status='active')`,communityID,userID).Scan(&member);err!=nil||!member{writeJSON(w,http.StatusForbidden,errorBody("COMMUNITY_MEMBERSHIP_REQUIRED","Join this community to read its chat",id));return}
@@ -32,7 +34,7 @@ func (s *service) communityChatList(w http.ResponseWriter,r *http.Request) {
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items}})
 }
 
-func jsonRaw(raw []byte) any { if len(raw)==0{return map[string]any{}};return string(raw) }
+func jsonRaw(raw []byte) any { if len(raw)==0{return json.RawMessage(`{}`)};return json.RawMessage(raw) }
 
 func (s *service) communityChatSend(w http.ResponseWriter,r *http.Request) {
 	userID,id,ok:=s.socialAuth(w,r);if !ok{return}
