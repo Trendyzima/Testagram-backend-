@@ -27,24 +27,14 @@ func newCallRoom() string {
 func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
 	name := strings.TrimSpace(body.Capability)
 	switch name {
-	case "testagram.realtime.ticket":
-		conversationID:=str("conversation_id")
-		if !socialUUIDPattern.MatchString(conversationID){fail("INVALID_CONVERSATION","A valid conversation ID is required",http.StatusBadRequest);return true}
-		var member bool
-		if e:=s.db.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)",conversationID,userID).Scan(&member);e!=nil{fail("REALTIME_AUTHORIZATION_FAILED","Could not verify conversation access",http.StatusServiceUnavailable);return true}
-		if !member{fail("CONVERSATION_ACCESS_DENIED","Conversation membership is required",http.StatusForbidden);return true}
-		secret:=strings.TrimSpace(os.Getenv("REALTIME_TICKET_SECRET"))
-		publicURL:=strings.TrimRight(strings.TrimSpace(os.Getenv("REALTIME_PUBLIC_URL")),"/")
-		if secret==""||publicURL==""{fail("REALTIME_NOT_CONFIGURED","Secure realtime delivery is not configured",http.StatusServiceUnavailable);return true}
-		ticket,e:=realtime.Issue(secret,userID,conversationID,time.Now(),2*time.Minute)
-		if e!=nil{fail("REALTIME_TICKET_FAILED","Could not issue realtime access",http.StatusServiceUnavailable);return true}
-		writeJSON(w,http.StatusOK,map[string]any{"ticket":ticket,"websocket_url":publicURL+"/v1/realtime/conversations/"+conversationID,"expires_in":120});return true
-	case "testagram.conversations.list", "testagram.conversations.create",
+	case "testagram.realtime.ticket", "testagram.media.token",
+		"testagram.conversations.list", "testagram.conversations.create",
 		"testagram.messages.list", "testagram.messages.send_encrypted",
 		"testagram.messages.edit_encrypted", "testagram.messages.delete",
 		"testagram.messages.mark_read", "testagram.messages.react",
 		"testagram.messages.attach", "testagram.calls.create",
-		"testagram.calls.join", "testagram.calls.end":
+		"testagram.calls.join", "testagram.calls.end",
+		"testagram.calls.list", "testagram.calls.get":
 	default:
 		return false
 	}
@@ -80,6 +70,32 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 	}
 	fail := func(code, message string, httpStatus int) { writeJSON(w,httpStatus,errorBody(code,message,requestID)) }
 	switch name {
+	case "testagram.media.token":
+		roomID:=str("room_id");roomType:=str("room_type")
+		if roomType!="call"||!socialUUIDPattern.MatchString(roomID){fail("INVALID_MEDIA_ROOM","Only an authorized call room is available on the Backend signaling service",http.StatusBadRequest);return true}
+		var conversationID string
+		e:=s.db.QueryRow(ctx,`SELECT c.conversation_id::text FROM testagram_local.call_sessions c
+			WHERE c.id=$1 AND c.status IN ('ringing','active')
+			AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`,roomID,userID).Scan(&conversationID)
+		if e!=nil{fail("CALL_NOT_AVAILABLE","Call is unavailable or access is denied",http.StatusForbidden);return true}
+		secret:=strings.TrimSpace(os.Getenv("REALTIME_TICKET_SECRET"))
+		publicURL:=strings.TrimRight(strings.TrimSpace(os.Getenv("REALTIME_PUBLIC_URL")),"/")
+		if secret==""||publicURL==""{fail("REALTIME_NOT_CONFIGURED","Secure call signaling is not configured",http.StatusServiceUnavailable);return true}
+		ticket,e:=realtime.IssueScoped(secret,userID,roomID,"media:signal",time.Now(),2*time.Minute)
+		if e!=nil{fail("REALTIME_TICKET_FAILED","Could not issue call signaling access",http.StatusServiceUnavailable);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"token":ticket,"ws_url":publicURL+"/v1/realtime/rooms/"+roomID,"room_id":roomID,"room_type":"call","role":"participant","ice_servers":[]any{map[string]any{"urls":"stun:stun.l.google.com:19302"}}});return true
+	case "testagram.realtime.ticket":
+		conversationID:=str("conversation_id")
+		if !socialUUIDPattern.MatchString(conversationID){fail("INVALID_CONVERSATION","A valid conversation ID is required",http.StatusBadRequest);return true}
+		var member bool
+		if e:=s.db.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)",conversationID,userID).Scan(&member);e!=nil{fail("REALTIME_AUTHORIZATION_FAILED","Could not verify conversation access",http.StatusServiceUnavailable);return true}
+		if !member{fail("CONVERSATION_ACCESS_DENIED","Conversation membership is required",http.StatusForbidden);return true}
+		secret:=strings.TrimSpace(os.Getenv("REALTIME_TICKET_SECRET"))
+		publicURL:=strings.TrimRight(strings.TrimSpace(os.Getenv("REALTIME_PUBLIC_URL")),"/")
+		if secret==""||publicURL==""{fail("REALTIME_NOT_CONFIGURED","Secure realtime delivery is not configured",http.StatusServiceUnavailable);return true}
+		ticket,e:=realtime.Issue(secret,userID,conversationID,time.Now(),2*time.Minute)
+		if e!=nil{fail("REALTIME_TICKET_FAILED","Could not issue realtime access",http.StatusServiceUnavailable);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"ticket":ticket,"websocket_url":publicURL+"/v1/realtime/conversations/"+conversationID,"expires_in":120});return true
 	case "testagram.conversations.list":
 		limit:=intVal("limit",50,1,100); if limit<1 { fail("INVALID_LIMIT","Limit must be between 1 and 100",http.StatusBadRequest); return true }
 		rows,e:=s.db.Query(ctx,`SELECT c.id::text,c.kind,c.title,c.created_at,c.updated_at,
