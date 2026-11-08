@@ -54,3 +54,12 @@ func (s *service) hashtagFollowCreate(w http.ResponseWriter,r *http.Request){
 func (s *service) hashtagFollowDelete(w http.ResponseWriter,r *http.Request){
  uid,id,ok:=s.socialAuth(w,r);if !ok{return};hid:=r.PathValue("hashtag_id");if !socialUUIDPattern.MatchString(hid){writeJSON(w,400,errorBody("INVALID_HASHTAG_ID","Hashtag ID is invalid",id));return};if _,err:=s.db.Exec(r.Context(),`DELETE FROM testagram_local.hashtag_follows WHERE user_id=$1::uuid AND hashtag_id=$2::uuid`,uid,hid);err!=nil{writeJSON(w,503,errorBody("HASHTAG_UNFOLLOW_FAILED","Hashtag could not be unfollowed",id));return};writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"following":false}})
 }
+
+func (s *service) hashtagsSearch(w http.ResponseWriter,r *http.Request) {
+ id:=requestID(r);if !s.cors(w,r){writeJSON(w,403,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return};if s.db==nil{writeJSON(w,503,errorBody("HASHTAG_SERVICE_UNAVAILABLE","Hashtag service is unavailable",id));return}
+ q:=strings.ToLower(strings.TrimSpace(strings.TrimPrefix(r.URL.Query().Get("q"),"#")));if len(q)>64{writeJSON(w,400,errorBody("INVALID_HASHTAG_QUERY","Hashtag search is too long",id));return}
+ limit:=20;if raw:=r.URL.Query().Get("limit");raw!=""{if n,e:=strconv.Atoi(raw);e==nil{if n<1{n=1};if n>100{n=100};limit=n}}
+ rows,err:=s.db.Query(r.Context(),`SELECT id::text,tag,usage_count,follower_count,federated_post_count,last_used_at FROM testagram_local.hashtags WHERE tag ILIKE '%'||$1||'%' ORDER BY usage_count DESC,follower_count DESC,tag ASC LIMIT $2`,q,limit);if err!=nil{writeJSON(w,503,errorBody("HASHTAG_SEARCH_FAILED","Hashtags could not be searched",id));return};defer rows.Close()
+ items:=make([]map[string]any,0);for rows.Next(){var hid,tag string;var usage,followers,fed int64;var last *time.Time;if err=rows.Scan(&hid,&tag,&usage,&followers,&fed,&last);err!=nil{writeJSON(w,503,errorBody("HASHTAG_SEARCH_FAILED","Hashtag records could not be read",id));return};items=append(items,map[string]any{"id":hid,"tag":tag,"usage_count":usage,"follower_count":followers,"federated_post_count":fed,"last_used_at":last})}
+ writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
+}
