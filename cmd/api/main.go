@@ -510,6 +510,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/hashtag-challenges", s.hashtagChallengesList)
 	mux.HandleFunc("POST /api/hashtag-challenges", s.hashtagChallengeCreate)
 	mux.HandleFunc("GET /api/hashtag-challenges/{challenge_id}", s.hashtagChallengeGet)
+	mux.HandleFunc("POST /api/hashtag-challenges/{challenge_id}/enter", s.hashtagChallengeEnter)
 	mux.HandleFunc("GET /api/hashtags", s.hashtagsSearch)
 	mux.HandleFunc("GET /api/hashtags/trending", s.hashtagsTrending)
 	mux.HandleFunc("GET /api/hashtags/followed", s.hashtagFollowedList)
