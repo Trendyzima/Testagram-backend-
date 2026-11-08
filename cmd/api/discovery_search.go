@@ -10,7 +10,7 @@ import (
 func (s *service) searchPublic(w http.ResponseWriter,r *http.Request) {
  id:=requestID(r);if !s.cors(w,r){writeJSON(w,403,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return}
  if s.db==nil{writeJSON(w,503,errorBody("SEARCH_UNAVAILABLE","Search service is unavailable",id));return}
- q:=strings.TrimSpace(r.URL.Query().Get("q"));if q==""||len(q)>200{writeJSON(w,400,errorBody("INVALID_SEARCH_QUERY","Search query must contain 1 to 200 characters",id));return}
+ q:=strings.TrimSpace(r.URL.Query().Get("q"));if len(q)>200{writeJSON(w,400,errorBody("INVALID_SEARCH_QUERY","Search query must contain 1 to 200 characters",id));return}
  kind:=r.URL.Query().Get("kind");if kind==""{kind="all"};switch kind{case "all","people","posts","hashtags","communities":default:writeJSON(w,400,errorBody("INVALID_SEARCH_KIND","Search kind is unsupported",id));return}
  limit:=20;if raw:=r.URL.Query().Get("limit");raw!=""{if n,e:=strconv.Atoi(raw);e==nil{if n<1{n=1};if n>50{n=50};limit=n}}
  offset:=0;if raw:=r.URL.Query().Get("offset");raw!=""{if n,e:=strconv.Atoi(raw);e==nil&&n>0{offset=n};if offset>10000{offset=10000}}
