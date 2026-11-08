@@ -26,7 +26,7 @@ type ProviderSet struct {
 func FromEnv() (ProviderSet, error) {
 	var out ProviderSet
 	var err error
-	out.B2, out.B2Bucket, err = providerFromEnv("B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "us-west-004")
+	out.B2, out.B2Bucket, err = providerFromEnv("B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "us-east-005")
 	if err != nil {
 		return ProviderSet{}, fmt.Errorf("Backblaze B2: %w", err)
 	}
