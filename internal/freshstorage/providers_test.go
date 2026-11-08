@@ -1,9 +1,12 @@
 package freshstorage
 
 import (
+	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func clear(t *testing.T) {
@@ -127,5 +130,33 @@ func TestArchiveProviderRequiresCompleteIndependentConfiguration(t *testing.T) {
 	}
 	if p.Archive == nil || p.ArchiveBucket != "cold-archive" {
 		t.Fatalf("archive provider not configured: %#v", p)
+	}
+}
+
+func TestBackblazeDefaultRegionMatchesUsEast005Endpoint(t *testing.T) {
+	clear(t)
+	t.Setenv("B2_S3_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
+	t.Setenv("B2_S3_ACCESS_KEY_ID", "test-b2-key-id")
+	t.Setenv("B2_S3_SECRET_ACCESS_KEY", strings.Repeat("s", 40))
+	t.Setenv("B2_S3_BUCKET", "testagram-private-media")
+	t.Setenv("B2_S3_REGION", "")
+	p, err := FromEnv()
+	if err != nil {
+		t.Fatalf("configure B2: %v", err)
+	}
+	if p.B2 == nil || p.B2Bucket != "testagram-private-media" {
+		t.Fatalf("B2 provider not configured: %#v", p)
+	}
+	putURL, err := p.B2.PresignPut(context.Background(), p.B2Bucket, "v1/0123456789abcdef0123456789abcdef", "image/jpeg", 1024, time.Minute)
+	if err != nil {
+		t.Fatalf("presign B2 upload: %v", err)
+	}
+	parsed, err := url.Parse(putURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := parsed.Query().Get("X-Amz-Credential")
+	if !strings.Contains(credential, "/us-east-005/s3/aws4_request") {
+		t.Fatalf("B2 signing credential uses wrong region: %q", credential)
 	}
 }
