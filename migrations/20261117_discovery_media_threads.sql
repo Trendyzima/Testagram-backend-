@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.threads (
  content TEXT NOT NULL DEFAULT '' CHECK(length(content)<=30000),
  is_published BOOLEAN NOT NULL DEFAULT TRUE,
  likes_count BIGINT NOT NULL DEFAULT 0 CHECK(likes_count>=0),
+ replies_count BIGINT NOT NULL DEFAULT 0 CHECK(replies_count>=0),
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  deleted_at TIMESTAMPTZ
