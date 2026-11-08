@@ -49,6 +49,7 @@ type Reservation struct {
 	ReservedKiB    int64     `json:"reserved_kib"`
 	ContentType    string    `json:"content_type"`
 	ExpectedSHA256 string    `json:"sha256_expected"`
+	PrimaryProvider string    `json:"primary_provider"`
 	SHA256         string    `json:"sha256_actual"`
 	Status         string    `json:"status"`
 	ExpiresAt      time.Time `json:"expires_at"`
@@ -62,6 +63,7 @@ type ReserveInput struct {
 	Bytes          int64
 	ContentType    string
 	SHA256         string
+	PrimaryProvider string
 }
 
 type Store interface {
@@ -105,6 +107,7 @@ type Service struct {
 	cdnSigningSecret string
 	archive          *virtualstorage.S3Provider
 	archiveBucket    string
+	primaryProvider  string
 }
 
 func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Service, error) {
@@ -144,7 +147,10 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 			return nil, errors.New("cold archive provider must support verified object replication and have a bucket")
 		}
 	}
-	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, cdnSigningSecret: providers.MediaCDNSigningSecret, archive: archive, archiveBucket: providers.ArchiveBucket}, nil
+	primaryProvider := strings.ToLower(strings.TrimSpace(providers.PrimaryProvider))
+	if primaryProvider == "" { primaryProvider = "b2" }
+	if primaryProvider != "b2" && primaryProvider != "r2" { return nil, errors.New("primary media provider must be b2 or r2") }
+	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, cdnSigningSecret: providers.MediaCDNSigningSecret, archive: archive, archiveBucket: providers.ArchiveBucket, primaryProvider: primaryProvider}, nil
 }
 
 type UploadReservation struct {
@@ -190,6 +196,7 @@ func (s *Service) ReserveUpload(ctx context.Context, input ReserveInput) (Upload
 	keyBytes := sha256.Sum256([]byte(input.OwnerID + "\x00" + input.IdempotencyKey))
 	reservationID := "res_" + hex.EncodeToString(keyBytes[:])
 	expires := time.Now().UTC().Add(s.reservationTTL)
+	input.PrimaryProvider = s.primaryProvider
 	reservation, err := s.store.Reserve(ctx, input, reservationID, expires)
 	if err != nil {
 		return UploadReservation{}, err
@@ -213,9 +220,10 @@ func (s *Service) ReserveUpload(ctx context.Context, input ReserveInput) (Upload
 	if !reservation.ExpiresAt.After(time.Now()) {
 		return UploadReservation{}, ErrReservationExpired
 	}
-	uploadURL, err := s.b2.PresignPut(ctx, s.b2Bucket, reservation.ObjectKey, reservation.ContentType, s.maxObjectBytes, s.uploadTTL)
+	primary, primaryBucket, _, _, primaryName, _ := s.providersFor(reservation)
+	uploadURL, err := primary.PresignPut(ctx, primaryBucket, reservation.ObjectKey, reservation.ContentType, s.maxObjectBytes, s.uploadTTL)
 	if err != nil {
-		return UploadReservation{}, fmt.Errorf("create B2 upload URL: %w", err)
+		return UploadReservation{}, fmt.Errorf("create %s upload URL: %w", primaryName, err)
 	}
 	return UploadReservation{ReservationID: reservation.ID, ObjectID: reservation.ObjectID, UploadURL: uploadURL, UploadMethod: "PUT", RequiredHeaders: map[string]string{"Content-Type": reservation.ContentType}, ExpiresAt: reservation.ExpiresAt, ReservedBytes: reservation.Bytes, Status: "reserved"}, nil
 }
@@ -243,29 +251,30 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 		if reservation.Status != "verifying" {
 			return fmt.Errorf("reservation is %s and cannot be verified", reservation.Status)
 		}
-		info, headErr := s.b2.Head(ctx, s.b2Bucket, reservation.ObjectKey)
+		primary, primaryBucket, secondary, secondaryBucket, primaryName, secondaryName := s.providersFor(reservation)
+		info, headErr := primary.Head(ctx, primaryBucket, reservation.ObjectKey)
 		if headErr != nil {
 			_, _ = s.store.ClaimReservation(context.Background(), reservation.ID, "verifying", "reserved", map[string]any{})
-			return fmt.Errorf("B2 upload not available: %w", headErr)
+			return fmt.Errorf("%s upload not available: %w", primaryName, headErr)
 		}
 		if info.Size != reservation.Bytes || !strings.EqualFold(info.ContentType, reservation.ContentType) {
-			_ = s.b2.Delete(ctx, s.b2Bucket, reservation.ObjectKey)
+			_ = primary.Delete(ctx, primaryBucket, reservation.ObjectKey)
 			_, _ = s.store.ClaimReservation(context.Background(), reservation.ID, "verifying", "reserved", map[string]any{})
 			return virtualstorage.ErrObjectMismatch
 		}
-		actualHash, hashErr := s.b2.SHA256(ctx, s.b2Bucket, reservation.ObjectKey, reservation.Bytes)
+		actualHash, hashErr := primary.SHA256(ctx, primaryBucket, reservation.ObjectKey, reservation.Bytes)
 		if hashErr != nil {
 			_, _ = s.store.ClaimReservation(context.Background(), reservation.ID, "verifying", "reserved", map[string]any{})
-			return fmt.Errorf("verify B2 object checksum: %w", hashErr)
+			return fmt.Errorf("verify %s object checksum: %w", primaryName, hashErr)
 		}
 		if reservation.ExpectedSHA256 != "" && actualHash != reservation.ExpectedSHA256 {
 			_ = s.b2.Delete(ctx, s.b2Bucket, reservation.ObjectKey)
 			_, _ = s.store.ClaimReservation(context.Background(), reservation.ID, "verifying", "reserved", map[string]any{})
 			return virtualstorage.ErrChecksumMismatch
 		}
-		reservation, err = s.store.ClaimReservation(ctx, reservation.ID, "verifying", "uploaded_primary", map[string]any{"sha256_actual": actualHash, "primary_verified_at": time.Now().UTC().Format(time.RFC3339Nano), "lease_expires_at": time.Now().UTC().Add(3 * time.Hour).Format(time.RFC3339Nano)})
+		reservation, err = s.store.ClaimReservation(ctx, reservation.ID, "verifying", "uploaded_primary", map[string]any{"sha256_actual": actualHash, "primary_provider": primaryName, "primary_verified_at": time.Now().UTC().Format(time.RFC3339Nano), "lease_expires_at": time.Now().UTC().Add(3 * time.Hour).Format(time.RFC3339Nano)})
 		if err != nil {
-			return fmt.Errorf("record verified B2 upload: %w", err)
+			return fmt.Errorf("record verified %s upload: %w", primaryName, err)
 		}
 	}
 	if reservation.Status != "uploaded_primary" {
@@ -277,13 +286,24 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 	if !validSHA256(reservation.SHA256) {
 		return errors.New("verified primary checksum is missing")
 	}
-	if err := s.r2.CopyFrom(ctx, s.b2, s.b2Bucket, reservation.ObjectKey, s.r2Bucket, reservation.ObjectKey, reservation.Bytes, reservation.ContentType, reservation.SHA256); err != nil {
-		return fmt.Errorf("B2 object is verified but R2 replica is pending: %w", err)
+	primary, primaryBucket, secondary, secondaryBucket, primaryName, secondaryName := s.providersFor(reservation)
+	if err := secondary.CopyFrom(ctx, primary, primaryBucket, reservation.ObjectKey, secondaryBucket, reservation.ObjectKey, reservation.Bytes, reservation.ContentType, reservation.SHA256); err != nil {
+		return fmt.Errorf("%s object is verified but %s replica is pending: %w", primaryName, secondaryName, err)
 	}
 	if err := s.store.CommitProtected(ctx, reservation, s.b2Bucket, s.r2Bucket); err != nil {
 		return fmt.Errorf("both cloud copies verified but Appwrite commit is pending: %w", err)
 	}
 	return nil
+}
+
+
+// providersFor returns the reservation's immutable upload origin and its peer replica.
+// Missing provider metadata on legacy reservations defaults to B2.
+func (s *Service) providersFor(r Reservation) (*virtualstorage.S3Provider, string, *virtualstorage.S3Provider, string, string, string) {
+	origin := strings.ToLower(strings.TrimSpace(r.PrimaryProvider))
+	if origin == "" { origin = "b2" }
+	if origin == "r2" { return s.r2, s.r2Bucket, s.b2, s.b2Bucket, "r2", "b2" }
+	return s.b2, s.b2Bucket, s.r2, s.r2Bucket, "b2", "r2"
 }
 
 // ExpireReservation releases quota only after both provider copies are confirmed
@@ -620,8 +640,11 @@ func (s *AppwriteStore) Reserve(ctx context.Context, input ReserveInput, id stri
 		rollback()
 		return Reservation{}, quotaError(err)
 	}
-	res := Reservation{ID: id, OwnerID: input.OwnerID, Scope: input.Scope, ObjectID: objectID, ObjectKey: objectKey, Bytes: input.Bytes, ReservedKiB: units, ContentType: input.ContentType, ExpectedSHA256: input.SHA256, Status: "reserved", ExpiresAt: expires}
-	data := map[string]any{"owner_id": res.OwnerID, "scope": res.Scope, "object_id": res.ObjectID, "object_key": res.ObjectKey, "bytes_decimal": fmt.Sprint(res.Bytes), "reserved_kib": res.ReservedKiB, "content_type": res.ContentType, "sha256_expected": res.ExpectedSHA256, "sha256_actual": res.SHA256, "status": res.Status, "expires_at": res.ExpiresAt.Format(time.RFC3339Nano)}
+	primaryProvider := input.PrimaryProvider
+	if primaryProvider == "" { primaryProvider = "b2" }
+	if primaryProvider != "b2" && primaryProvider != "r2" { rollback(); return Reservation{}, errors.New("invalid primary media provider") }
+	res := Reservation{ID: id, OwnerID: input.OwnerID, Scope: input.Scope, ObjectID: objectID, ObjectKey: objectKey, Bytes: input.Bytes, ReservedKiB: units, ContentType: input.ContentType, ExpectedSHA256: input.SHA256, PrimaryProvider: primaryProvider, Status: "reserved", ExpiresAt: expires}
+	data := map[string]any{"owner_id": res.OwnerID, "scope": res.Scope, "object_id": res.ObjectID, "object_key": res.ObjectKey, "bytes_decimal": fmt.Sprint(res.Bytes), "reserved_kib": res.ReservedKiB, "content_type": res.ContentType, "sha256_expected": res.ExpectedSHA256, "sha256_actual": res.SHA256, "primary_provider": res.PrimaryProvider, "status": res.Status, "expires_at": res.ExpiresAt.Format(time.RFC3339Nano)}
 	if err = s.db.CreateDocumentInTransaction(ctx, reservationCollection, id, data, tx); err != nil {
 		rollback()
 		return Reservation{}, err
@@ -680,6 +703,7 @@ func decodeReservation(raw []byte) (Reservation, error) {
 		ContentType    string `json:"content_type"`
 		ExpectedSHA256 string `json:"sha256_expected"`
 		SHA256         string `json:"sha256_actual"`
+		PrimaryProvider string `json:"primary_provider"`
 		Status         string `json:"status"`
 		ExpiresAt      string `json:"expires_at"`
 		LeaseExpiresAt string `json:"lease_expires_at"`
@@ -705,7 +729,10 @@ func decodeReservation(raw []byte) (Reservation, error) {
 			return Reservation{}, errors.New("invalid reservation lease expiry")
 		}
 	}
-	return Reservation{ID: wire.ID, OwnerID: wire.OwnerID, Scope: wire.Scope, ObjectID: wire.ObjectID, ObjectKey: wire.ObjectKey, Bytes: bytes, ReservedKiB: wire.ReservedKiB, ContentType: wire.ContentType, ExpectedSHA256: wire.ExpectedSHA256, SHA256: wire.SHA256, Status: wire.Status, ExpiresAt: expires, LeaseExpiresAt: lease}, nil
+	primaryProvider := wire.PrimaryProvider
+	if primaryProvider == "" { primaryProvider = "b2" } // Backward compatibility for existing B2-origin reservations.
+	if primaryProvider != "b2" && primaryProvider != "r2" { return Reservation{}, errors.New("invalid reservation primary provider") }
+	return Reservation{ID: wire.ID, OwnerID: wire.OwnerID, Scope: wire.Scope, ObjectID: wire.ObjectID, ObjectKey: wire.ObjectKey, Bytes: bytes, ReservedKiB: wire.ReservedKiB, ContentType: wire.ContentType, ExpectedSHA256: wire.ExpectedSHA256, PrimaryProvider: primaryProvider, SHA256: wire.SHA256, Status: wire.Status, ExpiresAt: expires, LeaseExpiresAt: lease}, nil
 }
 
 func (s *AppwriteStore) ClaimReservation(ctx context.Context, id, expectedStatus, nextStatus string, fields map[string]any) (Reservation, error) {
@@ -746,6 +773,7 @@ func (s *AppwriteStore) ClaimReservation(ctx context.Context, id, expectedStatus
 	if value, ok := fields["sha256_actual"].(string); ok {
 		current.SHA256 = value
 	}
+	if value, ok := fields["primary_provider"].(string); ok { current.PrimaryProvider = value }
 	if value, ok := fields["lease_expires_at"].(string); ok {
 		current.LeaseExpiresAt, _ = time.Parse(time.RFC3339Nano, value)
 	}
