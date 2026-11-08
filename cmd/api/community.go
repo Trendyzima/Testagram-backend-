@@ -42,6 +42,8 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 	offset:=0
 	if raw:=r.URL.Query().Get("page"); raw!="" { if n,err:=strconv.Atoi(raw); err==nil && n>0 { offset=n*limit } }
 	search:=strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(search)>128 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_QUERY","Search query is too long",id)); return }
+	excludeJoined:=r.URL.Query().Get("exclude_joined")=="true"
 	tab:=r.URL.Query().Get("tab")
 	userID := ""
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))),"bearer ") {
@@ -55,14 +57,15 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 	if sortBy=="trending" { order="c.created_at DESC,c.member_count DESC,c.id DESC" }
 	query := `SELECT c.id::text,c.slug,c.name,c.description,c.visibility,c.icon_url,c.banner_url,c.member_count,c.owner_id::text,c.created_at,c.rules,
 		EXISTS(SELECT 1 FROM testagram_local.community_memberships m WHERE m.community_id=c.id AND m.user_id=NULLIF($1,'')::uuid AND m.status='active')
-		FROM testagram_local.communities c WHERE (($3='joined' AND EXISTS(SELECT 1 FROM testagram_local.community_memberships mine WHERE mine.community_id=c.id AND mine.user_id=NULLIF($1,'')::uuid AND mine.status='active')) OR ($3<>'joined' AND c.visibility='public' AND ($4='' OR c.name ILIKE '%'||$4||'%' OR c.slug ILIKE '%'||$4||'%')) AND ($3<>'joined' OR c.visibility='public')) ORDER BY `+order+` LIMIT $2 OFFSET $5`
-	rows,err:=s.db.Query(r.Context(),query,userID,limit,tab,search,offset)
+		FROM testagram_local.communities c WHERE (($3='joined' AND EXISTS(SELECT 1 FROM testagram_local.community_memberships mine WHERE mine.community_id=c.id AND mine.user_id=NULLIF($1,'')::uuid AND mine.status='active')) OR ($3<>'joined' AND c.visibility='public' AND ($4='' OR c.name ILIKE '%'||$4||'%' OR c.slug ILIKE '%'||$4||'%')) AND ($3<>'joined' OR c.visibility='public')) AND (NOT $6::boolean OR NOT EXISTS(SELECT 1 FROM testagram_local.community_memberships excluded WHERE excluded.community_id=c.id AND excluded.user_id=NULLIF($1,'')::uuid AND excluded.status='active')) ORDER BY `+order+` LIMIT $2 OFFSET $5`
+	rows,err:=s.db.Query(r.Context(),query,userID,limit,tab,search,offset,excludeJoined)
 	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_LIST_FAILED","Communities could not be loaded",id)); return }
 	defer rows.Close()
 	items:=make([]map[string]any,0)
 	for rows.Next() {
 		var cid,slug,name,description,visibility,icon,banner,owner string
 		var members int64
+		var rules []byte
 		var createdAt time.Time
 		var isMember bool
 		if err=rows.Scan(&cid,&slug,&name,&description,&visibility,&icon,&banner,&members,&owner,&createdAt,&rules,&isMember); err!=nil {
@@ -89,6 +92,7 @@ func (s *service) communitiesCreate(w http.ResponseWriter, r *http.Request) {
 	slug:=communitySlug(in.Name)
 	if strings.TrimSpace(in.Slug)!="" { slug=communitySlug(in.Slug) }
 	for _, rule := range in.Rules { if len(rule)>240 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_RULES","Community rules must be at most 240 characters each",id)); return } }
+	if in.Rules==nil { in.Rules=[]string{} }
 	rulesJSON,_:=json.Marshal(in.Rules)
 	if len(slug)<3 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_NAME","Community name must produce a valid URL slug",id)); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),4*time.Second); defer cancel()
