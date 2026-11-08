@@ -32,8 +32,6 @@ func moneyAmount(value any) (string, float64, bool) {
 
 var errWalletIdempotencyConflict = errors.New("wallet idempotency key payload conflict")
 
-var errWalletIdempotencyConflict = errors.New("wallet idempotency key payload conflict")
-
 func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount, kind, note, key string) (string,bool,error) {
 	_,err:=tx.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING",sender)
 	if err!=nil{return "",false,err}
