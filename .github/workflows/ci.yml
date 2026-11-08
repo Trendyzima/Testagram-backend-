@@ -339,7 +339,8 @@ jobs:
             migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
             migrations/20261106_social_core.sql \
-            migrations/20261108_community_core.sql; do
+            migrations/20261108_community_core.sql \
+            migrations/20261108_community_content.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
@@ -373,6 +374,9 @@ jobs:
           INSERT INTO testagram_local.community_memberships(community_id,user_id,role,status)
           SELECT id,'123e4567-e89b-42d3-a456-426614174004','member','active'
           FROM testagram_local.communities WHERE slug='ci-community';
+          UPDATE testagram_local.posts
+          SET community_id=(SELECT id FROM testagram_local.communities WHERE slug='ci-community')
+          WHERE id='123e4567-e89b-42d3-a456-426614174001';
           DO $community$
           BEGIN
             IF (SELECT member_count FROM testagram_local.communities WHERE slug='ci-community') <> 2 THEN
@@ -380,6 +384,9 @@ jobs:
             END IF;
             IF (SELECT count(*) FROM testagram_local.community_memberships WHERE community_id=(SELECT id FROM testagram_local.communities WHERE slug='ci-community')) <> 2 THEN
               RAISE EXCEPTION 'community owner/member rows were not persisted';
+            END IF;
+            IF (SELECT post_count FROM testagram_local.communities WHERE slug='ci-community') <> 1 THEN
+              RAISE EXCEPTION 'community post trigger did not maintain post_count';
             END IF;
           END $community$;
           DO $social$
