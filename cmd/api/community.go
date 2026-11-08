@@ -17,6 +17,8 @@ type communityCreateInput struct {
 	Visibility  string `json:"visibility"`
 	IconURL     string `json:"icon_url"`
 	BannerURL   string `json:"banner_url"`
+	Slug        string `json:"slug"`
+	Rules       []string `json:"rules"`
 }
 
 var communitySlugPattern = regexp.MustCompile(`[^a-z0-9_-]+`)
@@ -36,6 +38,10 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_DATABASE_UNAVAILABLE","Community data service is unavailable",id)); return }
 	limit := 20
 	if raw:=r.URL.Query().Get("limit"); raw!="" { if n,err:=strconv.Atoi(raw); err==nil { if n<1 {n=1}; if n>100 {n=100}; limit=n } }
+	offset:=0
+	if raw:=r.URL.Query().Get("page"); raw!="" { if n,err:=strconv.Atoi(raw); err==nil && n>0 { offset=n*limit } }
+	search:=strings.TrimSpace(r.URL.Query().Get("q"))
+	tab:=r.URL.Query().Get("tab")
 	userID := ""
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))),"bearer ") {
 		var ok bool
@@ -45,10 +51,11 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 	sortBy := r.URL.Query().Get("sort")
 	order := "c.member_count DESC,c.created_at DESC,c.id DESC"
 	if sortBy=="newest" { order="c.created_at DESC,c.id DESC" }
-	query := `SELECT c.id::text,c.slug,c.name,c.description,c.visibility,c.icon_url,c.banner_url,c.member_count,c.owner_id::text,c.created_at,
+	if sortBy=="trending" { order="c.created_at DESC,c.member_count DESC,c.id DESC" }
+	query := `SELECT c.id::text,c.slug,c.name,c.description,c.visibility,c.icon_url,c.banner_url,c.member_count,c.owner_id::text,c.created_at,c.rules,
 		EXISTS(SELECT 1 FROM testagram_local.community_memberships m WHERE m.community_id=c.id AND m.user_id=NULLIF($1,'')::uuid AND m.status='active')
-		FROM testagram_local.communities c WHERE c.visibility='public' ORDER BY `+order+` LIMIT $2`
-	rows,err:=s.db.Query(r.Context(),query,userID,limit)
+		FROM testagram_local.communities c WHERE (($3='joined' AND EXISTS(SELECT 1 FROM testagram_local.community_memberships mine WHERE mine.community_id=c.id AND mine.user_id=NULLIF($1,'')::uuid AND mine.status='active')) OR ($3<>'joined' AND c.visibility='public' AND ($4='' OR c.name ILIKE '%'||$4||'%' OR c.slug ILIKE '%'||$4||'%')) AND ($3<>'joined' OR c.visibility='public')) ORDER BY `+order+` LIMIT $2 OFFSET $5`
+	rows,err:=s.db.Query(r.Context(),query,userID,limit,tab,search,offset)
 	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_LIST_FAILED","Communities could not be loaded",id)); return }
 	defer rows.Close()
 	items:=make([]map[string]any,0)
@@ -57,10 +64,12 @@ func (s *service) communitiesList(w http.ResponseWriter, r *http.Request) {
 		var members int64
 		var createdAt time.Time
 		var isMember bool
-		if err=rows.Scan(&cid,&slug,&name,&description,&visibility,&icon,&banner,&members,&owner,&createdAt,&isMember); err!=nil {
+		if err=rows.Scan(&cid,&slug,&name,&description,&visibility,&icon,&banner,&members,&owner,&createdAt,&rules,&isMember); err!=nil {
 			writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_LIST_FAILED","Community records could not be read",id)); return
 		}
-		items=append(items,map[string]any{"id":cid,"name":slug,"slug":slug,"display_name":name,"description":description,"visibility":visibility,"is_private":visibility=="private","icon_url":icon,"banner_url":banner,"member_count":members,"owner_id":owner,"created_at":createdAt,"is_member":isMember})
+		var parsedRules []string
+		_ = json.Unmarshal(rules,&parsedRules)
+		items=append(items,map[string]any{"id":cid,"name":slug,"slug":slug,"display_name":name,"description":description,"visibility":visibility,"is_private":visibility=="private","icon_url":icon,"banner_url":banner,"member_count":members,"post_count":0,"rules":parsedRules,"created_by":owner,"owner_id":owner,"created_at":createdAt,"is_member":isMember})
 	}
 	if err=rows.Err(); err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_LIST_FAILED","Community records could not be read",id)); return }
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
@@ -77,17 +86,20 @@ func (s *service) communitiesCreate(w http.ResponseWriter, r *http.Request) {
 	if in.Visibility=="" { in.Visibility="public" }
 	if in.Visibility!="public" && in.Visibility!="private" { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_VISIBILITY","Visibility must be public or private",id)); return }
 	slug:=communitySlug(in.Name)
+	if strings.TrimSpace(in.Slug)!="" { slug=communitySlug(in.Slug) }
+	for _, rule := range in.Rules { if len(rule)>240 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_RULES","Community rules must be at most 240 characters each",id)); return } }
+	rulesJSON,_:=json.Marshal(in.Rules)
 	if len(slug)<3 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_NAME","Community name must produce a valid URL slug",id)); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),4*time.Second); defer cancel()
 	tx,err:=s.db.Begin(ctx); if err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_CREATE_FAILED","Community could not be created",id)); return }; defer tx.Rollback(ctx)
 	var communityID string
-	err=tx.QueryRow(ctx,`INSERT INTO testagram_local.communities(owner_id,slug,name,description,visibility,icon_url,banner_url)
-		VALUES($1::uuid,$2,$3,$4,$5,$6,$7) RETURNING id::text`,userID,slug,strings.TrimSpace(in.Name),strings.TrimSpace(in.Description),in.Visibility,strings.TrimSpace(in.IconURL),strings.TrimSpace(in.BannerURL)).Scan(&communityID)
+	err=tx.QueryRow(ctx,`INSERT INTO testagram_local.communities(owner_id,slug,name,description,visibility,icon_url,banner_url,rules)
+		VALUES($1::uuid,$2,$3,$4,$5,$6,$7,$8::jsonb) RETURNING id::text`,userID,slug,strings.TrimSpace(in.Name),strings.TrimSpace(in.Description),in.Visibility,strings.TrimSpace(in.IconURL),strings.TrimSpace(in.BannerURL),string(rulesJSON)).Scan(&communityID)
 	if err!=nil { writeJSON(w,http.StatusConflict,errorBody("COMMUNITY_CREATE_CONFLICT","Community name is already in use or could not be saved",id)); return }
 	_,err=tx.Exec(ctx,`INSERT INTO testagram_local.community_memberships(community_id,user_id,role,status) VALUES($1::uuid,$2::uuid,'owner','active')`,communityID,userID)
 	if err!=nil { writeJSON(w,http.StatusConflict,errorBody("COMMUNITY_OWNER_MEMBERSHIP_FAILED","Community owner membership could not be created",id)); return }
 	if err=tx.Commit(ctx); err!=nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_CREATE_FAILED","Community transaction could not be committed",id)); return }
-	writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":map[string]any{"community":map[string]any{"id":communityID,"name":slug,"slug":slug,"display_name":strings.TrimSpace(in.Name),"description":strings.TrimSpace(in.Description),"visibility":in.Visibility,"is_private":in.Visibility=="private","icon_url":strings.TrimSpace(in.IconURL),"banner_url":strings.TrimSpace(in.BannerURL),"member_count":1,"owner_id":userID,"is_member":true}}})
+	writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":map[string]any{"community":map[string]any{"id":communityID,"name":slug,"slug":slug,"display_name":strings.TrimSpace(in.Name),"description":strings.TrimSpace(in.Description),"visibility":in.Visibility,"is_private":in.Visibility=="private","icon_url":strings.TrimSpace(in.IconURL),"banner_url":strings.TrimSpace(in.BannerURL),"rules":in.Rules,"post_count":0,"member_count":1,"owner_id":userID,"is_member":true}}})
 }
 
 func (s *service) communityJoin(w http.ResponseWriter,r *http.Request) {
