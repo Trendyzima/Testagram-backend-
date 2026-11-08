@@ -43,6 +43,18 @@ func TestDecodeReservationRejectsMalformedAndPreservesStringByteCount(t *testing
 	}
 }
 
+
+func TestDecodeReservationPreservesR2OriginAndDefaultsLegacyToB2(t *testing.T) {
+	base := `{"$id":"res_123","owner_id":"user_123","scope":"post_media","object_id":"med_123","object_key":"v1/0123456789abcdef0123456789abcdef","bytes_decimal":"1000","reserved_kib":1,"content_type":"image/jpeg","sha256_expected":"","sha256_actual":"","status":"reserved","expires_at":"2026-11-07T12:00:00Z","primary_provider":"r2"}`
+	got, err := decodeReservation([]byte(base))
+	if err != nil { t.Fatal(err) }
+	if got.PrimaryProvider != "r2" { t.Fatalf("provider=%q, want r2", got.PrimaryProvider) }
+	legacy := strings.Replace(base, `,"primary_provider":"r2"`, "", 1)
+	got, err = decodeReservation([]byte(legacy))
+	if err != nil { t.Fatal(err) }
+	if got.PrimaryProvider != "b2" { t.Fatalf("legacy provider=%q, want b2", got.PrimaryProvider) }
+}
+
 func TestProtectedMediaMetadataAppliesRetentionClassAndScope(t *testing.T) {
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 	base := Reservation{OwnerID: "user_123", ObjectID: "med_123", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: 1024, ContentType: "image/jpeg", SHA256: strings.Repeat("a", 64)}
@@ -204,7 +216,7 @@ func (m *memoryStore) Reserve(_ context.Context, in ReserveInput, id string, exp
 	if m.reservation.ID != "" {
 		return m.reservation, nil
 	}
-	m.reservation = Reservation{ID: id, OwnerID: in.OwnerID, Scope: in.Scope, ObjectID: "med_test", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: in.Bytes, ReservedKiB: reserveKiB(in.Bytes), ContentType: in.ContentType, ExpectedSHA256: in.SHA256, Status: "reserved", ExpiresAt: expires}
+	m.reservation = Reservation{ID: id, OwnerID: in.OwnerID, Scope: in.Scope, ObjectID: "med_test", ObjectKey: "v1/0123456789abcdef0123456789abcdef", Bytes: in.Bytes, ReservedKiB: reserveKiB(in.Bytes), ContentType: in.ContentType, ExpectedSHA256: in.SHA256, PrimaryProvider: in.PrimaryProvider, Status: "reserved", ExpiresAt: expires}
 	return m.reservation, nil
 }
 func (m *memoryStore) GetReservation(_ context.Context, id string) (Reservation, error) {
@@ -224,6 +236,7 @@ func (m *memoryStore) ClaimReservation(_ context.Context, id, expected, next str
 	if value, ok := fields["sha256_actual"].(string); ok {
 		m.reservation.SHA256 = value
 	}
+	if value, ok := fields["primary_provider"].(string); ok { m.reservation.PrimaryProvider = value }
 	if value, ok := fields["lease_expires_at"].(string); ok {
 		m.reservation.LeaseExpiresAt, _ = time.Parse(time.RFC3339Nano, value)
 	}
