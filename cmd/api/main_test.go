@@ -107,7 +107,9 @@ func TestCapabilityGatewayDoesNotProxyRetiredSupabase(t *testing.T) {
 	if w.Header().Get("Access-Control-Allow-Origin") != "https://testagram.site" {
 		t.Fatalf("unexpected CORS origin: %q", w.Header().Get("Access-Control-Allow-Origin"))
 	}
-}func TestUnifiedSearchRequiresLinkedAppwriteIdentity(t *testing.T) {
+}
+
+func TestUnifiedSearchRequiresLinkedAppwriteIdentity(t *testing.T) {
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
 	upstreamCalls := 0
@@ -126,7 +128,9 @@ func TestCapabilityGatewayDoesNotProxyRetiredSupabase(t *testing.T) {
 		t.Fatalf("search without configured Appwrite identity must fail closed: status=%d body=%s", w.Code, w.Body.String())
 	}
 	if upstreamCalls != 0 { t.Fatalf("legacy upstream was called %d times", upstreamCalls) }
-}func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
+}
+
+func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.health.read","input":{}}`))
 	r.Header.Set("Origin", "https://evil.example")
 	w := httptest.NewRecorder()
@@ -170,7 +174,9 @@ func TestUnmigratedPublicCapabilityDoesNotUseLegacyCache(t *testing.T) {
 		t.Fatalf("unmigrated public capability must fail closed: status=%d body=%s", w.Code, w.Body.String())
 	}
 	if cacheGets != 0 || upstreamCalls != 0 { t.Fatalf("legacy cache/upstream used: cache=%d upstream=%d", cacheGets, upstreamCalls) }
-}func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
+}
+
+func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
 	t.Setenv("SUPABASE_URL", "https://supabase.example")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
 	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -574,7 +580,9 @@ func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) 
 	if strings.Contains(body, "testagram_upstream_requests_total{group=\"search\"") {
 		t.Fatal("unconfigured Appwrite identity unexpectedly reached an upstream service")
 	}
-}func TestCapabilityGroupLabelsAreBounded(t *testing.T) {
+}
+
+func TestCapabilityGroupLabelsAreBounded(t *testing.T) {
 	cases := map[string]string{
 		"testagram.search.unified":           "search",
 		"testagram.feed.home":                "feed",
