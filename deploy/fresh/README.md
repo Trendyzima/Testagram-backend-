@@ -10,15 +10,15 @@ This deployment is intentionally separate from the legacy PostgreSQL/Supabase AP
 6. Run with the fresh environment file and expose port 8081 only behind the HTTPS Cloudflare-protected API origin.
 7. Confirm /healthz and /readyz, then test Appwrite signup/login and GET/PUT /v1/me/profile with a real staging Appwrite JWT.
 
-The fresh API implements health/readiness, authenticated profile read/write, and an opt-in private media upload lifecycle. Set FRESH_MEDIA_ENABLED=true only after provisioning all media collections, attributes and indexes described in the schema. The media API requires both Backblaze B2 and Cloudflare R2 credentials and fails startup if either provider is incomplete.
+The fresh API implements health/readiness, authenticated profile read/write, and an opt-in private media upload lifecycle. Set FRESH_MEDIA_ENABLED=true only after provisioning all media collections, attributes and indexes described in the schema. The media API requires both Backblaze B2 and Cloudflare R2 credentials and fails startup if either provider is incomplete. Set `FRESH_MEDIA_PRIMARY_PROVIDER=b2` or `r2` to choose which provider receives new direct browser uploads; the chosen provider is persisted on each reservation, while the other provider receives a verified full replica. Existing reservations without this field remain B2-origin for backwards compatibility.
 
 ## Dual object storage: B2 + Cloudflare R2
 
 Cloudflare R2 is a real object-storage provider in this architecture. It stores the actual image/video/audio/file bytes in a private R2 bucket, just as Backblaze B2 stores a complete copy. Cloudflare Workers/CDN provide a delivery and authorization layer in front of R2; CDN cache is not counted as a storage replica.
 
-- POST /v1/media/uploads/reservations — requires an Appwrite session, an Idempotency-Key header, exact byte count and MIME type. The client may optionally provide SHA-256; otherwise Backend calculates it from the uploaded B2 object.
-- Upload directly to the returned short-lived B2 presigned PUT URL using the returned Content-Type header.
-- POST /v1/media/uploads/{reservationID}/complete — verifies B2 HEAD metadata and streams the actual B2 object to calculate SHA-256; copies the bytes to the private R2 bucket with bounded streaming and independently verifies the R2 read-back checksum. Only then does Backend commit the media and two-provider replica ledger.
+- POST /v1/media/uploads/reservations — requires an Appwrite session, an Idempotency-Key header, exact byte count and MIME type. The client may optionally provide SHA-256; otherwise Backend calculates it from the selected primary object.
+- Upload directly to the returned short-lived presigned PUT URL for the selected primary provider using the returned Content-Type header.
+- POST /v1/media/uploads/{reservationID}/complete — verifies primary-provider HEAD metadata and streams the actual primary object to calculate SHA-256; copies the bytes to the other private bucket with bounded streaming and independently verifies the replica read-back checksum. Only then does Backend commit the media and two-provider replica ledger.
 - Both B2 and R2 retain the full object. The media object is not marked protected/ready until both copies pass verification.
 - GET /v1/media/{objectID}/download — requires the owning Appwrite session and returns a two-minute private URL. When CLOUDFLARE_MEDIA_BASE_URL and CLOUDFLARE_MEDIA_SIGNING_SECRET are configured, the URL goes through the Cloudflare private-media Worker, which reads the bytes from its R2 binding. Otherwise Backend falls back to a direct two-minute R2 presigned URL.
 - Repair verifies both replicas against the canonical SHA-256 and can restore either missing/corrupt copy from the surviving verified provider. CDN caching is not a substitute for this replica process.
@@ -29,7 +29,7 @@ Configure separate private buckets and credentials:
 - R2: CLOUDFLARE_R2_ENDPOINT, CLOUDFLARE_R2_REGION, CLOUDFLARE_R2_BUCKET, CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY
 - Worker: CLOUDFLARE_MEDIA_BASE_URL and CLOUDFLARE_MEDIA_SIGNING_SECRET
 
-The B2-to-R2 lifecycle and reservation expiry state machine are implemented and locally tested. Run go run ./cmd/fresh-storage-expire from a trusted scheduler; it releases quota only after both provider objects are confirmed absent. For operator-triggered repair, set TESTAGRAM_REPAIR_OBJECT_ID and run go run ./cmd/fresh-storage-repair. The Cloudflare private-media Worker and matching Go signer are implemented but not deployed; configure its R2 binding, route, frontend origins and shared signing secret before enabling CDN delivery.
+The B2/R2 dual-origin lifecycle and reservation expiry state machine are implemented and locally tested. Run go run ./cmd/fresh-storage-expire from a trusted scheduler; it releases quota only after both provider objects are confirmed absent. For operator-triggered repair, set TESTAGRAM_REPAIR_OBJECT_ID and run go run ./cmd/fresh-storage-repair. The Cloudflare private-media Worker and matching Go signer are implemented but not deployed; configure its R2 binding, route, frontend origins and shared signing secret before enabling CDN delivery.
 
 Scheduled replica repair, Android/computer node object transport, public-media caching and wiring the frontend upload service into post/message/profile screens are not yet production complete. Do not route production frontend traffic to this API until remaining integration and live staging tests pass.
 
