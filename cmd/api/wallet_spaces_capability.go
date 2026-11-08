@@ -82,7 +82,7 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	switch name {
 	case "testagram.wallet.balance","testagram.wallet.transactions.list","testagram.wallet.transfer","testagram.wallet.tip",
 		"testagram.audio_spaces.list_live","testagram.audio_spaces.pending_speaker_requests","testagram.audio_spaces.get","testagram.audio_spaces.my_status","testagram.audio_spaces.create","testagram.audio_spaces.join",
-		"testagram.audio_spaces.leave","testagram.audio_spaces.request_speaker","testagram.audio_spaces.decide_speaker",
+		"testagram.audio_spaces.leave","testagram.audio_spaces.request_speaker","testagram.audio_spaces.decide_speaker","testagram.audio_spaces.update",
 		"testagram.audio_spaces.end","testagram.audio_spaces.superchat":
 	default:return false
 	}
@@ -182,6 +182,27 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 			WHERE s.id=$1`,id,userID).Scan(&role,&requestStatus)
 		if e!=nil{fail("SPACE_STATUS_FAILED","Could not load Space membership",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"role":role,"speaker_request_status":requestStatus,"joined":role!=""});return true
+	case "testagram.audio_spaces.update":
+		id := str("space_id")
+		title := str("title")
+		description := str("description")
+		if !socialUUIDPattern.MatchString(id) || len(title) == 0 || len(title) > 120 || len(description) > 2000 {
+			fail("INVALID_SPACE", "Space ID, title or description is invalid", http.StatusBadRequest)
+			return true
+		}
+		tag, e := s.db.Exec(ctx, `UPDATE testagram_local.audio_spaces
+			SET title=$3, description=$4, updated_at=now()
+			WHERE id=$1 AND host_id=$2 AND status='live'`, id, userID, title, description)
+		if e != nil {
+			fail("SPACE_UPDATE_FAILED", "Could not update Audio Space", http.StatusServiceUnavailable)
+			return true
+		}
+		if tag.RowsAffected() != 1 {
+			fail("HOST_ONLY", "Only the host can update a live Audio Space", http.StatusForbidden)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"space_id": id, "updated": true})
+		return true
 	case "testagram.audio_spaces.create":
 		title:=str("title");description:=str("description");if len(title)==0||len(title)>120||len(description)>2000{fail("INVALID_SPACE","Space title or description is invalid",http.StatusBadRequest);return true}
 		max:=1000;if v,ok:=in["max_audience"].(float64);ok{max=int(v)};if max<2||max>10000{fail("INVALID_SPACE","Audience limit must be between 2 and 10000",http.StatusBadRequest);return true}
