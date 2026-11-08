@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.wallet_transfers (
   kind TEXT NOT NULL DEFAULT 'transfer' CHECK (kind IN ('transfer','tip','superchat')),
   note TEXT NOT NULL DEFAULT '' CHECK (length(note) <= 280),
   idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 8 AND 128),
+  request_hash CHAR(64) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (sender_id <> recipient_id),
   UNIQUE(sender_id,idempotency_key)
@@ -93,7 +94,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.audio_space_superchats (
   pinned_until TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS testagram_local_audio_superchat_live_idx ON testagram_local.audio_space_superchats(space_id,pinned_until DESC) WHERE pinned_until>now();
+CREATE INDEX IF NOT EXISTS testagram_local_audio_superchat_live_idx ON testagram_local.audio_space_superchats(space_id,pinned_until DESC);
 
 REVOKE ALL ON testagram_local.wallets,testagram_local.wallet_transfers,testagram_local.wallet_ledger_entries,
  testagram_local.wallet_transactions,testagram_local.audio_spaces,testagram_local.audio_space_participants,
