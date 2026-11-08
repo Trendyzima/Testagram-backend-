@@ -54,3 +54,16 @@ func (s *service) hashtagChallengeCreate(w http.ResponseWriter,r *http.Request) 
  if err=tx.Commit(ctx);err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("CHALLENGE_CREATE_FAILED","Challenge could not be committed",id));return}
  writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":map[string]any{"id":challengeID,"title":in.Title,"description":in.Description,"prize":in.Prize,"end_date":in.EndDate.UTC(),"created_by":uid,"entry_count":0,"is_active":true,"hashtags":map[string]any{"id":hashtagID,"tag":tag}}})
 }
+
+func (s *service) hashtagChallengeEnter(w http.ResponseWriter,r *http.Request) {
+ uid,id,ok:=s.socialAuth(w,r);if !ok{return};if !s.socialWriteAllowed(w,r,uid,id,"hashtag_challenge_enter",10){return}
+ cid:=r.PathValue("challenge_id");if !socialUUIDPattern.MatchString(cid){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_CHALLENGE_ID","Challenge ID is invalid",id));return}
+ ctx:=r.Context();tx,err:=s.db.Begin(ctx);if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("CHALLENGE_ENTRY_FAILED","Challenge entry could not be saved",id));return};defer tx.Rollback(ctx)
+ var active bool
+ if err=tx.QueryRow(ctx,"SELECT is_active AND end_date>now() FROM testagram_local.hashtag_challenges WHERE id=$1::uuid FOR UPDATE",cid).Scan(&active);err==pgx.ErrNoRows{http.NotFound(w,r);return}else if err!=nil||!active{writeJSON(w,http.StatusConflict,errorBody("CHALLENGE_CLOSED","This challenge is no longer accepting entries",id));return}
+ tag,err:=tx.Exec(ctx,"INSERT INTO testagram_local.hashtag_challenge_entries(challenge_id,user_id) VALUES($1::uuid,$2::uuid) ON CONFLICT DO NOTHING",cid,uid)
+ if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("CHALLENGE_ENTRY_FAILED","Challenge entry could not be saved",id));return}
+ if tag.RowsAffected()>0{_,err=tx.Exec(ctx,"UPDATE testagram_local.hashtag_challenges SET entry_count=entry_count+1,updated_at=now() WHERE id=$1::uuid",cid);if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("CHALLENGE_ENTRY_FAILED","Challenge count could not be updated",id));return}}
+ if err=tx.Commit(ctx);err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("CHALLENGE_ENTRY_FAILED","Challenge entry could not be committed",id));return}
+ writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"challenge_id":cid,"entered":true,"created":tag.RowsAffected()>0}})
+}
