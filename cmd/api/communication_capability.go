@@ -160,8 +160,10 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 	case "testagram.messages.react":
 		id:=str("message_id");emoji:=str("reaction");if emoji==""{emoji="❤️"};if !socialUUIDPattern.MatchString(id)||len(emoji)>32{fail("INVALID_REACTION","Message or reaction is invalid",http.StatusBadRequest);return true}
 		remove,_:=in["remove"].(bool)
-		if remove{_,err=s.db.Exec(ctx,"DELETE FROM testagram_local.message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3 AND EXISTS(SELECT 1 FROM testagram_local.messages m JOIN testagram_local.conversation_members cm ON cm.conversation_id=m.conversation_id WHERE m.id=$1 AND cm.user_id=$2 AND cm.left_at IS NULL)",id,userID,emoji)}else{_,err=s.db.Exec(ctx,`INSERT INTO testagram_local.message_reactions(message_id,user_id,emoji)
-			SELECT $1,$2,$3 WHERE EXISTS(SELECT 1 FROM testagram_local.messages m JOIN testagram_local.conversation_members cm ON cm.conversation_id=m.conversation_id WHERE m.id=$1 AND cm.user_id=$2 AND cm.left_at IS NULL)
+		var member bool
+		if e:=s.db.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_local.messages m JOIN testagram_local.conversation_members cm ON cm.conversation_id=m.conversation_id WHERE m.id=$1 AND cm.user_id=$2 AND cm.left_at IS NULL AND m.deleted_at IS NULL)`,id,userID).Scan(&member);e!=nil{fail("MESSAGE_REACTION_FAILED","Could not verify message access",http.StatusServiceUnavailable);return true}
+		if !member{fail("MESSAGE_NOT_FOUND","Message was not found in an active conversation",http.StatusNotFound);return true}
+		if remove{_,err=s.db.Exec(ctx,"DELETE FROM testagram_local.message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3",id,userID,emoji)}else{_,err=s.db.Exec(ctx,`INSERT INTO testagram_local.message_reactions(message_id,user_id,emoji) VALUES($1,$2,$3)
 			ON CONFLICT(message_id,user_id) DO UPDATE SET emoji=EXCLUDED.emoji`,id,userID,emoji)}
 		if err!=nil{fail("MESSAGE_REACTION_FAILED","Could not update message reaction",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"message_id":id,"reaction":emoji,"removed":remove});return true
@@ -169,7 +171,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		id:=str("message_id");attachment,ok:=in["attachment_metadata"].(map[string]any);if !socialUUIDPattern.MatchString(id)||!ok{fail("INVALID_ATTACHMENT","Attachment metadata is invalid",http.StatusBadRequest);return true}
 		raw,_:=json.Marshal([]any{attachment});if len(raw)>16384{fail("INVALID_ATTACHMENT","Attachment metadata is too large",http.StatusBadRequest);return true}
 		tag,e:=s.db.Exec(ctx,`UPDATE testagram_local.messages m SET attachment_metadata=$3::jsonb
-			WHERE m.id=$1 AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=m.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`,id,userID,string(raw))
+			WHERE m.id=$1 AND m.sender_id=$2 AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=m.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`,id,userID,string(raw))
 		if e!=nil{fail("MESSAGE_ATTACHMENT_FAILED","Could not attach media to message",http.StatusServiceUnavailable);return true};if tag.RowsAffected()!=1{fail("MESSAGE_NOT_FOUND","Message was not found in an active conversation",http.StatusNotFound);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"attachment":attachment});return true
 	case "testagram.calls.list":
