@@ -2,8 +2,6 @@ package main
 
 import (
  "net/http"
- "strings"
- "time"
  "github.com/jackc/pgx/v5"
 )
 
@@ -62,4 +60,3 @@ func (s *service) communityBadgeClaim(w http.ResponseWriter,r *http.Request) {
  writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":map[string]any{"id":badgeID,"community_id":communityID,"owner_id":userID,"badge_tier":tier,"contribution_score":score,"issued_at":issued,"issued":true}})
 }
 
-var _ = strings.TrimSpace
