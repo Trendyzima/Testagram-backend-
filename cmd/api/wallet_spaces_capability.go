@@ -73,7 +73,7 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	name:=strings.TrimSpace(body.Capability)
 	switch name {
 	case "testagram.wallet.balance","testagram.wallet.transactions.list","testagram.wallet.transfer","testagram.wallet.tip",
-		"testagram.audio_spaces.list_live","testagram.audio_spaces.get","testagram.audio_spaces.my_status","testagram.audio_spaces.create","testagram.audio_spaces.join",
+		"testagram.audio_spaces.list_live","testagram.audio_spaces.pending_speaker_requests","testagram.audio_spaces.get","testagram.audio_spaces.my_status","testagram.audio_spaces.create","testagram.audio_spaces.join",
 		"testagram.audio_spaces.leave","testagram.audio_spaces.request_speaker","testagram.audio_spaces.decide_speaker",
 		"testagram.audio_spaces.end","testagram.audio_spaces.superchat":
 	default:return false
@@ -123,6 +123,16 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 		defer rows.Close();items:=make([]map[string]any,0)
 		for rows.Next(){var id,host,title,description,username,display,avatar string;var count,max int;var started *time.Time;if rows.Scan(&id,&host,&title,&description,&count,&max,&started,&username,&display,&avatar)!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true};items=append(items,map[string]any{"id":id,"host_id":host,"title":title,"description":description,"listener_count":count,"max_audience":max,"started_at":started,"host":map[string]any{"id":host,"username":username,"display_name":display,"avatar_url":avatar}})}
 		if rows.Err()!=nil{fail("SPACES_LIST_FAILED","Could not read live Spaces",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
+	case "testagram.audio_spaces.pending_speaker_requests":
+		id:=str("space_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_SPACE","A valid Space ID is required",http.StatusBadRequest);return true}
+		var host bool;if e:=s.db.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_local.audio_spaces WHERE id=$1 AND host_id=$2 AND status='live')",id,userID).Scan(&host);e!=nil||!host{fail("HOST_ONLY","Only the host can view speaker requests",http.StatusForbidden);return true}
+		rows,e:=s.db.Query(ctx,`SELECT r.user_id::text,r.status,r.requested_at,a.username,a.display_name,a.avatar_key
+			FROM testagram_local.audio_space_speaker_requests r JOIN testagram_local.accounts a ON a.user_id=r.user_id
+			WHERE r.space_id=$1 AND r.status='pending' ORDER BY r.requested_at ASC LIMIT 100`,id)
+		if e!=nil{fail("SPEAKER_REQUESTS_FAILED","Could not load speaker requests",http.StatusServiceUnavailable);return true}
+		defer rows.Close();items:=make([]map[string]any,0)
+		for rows.Next(){var userID,status,username,display,avatar string;var requested time.Time;if rows.Scan(&userID,&status,&requested,&username,&display,&avatar)!=nil{fail("SPEAKER_REQUESTS_FAILED","Could not read speaker requests",http.StatusServiceUnavailable);return true};items=append(items,map[string]any{"user_id":userID,"status":status,"requested_at":requested,"profiles":map[string]any{"id":userID,"username":username,"display_name":display,"avatar_url":avatar}})}
+		if rows.Err()!=nil{fail("SPEAKER_REQUESTS_FAILED","Could not read speaker requests",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
 	case "testagram.audio_spaces.get":
 		id:=str("space_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_SPACE","A valid Space ID is required",http.StatusBadRequest);return true}
 		var host,title,description,state string;var count,max int;var started,ended *time.Time
