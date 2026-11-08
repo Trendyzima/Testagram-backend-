@@ -799,6 +799,9 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if s.nativeCommunicationCapability(w, r, id, body) {
 		return
 	}
+	if s.nativeWalletSpaceCapability(w, r, id, body) {
+		return
+	}
 	if s.nativeSocialCapability(w, r, id, body) {
 		return
 	}
