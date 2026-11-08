@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"database/sql"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,10 +39,12 @@ func (s *service) communityPostsList(w http.ResponseWriter, r *http.Request) {
 		a.username,a.display_name,a.avatar_key,
 		(SELECT count(*) FROM testagram_local.post_reactions reaction WHERE reaction.post_id=p.id) AS likes_count,
 		(SELECT count(*) FROM testagram_local.replies reply WHERE reply.post_id=p.id AND reply.deleted_at IS NULL) AS replies_count,
-		EXISTS(SELECT 1 FROM testagram_local.post_reactions mine WHERE mine.post_id=p.id AND mine.user_id=NULLIF($2,'')::uuid) AS liked
+		EXISTS(SELECT 1 FROM testagram_local.post_reactions mine WHERE mine.post_id=p.id AND mine.user_id=NULLIF($2,'')::uuid) AS liked,
+		poll.id::text,poll.question,poll.status,poll.ends_at,poll.total_votes
 		FROM testagram_local.posts p
 		JOIN testagram_local.accounts a ON a.user_id=p.author_id
 		JOIN testagram_local.communities c ON c.id=p.community_id
+		LEFT JOIN testagram_local.polls poll ON poll.post_id=p.id
 		WHERE p.community_id=$1::uuid AND p.deleted_at IS NULL
 		AND (p.visibility='public' OR p.author_id=NULLIF($2,'')::uuid OR EXISTS(
 			SELECT 1 FROM testagram_local.community_memberships m WHERE m.community_id=c.id AND m.user_id=NULLIF($2,'')::uuid AND m.status='active'))
@@ -56,13 +59,18 @@ func (s *service) communityPostsList(w http.ResponseWriter, r *http.Request) {
 		var createdAt,updatedAt time.Time
 		var likes,replies int64
 		var liked bool
-		if err=rows.Scan(&postID,&authorID,&content,&visibility,&mediaJSON,&language,&createdAt,&updatedAt,&username,&displayName,&avatar,&likes,&replies,&liked);err!=nil {
+		var pollID,pollQuestion,pollStatus sql.NullString
+		var pollEndsAt sql.NullTime
+		var pollTotalVotes int64
+		if err=rows.Scan(&postID,&authorID,&content,&visibility,&mediaJSON,&language,&createdAt,&updatedAt,&username,&displayName,&avatar,&likes,&replies,&liked,&pollID,&pollQuestion,&pollStatus,&pollEndsAt,&pollTotalVotes);err!=nil {
 			writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_POSTS_FAILED","Community post records could not be read",id));return
 		}
 		var mediaIDs []string
 		_ = json.Unmarshal(mediaJSON,&mediaIDs)
 		profile:=map[string]any{"id":authorID,"username":username,"display_name":displayName,"avatar_url":avatar}
-		items=append(items,map[string]any{"id":postID,"community_id":communityID,"author_id":authorID,"user_id":authorID,"text":content,"content":content,"visibility":visibility,"media_ids":mediaIDs,"language":language,"created_at":createdAt,"updated_at":updatedAt,"likes_count":likes,"replies_count":replies,"liked_by_me":liked,"user_profiles":profile,"profiles":profile})
+		var poll any
+		if pollID.Valid { poll=map[string]any{"id":pollID.String,"question":pollQuestion.String,"status":pollStatus.String,"ends_at":nil,"total_votes":pollTotalVotes}; if pollEndsAt.Valid { poll.(map[string]any)["ends_at"]=pollEndsAt.Time } }
+		items=append(items,map[string]any{"poll":poll,"id":postID,"community_id":communityID,"author_id":authorID,"user_id":authorID,"text":content,"content":content,"visibility":visibility,"media_ids":mediaIDs,"language":language,"created_at":createdAt,"updated_at":updatedAt,"likes_count":likes,"replies_count":replies,"liked_by_me":liked,"user_profiles":profile,"profiles":profile})
 	}
 	if err=rows.Err();err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_POSTS_FAILED","Community post records could not be read",id));return}
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
