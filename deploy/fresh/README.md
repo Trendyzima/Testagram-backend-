@@ -34,7 +34,7 @@ Cloudflare R2 is a real object-storage provider in this architecture. It stores 
 
 Configure separate private buckets and credentials:
 
-- B2: B2_S3_ENDPOINT, B2_S3_REGION, B2_S3_BUCKET, B2_S3_ACCESS_KEY_ID, B2_S3_SECRET_ACCESS_KEY
+- B2: `B2_S3_ENDPOINT=https://s3.us-east-005.backblazeb2.com`, `B2_S3_REGION=us-east-005`, B2_S3_BUCKET, B2_S3_ACCESS_KEY_ID, B2_S3_SECRET_ACCESS_KEY (use the bucket name, not its bucket ID)
 - R2: CLOUDFLARE_R2_ENDPOINT, CLOUDFLARE_R2_REGION, CLOUDFLARE_R2_BUCKET, CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY
 - Worker: CLOUDFLARE_MEDIA_BASE_URL and CLOUDFLARE_MEDIA_SIGNING_SECRET
 
