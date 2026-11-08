@@ -28,6 +28,7 @@ func TestCommunityRoutesRequireCanonicalDatabase(t *testing.T) {
 		body   string
 	}{
 		{http.MethodGet, "/api/communities", ""},
+		{http.MethodGet, "/api/communities/00000000-0000-4000-8000-000000000001/posts", ""},
 		{http.MethodPost, "/api/communities", `{"name":"Kenya Tech Hub","slug":"kenya-tech-hub"}`},
 		{http.MethodPost, "/api/communities/00000000-0000-4000-8000-000000000001/join", `{}`},
 		{http.MethodDelete, "/api/communities/00000000-0000-4000-8000-000000000001/leave", ""},
