@@ -105,14 +105,22 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	case "testagram.wallet.transactions.list":
 		limit:=50;if v,ok:=in["limit"].(float64);ok{limit=int(v)};if limit<1||limit>100{fail("INVALID_LIMIT","Limit must be between 1 and 100",http.StatusBadRequest);return true}
 		rows,e:=s.db.Query(ctx,`SELECT t.id::text,t.kind,t.amount::text,t.currency,t.created_at,
-			COALESCE(x.id::text,top.id::text,''),COALESCE(x.sender_id::text,''),COALESCE(x.recipient_id::text,''),COALESCE(x.note,top.receipt_number,'')
+			COALESCE(x.id::text,top.id::text,''),COALESCE(x.sender_id::text,''),COALESCE(x.recipient_id::text,''),COALESCE(x.note,top.receipt_number,''),
+			CASE WHEN top.id IS NOT NULL THEN top.status ELSE t.status END,
+			CASE WHEN top.id IS NOT NULL THEN 'mpesa' ELSE t.provider END,
+			COALESCE(top.receipt_number,''),COALESCE(top.phone_e164,''),COALESCE(top.amount_kes::text,''),COALESCE(top.wallet_amount::text,'')
 			FROM testagram_local.wallet_transactions t
 			LEFT JOIN testagram_local.wallet_transfers x ON x.id=t.transfer_id
 			LEFT JOIN testagram_local.wallet_topups top ON top.id=t.topup_id
 			WHERE t.user_id=$1 ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit)
 		if e!=nil{fail("WALLET_HISTORY_FAILED","Could not load wallet history",http.StatusServiceUnavailable);return true}
 		defer rows.Close();items:=make([]map[string]any,0)
-		for rows.Next(){var id,kind,amount,currency,transferID,sender,recipient,note string;var created time.Time;if rows.Scan(&id,&kind,&amount,&currency,&created,&transferID,&sender,&recipient,&note)!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true};items=append(items,map[string]any{"id":id,"kind":kind,"amount":amount,"currency":strings.TrimSpace(currency),"created_at":created,"transfer_id":transferID,"sender_id":sender,"recipient_id":recipient,"note":note})}
+		for rows.Next(){
+			var id,kind,amount,currency,transferID,sender,recipient,note,state,provider,receipt,phone,amountKES,walletAmount string
+			var created time.Time
+			if rows.Scan(&id,&kind,&amount,&currency,&created,&transferID,&sender,&recipient,&note,&state,&provider,&receipt,&phone,&amountKES,&walletAmount)!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true}
+			items=append(items,map[string]any{"id":id,"kind":kind,"amount":amount,"currency":strings.TrimSpace(currency),"created_at":created,"transfer_id":transferID,"sender_id":sender,"recipient_id":recipient,"note":note,"status":state,"provider":strings.TrimSpace(provider),"receipt_number":receipt,"phone":phone,"amount_kes":amountKES,"wallet_amount":walletAmount})
+		}
 		if rows.Err()!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
 	case "testagram.wallet.transfer","testagram.wallet.tip":
 		recipient:=str("recipient_id");amount,_,ok:=moneyAmount(in["amount"]);key:=str("idempotency_key");note:=str("note")
