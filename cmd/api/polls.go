@@ -98,6 +98,7 @@ func (s *service) pollVote(w http.ResponseWriter,r *http.Request) {
 }
 
 func (s *service) pollGetByPost(w http.ResponseWriter,r *http.Request) {
+	if s.db==nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("POLL_SERVICE_UNAVAILABLE","Poll service is unavailable",requestID(r)));return}
 	postID:=r.PathValue("post_id")
 	if !socialUUIDPattern.MatchString(postID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POST_ID","Post ID is invalid",requestID(r)));return}
 	var pollID string
