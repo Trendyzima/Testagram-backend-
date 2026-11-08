@@ -31,14 +31,6 @@ type Server struct {
 	allowedOrigins map[string]struct{}
 	internalToken  string
 	moderation     ContentModeration
-	neon           NeonHealth
-	neonRequired   bool
-	identitySecret string
-	appwriteServerKey string
-}
-
-type NeonHealth interface {
-	Ping(context.Context) error
 }
 
 type HomeFeedService interface {
@@ -51,28 +43,6 @@ type MediaService interface {
 	CompleteUpload(context.Context, string, string) error
 	DownloadURL(context.Context, string, string) (string, error)
 	RestoreArchive(context.Context, string, string) error
-}
-
-func (s *Server) WithNeon(neon NeonHealth, required bool) *Server {
-	s.neon = neon
-	s.neonRequired = required
-	return s
-}
-
-func (s *Server) WithAppwriteServerKey(key string) error {
-	if strings.ContainsAny(key, "\r\n") { return errors.New("Appwrite server API key must be a single line") }
-	key = strings.TrimSpace(key)
-	if key == "" || len(key) > 4096 { return errors.New("Appwrite server API key is required") }
-	s.appwriteServerKey = key
-	return nil
-}
-
-func (s *Server) WithIdentitySecret(secret string) error {
-	if strings.ContainsAny(secret, "\r\n") { return errors.New("identity approval secret must be a single line") }
-	secret = strings.TrimSpace(secret)
-	if len(secret) < 32 { return errors.New("identity approval secret must contain at least 32 characters") }
-	s.identitySecret = secret
-	return nil
 }
 
 func (s *Server) WithFeed(feed HomeFeedService) *Server {
@@ -136,16 +106,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
 	mux.HandleFunc("GET /readyz", s.readyz)
-	mux.HandleFunc("GET /readyz/platform", s.platformReadyz)
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("PUT /v1/me/profile", s.updateProfile)
-	if s.identitySecret != "" && s.appwriteServerKey != "" { mux.HandleFunc("POST /v1/identity/register", s.registerIdentityVerifiedAccount) }
-	mux.HandleFunc("GET /v1/me/legal", s.getLegalConsent)
-	mux.HandleFunc("PUT /v1/me/legal", s.updateLegalConsent)
 	mux.HandleFunc("GET /v1/me/federation", s.getFederationPreference)
 	mux.HandleFunc("PUT /v1/me/federation", s.updateFederationPreference)
 	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
-	mux.HandleFunc("GET /v1/feed/public", s.publicHomeFeed)
 	mux.HandleFunc("POST /v1/posts", s.createPost)
 	mux.HandleFunc("POST /v1/moderation/check", s.moderateContent)
 	if s.internalToken != "" {
@@ -191,7 +156,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				writeError(w, http.StatusForbidden, "CORS method is not allowed")
 				return
 			}
-			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true, "x-request-id": true, "x-testagram-api-version": true}
+			allowedHeaders := map[string]bool{"authorization": true, "content-type": true, "idempotency-key": true, "accept": true}
 			for _, header := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
 				if header = strings.ToLower(strings.TrimSpace(header)); header != "" && !allowedHeaders[header] {
 					writeError(w, http.StatusForbidden, "CORS request header is not allowed")
@@ -199,8 +164,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				}
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept, X-Request-ID, X-Testagram-API-Version")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Testagram-API-Version, Retry-After")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Accept")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.Header().Add("Vary", "Access-Control-Request-Method")
 			w.Header().Add("Vary", "Access-Control-Request-Headers")
@@ -212,89 +176,14 @@ func (s *Server) cors(next http.Handler) http.Handler {
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	// Public-edge readiness must prove only that the Appwrite identity/profile
-	// dependency needed by login is available. Feed, Algorithm, Federation and
-	// Neon product-data health are reported separately and cannot block login.
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
-	authReady := make(chan error, 1)
-	go func() { authReady <- s.appwriteAuthReady(ctx) }()
-	if _, err := s.db.ListDocumentsWithQueries(ctx, "profiles", []string{
-		mustQuery("limit", "", 1),
-	}, 1); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "Appwrite profile database is not ready")
-		return
-	}
-	if err := <-authReady; err != nil {
-		writeError(w, http.StatusServiceUnavailable, "Appwrite Auth service is not ready")
-		return
-	}
-	neonStatus := "not_configured"
-	if s.neon != nil {
-		neonStatus = "configured_not_checked"
-	}
-	moderationStatus := "not_configured"
-	postWriteStatus := "disabled_moderation_unconfigured"
-	if s.moderation != nil {
-		moderationStatus = "ready"
-		postWriteStatus = "ready"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"identity": "appwrite",
-		"database": "appwrite",
-		"authentication": "available",
-		"social_data_plane": neonStatus,
-		"platform_ready": false,
-		"platform_readiness_path": "/readyz/platform",
-		"moderation": moderationStatus,
-		"post_write": postWriteStatus,
-	})
-}
-
-// platformReadyz is deliberately stricter than process readiness. It checks
-// Neon connectivity, feed collections/ranking dependencies and the durable
-// Federation outbox. It remains unavailable until canonical Neon repositories
-// are actually integrated, even if the database accepts connections.
-
-// appwriteAuthReady probes the same Appwrite account endpoint used by login.
-// An anonymous 401/403 is expected and proves that the Auth API is reachable;
-// transport failures and server/configuration errors keep the public edge closed.
-func (s *Server) appwriteAuthReady(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.endpoint+"/account", nil)
-	if err != nil {
-		return errors.New("could not create Appwrite Auth readiness request")
-	}
-	req.Header.Set("X-Appwrite-Project", s.projectID)
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return errors.New("Appwrite Auth endpoint could not be reached")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
-		(resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices) {
-		return nil
-	}
-	return errors.New("Appwrite Auth endpoint returned an unhealthy status")
-}
-
-func (s *Server) platformReadyz(w http.ResponseWriter, r *http.Request) {
-	if !s.neonRequired || s.neon == nil {
-		writeError(w, http.StatusServiceUnavailable, "Neon is not configured as the required canonical social data plane")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	if err := s.neon.Ping(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "Neon PostgreSQL connectivity is not ready")
-		return
-	}
 	if s.feed == nil {
 		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not configured")
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
 	if err := s.feed.Ready(ctx); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "feed or Algorithm dependencies are not ready")
+		writeError(w, http.StatusServiceUnavailable, "feed dependencies are not ready")
 		return
 	}
 	if _, err := s.db.ListDocumentsWithQueries(ctx, "backend_outbox", []string{
@@ -306,44 +195,7 @@ func (s *Server) platformReadyz(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "transactional outbox is not ready")
 		return
 	}
-	writeError(w, http.StatusServiceUnavailable, "Neon is reachable, but canonical social repositories are not integrated")
-}
-
-
-// publicHomeFeed serves only public, non-sensitive posts from the Appwrite feed
-// store. The zero UUID is a non-account viewer: it has no follows, no ownership
-// privileges and no authenticated relationship state. freshfeed applies the
-// same protected-profile, visibility, block and post-status checks as the
-// authenticated feed before returning any post.
-func (s *Server) publicHomeFeed(w http.ResponseWriter, r *http.Request) {
-	if s.feed == nil {
-		writeError(w, http.StatusServiceUnavailable, "feed service is not configured")
-		return
-	}
-	limit := 20
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, parseErr := strconv.Atoi(raw)
-		if parseErr != nil || parsed < 1 || parsed > 50 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 50")
-			return
-		}
-		limit = parsed
-	}
-	cursor := strings.TrimSpace(r.URL.Query().Get("before"))
-	if freshfeed.ValidateCursor(cursor) != nil {
-		writeError(w, http.StatusBadRequest, "invalid feed cursor")
-		return
-	}
-	result, err := s.feed.Home(r.Context(), "00000000-0000-0000-0000-000000000000", limit, cursor)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "public feed is temporarily unavailable")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": result,
-		"error": nil,
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "identity": "appwrite", "database": "appwrite", "feed": "ready", "post_write": "ready", "outbox": "ready"})
 }
 
 func (s *Server) homeFeed(w http.ResponseWriter, r *http.Request) {
@@ -498,14 +350,10 @@ func (s *Server) writeFederationActorProfile(w http.ResponseWriter, r *http.Requ
 	displayName, _ := profile["display_name"].(string)
 	bio, _ := profile["bio"].(string)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{
-			"user_id": userID, "handle": handle,
-			"display_name": strings.TrimSpace(displayName),
-			"summary": strings.TrimSpace(bio),
-			"federation_enabled": true,
-		},
-		"error": nil,
+		"user_id": userID, "handle": handle,
+		"display_name": strings.TrimSpace(displayName),
+		"summary": strings.TrimSpace(bio),
+		"federation_enabled": true,
 	})
 }
 
@@ -613,6 +461,9 @@ func (s *Server) federationOutbox(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		documents = documents[:limit]
 	}
+	// The cursor identifies the last event in this page even when has_more
+	// is false. Consumers persist it and can resume incrementally when new events
+	// arrive; an empty cursor is reserved for an empty result page.
 	var nextCursor string
 	if len(documents) > 0 {
 		var last struct {
@@ -970,10 +821,8 @@ func writeStorageError(w http.ResponseWriter, err error) {
 }
 
 type account struct {
-	ID string `json:"$id"`
-	Status bool `json:"status"`
-	Email string `json:"email"`
-	EmailVerification bool `json:"emailVerification"`
+	ID     string `json:"$id"`
+	Status bool   `json:"status"`
 }
 
 func (s *Server) authenticate(r *http.Request) (account, int, error) {
@@ -1008,15 +857,6 @@ func (s *Server) authenticate(r *http.Request) (account, int, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&a); err != nil || !validUserID(a.ID) || !a.Status {
 		return account{}, 401, errors.New("Appwrite account is invalid or disabled")
 	}
-	if !a.EmailVerification { return account{}, http.StatusForbidden, errors.New("EMAIL_NOT_VERIFIED") }
-	profileRaw, err := s.db.GetDocument(ctx, "profiles", a.ID)
-	if err != nil {
-		var apiErr appwritedb.HTTPError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound { return account{}, http.StatusForbidden, errors.New("IDENTITY_VERIFICATION_REQUIRED") }
-		return account{}, http.StatusServiceUnavailable, errors.New("profile authorization unavailable")
-	}
-	var profile struct { IdentityVerificationStatus string `json:"identity_verification_status"` }
-	if err := json.Unmarshal(profileRaw, &profile); err != nil || profile.IdentityVerificationStatus != "approved" { return account{}, http.StatusForbidden, errors.New("IDENTITY_VERIFICATION_REQUIRED") }
 	return a, 200, nil
 }
 
@@ -1041,111 +881,6 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(raw)
 }
 
-const currentLegalPolicyVersion = "2026-09"
-
-func (s *Server) getLegalConsent(w http.ResponseWriter, r *http.Request) {
-	a, status, err := s.authenticate(r)
-	if err != nil {
-		writeError(w, status, err.Error())
-		return
-	}
-	raw, err := s.db.GetDocument(r.Context(), "profiles", a.ID)
-	if err != nil {
-		var apiErr appwritedb.HTTPError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			writeError(w, http.StatusNotFound, "profile not found")
-		} else {
-			writeError(w, http.StatusServiceUnavailable, "legal consent status is unavailable")
-		}
-		return
-	}
-	var profile map[string]any
-	if err := json.Unmarshal(raw, &profile); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "legal consent status is invalid")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{
-			"birth_date": profile["birth_date"],
-			"legal_terms_accepted_at": profile["legal_terms_accepted_at"],
-			"legal_privacy_accepted_at": profile["legal_privacy_accepted_at"],
-			"legal_content_policy_accepted_at": profile["legal_content_policy_accepted_at"],
-			"legal_age_confirmed_at": profile["legal_age_confirmed_at"],
-			"legal_policy_version": profile["legal_policy_version"],
-		},
-		"error": nil,
-	})
-}
-
-func (s *Server) updateLegalConsent(w http.ResponseWriter, r *http.Request) {
-	a, status, err := s.authenticate(r)
-	if err != nil {
-		writeError(w, status, err.Error())
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-	var input struct {
-		BirthDate             string `json:"birth_date"`
-		PolicyVersion         string `json:"policy_version"`
-		TermsAccepted         bool   `json:"terms_accepted"`
-		PrivacyAccepted       bool   `json:"privacy_accepted"`
-		ContentPolicyAccepted bool   `json:"content_policy_accepted"`
-		AgeConfirmed          bool   `json:"age_confirmed"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid legal consent payload")
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "legal consent must contain one JSON object")
-		return
-	}
-	if input.PolicyVersion != currentLegalPolicyVersion || !input.TermsAccepted || !input.PrivacyAccepted || !input.ContentPolicyAccepted || !input.AgeConfirmed {
-		writeError(w, http.StatusBadRequest, "all required policies and age confirmation must be accepted for the current policy version")
-		return
-	}
-	birthDate, err := time.Parse("2006-01-02", input.BirthDate)
-	if err != nil || birthDate.Format("2006-01-02") != input.BirthDate {
-		writeError(w, http.StatusBadRequest, "birth_date must use YYYY-MM-DD")
-		return
-	}
-	now := time.Now().UTC()
-	if birthDate.After(now) || birthDate.After(now.AddDate(-18, 0, 0)) {
-		writeError(w, http.StatusForbidden, "AGE_RESTRICTION")
-		return
-	}
-	if _, err := s.db.GetDocument(r.Context(), "profiles", a.ID); err != nil {
-		var apiErr appwritedb.HTTPError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			writeError(w, http.StatusNotFound, "profile must be created before legal consent")
-		} else {
-			writeError(w, http.StatusServiceUnavailable, "profile service unavailable")
-		}
-		return
-	}
-	acceptedAt := now.Format(time.RFC3339Nano)
-	_, err = s.db.UpdateDocument(r.Context(), "profiles", a.ID, map[string]any{
-		"birth_date": input.BirthDate,
-		"legal_terms_accepted_at": acceptedAt,
-		"legal_privacy_accepted_at": acceptedAt,
-		"legal_content_policy_accepted_at": acceptedAt,
-		"legal_age_confirmed_at": acceptedAt,
-		"legal_policy_version": currentLegalPolicyVersion,
-		"updated_at": acceptedAt,
-	})
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "legal consent could not be recorded")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{"accepted": true, "policy_version": currentLegalPolicyVersion, "accepted_at": acceptedAt},
-		"error": nil,
-	})
-}
 func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 	a, status, err := s.authenticate(r)
 	if err != nil {
