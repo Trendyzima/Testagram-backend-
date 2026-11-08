@@ -42,7 +42,7 @@ func (s *service) discoveryPosts(w http.ResponseWriter,r *http.Request) {
  ORDER BY `+order+` LIMIT $3`
  rows,err:=s.db.Query(r.Context(),query,since,q,limit);if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_POSTS_FAILED","Posts could not be loaded",id));return};defer rows.Close()
  items:=make([]map[string]any,0)
- for rows.Next(){var pid,uid,content,visibility,username,display,avatar string;var media []byte;var created,updated time.Time;var likes,replies,reposts,views int64
+ for rows.Next(){var pid,uid,content,visibility,username,display,avatar string;var media []byte;var created,updated time.Time;var likes,replies,reposts int64
   if err=rows.Scan(&pid,&uid,&content,&visibility,&media,&created,&updated,&likes,&replies,&reposts,&username,&display,&avatar);err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_POSTS_FAILED","Post records could not be read",id));return}
   var mediaIDs []string;_ = json.Unmarshal(media,&mediaIDs);profile:=map[string]any{"id":uid,"username":username,"display_name":display,"avatar_url":avatar,"verified":false}
   items=append(items,map[string]any{"id":pid,"user_id":uid,"author_id":uid,"content":content,"text":content,"visibility":visibility,"media_ids":mediaIDs,"media_urls":[]string{},"is_video":false,"created_at":created,"updated_at":updated,"likes_count":likes,"replies_count":replies,"reposts_count":reposts,"views_count":int64(0),"user_profiles":profile})
