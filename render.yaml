@@ -13,7 +13,7 @@ services:
       - key: FRESH_API_ADDR
         value: ""
       - key: FRESH_API_ALLOWED_ORIGINS
-        sync: false
+        value: https://testagram.site,https://www.testagram.site
       - key: APPWRITE_ENDPOINT
         value: https://cloud.appwrite.io/v1
       - key: APPWRITE_PROJECT_ID
@@ -57,7 +57,7 @@ services:
       - key: CLOUDFLARE_R2_SECRET_ACCESS_KEY
         sync: false
       - key: CLOUDFLARE_MEDIA_BASE_URL
-        sync: false
+        value: https://media.testagram.site
       - key: CLOUDFLARE_MEDIA_SIGNING_SECRET
         sync: false
       - key: FRESH_FEDERATION_INTERNAL_TOKEN
