@@ -1,4 +1,4 @@
--- Backend-owned marketplace catalog and community achievement badges.
+-- Backend-owned marketplace catalog; extend the pre-existing community achievement badge model.
 BEGIN;
 CREATE TABLE IF NOT EXISTS testagram_local.marketplace_products (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -18,23 +18,31 @@ CREATE TABLE IF NOT EXISTS testagram_local.marketplace_products (
 );
 CREATE INDEX IF NOT EXISTS testagram_marketplace_active_featured_idx ON testagram_local.marketplace_products(is_featured,sales_count DESC,created_at DESC) WHERE is_active;
 CREATE INDEX IF NOT EXISTS testagram_marketplace_active_name_idx ON testagram_local.marketplace_products(lower(name)) WHERE is_active;
-CREATE TABLE IF NOT EXISTS testagram_local.community_badges (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- community_id UUID NOT NULL REFERENCES testagram_local.communities(id) ON DELETE CASCADE,
- owner_id UUID NOT NULL REFERENCES testagram_local.accounts(user_id) ON DELETE CASCADE,
- badge_tier TEXT NOT NULL CHECK(badge_tier IN ('rare','epic','legendary')),
- contribution_score BIGINT NOT NULL DEFAULT 0 CHECK(contribution_score>=0),
- issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- UNIQUE(community_id,owner_id)
-);
-CREATE INDEX IF NOT EXISTS testagram_community_badges_timeline_idx ON testagram_local.community_badges(community_id,issued_at DESC);
+ALTER TABLE testagram_local.community_badges
+ ADD COLUMN IF NOT EXISTS badge_tier TEXT NOT NULL DEFAULT 'rare',
+ ADD COLUMN IF NOT EXISTS contribution_score BIGINT NOT NULL DEFAULT 0;
+DO $constraints$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='testagram_community_badges_tier_check') THEN
+  ALTER TABLE testagram_local.community_badges ADD CONSTRAINT testagram_community_badges_tier_check CHECK(badge_tier IN ('rare','epic','legendary'));
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='testagram_community_badges_score_check') THEN
+  ALTER TABLE testagram_local.community_badges ADD CONSTRAINT testagram_community_badges_score_check CHECK(contribution_score>=0);
+ END IF;
+END;
+$constraints$;
+UPDATE testagram_local.community_badges
+ SET badge_tier=CASE badge_type WHEN 'founder' THEN 'legendary' WHEN 'contributor' THEN 'epic' ELSE 'rare' END
+ WHERE contribution_score=0;
 DO $grants$
 BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
-  GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_local.marketplace_products,testagram_local.community_badges TO testagram_app;
+  GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_local.marketplace_products TO testagram_app;
+  GRANT SELECT,INSERT,UPDATE ON testagram_local.community_badges TO testagram_app;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
-  GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_local.marketplace_products,testagram_local.community_badges TO service_role;
+  GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_local.marketplace_products TO service_role;
+  GRANT SELECT,INSERT,UPDATE ON testagram_local.community_badges TO service_role;
  END IF;
 END;
 $grants$;
