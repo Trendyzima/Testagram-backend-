@@ -358,7 +358,7 @@ jobs:
           INSERT INTO testagram_local.accounts(user_id,username,display_name)
           VALUES ('123e4567-e89b-42d3-a456-426614174000','ci_public_user','CI User');
           INSERT INTO testagram_local.posts(id,author_id,text,visibility)
-          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174000','public test post','public');
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174000','public #BackendTag test post','public');
           INSERT INTO testagram_local.accounts(user_id,username,display_name)
           VALUES ('123e4567-e89b-42d3-a456-426614174004','ci_social_user','Social User'),
                  ('123e4567-e89b-42d3-a456-426614174005','ci_protected_user','Protected User');
@@ -419,6 +419,12 @@ jobs:
             END IF;
             IF NOT EXISTS (SELECT 1 FROM testagram_local.bookmarks WHERE user_id='123e4567-e89b-42d3-a456-426614174004') THEN
               RAISE EXCEPTION 'bookmark insert failed';
+            END IF;
+            IF (SELECT usage_count FROM testagram_local.hashtags WHERE tag='backendtag') <> 1 THEN
+              RAISE EXCEPTION 'hashtag index trigger did not maintain usage_count';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_local.post_hashtags WHERE post_id='123e4567-e89b-42d3-a456-426614174001' AND hashtag_id=(SELECT id FROM testagram_local.hashtags WHERE tag='backendtag')) THEN
+              RAISE EXCEPTION 'post hashtag index was not created';
             END IF;
           END $social$;
           UPDATE testagram_local.replies SET deleted_at=now()
