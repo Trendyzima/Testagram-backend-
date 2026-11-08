@@ -735,8 +735,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := requestID(r)
-	supabaseURL := strings.TrimRight(env("SUPABASE_URL", ""), "/")
-	publishableKey := env("SUPABASE_PUBLISHABLE_KEY", env("SUPABASE_ANON_KEY", ""))
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxCapabilityBody)
 	defer r.Body.Close()
