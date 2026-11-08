@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,8 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 	name := strings.TrimSpace(body.Capability)
 	switch name {
 	case "testagram.realtime.ticket", "testagram.media.token",
+		"testagram.communication.devices.register", "testagram.communication.devices.list",
+		"testagram.communication.keys.list", "testagram.communication.keys.put",
 		"testagram.conversations.list", "testagram.conversations.create",
 		"testagram.messages.list", "testagram.messages.send_encrypted",
 		"testagram.messages.edit_encrypted", "testagram.messages.delete",
@@ -70,6 +73,138 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 	}
 	fail := func(code, message string, httpStatus int) { writeJSON(w,httpStatus,errorBody(code,message,requestID)) }
 	switch name {
+	case "testagram.communication.devices.register":
+		deviceID := str("device_id")
+		publicKey := str("identity_public_key")
+		decodedKey, decodeErr := base64.StdEncoding.DecodeString(publicKey)
+		if len(deviceID) < 8 || len(deviceID) > 128 || decodeErr != nil || len(decodedKey) < 64 || len(decodedKey) > 4096 {
+			fail("INVALID_COMMUNICATION_DEVICE", "Device ID or public identity key is invalid", http.StatusBadRequest)
+			return true
+		}
+		var id, savedUserID, savedDeviceID, savedPublicKey string
+		err = s.db.QueryRow(ctx, `INSERT INTO testagram_local.communication_devices(user_id,device_id,identity_public_key,last_seen_at,revoked_at)
+			VALUES($1,$2,$3,now(),NULL)
+			ON CONFLICT(user_id,device_id) DO UPDATE SET identity_public_key=EXCLUDED.identity_public_key,last_seen_at=now(),revoked_at=NULL
+			RETURNING id::text,user_id::text,device_id,identity_public_key`, userID, deviceID, publicKey).Scan(&id, &savedUserID, &savedDeviceID, &savedPublicKey)
+		if err != nil {
+			fail("COMMUNICATION_DEVICE_REGISTER_FAILED", "Could not register this device", http.StatusServiceUnavailable)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "user_id": savedUserID, "device_id": savedDeviceID, "identity_public_key": savedPublicKey})
+		return true
+	case "testagram.communication.devices.list":
+		conversationID := str("conversation_id")
+		if !socialUUIDPattern.MatchString(conversationID) {
+			fail("INVALID_CONVERSATION", "A valid conversation ID is required", http.StatusBadRequest)
+			return true
+		}
+		var member bool
+		if err = s.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)", conversationID, userID).Scan(&member); err != nil || !member {
+			fail("CONVERSATION_ACCESS_DENIED", "Conversation membership is required", http.StatusForbidden)
+			return true
+		}
+		rows, queryErr := s.db.Query(ctx, `SELECT d.id::text,d.user_id::text,d.device_id,d.identity_public_key
+			FROM testagram_local.communication_devices d
+			JOIN testagram_local.conversation_members cm ON cm.user_id=d.user_id
+			WHERE cm.conversation_id=$1 AND cm.left_at IS NULL AND d.revoked_at IS NULL
+			ORDER BY d.user_id,d.last_seen_at DESC`, conversationID)
+		if queryErr != nil {
+			fail("COMMUNICATION_DEVICE_LIST_FAILED", "Could not load conversation devices", http.StatusServiceUnavailable)
+			return true
+		}
+		defer rows.Close()
+		devices := make([]map[string]any, 0)
+		for rows.Next() {
+			var id, ownerID, device, key string
+			if rows.Scan(&id, &ownerID, &device, &key) != nil {
+				fail("COMMUNICATION_DEVICE_LIST_FAILED", "Could not read conversation devices", http.StatusServiceUnavailable)
+				return true
+			}
+			devices = append(devices, map[string]any{"id": id, "user_id": ownerID, "device_id": device, "identity_public_key": key})
+		}
+		if rows.Err() != nil {
+			fail("COMMUNICATION_DEVICE_LIST_FAILED", "Could not read conversation devices", http.StatusServiceUnavailable)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"devices": devices})
+		return true
+	case "testagram.communication.keys.list":
+		conversationID := str("conversation_id")
+		if !socialUUIDPattern.MatchString(conversationID) {
+			fail("INVALID_CONVERSATION", "A valid conversation ID is required", http.StatusBadRequest)
+			return true
+		}
+		var member bool
+		if err = s.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)", conversationID, userID).Scan(&member); err != nil || !member {
+			fail("CONVERSATION_ACCESS_DENIED", "Conversation membership is required", http.StatusForbidden)
+			return true
+		}
+		rows, queryErr := s.db.Query(ctx, `SELECT e.id::text,e.conversation_id::text,e.epoch,e.sender_device_id::text,e.recipient_device_id::text,e.ciphertext,e.nonce,e.salt,sd.identity_public_key
+			FROM testagram_local.conversation_key_envelopes e
+			JOIN testagram_local.communication_devices rd ON rd.id=e.recipient_device_id AND rd.user_id=$2 AND rd.revoked_at IS NULL
+			JOIN testagram_local.communication_devices sd ON sd.id=e.sender_device_id AND sd.revoked_at IS NULL
+			WHERE e.conversation_id=$1 ORDER BY e.epoch DESC,e.created_at DESC`, conversationID, userID)
+		if queryErr != nil {
+			fail("COMMUNICATION_KEYS_LIST_FAILED", "Could not load encrypted conversation keys", http.StatusServiceUnavailable)
+			return true
+		}
+		defer rows.Close()
+		envelopes := make([]map[string]any, 0)
+		for rows.Next() {
+			var id, conv, sender, recipient, ciphertext, nonce, salt, senderPublicKey string
+			var epoch int64
+			if rows.Scan(&id,&conv,&epoch,&sender,&recipient,&ciphertext,&nonce,&salt,&senderPublicKey) != nil {
+				fail("COMMUNICATION_KEYS_LIST_FAILED", "Could not read encrypted conversation keys", http.StatusServiceUnavailable)
+				return true
+			}
+			envelopes = append(envelopes, map[string]any{"id":id,"conversation_id":conv,"epoch":epoch,"sender_device_id":sender,"recipient_device_id":recipient,"ciphertext":ciphertext,"nonce":nonce,"salt":salt,"sender_public_key":senderPublicKey})
+		}
+		if rows.Err() != nil {
+			fail("COMMUNICATION_KEYS_LIST_FAILED", "Could not read encrypted conversation keys", http.StatusServiceUnavailable)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"envelopes": envelopes})
+		return true
+	case "testagram.communication.keys.put":
+		conversationID, senderID, recipientID := str("conversation_id"), str("sender_device_id"), str("recipient_device_id")
+		ciphertext, nonce, salt := str("ciphertext"), str("nonce"), str("salt")
+		epoch := intVal("epoch", 0, 1, 1000000)
+		if !socialUUIDPattern.MatchString(conversationID) || !socialUUIDPattern.MatchString(senderID) || !socialUUIDPattern.MatchString(recipientID) || epoch < 1 || len(ciphertext) > 16384 || len(nonce) > 256 || len(salt) > 256 {
+			fail("INVALID_KEY_ENVELOPE", "Encrypted key envelope fields are invalid", http.StatusBadRequest)
+			return true
+		}
+		if _, e := base64.StdEncoding.DecodeString(ciphertext); e != nil { fail("INVALID_KEY_ENVELOPE", "Encrypted key ciphertext must be base64", http.StatusBadRequest); return true }
+		if _, e := base64.StdEncoding.DecodeString(nonce); e != nil { fail("INVALID_KEY_ENVELOPE", "Encrypted key nonce must be base64", http.StatusBadRequest); return true }
+		if _, e := base64.StdEncoding.DecodeString(salt); e != nil { fail("INVALID_KEY_ENVELOPE", "Encrypted key salt must be base64", http.StatusBadRequest); return true }
+		var authorized bool
+		err = s.db.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM testagram_local.conversation_members cm
+			JOIN testagram_local.communication_devices sd ON sd.user_id=cm.user_id AND sd.id=$3 AND sd.revoked_at IS NULL
+			JOIN testagram_local.communication_devices rd ON rd.id=$4 AND rd.revoked_at IS NULL
+			JOIN testagram_local.conversation_members recipient ON recipient.conversation_id=cm.conversation_id AND recipient.user_id=rd.user_id AND recipient.left_at IS NULL
+			WHERE cm.conversation_id=$1 AND cm.user_id=$2 AND cm.left_at IS NULL
+		)`, conversationID,userID,senderID,recipientID).Scan(&authorized)
+		if err != nil || !authorized {
+			fail("KEY_ENVELOPE_ACCESS_DENIED", "Sender and recipient devices must belong to active conversation members", http.StatusForbidden)
+			return true
+		}
+		var envelopeID string
+		err = s.db.QueryRow(ctx, `INSERT INTO testagram_local.conversation_key_envelopes(conversation_id,epoch,sender_device_id,recipient_device_id,ciphertext,nonce,salt)
+			VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(conversation_id,epoch,recipient_device_id) DO NOTHING RETURNING id::text`,conversationID,epoch,senderID,recipientID,ciphertext,nonce,salt).Scan(&envelopeID)
+		if err == pgx.ErrNoRows {
+			var existingCiphertext string
+			err = s.db.QueryRow(ctx,"SELECT id::text,ciphertext FROM testagram_local.conversation_key_envelopes WHERE conversation_id=$1 AND epoch=$2 AND recipient_device_id=$3",conversationID,epoch,recipientID).Scan(&envelopeID,&existingCiphertext)
+			if err == nil && existingCiphertext != ciphertext {
+				fail("KEY_ENVELOPE_CONFLICT", "A different encrypted key already exists for this device and epoch", http.StatusConflict)
+				return true
+			}
+		}
+		if err != nil {
+			fail("COMMUNICATION_KEY_WRITE_FAILED", "Could not save encrypted conversation key", http.StatusServiceUnavailable)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"envelope_id": envelopeID})
+		return true
 	case "testagram.media.token":
 		roomID:=str("room_id");roomType:=str("room_type")
 		if roomType!="call"||!socialUUIDPattern.MatchString(roomID){fail("INVALID_MEDIA_ROOM","Only an authorized call room is available on the Backend signaling service",http.StatusBadRequest);return true}
