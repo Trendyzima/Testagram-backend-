@@ -158,35 +158,42 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 	case "testagram.messages.send_encrypted":
 		conversationID:=str("conversation_id");ciphertext:=str("ciphertext");nonce:=str("nonce");clientID:=str("client_message_id");if clientID==""{clientID=strings.TrimPrefix(newCallRoom(),"testagram-")};epoch:=intVal("e2ee_epoch",1,1,1<<30)
 		if !socialUUIDPattern.MatchString(conversationID)||ciphertext==""||len(ciphertext)>32768||nonce==""||len(nonce)>512||epoch<1||clientID==""||len(clientID)>128{fail("INVALID_MESSAGE","Encrypted message fields are invalid",http.StatusBadRequest);return true}
-		var id string;e:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.messages(conversation_id,sender_id,body,client_message_id,reply_to_message_id,shared_post_id,ciphertext,nonce,aad,e2ee_enabled,e2ee_version,e2ee_epoch)
+		tx,e:=s.db.Begin(ctx);if e!=nil{fail("MESSAGE_SEND_FAILED","Could not begin encrypted message transaction",http.StatusServiceUnavailable);return true};defer func(){_ = tx.Rollback(context.Background())}()
+		var id string;e=tx.QueryRow(ctx,`INSERT INTO testagram_local.messages(conversation_id,sender_id,body,client_message_id,reply_to_message_id,shared_post_id,ciphertext,nonce,aad,e2ee_enabled,e2ee_version,e2ee_epoch)
 			SELECT $1,$2,'',$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,TRUE,'v1',$9
 			WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)
 			ON CONFLICT(sender_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id RETURNING id::text`,
 			conversationID,userID,clientID,str("reply_to_message_id"),str("shared_post_id"),ciphertext,nonce,str("aad"),epoch).Scan(&id)
 		if errors.Is(e,pgx.ErrNoRows){fail("CONVERSATION_ACCESS_DENIED","Conversation membership is required",http.StatusForbidden);return true}
 		if e!=nil{fail("MESSAGE_SEND_FAILED","Could not save encrypted message",http.StatusServiceUnavailable);return true}
-		_,_=s.db.Exec(ctx,"UPDATE testagram_local.conversations SET updated_at=now() WHERE id=$1",conversationID)
-		_,_=s.db.Exec(ctx,`INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
+		_,e=tx.Exec(ctx,"UPDATE testagram_local.conversations SET updated_at=now() WHERE id=$1",conversationID)
+		if e==nil{_,e=tx.Exec(ctx,`INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
 			VALUES($1,'message.created',$2,$3,jsonb_build_object('message_id',$3,'conversation_id',$2,'sender_id',$4,'encrypted',true))
-			ON CONFLICT(event_key) DO NOTHING`,"message:"+id,conversationID,id,userID)
+			ON CONFLICT(event_key) DO NOTHING`,"message:"+id,conversationID,id,userID)}
+		if e==nil{e=tx.Commit(ctx)}
+		if e!=nil{fail("MESSAGE_SEND_FAILED","Could not commit encrypted message and realtime event",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusCreated,map[string]any{"message_id":id,"encrypted":true});return true
 	case "testagram.messages.edit_encrypted":
 		id:=str("message_id");ciphertext:=str("ciphertext");nonce:=str("nonce");epoch:=intVal("e2ee_epoch",1,1,1<<30)
 		if !socialUUIDPattern.MatchString(id)||ciphertext==""||nonce==""||epoch<1{fail("INVALID_MESSAGE","Encrypted message fields are invalid",http.StatusBadRequest);return true}
+		tx,e:=s.db.Begin(ctx);if e!=nil{fail("MESSAGE_EDIT_FAILED","Could not begin message edit",http.StatusServiceUnavailable);return true};defer func(){_ = tx.Rollback(context.Background())}()
 		var conversationID string
-		e:=s.db.QueryRow(ctx,`UPDATE testagram_local.messages SET ciphertext=$3,nonce=$4,aad=$5,e2ee_epoch=$6,e2ee_enabled=TRUE,e2ee_version='v1',edited_at=now()
+		e=tx.QueryRow(ctx,`UPDATE testagram_local.messages SET ciphertext=$3,nonce=$4,aad=$5,e2ee_epoch=$6,e2ee_enabled=TRUE,e2ee_version='v1',edited_at=now()
 			WHERE id=$1 AND sender_id=$2 AND deleted_at IS NULL RETURNING conversation_id::text`,id,userID,ciphertext,nonce,str("aad"),epoch).Scan(&conversationID)
 		if e!=nil{if errors.Is(e,pgx.ErrNoRows){fail("MESSAGE_NOT_FOUND","Message was not found or cannot be edited",http.StatusNotFound)}else{fail("MESSAGE_EDIT_FAILED","Could not update encrypted message",http.StatusServiceUnavailable)};return true}
-		_,_=s.db.Exec(ctx,`INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
+		_,e=tx.Exec(ctx,`INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
 			VALUES($1,'message.updated',$2,$3,jsonb_build_object('message_id',$3,'conversation_id',$2,'sender_id',$4,'encrypted',true)) ON CONFLICT(event_key) DO NOTHING`,"message:"+id+":updated:"+strings.TrimPrefix(newCallRoom(),"testagram-"),conversationID,id,userID)
+		if e==nil{e=tx.Commit(ctx)};if e!=nil{fail("MESSAGE_EDIT_FAILED","Could not commit message edit and realtime event",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"message_id":id,"edited":true});return true
 	case "testagram.messages.delete":
 		id:=str("message_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_MESSAGE","A valid message ID is required",http.StatusBadRequest);return true}
+		tx,e:=s.db.Begin(ctx);if e!=nil{fail("MESSAGE_DELETE_FAILED","Could not begin message deletion",http.StatusServiceUnavailable);return true};defer func(){_ = tx.Rollback(context.Background())}()
 		var conversationID string
-		e:=s.db.QueryRow(ctx,"UPDATE testagram_local.messages SET deleted_at=now(),body='',ciphertext=NULL,nonce=NULL,aad=NULL WHERE id=$1 AND sender_id=$2 AND deleted_at IS NULL RETURNING conversation_id::text",id,userID).Scan(&conversationID)
+		e=tx.QueryRow(ctx,"UPDATE testagram_local.messages SET deleted_at=now(),body='',ciphertext=NULL,nonce=NULL,aad=NULL WHERE id=$1 AND sender_id=$2 AND deleted_at IS NULL RETURNING conversation_id::text",id,userID).Scan(&conversationID)
 		if e!=nil{if errors.Is(e,pgx.ErrNoRows){fail("MESSAGE_NOT_FOUND","Message was not found or cannot be deleted",http.StatusNotFound)}else{fail("MESSAGE_DELETE_FAILED","Could not delete message",http.StatusServiceUnavailable)};return true}
-		_,_=s.db.Exec(ctx,`INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
+		_,e=tx.Exec(ctx,`INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
 			VALUES($1,'message.deleted',$2,$3,jsonb_build_object('message_id',$3,'conversation_id',$2,'sender_id',$4)) ON CONFLICT(event_key) DO NOTHING`,"message:"+id+":deleted",conversationID,id,userID)
+		if e==nil{e=tx.Commit(ctx)};if e!=nil{fail("MESSAGE_DELETE_FAILED","Could not commit message deletion and realtime event",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"message_id":id,"deleted":true});return true
 	case "testagram.messages.mark_read":
 		id:=str("message_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_MESSAGE","A valid message ID is required",http.StatusBadRequest);return true}
