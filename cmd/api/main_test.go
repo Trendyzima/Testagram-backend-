@@ -84,77 +84,31 @@ func TestCapabilityRequiresBearerForPrivateCalls(t *testing.T) {
 	}
 }
 
-func TestCapabilityGatewayForwardsUserJWTAndPayload(t *testing.T) {
-	t.Setenv("SUPABASE_URL", "")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
-	observed := make(chan [3]bool, 1)
+func TestCapabilityDoesNotFallbackToSupabase(t *testing.T) {
+	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authOK := r.Header.Get("Authorization") == "Bearer user-session-token"
-		apiKeyOK := r.Header.Get("apikey") == "test-publishable-key"
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		observed <- [3]bool{authOK, apiKeyOK, body["p_capability"] == "testagram.posts.create"}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"post_id":"post-123","created":true}`))
+		upstreamCalls.Add(1)
+		http.Error(w, "legacy upstream must not be called", http.StatusInternalServerError)
 	}))
 	defer upstream.Close()
 	t.Setenv("SUPABASE_URL", upstream.URL)
+	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "legacy-test-key")
 
-	s := &service{upstream: upstream.Client()}
-	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer user-session-token")
-	r.Header.Set("Origin", "https://testagram.site")
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
+	request := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer user-session-token")
+	request.Header.Set("Origin", "https://testagram.site")
+	response := httptest.NewRecorder()
+	(&service{upstream: upstream.Client()}).routes().ServeHTTP(response, request)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("gateway status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	if response.Code != http.StatusNotImplemented {
+		t.Fatalf("unsupported capability status = %d, want %d: %s", response.Code, http.StatusNotImplemented, response.Body.String())
 	}
-	seen := <-observed
-	if !seen[0] || !seen[1] || !seen[2] {
-		t.Fatalf("gateway did not forward contract: auth=%v apikey=%v payload=%v", seen[0], seen[1], seen[2])
+	if upstreamCalls.Load() != 0 {
+		t.Fatalf("legacy Supabase upstream was called %d times", upstreamCalls.Load())
 	}
-	if w.Header().Get("Access-Control-Allow-Origin") != "https://testagram.site" {
-		t.Fatalf("unexpected CORS origin: %q", w.Header().Get("Access-Control-Allow-Origin"))
-	}
-}
-
-func TestUnifiedSearchGatewayCallsCanonicalRPCWithBoundedParameters(t *testing.T) {
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
-	t.Setenv("SUPABASE_URL", "")
-	observed := make(chan bool, 1)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		observed <- r.URL.Path == "/rest/v1/rpc/testagram_search_unified" &&
-			r.Header.Get("Authorization") == "Bearer user-session-token" &&
-			r.Header.Get("apikey") == "test-publishable-key" &&
-			body["p_q"] == "kenya" && body["p_kind"] == "hashtags" &&
-			body["p_limit"] == float64(20) && body["p_offset"] == float64(40) &&
-			body["p_sort"] == "latest"
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"users":[],"hashtags":[],"posts":[],"threads":[],"communities":[],"replies":[],"fediverse":[],"instances":[]}`))
-	}))
-	defer upstream.Close()
-	t.Setenv("SUPABASE_URL", upstream.URL)
-
-	s := &service{upstream: upstream.Client()}
-	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.search.unified","input":{"q":"kenya","kind":"hashtags","limit":20,"offset":40,"sort":"latest"}}`))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer user-session-token")
-	r.Header.Set("Origin", "https://testagram.site")
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("unified search gateway status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
-	}
-	if !<-observed {
-		t.Fatal("gateway did not call the canonical unified-search RPC with the authenticated, bounded request")
-	}
-	if !strings.Contains(w.Body.String(), `"hashtags":[]`) {
-		t.Fatalf("gateway did not return the canonical search payload: %s", w.Body.String())
+	if !strings.Contains(response.Body.String(), "CAPABILITY_NOT_IMPLEMENTED") {
+		t.Fatalf("expected explicit fail-closed response, got %s", response.Body.String())
 	}
 }
 
@@ -177,47 +131,6 @@ func newTestPlatformClient(t *testing.T, handler http.Handler) *platformclient.C
 		t.Fatal(err)
 	}
 	return client
-}
-
-func TestPublicCapabilityUsesSharedPlatformCache(t *testing.T) {
-	t.Setenv("SUPABASE_URL", "https://supabase.example")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
-	var cacheGets, upstreamCalls int
-	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-platform-token" {
-			t.Errorf("missing platform auth")
-		}
-		switch r.URL.Path {
-		case "/v1/rate-limit/check":
-			_, _ = w.Write([]byte(`{"allowed":true,"count":1,"remaining":119,"retry_after_seconds":60}`))
-		case "/v1/cache/get":
-			cacheGets++
-			_, _ = w.Write([]byte(`{"value":"{\"trending\":[\"cached-item\"]}"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamCalls++
-		_, _ = w.Write([]byte(`{"trending":["upstream-item"]}`))
-	}))
-	defer upstream.Close()
-	s := &service{upstream: upstream.Client(), platform: platform}
-	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-	if cacheGets != 1 || upstreamCalls != 0 {
-		t.Fatalf("cacheGets=%d upstreamCalls=%d", cacheGets, upstreamCalls)
-	}
-	if !strings.Contains(w.Body.String(), "cached-item") {
-		t.Fatalf("cached response not returned: %s", w.Body.String())
-	}
-	if !strings.Contains(w.Header().Get("Cache-Control"), "public") {
-		t.Fatalf("expected public cache headers, got %q", w.Header().Get("Cache-Control"))
-	}
 }
 
 func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
@@ -246,43 +159,6 @@ func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
 	}
 	if upstreamCalls != 0 {
 		t.Fatalf("upstream called %d times after rate-limit denial", upstreamCalls)
-	}
-}
-
-func TestAuthenticatedResponsesNeverUseSharedPublicCache(t *testing.T) {
-	t.Setenv("SUPABASE_URL", "https://supabase.example")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
-	var cacheGets, cacheSets int
-	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/rate-limit/check":
-			_, _ = w.Write([]byte(`{"allowed":true,"count":1,"remaining":119,"retry_after_seconds":60}`))
-		case "/v1/cache/get":
-			cacheGets++
-			http.Error(w, "not found", http.StatusNotFound)
-		case "/v1/cache/set":
-			cacheSets++
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"private":"user-specific"}`)) }))
-	defer upstream.Close()
-	t.Setenv("SUPABASE_URL", upstream.URL)
-	s := &service{upstream: upstream.Client(), platform: platform}
-	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.news.trending","input":{}}`))
-	r.Header.Set("Authorization", "Bearer user-session-token")
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-	if cacheGets != 0 || cacheSets != 0 {
-		t.Fatalf("authenticated request touched shared cache: gets=%d sets=%d", cacheGets, cacheSets)
-	}
-	if w.Header().Get("Cache-Control") != "private, no-store" {
-		t.Fatalf("unsafe cache header %q", w.Header().Get("Cache-Control"))
 	}
 }
 
@@ -606,47 +482,6 @@ func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 	}
 	if strings.Contains(body, "/unknown/private-user-id") {
 		t.Fatal("metrics leaked raw request path into a label")
-	}
-}
-
-func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) {
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("database statement timeout"))
-	}))
-	defer upstream.Close()
-	t.Setenv("SUPABASE_URL", upstream.URL)
-
-	s := &service{upstream: upstream.Client()}
-	request := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(
-		`{"capability":"testagram.search.unified","input":{"query":"timeout-test"}}`,
-	))
-	request.Header.Set("Authorization", "Bearer test-user-token")
-	response := httptest.NewRecorder()
-	s.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusBadGateway {
-		t.Fatalf("search capability status = %d, want %d; body=%s", response.Code, http.StatusBadGateway, response.Body.String())
-	}
-
-	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	metricsResponse := httptest.NewRecorder()
-	s.routes().ServeHTTP(metricsResponse, metricsRequest)
-	body := metricsResponse.Body.String()
-	for _, want := range []string{
-		`testagram_capability_requests_total{group="search",status="502"} 1`,
-		`testagram_capability_request_duration_seconds_count{group="search"} 1`,
-		`testagram_upstream_requests_total{group="search",outcome="upstream_5xx"} 1`,
-		`testagram_upstream_response_status_total{group="search",status="500"} 1`,
-		`testagram_upstream_request_duration_seconds_count{group="search"} 1`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("capability metrics missing %q in:\\n%s", want, body)
-		}
-	}
-	if strings.Contains(body, "testagram.search.unified") || strings.Contains(body, "timeout-test") {
-		t.Fatal("metrics leaked raw capability names or user search terms")
 	}
 }
 
