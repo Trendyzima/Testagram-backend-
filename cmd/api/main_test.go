@@ -172,7 +172,7 @@ func newTestPlatformClient(t *testing.T, handler http.Handler) *platformclient.C
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := platformclient.New(server.URL, "test-platform-token", time.Second)
+	client, err := platformclient.New(server.URL, "test-platform-token-for-ci-only-32", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestPublicCapabilityUsesSharedPlatformCache(t *testing.T) {
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
 	var cacheGets, upstreamCalls int
 	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer test-platform-token" {
+		if r.Header.Get("Authorization") != "Bearer test-platform-token-for-ci-only-32" {
 			t.Errorf("missing platform auth")
 		}
 		switch r.URL.Path {
