@@ -15,11 +15,11 @@ services:
       - key: FRESH_API_ALLOWED_ORIGINS
         value: https://testagram.site,https://www.testagram.site
       - key: APPWRITE_ENDPOINT
-        value: https://cloud.appwrite.io/v1
+        value: https://fra.cloud.appwrite.io/v1
       - key: APPWRITE_PROJECT_ID
-        sync: false
+        value: 6af01d97002875d6d7bd
       - key: APPWRITE_DATABASE_ID
-        sync: false
+        value: 6af01f05003503d9d603
       - key: APPWRITE_SERVER_API_KEY
         sync: false
       - key: IDENTITY_PREAUTH_SECRET
