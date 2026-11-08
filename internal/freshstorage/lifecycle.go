@@ -251,7 +251,7 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 		if reservation.Status != "verifying" {
 			return fmt.Errorf("reservation is %s and cannot be verified", reservation.Status)
 		}
-		primary, primaryBucket, secondary, secondaryBucket, primaryName, secondaryName := s.providersFor(reservation)
+		primary, primaryBucket, _, _, primaryName, _ := s.providersFor(reservation)
 		info, headErr := primary.Head(ctx, primaryBucket, reservation.ObjectKey)
 		if headErr != nil {
 			_, _ = s.store.ClaimReservation(context.Background(), reservation.ID, "verifying", "reserved", map[string]any{})
