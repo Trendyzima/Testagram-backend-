@@ -9,7 +9,18 @@ import (
  "encoding/json"
  "github.com/jackc/pgx/v5"
 )
-var hashtagTagPattern=regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+var hashtagTagPattern=regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}package main
+
+import (
+ "net/http"
+ "regexp"
+ "strconv"
+ "strings"
+ "time"
+ "encoding/json"
+ "github.com/jackc/pgx/v5"
+)
+var hashtagTagPattern=)
 func (s *service) hashtagResolve(w http.ResponseWriter,r *http.Request){
  id:=requestID(r);if !s.cors(w,r){writeJSON(w,403,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return};if s.db==nil{writeJSON(w,503,errorBody("HASHTAG_SERVICE_UNAVAILABLE","Hashtag service is unavailable",id));return}
  tag:=strings.ToLower(strings.TrimSpace(strings.TrimPrefix(r.PathValue("tag"),"#")));if !hashtagTagPattern.MatchString(tag){writeJSON(w,400,errorBody("INVALID_HASHTAG","Hashtag is invalid",id));return}
@@ -39,19 +50,23 @@ func (s *service) hashtagsTrending(w http.ResponseWriter,r *http.Request){
  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"items":items}})
 }
 func (s *service) hashtagFollowedList(w http.ResponseWriter,r *http.Request){
+ if s.db==nil{writeJSON(w,503,errorBody("HASHTAG_SERVICE_UNAVAILABLE","Hashtag service is unavailable",requestID(r)));return}
  uid,id,ok:=s.socialAuth(w,r);if !ok{return};rows,err:=s.db.Query(r.Context(),`SELECT h.id::text,h.tag,h.usage_count,h.follower_count,h.federated_post_count,h.last_used_at FROM testagram_local.hashtag_follows f JOIN testagram_local.hashtags h ON h.id=f.hashtag_id WHERE f.user_id=$1::uuid ORDER BY f.created_at DESC LIMIT 200`,uid);if err!=nil{writeJSON(w,503,errorBody("HASHTAG_FOLLOWS_FAILED","Followed hashtags could not be loaded",id));return};defer rows.Close()
  items:=make([]map[string]any,0);for rows.Next(){var hid,tag string;var usage,followers,fed int64;var last *time.Time;if err=rows.Scan(&hid,&tag,&usage,&followers,&fed,&last);err!=nil{writeJSON(w,503,errorBody("HASHTAG_FOLLOWS_FAILED","Followed hashtag records could not be read",id));return};items=append(items,map[string]any{"id":hid,"tag":tag,"usage_count":usage,"follower_count":followers,"federated_post_count":fed,"last_used_at":last})}
  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"items":items}})
 }
 func (s *service) hashtagFollowState(w http.ResponseWriter,r *http.Request){
+ if s.db==nil{writeJSON(w,503,errorBody("HASHTAG_SERVICE_UNAVAILABLE","Hashtag service is unavailable",requestID(r)));return}
  uid,id,ok:=s.socialAuth(w,r);if !ok{return};hid:=r.PathValue("hashtag_id");if !socialUUIDPattern.MatchString(hid){writeJSON(w,400,errorBody("INVALID_HASHTAG_ID","Hashtag ID is invalid",id));return};var following bool
  if err:=s.db.QueryRow(r.Context(),`SELECT EXISTS(SELECT 1 FROM testagram_local.hashtag_follows WHERE user_id=$1::uuid AND hashtag_id=$2::uuid)`,uid,hid).Scan(&following);err!=nil{writeJSON(w,503,errorBody("HASHTAG_FOLLOW_STATE_FAILED","Follow state could not be loaded",id));return};writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"following":following}})
 }
 func (s *service) hashtagFollowCreate(w http.ResponseWriter,r *http.Request){
+ if s.db==nil{writeJSON(w,503,errorBody("HASHTAG_SERVICE_UNAVAILABLE","Hashtag service is unavailable",requestID(r)));return}
  uid,id,ok:=s.socialAuth(w,r);if !ok{return};if !s.socialWriteAllowed(w,r,uid,id,"hashtag_follow",60){return};hid:=r.PathValue("hashtag_id");if !socialUUIDPattern.MatchString(hid){writeJSON(w,400,errorBody("INVALID_HASHTAG_ID","Hashtag ID is invalid",id));return}
  tag,err:=s.db.Exec(r.Context(),`INSERT INTO testagram_local.hashtag_follows(user_id,hashtag_id) VALUES($1::uuid,$2::uuid) ON CONFLICT DO NOTHING`,uid,hid);if err!=nil{writeJSON(w,503,errorBody("HASHTAG_FOLLOW_FAILED","Hashtag could not be followed",id));return};writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"following":true,"created":tag.RowsAffected()>0}})
 }
 func (s *service) hashtagFollowDelete(w http.ResponseWriter,r *http.Request){
+ if s.db==nil{writeJSON(w,503,errorBody("HASHTAG_SERVICE_UNAVAILABLE","Hashtag service is unavailable",requestID(r)));return}
  uid,id,ok:=s.socialAuth(w,r);if !ok{return};hid:=r.PathValue("hashtag_id");if !socialUUIDPattern.MatchString(hid){writeJSON(w,400,errorBody("INVALID_HASHTAG_ID","Hashtag ID is invalid",id));return};if _,err:=s.db.Exec(r.Context(),`DELETE FROM testagram_local.hashtag_follows WHERE user_id=$1::uuid AND hashtag_id=$2::uuid`,uid,hid);err!=nil{writeJSON(w,503,errorBody("HASHTAG_UNFOLLOW_FAILED","Hashtag could not be unfollowed",id));return};writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"following":false}})
 }
 
