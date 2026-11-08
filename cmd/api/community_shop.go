@@ -29,14 +29,14 @@ func (s *service) communityBadgesList(w http.ResponseWriter,r *http.Request) {
  id:=requestID(r);if !s.cors(w,r){writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return}
  if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_BADGES_UNAVAILABLE","Community badges are unavailable",id));return}
  communityID:=r.PathValue("community_id");if !socialUUIDPattern.MatchString(communityID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_ID","Community ID is invalid",id));return}
- rows,err:=s.db.Query(r.Context(),`SELECT b.id::text,b.owner_id::text,b.badge_tier,b.contribution_score,b.issued_at,a.username,a.avatar_key
+ rows,err:=s.db.Query(r.Context(),`SELECT b.id::text,b.owner_id::text,b.badge_tier,b.contribution_score,b.minted_at,a.username,a.avatar_key
  FROM testagram_local.community_badges b JOIN testagram_local.accounts a ON a.user_id=b.owner_id
  WHERE b.community_id=$1::uuid ORDER BY b.issued_at DESC LIMIT 100`,communityID)
  if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_BADGES_FAILED","Community badges could not be loaded",id));return};defer rows.Close()
  items:=make([]map[string]any,0)
  for rows.Next(){var bid,owner,tier,username,avatar string;var score int64;var issued time.Time
   if err=rows.Scan(&bid,&owner,&tier,&score,&issued,&username,&avatar);err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_BADGES_FAILED","Badge records could not be read",id));return}
-  items=append(items,map[string]any{"id":bid,"owner_id":owner,"badge_tier":tier,"contribution_score":score,"minted_at":issued,"user_profiles":map[string]any{"username":username,"avatar_url":avatar}})
+  items=append(items,map[string]any{"id":bid,"owner_id":owner,"badge_tier":tier,"badge_emoji":map[string]string{"rare":"🏅","epic":"🔮","legendary":"💎"}[tier],"contribution_score":score,"minted_at":issued,"user_profiles":map[string]any{"username":username,"avatar_url":avatar}})
  }
  if err=rows.Err();err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_BADGES_FAILED","Badge records could not be read",id));return}
  writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
@@ -55,8 +55,8 @@ func (s *service) communityBadgeClaim(w http.ResponseWriter,r *http.Request) {
  var badgeID string;var issued time.Time
  err=s.db.QueryRow(r.Context(),`INSERT INTO testagram_local.community_badges(community_id,owner_id,badge_tier,contribution_score)
  VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(community_id,owner_id) DO UPDATE SET badge_tier=EXCLUDED.badge_tier,contribution_score=EXCLUDED.contribution_score
- RETURNING id::text,issued_at`,communityID,userID,tier,score).Scan(&badgeID,&issued)
+ RETURNING id::text,minted_at`,communityID,userID,tier,score).Scan(&badgeID,&issued)
  if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("COMMUNITY_BADGE_CLAIM_FAILED","Community badge could not be issued",id));return}
- writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":map[string]any{"id":badgeID,"community_id":communityID,"owner_id":userID,"badge_tier":tier,"contribution_score":score,"issued_at":issued,"issued":true}})
+ writeJSON(w,http.StatusCreated,map[string]any{"ok":true,"data":map[string]any{"id":badgeID,"community_id":communityID,"owner_id":userID,"badge_tier":tier,"badge_emoji":map[string]string{"rare":"🏅","epic":"🔮","legendary":"💎"}[tier],"contribution_score":score,"minted_at":issued,"issued":true}})
 }
 
