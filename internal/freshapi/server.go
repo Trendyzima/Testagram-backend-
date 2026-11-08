@@ -2,6 +2,7 @@ package freshapi
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -160,7 +161,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /v1/media/{objectID}/download", s.downloadMedia)
 		mux.HandleFunc("POST /v1/media/{objectID}/restore", s.restoreMedia)
 	}
-	return securityHeaders(s.cors(mux))
+	return apiContractHeaders(securityHeaders(s.cors(mux)))
 }
 
 func (s *Server) cors(next http.Handler) http.Handler {
@@ -1224,4 +1225,44 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
+}
+
+
+// apiContractHeaders applies the cross-repository HTTP contract to every
+// response, including errors and preflight responses. Request IDs are treated
+// as untrusted input and are echoed only when they use a safe bounded alphabet.
+func apiContractHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if !validRequestID(requestID) {
+			requestID = newRequestID()
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("X-Testagram-API-Version", "1")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func validRequestID(value string) bool {
+	if len(value) < 8 || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' ||
+			char >= '0' && char <= '9' || char == '-' || char == '_' ||
+			char == '.' || char == ':') {
+			return false
+		}
+	}
+	return true
+}
+
+func newRequestID() string {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err == nil {
+		return hex.EncodeToString(value[:])
+	}
+	// The fallback is still safe for an HTTP header and unique enough for
+	// diagnostics if the operating system random source is temporarily absent.
+	return "req-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
 }

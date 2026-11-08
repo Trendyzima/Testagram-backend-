@@ -31,7 +31,7 @@ func TestNewRequiresValidURLAndToken(t *testing.T) {
 func TestCacheSetSendsBearerAndTTL(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/cache/set" { t.Errorf("unexpected request: %s %s", r.Method, r.URL) }
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" { t.Errorf("missing internal bearer token") }
+		if r.Header.Get("Authorization") != "Bearer unit-test-secret-that-is-long-enough-for-api" { t.Errorf("missing internal bearer token") }
 		if r.Header.Get("Content-Type") != "application/json" { t.Errorf("missing content type") }
 		var body struct {
 			Key string `json:"key"`
@@ -49,11 +49,11 @@ func TestCacheSetSendsBearerAndTTL(t *testing.T) {
 func TestCacheGetAndMiss(t *testing.T) {
 	t.Run("hit", func(t *testing.T) {
 		client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Query().Get("key") != "hello world" { t.Errorf("query value not encoded: %s", r.URL.RawQuery) }
+			if r.URL.Query().Get("key") != "hello-world" { t.Errorf("query value not encoded: %s", r.URL.RawQuery) }
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"value":"there"}`))
 		})
-		got, err := client.Get(context.Background(), "hello world")
+		got, err := client.Get(context.Background(), "hello-world")
 		if err != nil || got != "there" { t.Fatalf("Get() = %q, %v", got, err) }
 	})
 	t.Run("miss", func(t *testing.T) {
@@ -65,7 +65,7 @@ func TestCacheGetAndMiss(t *testing.T) {
 
 func TestRateLimitAndEnqueue(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" { t.Errorf("missing authorization") }
+		if r.Header.Get("Authorization") != "Bearer unit-test-secret-that-is-long-enough-for-api" { t.Errorf("missing authorization") }
 		switch r.URL.Path {
 		case "/v1/rate-limit/check":
 			var body map[string]any
