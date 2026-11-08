@@ -66,3 +66,17 @@ func (s *service) discoveryThreads(w http.ResponseWriter,r *http.Request) {
  }
  writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
 }
+
+func (s *service) discoveryPostCount(w http.ResponseWriter,r *http.Request) {
+ id:=requestID(r);if !s.cors(w,r){writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return}
+ if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_UNAVAILABLE","Discovery service is unavailable",id));return}
+ raw:=strings.Split(strings.ToLower(strings.TrimSpace(r.URL.Query().Get("terms"))),",")
+ terms:=make([]string,0,len(raw));for _,term:=range raw{term=strings.TrimSpace(term);if term==""{continue};if len(term)>32||!regexp.MustCompile(`^[a-z0-9 -]+$`).MatchString(term){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_DISCOVERY_TERMS","Discovery terms are invalid",id));return};terms=append(terms,term)}
+ if len(terms)==0||len(terms)>20{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_DISCOVERY_TERMS","Between 1 and 20 search terms are required",id));return}
+ var count int64
+ err:=s.db.QueryRow(r.Context(),`SELECT count(*) FROM testagram_local.posts p
+ WHERE p.deleted_at IS NULL AND p.visibility='public' AND p.community_id IS NULL AND p.created_at>=now()-interval '7 days'
+ AND EXISTS(SELECT 1 FROM unnest($1::text[]) term WHERE p.text ILIKE '%'||term||'%')`,terms).Scan(&count)
+ if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_COUNT_FAILED","Discovery counts could not be loaded",id));return}
+ writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"count":count}})
+}
