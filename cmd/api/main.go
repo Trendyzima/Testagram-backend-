@@ -512,6 +512,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/marketplace/products", s.marketplaceProductsList)
 	mux.HandleFunc("GET /api/discovery/creators", s.discoveryCreators)
 	mux.HandleFunc("GET /api/discovery/posts", s.discoveryPosts)
+	mux.HandleFunc("GET /api/discovery/post-counts", s.discoveryPostCount)
 	mux.HandleFunc("GET /api/discovery/threads", s.discoveryThreads)
 	mux.HandleFunc("GET /api/hashtag-challenges", s.hashtagChallengesList)
 	mux.HandleFunc("POST /api/hashtag-challenges", s.hashtagChallengeCreate)
