@@ -99,6 +99,7 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 }
 
 func (c *Client) Check(ctx context.Context, key string, limit int64, window time.Duration) (RateLimitResult, error) {
+	if err := validateKey(key); err != nil { return RateLimitResult{}, err }
 	seconds := int64(window / time.Second)
 	if window%time.Second != 0 { seconds++ }
 	if limit < 1 || limit > 100000 || seconds < 1 || seconds > 86400 {
