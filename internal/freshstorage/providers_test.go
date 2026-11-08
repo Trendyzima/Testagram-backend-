@@ -34,7 +34,7 @@ func TestEmptyConfigurationIsNotReady(t *testing.T) {
 
 func TestPartialB2ConfigurationFailsClosed(t *testing.T) {
 	clear(t)
-	_ = os.Setenv("B2_S3_ENDPOINT", "https://s3.us-west-004.backblazeb2.com")
+	_ = os.Setenv("B2_S3_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
 	p, err := FromEnv()
 	if err == nil || p.B2 != nil {
 		t.Fatal("partial B2 configuration must fail closed")
@@ -60,7 +60,7 @@ func TestR2CannotLaunchMediaWithoutB2(t *testing.T) {
 func TestR2CanBeSelectedAsPrimaryWithBothProviders(t *testing.T) {
 	clear(t)
 	for key, value := range map[string]string{
-		"B2_S3_ENDPOINT": "https://s3.us-west-004.backblazeb2.com",
+		"B2_S3_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",
 		"B2_S3_ACCESS_KEY_ID": "b2-key",
 		"B2_S3_SECRET_ACCESS_KEY": "b2-secret",
 		"B2_S3_BUCKET": "testagram-b2",
