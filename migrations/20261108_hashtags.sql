@@ -48,6 +48,24 @@ DROP TRIGGER IF EXISTS testagram_local_post_hashtag_count ON testagram_local.pos
 CREATE TRIGGER testagram_local_post_hashtag_count AFTER INSERT OR DELETE ON testagram_local.post_hashtags FOR EACH ROW EXECUTE FUNCTION testagram_local.adjust_hashtag_post_count();
 DROP TRIGGER IF EXISTS testagram_local_hashtag_follow_count ON testagram_local.hashtag_follows;
 CREATE TRIGGER testagram_local_hashtag_follow_count AFTER INSERT OR DELETE ON testagram_local.hashtag_follows FOR EACH ROW EXECUTE FUNCTION testagram_local.adjust_hashtag_follower_count();
+CREATE OR REPLACE FUNCTION testagram_local.index_post_hashtags()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,testagram_local
+AS $
+DECLARE match_row TEXT[];
+BEGIN
+ DELETE FROM testagram_local.post_hashtags WHERE post_id=NEW.id;
+ FOR match_row IN SELECT regexp_matches(lower(COALESCE(NEW.text,'')),'#([a-z0-9_]{1,64})','g') LOOP
+  INSERT INTO testagram_local.hashtags(tag) VALUES(match_row[1]) ON CONFLICT(tag) DO NOTHING;
+  INSERT INTO testagram_local.post_hashtags(post_id,hashtag_id)
+   SELECT NEW.id,id FROM testagram_local.hashtags WHERE tag=match_row[1]
+   ON CONFLICT(post_id,hashtag_id) DO NOTHING;
+ END LOOP;
+ RETURN NEW;
+END;
+$;
+DROP TRIGGER IF EXISTS testagram_local_posts_hashtag_index ON testagram_local.posts;
+CREATE TRIGGER testagram_local_posts_hashtag_index AFTER INSERT OR UPDATE OF text ON testagram_local.posts
+FOR EACH ROW WHEN (NEW.deleted_at IS NULL) EXECUTE FUNCTION testagram_local.index_post_hashtags();
 DO $grants$
 BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
