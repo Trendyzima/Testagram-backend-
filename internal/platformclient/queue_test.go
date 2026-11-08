@@ -13,7 +13,7 @@ func TestQueueClaimUsesNormalizedMessageContract(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/queue/claim" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL)
 		}
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" {
+		if r.Header.Get("Authorization") != "Bearer unit-test-secret-that-is-long-enough-for-api" {
 			t.Fatal("missing internal bearer token")
 		}
 		var request struct {
@@ -45,7 +45,7 @@ func TestQueueClaimUsesNormalizedMessageContract(t *testing.T) {
 func TestQueueReclaimAndAck(t *testing.T) {
 	calls := 0
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" {
+		if r.Header.Get("Authorization") != "Bearer unit-test-secret-that-is-long-enough-for-api" {
 			t.Fatal("missing internal bearer token")
 		}
 		switch r.URL.Path {
