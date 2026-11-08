@@ -504,6 +504,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/communities", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/communities/{path...}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/search", s.searchPublic)
+	mux.HandleFunc("GET /api/discovery/creators", s.discoveryCreators)
+	mux.HandleFunc("GET /api/discovery/posts", s.discoveryPosts)
 	mux.HandleFunc("GET /api/hashtags", s.hashtagsSearch)
 	mux.HandleFunc("GET /api/hashtags/trending", s.hashtagsTrending)
 	mux.HandleFunc("GET /api/hashtags/followed", s.hashtagFollowedList)
