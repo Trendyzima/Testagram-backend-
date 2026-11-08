@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -155,7 +156,9 @@ func main() {
 
 	addr := strings.TrimSpace(os.Getenv("FRESH_API_ADDR"))
 	if addr == "" {
-		addr = ":8081"
+		port := strings.TrimSpace(os.Getenv("PORT"))
+		if port == "" { port = "8081" }
+		addr = ":" + port
 	}
 	server := &http.Server{Addr: addr, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Printf("fresh Appwrite API listening on %s", addr)
@@ -163,8 +166,16 @@ func main() {
 }
 
 func runHealthcheck() int {
+	addr := strings.TrimSpace(os.Getenv("FRESH_API_ADDR"))
+	if addr == "" {
+		port := strings.TrimSpace(os.Getenv("PORT"))
+		if port == "" { port = "8081" }
+		addr = ":" + port
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" { return 1 }
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:8081/readyz")
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
 	if err != nil {
 		return 1
 	}
