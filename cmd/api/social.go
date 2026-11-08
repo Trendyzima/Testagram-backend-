@@ -1003,6 +1003,59 @@ func (s *service) socialRejectFollowRequest(w http.ResponseWriter, r *http.Reque
 	s.socialRespondFollowRequest(w, r, false)
 }
 
+func (s *service) socialPostRead(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialAuth(w, r)
+	if !ok { return }
+	postID := strings.ToLower(r.PathValue("post_id"))
+	if !socialUUIDPattern.MatchString(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "A valid post ID is required", requestID))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be loaded", requestID))
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err := socialCanViewPostReadWith(ctx, tx, userID, postID); errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "The post is unavailable", requestID))
+		return
+	} else if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be checked", requestID))
+		return
+	}
+	var id, content, authorID, username, displayName, avatarKey string
+	var created time.Time
+	var mediaIDs []byte
+	err = tx.QueryRow(ctx, `SELECT p.id::text,p.text,p.author_id::text,p.created_at,p.media_ids,
+		a.username,a.display_name,a.avatar_key
+		FROM testagram_local.posts p
+		JOIN testagram_local.accounts a ON a.user_id=p.author_id
+		WHERE p.id=$1 AND p.deleted_at IS NULL`, postID).Scan(
+		&id, &content, &authorID, &created, &mediaIDs, &username, &displayName, &avatarKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "The post is unavailable", requestID))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be loaded", requestID))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be confirmed", requestID))
+		return
+	}
+	var media []any
+	if len(mediaIDs) > 0 { _ = json.Unmarshal(mediaIDs, &media) }
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{
+		"id": id, "content": content, "created_at": created, "author_id": authorID,
+		"user_id": authorID, "media_ids": media,
+		"profiles": map[string]any{"id": authorID, "username": username, "display_name": displayName, "avatar_url": avatarKey},
+	}, "error": nil, "request_id": requestID})
+}
+
 func (s *service) socialInteractionSummary(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
