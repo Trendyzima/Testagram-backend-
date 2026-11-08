@@ -39,7 +39,7 @@ services:
       - key: B2_S3_ENDPOINT
         sync: false
       - key: B2_S3_REGION
-        value: us-west-004
+        value: us-east-005
       - key: B2_S3_BUCKET
         sync: false
       - key: B2_S3_ACCESS_KEY_ID
