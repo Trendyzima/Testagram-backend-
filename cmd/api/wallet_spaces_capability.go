@@ -174,10 +174,11 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	case "testagram.audio_spaces.create":
 		title:=str("title");description:=str("description");if len(title)==0||len(title)>120||len(description)>2000{fail("INVALID_SPACE","Space title or description is invalid",http.StatusBadRequest);return true}
 		max:=1000;if v,ok:=in["max_audience"].(float64);ok{max=int(v)};if max<2||max>10000{fail("INVALID_SPACE","Audience limit must be between 2 and 10000",http.StatusBadRequest);return true}
-		var id string;e:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.audio_spaces(host_id,title,description,status,started_at,max_audience)
+		tx,e:=s.db.Begin(ctx);if e!=nil{fail("SPACE_CREATE_FAILED","Could not create audio Space",http.StatusServiceUnavailable);return true};defer func(){_ = tx.Rollback(context.Background())}()
+		var id string;e=tx.QueryRow(ctx,`INSERT INTO testagram_local.audio_spaces(host_id,title,description,status,started_at,max_audience)
 			VALUES($1,$2,$3,'live',now(),$4) RETURNING id::text`,userID,title,description,max).Scan(&id)
-		if e!=nil{fail("SPACE_CREATE_FAILED","Could not create audio Space",http.StatusServiceUnavailable);return true}
-		_,_=s.db.Exec(ctx,"INSERT INTO testagram_local.audio_space_participants(space_id,user_id,role) VALUES($1,$2,'host')",id,userID)
+		if e==nil{_,e=tx.Exec(ctx,"INSERT INTO testagram_local.audio_space_participants(space_id,user_id,role) VALUES($1,$2,'host')",id,userID)}
+		if e==nil{e=tx.Commit(ctx)};if e!=nil{fail("SPACE_CREATE_FAILED","Could not create audio Space",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusCreated,map[string]any{"space_id":id,"status":"live","host_id":userID});return true
 	case "testagram.audio_spaces.join":
 		id:=str("space_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_SPACE","A valid Space ID is required",http.StatusBadRequest);return true}
@@ -208,13 +209,18 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 		tag,e:=tx.Exec(ctx,"UPDATE testagram_local.audio_space_speaker_requests SET status=$3,decided_at=now(),decided_by=$4 WHERE space_id=$1 AND user_id=$2 AND status='pending'",id,target,decision,userID)
 		if e!=nil||tag.RowsAffected()!=1{fail("SPEAKER_REQUEST_NOT_PENDING","Speaker request is not pending",http.StatusConflict);return true}
 		role:="listener";if decision=="approved"{role="speaker"}
-		_,e=tx.Exec(ctx,"UPDATE testagram_local.audio_space_participants SET role=$3 WHERE space_id=$1 AND user_id=$2 AND left_at IS NULL",id,target,role)
+		participantTag,e:=tx.Exec(ctx,"UPDATE testagram_local.audio_space_participants SET role=$3 WHERE space_id=$1 AND user_id=$2 AND left_at IS NULL",id,target,role)
+		if e==nil&&participantTag.RowsAffected()!=1{e=pgx.ErrNoRows}
 		if e==nil{e=tx.Commit(ctx)};if e!=nil{fail("SPEAKER_DECISION_FAILED","Could not update speaker role",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"space_id":id,"user_id":target,"status":decision});return true
 	case "testagram.audio_spaces.end":
 		id:=str("space_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_SPACE","A valid Space ID is required",http.StatusBadRequest);return true}
-		tag,e:=s.db.Exec(ctx,"UPDATE testagram_local.audio_spaces SET status='ended',ended_at=now(),updated_at=now() WHERE id=$1 AND host_id=$2 AND status='live'",id,userID)
-		if e!=nil{fail("SPACE_END_FAILED","Could not end Space",http.StatusServiceUnavailable);return true};if tag.RowsAffected()!=1{fail("HOST_ONLY","Only the host can end a live Space",http.StatusForbidden);return true}
-		_,_=s.db.Exec(ctx,"UPDATE testagram_local.audio_space_participants SET left_at=COALESCE(left_at,now()) WHERE space_id=$1",id);writeJSON(w,http.StatusOK,map[string]any{"space_id":id,"ended":true});return true
+		tx,e:=s.db.Begin(ctx);if e!=nil{fail("SPACE_END_FAILED","Could not end Space",http.StatusServiceUnavailable);return true};defer func(){_ = tx.Rollback(context.Background())}()
+		var host,state string;e=tx.QueryRow(ctx,"SELECT host_id::text,status FROM testagram_local.audio_spaces WHERE id=$1 FOR UPDATE",id).Scan(&host,&state)
+		if e!=nil||host!=userID||state!="live"{fail("HOST_ONLY","Only the host can end a live Space",http.StatusForbidden);return true}
+		_,e=tx.Exec(ctx,"UPDATE testagram_local.audio_spaces SET status='ended',ended_at=now(),updated_at=now() WHERE id=$1",id)
+		if e==nil{_,e=tx.Exec(ctx,"UPDATE testagram_local.audio_space_participants SET left_at=COALESCE(left_at,now()) WHERE space_id=$1",id)}
+		if e==nil{e=tx.Commit(ctx)};if e!=nil{fail("SPACE_END_FAILED","Could not end Space",http.StatusServiceUnavailable);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"space_id":id,"ended":true});return true
 	case "testagram.audio_spaces.superchat":
 		id:=str("space_id");message:=str("message");amount,_,ok:=moneyAmount(in["amount"]);key:=str("idempotency_key")
 		if !socialUUIDPattern.MatchString(id)||len(message)==0||len(message)>280||!ok||len(key)<8{fail("INVALID_SUPERCHAT","Space, amount, message or idempotency key is invalid",http.StatusBadRequest);return true}
