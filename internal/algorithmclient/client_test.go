@@ -107,6 +107,7 @@ func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
 		"out of range score": "{\"items\":[{\"id\":\"p\",\"score\":2}]}",
 		"empty ID":           "{\"items\":[{\"id\":\" \",\"score\":0.5}]}",
 		"duplicate ID":       "{\"items\":[{\"id\":\"p\",\"score\":0.5},{\"id\":\"p\",\"score\":0.4}]}",
+		"unknown candidate":  "{\"items\":[{\"id\":\"not-supplied\",\"score\":0.5}]}",
 		"too many reasons":   "{\"items\":[{\"id\":\"p\",\"score\":0.5,\"reasons\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}]}",
 	} {
 		t.Run(name, func(t *testing.T) {
