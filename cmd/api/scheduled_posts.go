@@ -14,6 +14,7 @@ type scheduledPostInput struct {
 }
 
 func (s *service) scheduledPostCreate(w http.ResponseWriter,r *http.Request) {
+	if s.db==nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("SCHEDULED_POSTS_UNAVAILABLE","Scheduling service is unavailable",requestID(r))); return }
 	userID,id,ok:=s.socialAuth(w,r);if !ok{return}
 	if !s.socialWriteAllowed(w,r,userID,id,"scheduled_post_create",20){return}
 	r.Body=http.MaxBytesReader(w,r.Body,16<<10);defer r.Body.Close()
@@ -40,6 +41,7 @@ func (s *service) scheduledPostCreate(w http.ResponseWriter,r *http.Request) {
 }
 
 func (s *service) scheduledPostsList(w http.ResponseWriter,r *http.Request) {
+	if s.db==nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("SCHEDULED_POSTS_UNAVAILABLE","Scheduling service is unavailable",requestID(r))); return }
 	userID,id,ok:=s.socialAuth(w,r);if !ok{return}
 	rows,err:=s.db.Query(r.Context(),`SELECT id::text,community_id::text,content,scheduled_for,status,created_at FROM testagram_local.scheduled_posts WHERE user_id=$1::uuid AND status IN ('pending','failed') ORDER BY scheduled_for ASC,id ASC LIMIT 100`,userID)
 	if err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("SCHEDULED_POST_LIST_FAILED","Scheduled posts could not be loaded",id));return}
@@ -54,6 +56,7 @@ func (s *service) scheduledPostsList(w http.ResponseWriter,r *http.Request) {
 }
 
 func (s *service) scheduledPostCancel(w http.ResponseWriter,r *http.Request) {
+	if s.db==nil { writeJSON(w,http.StatusServiceUnavailable,errorBody("SCHEDULED_POSTS_UNAVAILABLE","Scheduling service is unavailable",requestID(r))); return }
 	userID,id,ok:=s.socialAuth(w,r);if !ok{return}
 	scheduledID:=r.PathValue("scheduled_post_id")
 	if !socialUUIDPattern.MatchString(scheduledID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_SCHEDULED_POST_ID","Scheduled post ID is invalid",id));return}
