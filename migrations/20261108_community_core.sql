@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.communities (
   visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public','private')),
   icon_url TEXT NOT NULL DEFAULT '' CHECK (length(icon_url) <= 2048),
   banner_url TEXT NOT NULL DEFAULT '' CHECK (length(banner_url) <= 2048),
+  rules JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(rules)='array' AND octet_length(rules::text)<=8192),
   member_count BIGINT NOT NULL DEFAULT 1 CHECK (member_count >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
