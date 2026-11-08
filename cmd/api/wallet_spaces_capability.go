@@ -135,9 +135,13 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 		if rows.Err()!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
 	case "testagram.wallet.recipient.resolve":
 		username:=strings.TrimPrefix(strings.TrimSpace(str("username")),"@")
-		if len(username)<2||len(username)>30||!validWalletUsername(username){fail("INVALID_RECIPIENT","Enter a valid Testagram username",http.StatusBadRequest);return true}
 		var recipientID,canonicalUsername string
-		err=s.db.QueryRow(ctx,"SELECT user_id::text,username FROM testagram_local.accounts WHERE lower(username)=lower($1) AND account_status='active'",username).Scan(&recipientID,&canonicalUsername)
+		if socialUUIDPattern.MatchString(username) {
+			err=s.db.QueryRow(ctx,"SELECT user_id::text,username FROM testagram_local.accounts WHERE user_id=$1 AND account_status='active'",username).Scan(&recipientID,&canonicalUsername)
+		} else {
+			if !validWalletUsername(username){fail("INVALID_RECIPIENT","Enter a valid Testagram username or account ID",http.StatusBadRequest);return true}
+			err=s.db.QueryRow(ctx,"SELECT user_id::text,username FROM testagram_local.accounts WHERE lower(username)=lower($1) AND account_status='active'",username).Scan(&recipientID,&canonicalUsername)
+		}
 		if err!=nil||recipientID==userID{fail("RECIPIENT_NOT_FOUND","An active, different recipient account was not found",http.StatusNotFound);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"user_id":recipientID,"username":canonicalUsername});return true
 	case "testagram.wallet.transfer","testagram.wallet.tip":
