@@ -124,7 +124,7 @@ func TestUnifiedSearchRequiresLinkedAppwriteIdentity(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer user-session-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "AUTH_REQUIRED") {
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "AUTH_REQUIRED") {
 		t.Fatalf("search without configured Appwrite identity must fail closed: status=%d body=%s", w.Code, w.Body.String())
 	}
 	if upstreamCalls != 0 { t.Fatalf("legacy upstream was called %d times", upstreamCalls) }
@@ -563,15 +563,15 @@ func TestCapabilityMetricsGroupSearchWithoutHighCardinalityLabels(t *testing.T) 
 	request.Header.Set("Authorization", "Bearer test-user-token")
 	response := httptest.NewRecorder()
 	s.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusBadGateway {
-		t.Fatalf("search without Appwrite configuration status = %d, want %d; body=%s", response.Code, http.StatusBadGateway, response.Body.String())
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("search without Appwrite configuration status = %d, want %d; body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
 	}
 	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	metricsResponse := httptest.NewRecorder()
 	s.routes().ServeHTTP(metricsResponse, metricsRequest)
 	body := metricsResponse.Body.String()
 	for _, want := range []string{
-		`testagram_capability_requests_total{group="search",status="502"} 1`,
+		`testagram_capability_requests_total{group="search",status="503"} 1`,
 		`testagram_capability_request_duration_seconds_count{group="search"} 1`,
 	} {
 		if !strings.Contains(body, want) { t.Errorf("capability metrics missing %q in:\n%s", want, body) }
