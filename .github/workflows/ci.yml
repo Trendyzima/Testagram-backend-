@@ -177,8 +177,19 @@ jobs:
           docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
           CREATE ROLE service_role NOLOGIN;
           CREATE SCHEMA testagram_local;
-          CREATE TABLE testagram_local.accounts (user_id uuid PRIMARY KEY);
+          CREATE TABLE testagram_local.accounts (
+            user_id uuid PRIMARY KEY,
+            username text NOT NULL DEFAULT 'ci_user',
+            display_name text NOT NULL DEFAULT '',
+            avatar_key text NOT NULL DEFAULT '',
+            account_status text NOT NULL DEFAULT 'active'
+          );
           CREATE TABLE testagram_local.posts (id uuid PRIMARY KEY);
+          CREATE TABLE testagram_local.follows (
+            follower_id uuid NOT NULL,
+            following_id uuid NOT NULL,
+            status text NOT NULL DEFAULT 'accepted'
+          );
           SQL
           for migration in \
             migrations/005_media_assets.sql \
@@ -229,6 +240,19 @@ jobs:
           SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
           INSERT INTO testagram_local.thread_bookmarks(thread_id,user_id)
           SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
+          INSERT INTO testagram_local.follows(follower_id,following_id,status)
+          VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','accepted');
+          DO $feed$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_local.threads t
+              JOIN testagram_local.follows f ON f.following_id=t.owner_id
+              WHERE f.follower_id='00000000-0000-4000-8000-000000000002'
+                AND f.status='accepted' AND t.visibility='public' AND t.deleted_at IS NULL
+            ) THEN
+              RAISE EXCEPTION 'following thread feed query returned no visible thread';
+            END IF;
+          END $feed$;
           DO $ci$
           BEGIN
             IF (SELECT count(*) FROM testagram_local.threads) <> 1 THEN
