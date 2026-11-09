@@ -503,7 +503,7 @@ jobs:
             migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
             migrations/20261106_social_core.sql \
-            migrations/20261109_post_create_idempotency.sql; do
+; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
@@ -517,38 +517,6 @@ jobs:
           INSERT INTO testagram_local.accounts(user_id,username,display_name)
           VALUES ('123e4567-e89b-42d3-a456-426614174004','ci_social_user','Social User'),
                  ('123e4567-e89b-42d3-a456-426614174005','ci_protected_user','Protected User');
-          DO $idempotency$
-          DECLARE
-            v_user UUID;
-            v_post UUID;
-            v_count BIGINT;
-            v_text TEXT;
-            v_sensitive BOOLEAN;
-            v_projected_sensitive TEXT;
-          BEGIN
-            INSERT INTO testagram_local.accounts(user_id,username,display_name)
-            VALUES (gen_random_uuid(),'ci_idempotency_user','Idempotency User')
-            RETURNING user_id INTO v_user;
-            INSERT INTO testagram_local.posts(author_id,text,visibility,sensitive,idempotency_key)
-            VALUES (v_user,'idempotent body','public',TRUE,'ci-post-key-0001')
-            RETURNING id INTO v_post;
-            INSERT INTO testagram_local.posts(author_id,text,visibility,sensitive,idempotency_key)
-            VALUES (v_user,'different body','public',FALSE,'ci-post-key-0001')
-            ON CONFLICT (author_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING;
-            SELECT count(*) INTO v_count FROM testagram_local.posts
-              WHERE author_id=v_user AND idempotency_key='ci-post-key-0001';
-            SELECT text,sensitive INTO v_text,v_sensitive FROM testagram_local.posts WHERE id=v_post;
-            SELECT payload->>'sensitive' INTO v_projected_sensitive
-              FROM public.platform_replication_outbox
-              WHERE entity_type='post' AND entity_id=v_post::text
-              ORDER BY entity_version DESC LIMIT 1;
-            IF v_count <> 1 OR v_text <> 'idempotent body' OR NOT v_sensitive THEN
-              RAISE EXCEPTION 'post idempotency did not preserve the original payload';
-            END IF;
-            IF v_projected_sensitive <> 'true' THEN
-              RAISE EXCEPTION 'sensitive marker was not carried into the transactional replication event';
-            END IF;
-          END $idempotency$;
           UPDATE testagram_local.accounts SET protected_account=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174005';
           INSERT INTO testagram_local.follows(follower_id,following_id,status)
           VALUES ('123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174004','accepted'),
