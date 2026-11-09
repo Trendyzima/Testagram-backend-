@@ -153,6 +153,94 @@ jobs:
         if: always()
         run: docker stop testagram-tv-health-ci || true
 
+  social-schema-integration:
+    name: Poll, thread and browsing history PostgreSQL integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-social-schema-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-social-schema-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-social-schema-ci
+          exit 1
+      - name: Apply real prerequisite and social migrations
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE service_role NOLOGIN;
+          CREATE SCHEMA testagram_local;
+          CREATE TABLE testagram_local.accounts (user_id uuid PRIMARY KEY);
+          CREATE TABLE testagram_local.posts (id uuid PRIMARY KEY);
+          SQL
+          for migration in \
+            migrations/005_media_assets.sql \
+            migrations/007_media_product_bridge.sql \
+            migrations/008_virtual_storage_bridge.sql \
+            migrations/20261108_testagram_polls.sql \
+            migrations/20261109_threads_browsing_history.sql; do
+            docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+      - name: Verify media attachment, poll voting and private history constraints
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_local.accounts(user_id)
+          VALUES ('00000000-0000-4000-8000-000000000001'),
+                 ('00000000-0000-4000-8000-000000000002');
+          INSERT INTO testagram_media.assets
+            (object_key,owner_id,visibility,content_type,size_bytes,status,original_name,storage_namespace)
+          VALUES ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef',
+                  '00000000-0000-4000-8000-000000000001','public','image/jpeg',1024,'ready','thread.jpg','media-public');
+          INSERT INTO testagram_local.polls(author_id,question,media_object_key)
+          VALUES ('00000000-0000-4000-8000-000000000001','Which option should we choose?',
+                  'users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef');
+          INSERT INTO testagram_local.poll_options(poll_id,label,position)
+          SELECT id,'Option A',0 FROM testagram_local.polls;
+          INSERT INTO testagram_local.poll_options(poll_id,label,position)
+          SELECT id,'Option B',1 FROM testagram_local.polls;
+          INSERT INTO testagram_local.poll_votes(poll_id,option_id,user_id)
+          SELECT p.id,o.id,'00000000-0000-4000-8000-000000000002'
+          FROM testagram_local.polls p JOIN testagram_local.poll_options o ON o.poll_id=p.id AND o.position=0;
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_local.poll_votes) <> 1 THEN
+              RAISE EXCEPTION 'poll vote was not persisted';
+            END IF;
+            IF (SELECT count(*) FROM testagram_local.polls WHERE media_object_key IS NOT NULL) <> 1 THEN
+              RAISE EXCEPTION 'poll media registry foreign key was not persisted';
+            END IF;
+          END $ci$;
+          INSERT INTO testagram_local.threads(owner_id,body,media_urls)
+          VALUES ('00000000-0000-4000-8000-000000000001','A native thread',
+            '[{"url":"https://media.testagram.site/v1/tenants/owner/users/file","name":"thread.jpg","type":"image/jpeg","size":1024}]'::jsonb);
+          INSERT INTO testagram_local.browsing_history(user_id,entity_type,entity_id,metadata)
+          SELECT '00000000-0000-4000-8000-000000000001','thread',id,'{"surface":"thread-detail"}'::jsonb
+          FROM testagram_local.threads;
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_local.threads) <> 1 THEN
+              RAISE EXCEPTION 'native thread row was not persisted';
+            END IF;
+            IF (SELECT count(*) FROM testagram_local.browsing_history WHERE user_id='00000000-0000-4000-8000-000000000001') <> 1 THEN
+              RAISE EXCEPTION 'per-account browsing history was not persisted';
+            END IF;
+            IF (SELECT count(*) FROM testagram_local.browsing_history WHERE user_id='00000000-0000-4000-8000-000000000002') <> 0 THEN
+              RAISE EXCEPTION 'browsing history leaked across accounts';
+            END IF;
+          END $ci$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-social-schema-ci || true
+
   compose:
     name: Self-hosted Compose validation
     runs-on: ubuntu-latest
