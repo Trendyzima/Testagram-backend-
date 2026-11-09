@@ -208,8 +208,8 @@ func (s *service) marketplaceProductsByIDs(w http.ResponseWriter, r *http.Reques
 		       COALESCE(a.avatar_key,'')
 		FROM testagram_local.marketplace_products p
 		JOIN testagram_local.accounts a ON a.user_id = p.owner_id
-		WHERE p.id = ANY($1::uuid[]) AND p.is_active AND a.account_status = 'active'
-		ORDER BY array_position($1::uuid[], p.id)
+		WHERE p.id::text = ANY($1::text[]) AND p.is_active AND a.account_status = 'active'
+		ORDER BY array_position($1::text[], p.id::text)
 	`, ids)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MARKETPLACE_PRODUCTS_FAILED", "Saved products could not be loaded", id))
