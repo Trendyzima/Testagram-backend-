@@ -14,6 +14,14 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
+func parseFollowingOnly(value string) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
+}
+
 type homeFeedCursor struct {
 	CreatedAt time.Time `json:"created_at"`
 	ID        string    `json:"id"`
@@ -76,7 +84,11 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := 20
-	followingOnly := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("following_only")), "true")
+	followingOnly, followingErr := parseFollowingOnly(r.URL.Query().Get("following_only"))
+	if followingErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_FOLLOWING_FILTER", "following_only must be a boolean", requestID))
+		return
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 50 {
