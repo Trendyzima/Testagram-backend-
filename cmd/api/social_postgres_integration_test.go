@@ -74,14 +74,20 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 	viewTag, err := tx.Exec(ctx, `INSERT INTO testagram_local.post_views(post_id,viewer_id,view_date)
 		VALUES($1,$2,(now() AT TIME ZONE 'UTC')::date)
 		ON CONFLICT(post_id,viewer_id,view_date) DO NOTHING`, publicPostID, viewerID)
-	if err != nil || viewTag.RowsAffected() != 1 {
-		t.Fatalf("insert first post view: rows=%d err=%v", viewTag.RowsAffected(), err)
+	if err != nil {
+		t.Fatalf("insert first post view: %v", err)
+	}
+	if viewTag.RowsAffected() != 1 {
+		t.Fatalf("first post view rows=%d, want 1", viewTag.RowsAffected())
 	}
 	viewTag, err = tx.Exec(ctx, `INSERT INTO testagram_local.post_views(post_id,viewer_id,view_date)
 		VALUES($1,$2,(now() AT TIME ZONE 'UTC')::date)
 		ON CONFLICT(post_id,viewer_id,view_date) DO NOTHING`, publicPostID, viewerID)
-	if err != nil || viewTag.RowsAffected() != 0 {
-		t.Fatalf("duplicate daily post view was not suppressed: rows=%d err=%v", viewTag.RowsAffected(), err)
+	if err != nil {
+		t.Fatalf("insert duplicate post view: %v", err)
+	}
+	if viewTag.RowsAffected() != 0 {
+		t.Fatalf("duplicate daily post view rows=%d, want 0", viewTag.RowsAffected())
 	}
 
 	assertVisible := func(name, viewer, post string, want bool) {
