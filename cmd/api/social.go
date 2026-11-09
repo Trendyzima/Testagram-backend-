@@ -544,6 +544,161 @@ func (s *service) socialUnreact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"liked": false, "removed": tag.RowsAffected() > 0, "likes_count": likesCount}, "error": nil, "request_id": requestID})
 }
 
+func (s *service) socialRepliesList(w http.ResponseWriter, r *http.Request) {
+	userID, reqID, ok := s.socialAuth(w, r)
+	if !ok { return }
+	postID := strings.ToLower(strings.TrimSpace(r.PathValue("post_id")))
+	if !socialUUIDPattern.MatchString(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "Post ID is invalid", reqID))
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 100 {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REPLY_LIMIT", "Limit must be between 1 and 100", reqID))
+			return
+		}
+		limit = n
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLIES_UNAVAILABLE", "Replies could not be loaded", reqID))
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	if _, err := socialCanViewPostReadWith(r.Context(), tx, userID, postID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	rows, err := tx.Query(r.Context(), `
+		SELECT r.id::text,r.user_id::text,r.post_id::text,r.parent_reply_id::text,
+		       r.content,r.created_at,r.updated_at,
+		       a.username,a.display_name,a.avatar_key,a.verified_tier
+		FROM testagram_local.replies r
+		JOIN testagram_local.accounts a ON a.user_id=r.user_id
+		WHERE r.post_id=$1::uuid AND r.deleted_at IS NULL AND a.account_status='active'
+		ORDER BY r.created_at DESC,r.id DESC
+		LIMIT $2
+	`, postID, limit)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLIES_UNAVAILABLE", "Replies could not be loaded", reqID))
+		return
+	}
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		var replyID, authorID, parentID, content, username, displayName, avatar, tier string
+		var postIDValue string
+		var created, updated time.Time
+		var parent *string
+		if err := rows.Scan(&replyID,&authorID,&postIDValue,&parent,&content,&created,&updated,&username,&displayName,&avatar,&tier); err != nil {
+			rows.Close()
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLIES_UNAVAILABLE", "Reply records could not be read", reqID))
+			return
+		}
+		if parent != nil { parentID = *parent }
+		profile := map[string]any{"id": authorID, "username": username, "display_name": displayName, "avatar_url": avatar, "verified_tier": tier}
+		items = append(items, map[string]any{
+			"id": replyID, "user_id": authorID, "post_id": postIDValue,
+			"parent_reply_id": parentID, "content": content,
+			"created_at": created, "updated_at": updated,
+			"profile": profile, "user_profiles": profile,
+		})
+	}
+	rowErr := rows.Err()
+	rows.Close()
+	if rowErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLIES_UNAVAILABLE", "Reply records could not be read", reqID))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLIES_UNAVAILABLE", "Replies could not be loaded", reqID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items, "next_cursor": nil}, "error": nil, "request_id": reqID})
+}
+
+func (s *service) socialReplyChainGet(w http.ResponseWriter, r *http.Request) {
+	userID, reqID, ok := s.socialAuth(w, r)
+	if !ok { return }
+	replyID := strings.ToLower(strings.TrimSpace(r.PathValue("reply_id")))
+	if !socialUUIDPattern.MatchString(replyID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REPLY_ID", "Reply ID is invalid", reqID))
+		return
+	}
+	limit := 200
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 500 {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REPLY_LIMIT", "Limit must be between 1 and 500", reqID))
+			return
+		}
+		limit = n
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_CHAIN_UNAVAILABLE", "Reply chain could not be loaded", reqID))
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	var postID string
+	if err := tx.QueryRow(r.Context(), "SELECT post_id::text FROM testagram_local.replies WHERE id=$1::uuid AND deleted_at IS NULL", replyID).Scan(&postID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if _, err := socialCanViewPostReadWith(r.Context(), tx, userID, postID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	rows, err := tx.Query(r.Context(), `
+		WITH RECURSIVE reply_tree AS (
+		  SELECT r.id,r.user_id,r.post_id,r.parent_reply_id,r.content,r.created_at,r.updated_at
+		  FROM testagram_local.replies r
+		  WHERE r.id=$1::uuid AND r.post_id=$2::uuid AND r.deleted_at IS NULL
+		  UNION ALL
+		  SELECT child.id,child.user_id,child.post_id,child.parent_reply_id,child.content,child.created_at,child.updated_at
+		  FROM testagram_local.replies child
+		  JOIN reply_tree parent ON child.parent_reply_id=parent.id AND child.post_id=parent.post_id
+		  WHERE child.deleted_at IS NULL
+		)
+		SELECT t.id::text,t.user_id::text,t.post_id::text,t.parent_reply_id::text,
+		       t.content,t.created_at,t.updated_at,a.username,a.display_name,a.avatar_key,a.verified_tier
+		FROM reply_tree t
+		JOIN testagram_local.accounts a ON a.user_id=t.user_id
+		WHERE a.account_status='active'
+		ORDER BY t.created_at ASC,t.id ASC
+		LIMIT $3
+	`, replyID, postID, limit)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_CHAIN_UNAVAILABLE", "Reply chain could not be loaded", reqID))
+		return
+	}
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		var id, author, post, content, username, display, avatar, tier string
+		var parent *string
+		var created, updated time.Time
+		if err := rows.Scan(&id,&author,&post,&parent,&content,&created,&updated,&username,&display,&avatar,&tier); err != nil {
+			rows.Close()
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_CHAIN_UNAVAILABLE", "Reply chain records could not be read", reqID))
+			return
+		}
+		profile := map[string]any{"id": author, "username": username, "display_name": display, "avatar_url": avatar, "verified_tier": tier}
+		items = append(items, map[string]any{"id": id, "user_id": author, "post_id": post, "parent_reply_id": parent, "content": content, "created_at": created, "updated_at": updated, "profile": profile, "user_profiles": profile})
+	}
+	rowErr := rows.Err()
+	rows.Close()
+	if rowErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_CHAIN_UNAVAILABLE", "Reply chain records could not be read", reqID))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_CHAIN_UNAVAILABLE", "Reply chain could not be loaded", reqID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items}, "error": nil, "request_id": reqID})
+}
+
 func (s *service) socialReply(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
