@@ -182,4 +182,57 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 		t.Fatalf("suspend viewer fixture: %v", err)
 	}
 	assertVisible("suspended viewer cannot read a public post", viewerID, publicPostID, false)
+
+	// Exercise the native advertising review schema and audit trail.
+	var advertiserID, campaignID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO testagram_local.advertisers(owner_user_id, name)
+		VALUES($1, 'CI advertiser ' || $2)
+		RETURNING id::text
+	`, authorID, suffix).Scan(&advertiserID); err != nil {
+		t.Fatalf("insert ad advertiser fixture: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO testagram_local.ad_campaigns(
+		  advertiser_id, name, payment_status, lifetime_budget_micros, funded_micros
+		) VALUES($1, 'CI campaign ' || $2, 'funded', 1000000, 1000000)
+		RETURNING id::text
+	`, advertiserID, suffix).Scan(&campaignID); err != nil {
+		t.Fatalf("insert ad campaign fixture: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO testagram_local.ad_creatives(campaign_id, headline, click_through_url)
+		VALUES($1, 'CI creative', 'https://example.test/ad')
+	`, campaignID); err != nil {
+		t.Fatalf("insert ad creative fixture: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO testagram_identity.staff_permissions(user_id, permission_key, granted_by)
+		VALUES($1, 'platform.ads', $2)
+	`, viewerID, authorID); err != nil {
+		t.Fatalf("insert staff permission fixture: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO testagram_local.ad_review_audit(
+		  campaign_id, advertiser_owner_id, actor_user_id, decision,
+		  note, previous_status, resulting_status, payment_status
+		) VALUES($1, $2, $3, 'approved', 'integration approval',
+		         'pending_review', 'active', 'funded')
+	`, campaignID, authorID, viewerID); err != nil {
+		t.Fatalf("insert ad review audit fixture: %v", err)
+	}
+	var campaignCount, creativeCount, permissionCount, auditCount int64
+	if err := tx.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM testagram_local.ad_campaigns WHERE id = $1),
+		  (SELECT count(*) FROM testagram_local.ad_creatives WHERE campaign_id = $1),
+		  (SELECT count(*) FROM testagram_identity.staff_permissions WHERE user_id = $2 AND permission_key = 'platform.ads' AND revoked_at IS NULL),
+		  (SELECT count(*) FROM testagram_local.ad_review_audit WHERE campaign_id = $1)
+	`, campaignID, viewerID).Scan(&campaignCount, &creativeCount, &permissionCount, &auditCount); err != nil {
+		t.Fatalf("verify ad review schema fixtures: %v", err)
+	}
+	if campaignCount != 1 || creativeCount != 1 || permissionCount != 1 || auditCount != 1 {
+		t.Fatalf("ad review fixtures counts = campaign:%d creative:%d permission:%d audit:%d; want all 1",
+			campaignCount, creativeCount, permissionCount, auditCount)
+	}
 }
