@@ -2,11 +2,10 @@
 
 This repository is the application-service foundation for Testagram. It is separate from:
 
-- supabase-for-testagram: Supabase platform and database/auth/storage services.
 - cdn-: Go media-delivery/cache data plane.
-- [Testagram data-centre](https://github.com/Trendyzima/Testagram-data-centre-): VPS assembly, pinned Supabase upstreams, node-agent and host backup/restore operations; see [the cross-repository integration contract](docs/vps-data-centre-integration.md).
+- [Testagram data-centre](https://github.com/Trendyzima/Testagram-data-centre-): VPS assembly, Backblaze B2 media durability, Cloudflare delivery, node-agent and host backup/restore operations; see [the cross-repository integration contract](docs/vps-data-centre-integration.md).
 
-It must not duplicate Supabase's database, authentication, or binary media responsibilities. It provides a separately deployable API/worker layer that can scale horizontally as demand grows.
+It is the only public application API and authorization boundary. Appwrite owns authentication and sessions, Neon owns canonical relational application data, and Backblaze B2 owns durable media objects. Cloudflare provides edge delivery/security; Data Centre owns infrastructure and media lifecycle.
 
 ## Current service
 
@@ -37,7 +36,7 @@ The fresh Appwrite platform is coordinated across five repositories. Keep the fo
 | [the-algorithm](https://github.com/Trendyzima/the-algorithm) | Private feed ranking and recommendation scoring | Returns ordering only; Backend rechecks visibility and hydrates canonical posts |
 | [Testagram Data Centre](https://github.com/Trendyzima/Testagram-data-centre-) | Runtime deployment, private networks, media durability, storage nodes, backups and recovery | Owns infrastructure and media durability, not product identity or social policy |
 
-Legacy Supabase-compatible modules remain in this repository for migration compatibility. The fresh Appwrite runtime is a separate, explicitly configured path; do not silently fall back between identity providers. The public API remains the only client-facing application boundary. Federation, Algorithm and infrastructure services stay on private networks.
+Supabase is not part of the target runtime architecture. The API verifies Appwrite sessions, stores canonical application records in Neon, and coordinates private specialist services. There is no identity-provider fallback. Federation, Algorithm and infrastructure services stay on private networks.
 
 Federation has a dedicated authenticated `GET /internal/v1/federation/readyz` contract. It checks only the Appwrite profile and transactional outbox dependencies needed by Federation, while public `/readyz` continues to include Algorithm/home-feed readiness.
 
@@ -46,9 +45,9 @@ Federation has a dedicated authenticated `GET /internal/v1/federation/readyz` co
 
 ## Testagram compatibility gateway
 
-`POST /api/capability` implements the same capability-dispatch envelope used by the existing Testagram web client. It forwards the user's Bearer JWT and the publishable API key to the canonical Supabase `capability_dispatch_v2` RPC; it does not use a service-role key to bypass row-level security. It also preserves the bookmark RPC compatibility paths, applies strict origin allow-listing, caps request/response bodies, applies an 8-second upstream deadline, and returns request IDs on gateway errors. `GET /healthz`, `GET /readyz`, and `GET /metrics` remain available.
+`POST /api/capability` implements native Backend dispatch for migrated capabilities. It verifies the Appwrite JWT, routes supported operations to Neon-backed handlers, and returns an explicit `501 CAPABILITY_NOT_IMPLEMENTED` for capabilities that have not yet been migrated. It never forwards requests to Supabase or a generic legacy RPC gateway. `GET /healthz`, `GET /readyz`, and `GET /metrics` remain available.
 
-To opt the web app into this gateway only after deployment, set `VITE_TESTAGRAM_API_URL=https://api.testagram.site` in the frontend build environment. Leave it blank to keep the current same-origin `/api/capability` Vercel route. Configure matching TLS/DNS and `ALLOWED_ORIGINS` before switching production traffic. The gateway requires `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`; never set the Supabase service-role key in browser-visible configuration.
+Configure `VITE_TESTAGRAM_API_URL=https://api.testagram.site` in the frontend build environment and matching TLS/DNS plus `ALLOWED_ORIGINS` before switching production traffic. No Supabase configuration or credentials are accepted or required.
 
 ## Local development
 
@@ -60,7 +59,7 @@ Requirements: Go 1.23+, Docker Compose.
 4. Start the stack with docker compose up --build.
 5. Verify GET http://127.0.0.1:8080/healthz, /readyz and /metrics.
 
-The local database is for development only and is not automatically wired to the live Supabase project. Do not put production credentials in this repository or in .env.example.
+The local PostgreSQL database is for development only and is not automatically wired to production Neon. Do not put production credentials in this repository or in .env.example.
 
 ## Testagram platform core
 
