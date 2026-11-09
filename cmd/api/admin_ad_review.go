@@ -158,6 +158,22 @@ func (s *service) adReviewQueue(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func adCampaignStatusAfterReview(decision, paymentStatus, previousStatus string, endsAt *time.Time, now time.Time) string {
+	if decision == "rejected" {
+		return "rejected"
+	}
+	if paymentStatus != "funded" {
+		return "pending_payment"
+	}
+	if endsAt != nil && !endsAt.After(now) {
+		return "completed"
+	}
+	if previousStatus == "paused" {
+		return "paused"
+	}
+	return "active"
+}
+
 func valueOrEmpty(value *string) string {
 	if value == nil {
 		return ""
@@ -237,17 +253,7 @@ func (s *service) reviewAdCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	resultingStatus := "pending_payment"
-	switch {
-	case input.Decision == "rejected":
-		resultingStatus = "rejected"
-	case paymentStatus == "funded" && endsAt != nil && !endsAt.After(now):
-		resultingStatus = "completed"
-	case paymentStatus == "funded" && previousStatus == "paused":
-		resultingStatus = "paused"
-	case paymentStatus == "funded":
-		resultingStatus = "active"
-	}
+	resultingStatus := adCampaignStatusAfterReview(input.Decision, paymentStatus, previousStatus, endsAt, now)
 	var note any
 	if input.Note != "" {
 		note = input.Note
