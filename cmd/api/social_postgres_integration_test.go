@@ -221,18 +221,26 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 	`, campaignID, authorID, viewerID); err != nil {
 		t.Fatalf("insert ad review audit fixture: %v", err)
 	}
-	var campaignCount, creativeCount, permissionCount, auditCount int64
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO testagram_local.ad_campaign_status_audit(
+		  campaign_id, actor_user_id, previous_status, resulting_status
+		) VALUES($1, $2, 'active', 'paused')
+	`, campaignID, viewerID); err != nil {
+		t.Fatalf("insert ad status audit fixture: %v", err)
+	}
+	var campaignCount, creativeCount, permissionCount, auditCount, statusAuditCount int64
 	if err := tx.QueryRow(ctx, `
 		SELECT
 		  (SELECT count(*) FROM testagram_local.ad_campaigns WHERE id = $1),
 		  (SELECT count(*) FROM testagram_local.ad_creatives WHERE campaign_id = $1),
 		  (SELECT count(*) FROM testagram_identity.staff_permissions WHERE user_id = $2 AND permission_key = 'platform.ads' AND revoked_at IS NULL),
-		  (SELECT count(*) FROM testagram_local.ad_review_audit WHERE campaign_id = $1)
-	`, campaignID, viewerID).Scan(&campaignCount, &creativeCount, &permissionCount, &auditCount); err != nil {
+		  (SELECT count(*) FROM testagram_local.ad_review_audit WHERE campaign_id = $1),
+		  (SELECT count(*) FROM testagram_local.ad_campaign_status_audit WHERE campaign_id = $1)
+	`, campaignID, viewerID).Scan(&campaignCount, &creativeCount, &permissionCount, &auditCount, &statusAuditCount); err != nil {
 		t.Fatalf("verify ad review schema fixtures: %v", err)
 	}
-	if campaignCount != 1 || creativeCount != 1 || permissionCount != 1 || auditCount != 1 {
-		t.Fatalf("ad review fixtures counts = campaign:%d creative:%d permission:%d audit:%d; want all 1",
-			campaignCount, creativeCount, permissionCount, auditCount)
+	if campaignCount != 1 || creativeCount != 1 || permissionCount != 1 || auditCount != 1 || statusAuditCount != 1 {
+		t.Fatalf("ad review fixtures counts = campaign:%d creative:%d permission:%d audit:%d status-audit:%d; want all 1",
+			campaignCount, creativeCount, permissionCount, auditCount, statusAuditCount)
 	}
 }
