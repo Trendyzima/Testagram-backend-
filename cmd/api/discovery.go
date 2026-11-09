@@ -2,6 +2,7 @@ package main
 
 import (
  "net/http"
+ "regexp"
  "strconv"
  "strings"
  "time"
@@ -27,28 +28,143 @@ func (s *service) discoveryCreators(w http.ResponseWriter,r *http.Request) {
  writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
 }
 
-func (s *service) discoveryPosts(w http.ResponseWriter,r *http.Request) {
- id:=requestID(r);if !s.cors(w,r){writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",id));return}
- if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_UNAVAILABLE","Discovery service is unavailable",id));return}
- limit:=20;if raw:=r.URL.Query().Get("limit");raw!=""{if n,e:=strconv.Atoi(raw);e==nil{if n<1{n=1};if n>100{n=100};limit=n}}
- q:=strings.TrimSpace(r.URL.Query().Get("q"));if len(q)>200{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_DISCOVERY_QUERY","Search query is too long",id));return}
- sortBy:=r.URL.Query().Get("sort");order:="p.created_at DESC,p.id DESC";if sortBy=="top"{order="p.likes_count DESC,p.created_at DESC,p.id DESC"}else if sortBy=="views"{order="p.views_count DESC,p.created_at DESC,p.id DESC"}
- since:=time.Now().UTC().Add(-48*time.Hour);if raw:=strings.TrimSpace(r.URL.Query().Get("since"));raw!=""{if parsed,e:=time.Parse(time.RFC3339,raw);e==nil{since=parsed.UTC()}else{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_DISCOVERY_DATE","Discovery date is invalid",id));return}};if raw:=r.URL.Query().Get("since");raw!=""{if parsed,e:=time.Parse(time.RFC3339,raw);e==nil{since=parsed}};media:=r.URL.Query().Get("media");keywords:=strings.Split(strings.ToLower(r.URL.Query().Get("keywords")),",");patterns:=make([]string,0,len(keywords));for _,keyword:=range keywords{keyword=strings.TrimSpace(keyword);if keyword!=""&&len(keyword)<=64{patterns=append(patterns,"%"+keyword+"%")}}
- query:=`SELECT p.id::text,p.author_id::text,p.text,p.visibility,p.media_ids,p.is_video,p.views_count,p.created_at,p.updated_at,p.likes_count,p.replies_count,p.reposts_count,
- a.username,a.display_name,a.avatar_key
- FROM testagram_local.posts p JOIN testagram_local.accounts a ON a.user_id=p.author_id
- WHERE p.deleted_at IS NULL AND p.visibility='public' AND p.community_id IS NULL AND p.created_at >= $1
- AND (($2='' AND cardinality($5::text[])=0) OR p.text ILIKE '%'||$2||'%' OR a.username ILIKE '%'||$2||'%' OR EXISTS(SELECT 1 FROM unnest($5::text[]) term WHERE p.text ILIKE term)) AND ($4='' OR ($4='video' AND p.is_video=TRUE) OR ($4='image' AND p.is_video=FALSE))
- ORDER BY `+order+` LIMIT $3`
- rows,err:=s.db.Query(r.Context(),query,since,q,limit,media,patterns);if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_POSTS_FAILED","Posts could not be loaded",id));return};defer rows.Close()
- items:=make([]map[string]any,0)
- for rows.Next(){var pid,uid,content,visibility,username,display,avatar string;var mediaJSON []byte;var video bool;var views,likes,replies,reposts int64;var created,updated time.Time
-  if err=rows.Scan(&pid,&uid,&content,&visibility,&mediaJSON,&video,&views,&created,&updated,&likes,&replies,&reposts,&username,&display,&avatar);err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_POSTS_FAILED","Post records could not be read",id));return}
-  var mediaIDs []string;_ = json.Unmarshal(mediaJSON,&mediaIDs);profile:=map[string]any{"id":uid,"username":username,"display_name":display,"avatar_url":avatar,"verified":false}
-  items=append(items,map[string]any{"id":pid,"user_id":uid,"author_id":uid,"content":content,"text":content,"visibility":visibility,"media_ids":mediaIDs,"media_urls":[]string{},"is_video":video ,"views_count":views,"created_at":created,"updated_at":updated,"likes_count":likes,"replies_count":replies,"reposts_count":reposts,"user_profiles":profile})
- }
- if err=rows.Err();err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("DISCOVERY_POSTS_FAILED","Post records could not be read",id));return}
- writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":nil}})
+func (s *service) discoveryPosts(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("DISCOVERY_UNAVAILABLE", "Discovery service is unavailable", id))
+		return
+	}
+
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 100 {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_DISCOVERY_LIMIT", "Limit must be between 1 and 100", id))
+			return
+		}
+		limit = n
+	}
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 || n > 100000 {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_DISCOVERY_OFFSET", "Offset must be between 0 and 100000", id))
+			return
+		}
+		offset = n
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) > 200 {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_DISCOVERY_QUERY", "Search query is too long", id))
+		return
+	}
+	sortBy := strings.TrimSpace(r.URL.Query().Get("sort"))
+	order := "p.created_at DESC,p.id DESC"
+	switch sortBy {
+	case "", "recent":
+	case "top":
+		order = "p.likes_count DESC,p.created_at DESC,p.id DESC"
+	case "views":
+		order = "p.views_count DESC,p.created_at DESC,p.id DESC"
+	default:
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_DISCOVERY_SORT", "Sort must be recent, top or views", id))
+		return
+	}
+	since := time.Now().UTC().Add(-48 * time.Hour)
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_DISCOVERY_DATE", "Discovery date is invalid", id))
+			return
+		}
+		since = parsed.UTC()
+	}
+	media := strings.TrimSpace(r.URL.Query().Get("media"))
+	if media != "" && media != "video" && media != "image" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_DISCOVERY_MEDIA", "Media must be video or image", id))
+		return
+	}
+	feed := strings.TrimSpace(r.URL.Query().Get("feed"))
+	if feed != "" && feed != "following" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_DISCOVERY_FEED", "Feed must be following", id))
+		return
+	}
+	userID := ""
+	if feed == "following" {
+		var ok bool
+		userID, _, ok = s.socialAuth(w, r)
+		if !ok {
+			return
+		}
+	}
+	keywords := strings.Split(strings.ToLower(r.URL.Query().Get("keywords")), ",")
+	patterns := make([]string, 0, len(keywords))
+	for _, keyword := range keywords {
+		keyword = strings.TrimSpace(keyword)
+		if keyword != "" && len(keyword) <= 64 {
+			patterns = append(patterns, "%"+keyword+"%")
+		}
+	}
+
+	query := `
+		SELECT p.id::text,p.author_id::text,p.text,p.visibility,p.media_ids,p.is_video,
+		       p.views_count,p.created_at,p.updated_at,p.likes_count,p.replies_count,p.reposts_count,
+		       a.username,a.display_name,a.avatar_key
+		FROM testagram_local.posts p
+		JOIN testagram_local.accounts a ON a.user_id=p.author_id
+		WHERE p.deleted_at IS NULL AND p.visibility='public' AND p.community_id IS NULL
+		  AND p.created_at >= $1
+		  AND (($2='' AND cardinality($5::text[])=0) OR p.text ILIKE '%'||$2||'%'
+		       OR a.username ILIKE '%'||$2||'%'
+		       OR EXISTS(SELECT 1 FROM unnest($5::text[]) term WHERE p.text ILIKE term))
+		  AND ($4='' OR ($4='video' AND p.is_video=TRUE) OR ($4='image' AND p.is_video=FALSE))
+		  AND ($6<>'following' OR EXISTS(
+		       SELECT 1 FROM testagram_local.follows f
+		       WHERE f.follower_id=$7::uuid AND f.following_id=p.author_id AND f.status='accepted'))
+		ORDER BY ` + order + `
+		LIMIT $3 OFFSET $8
+	`
+	rows, err := s.db.Query(r.Context(), query, since, q, limit, media, patterns, feed, userID, offset)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("DISCOVERY_POSTS_FAILED", "Posts could not be loaded", id))
+		return
+	}
+	defer rows.Close()
+
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		var postID, authorID, content, visibility, username, displayName, avatar string
+		var mediaJSON []byte
+		var video bool
+		var views, likes, replies, reposts int64
+		var created, updated time.Time
+		if err := rows.Scan(&postID, &authorID, &content, &visibility, &mediaJSON, &video,
+			&views, &created, &updated, &likes, &replies, &reposts,
+			&username, &displayName, &avatar); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("DISCOVERY_POSTS_FAILED", "Post records could not be read", id))
+			return
+		}
+		var mediaIDs []string
+		_ = json.Unmarshal(mediaJSON, &mediaIDs)
+		profile := map[string]any{"id": authorID, "username": username, "display_name": displayName, "avatar_url": avatar, "verified": false}
+		items = append(items, map[string]any{
+			"id": postID, "user_id": authorID, "author_id": authorID,
+			"content": content, "text": content, "visibility": visibility,
+			"media_ids": mediaIDs, "media_urls": []string{}, "is_video": video,
+			"views_count": views, "created_at": created, "updated_at": updated,
+			"likes_count": likes, "replies_count": replies, "reposts_count": reposts,
+			"user_profiles": profile,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("DISCOVERY_POSTS_FAILED", "Post records could not be read", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items, "next_cursor": nil}})
 }
 
 func (s *service) discoveryThreads(w http.ResponseWriter,r *http.Request) {
