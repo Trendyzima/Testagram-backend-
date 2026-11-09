@@ -112,9 +112,9 @@ func (s *service) pollCreate(w http.ResponseWriter,r *http.Request) {
 	for i:=range in.Options {in.Options[i]=strings.TrimSpace(in.Options[i]);if utf8.RuneCountInString(in.Options[i])<1||utf8.RuneCountInString(in.Options[i])>200 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_OPTION","Each option must contain 1–200 characters",requestID));return}}
 	if in.EndsAt!=nil&&!in.EndsAt.After(time.Now()) {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_END_DATE","Poll closing time must be in the future",requestID));return}
 if in.MediaObjectKey != "" {
-		var visibility, assetStatus, contentType string
-		err := s.db.QueryRow(r.Context(), "SELECT visibility,status,content_type FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", strings.TrimSpace(in.MediaObjectKey), userID).Scan(&visibility,&assetStatus,&contentType)
-		if err != nil || visibility != "public" || assetStatus != "ready" || (!strings.HasPrefix(contentType,"image/") && !strings.HasPrefix(contentType,"video/")) {
+		var visibility, assetStatus, contentType, externalMediaID string
+		err := s.db.QueryRow(r.Context(), "SELECT visibility,status,content_type,coalesce(external_media_id::text,'') FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", strings.TrimSpace(in.MediaObjectKey), userID).Scan(&visibility,&assetStatus,&contentType,&externalMediaID)
+		if err != nil || visibility != "public" || assetStatus != "ready" || externalMediaID != "" || (!strings.HasPrefix(contentType,"image/") && !strings.HasPrefix(contentType,"video/")) {
 			writeJSON(w,http.StatusBadRequest,errorBody("POLL_MEDIA_NOT_ATTACHABLE","Poll media must be a ready public image or video owned by this account",requestID));return
 		}
 		in.MediaObjectKey = strings.TrimSpace(in.MediaObjectKey)
