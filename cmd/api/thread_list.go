@@ -35,6 +35,7 @@ func (s *service) threadsList(w http.ResponseWriter,r *http.Request) {
     parts:=strings.SplitN(string(decoded),"|",2)
     if len(parts)!=2||!socialUUIDPattern.MatchString(parts[1]){writeJSON(w,400,errorBody("INVALID_CURSOR","Thread cursor is invalid",rid));return}
     cursorTime,cursorID=parts[0],strings.ToLower(parts[1])
+    if _,timeErr:=time.Parse(time.RFC3339Nano,cursorTime);timeErr!=nil{writeJSON(w,400,errorBody("INVALID_CURSOR","Thread cursor timestamp is invalid",rid));return}
   }
   ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
   var rows pgx.Rows
