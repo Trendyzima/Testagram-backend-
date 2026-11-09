@@ -232,7 +232,14 @@ jobs:
           END $ci$;
           INSERT INTO testagram_local.threads(owner_id,body,media_urls)
           VALUES ('00000000-0000-4000-8000-000000000001','A native thread',
-            '[{"url":"https://media.testagram.site/v1/tenants/owner/users/file","name":"thread.jpg","type":"image/jpeg","size":1024}]'::jsonb);
+            '[{"key":"users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef","url":"https://media.testagram.site/v1/tenants/owner/users/file","name":"thread.jpg","type":"image/jpeg","size":1024}]'::jsonb);
+          INSERT INTO testagram_media.storage_deletion_jobs
+            (object_key,owner_id,visibility,storage_namespace,storage_provider,reason)
+          SELECT object_key,owner_id,visibility,storage_namespace,storage_provider,'user_delete'
+          FROM testagram_media.assets
+          WHERE object_key='users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef';
+          UPDATE testagram_media.assets SET status='deletion_pending'
+          WHERE object_key='users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef';
           INSERT INTO testagram_local.browsing_history(user_id,entity_type,entity_id,metadata)
           SELECT '00000000-0000-4000-8000-000000000001','thread',id,'{"surface":"thread-detail"}'::jsonb
           FROM testagram_local.threads;
@@ -268,6 +275,9 @@ jobs:
             END IF;
             IF (SELECT count(*) FROM testagram_local.thread_bookmarks) <> 1 THEN
               RAISE EXCEPTION 'native thread bookmark was not persisted';
+            END IF;
+            IF (SELECT count(*) FROM testagram_media.storage_deletion_jobs WHERE reason='user_delete' AND status='pending') <> 1 THEN
+              RAISE EXCEPTION 'thread media cleanup job was not queued';
             END IF;
             IF (SELECT count(*) FROM testagram_local.browsing_history WHERE user_id='00000000-0000-4000-8000-000000000001') <> 1 THEN
               RAISE EXCEPTION 'per-account browsing history was not persisted';
