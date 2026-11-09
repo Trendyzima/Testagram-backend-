@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -29,7 +31,7 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var input createPostV1Request
-	if err := decodeSingleJSON(r.Body, &input); err != nil {
+	if err := decodeCreatePostV1JSON(r.Body, &input); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_JSON", "Request body must contain one valid JSON object", id))
 		return
 	}
@@ -130,4 +132,20 @@ func validateCreatePostV1(input *createPostV1Request, rawKey string) (string, st
 		return "IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required"
 	}
 	return "", ""
+}
+
+func decodeCreatePostV1JSON(reader io.Reader, input *createPostV1Request) error {
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(input); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
