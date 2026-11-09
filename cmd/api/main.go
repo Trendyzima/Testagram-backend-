@@ -50,25 +50,25 @@ type upstreamMetric struct {
 }
 
 type service struct {
-	db                  *pgxpool.Pool
-	metricsMu           sync.Mutex
-	routeMetrics        map[string]*requestMetric
-	capabilityMetrics   map[string]*requestMetric
-	upstreamMetrics     map[string]*upstreamMetric
-	requests            atomic.Uint64
-	cacheHits           atomic.Uint64
-	cacheMisses         atomic.Uint64
-	rateLimited         atomic.Uint64
-	platformErrors      atomic.Uint64
-	algorithmRequests   atomic.Uint64
-	algorithmFailures   atomic.Uint64
+	db                      *pgxpool.Pool
+	metricsMu               sync.Mutex
+	routeMetrics            map[string]*requestMetric
+	capabilityMetrics       map[string]*requestMetric
+	upstreamMetrics         map[string]*upstreamMetric
+	requests                atomic.Uint64
+	cacheHits               atomic.Uint64
+	cacheMisses             atomic.Uint64
+	rateLimited             atomic.Uint64
+	platformErrors          atomic.Uint64
+	algorithmRequests       atomic.Uint64
+	algorithmFailures       atomic.Uint64
 	federationInternalToken string
-	upstream            *http.Client
-	platform            *platformclient.Client
-	media               *media.Signer
-	virtualStorage      *virtualstorage.Manager
-	algorithm           *algorithmclient.Client
-	replicationReceiver http.Handler
+	upstream                *http.Client
+	platform                *platformclient.Client
+	media                   *media.Signer
+	virtualStorage          *virtualstorage.Manager
+	algorithm               *algorithmclient.Client
+	replicationReceiver     http.Handler
 }
 
 type capabilityRequest struct {
@@ -816,11 +816,21 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
 		return
 	}
-	if body.Capability == "testagram.search.unified" && s.nativeUnifiedSearch(w, r, id, body.Input) { return }
-	if s.nativeCommunicationCapability(w, r, id, body) { return }
-	if s.nativeMPesaCapability(w, r, id, body) { return }
-	if s.nativeWalletSpaceCapability(w, r, id, body) { return }
-	if s.nativeSocialCapability(w, r, id, body) { return }
+	if body.Capability == "testagram.search.unified" && s.nativeUnifiedSearch(w, r, id, body.Input) {
+		return
+	}
+	if s.nativeCommunicationCapability(w, r, id, body) {
+		return
+	}
+	if s.nativeMPesaCapability(w, r, id, body) {
+		return
+	}
+	if s.nativeWalletSpaceCapability(w, r, id, body) {
+		return
+	}
+	if s.nativeSocialCapability(w, r, id, body) {
+		return
+	}
 	if s.localProductCapability(w, r, id, body) {
 		return
 	}
@@ -830,7 +840,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, errorBody("CAPABILITY_NOT_IMPLEMENTED", "This capability has not yet been migrated to the Testagram Backend", id))
 	return
 }
-
 
 // decodeSingleJSON rejects trailing values and non-whitespace bytes after the first
 // JSON value. Accepting concatenated JSON documents can cause different layers to
@@ -1077,7 +1086,9 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
-	if federationWorker != nil { go federationWorker.Run(signalCtx) }
+	if federationWorker != nil {
+		go federationWorker.Run(signalCtx)
+	}
 	go svc.runStorageDeletionWorker(signalCtx)
 	if replicationApplyEnabled {
 		if replicationStore == nil {
