@@ -214,21 +214,25 @@ func (s *service) reviewAdCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 
-	var ownerID, campaignName, previousStatus, paymentStatus string
+	var ownerID, campaignName, previousStatus, paymentStatus, moderationStatus string
 	var endsAt *time.Time
 	err = tx.QueryRow(r.Context(), `
-		SELECT a.owner_user_id::text, c.name, c.status, c.payment_status, c.ends_at
+		SELECT a.owner_user_id::text, c.name, c.status, c.payment_status, c.moderation_status, c.ends_at
 		FROM testagram_local.ad_campaigns c
 		JOIN testagram_local.advertisers a ON a.id = c.advertiser_id
 		WHERE c.id = $1::uuid
 		FOR UPDATE OF c
-	`, campaignID).Scan(&ownerID, &campaignName, &previousStatus, &paymentStatus, &endsAt)
+	`, campaignID).Scan(&ownerID, &campaignName, &previousStatus, &paymentStatus, &moderationStatus, &endsAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.NotFound(w, r)
 		return
 	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AD_REVIEW_FAILED", "Campaign could not be loaded", reqID))
+		return
+	}
+	if moderationStatus != "pending" {
+		writeJSON(w, http.StatusConflict, errorBody("CAMPAIGN_ALREADY_REVIEWED", "Only pending campaigns can be reviewed", reqID))
 		return
 	}
 
