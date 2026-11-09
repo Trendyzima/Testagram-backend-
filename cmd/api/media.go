@@ -1052,7 +1052,7 @@ func (s *service) resolvePublicPostMediaBatch(ctx context.Context, posts []map[s
 		rows, err := s.db.Query(ctx, `
 			SELECT owner_id::text, object_key, content_type, storage_namespace
 			FROM testagram_media.assets
-			WHERE owner_id = ANY($1::uuid[])
+			WHERE owner_id::text = ANY($1::text[])
 			  AND object_key = ANY($2::text[])
 			  AND visibility = 'public'
 			  AND status = 'ready'
