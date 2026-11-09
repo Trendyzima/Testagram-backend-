@@ -1016,6 +1016,74 @@ func productPostMediaType(contentType string) (string, bool) {
 	}
 }
 
+type publicPostMediaItem struct {
+	Key         string
+	URL         string
+	ContentType string
+}
+
+func (s *service) resolvePublicPostMedia(ctx context.Context, ownerID string, keys []string) ([]map[string]any, []string, string, string, error) {
+	if len(keys) == 0 {
+		return []map[string]any{}, []string{}, "", "", nil
+	}
+	if s.db == nil {
+		return nil, nil, "", "", errors.New("media metadata database is unavailable")
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT object_key, content_type, storage_namespace
+		FROM testagram_media.assets
+		WHERE owner_id = $1::uuid
+		  AND object_key = ANY($2::text[])
+		  AND visibility = 'public'
+		  AND status = 'ready'
+	`, ownerID, keys)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	assetsByKey := make(map[string]publicPostMediaItem, len(keys))
+	for rows.Next() {
+		var key, contentType, namespace string
+		if err := rows.Scan(&key, &contentType, &namespace); err != nil {
+			rows.Close()
+			return nil, nil, "", "", err
+		}
+		publicURL := publicMediaURLForStorage(key, ownerID, namespace)
+		if publicURL == "" {
+			continue
+		}
+		assetsByKey[key] = publicPostMediaItem{
+			Key: key, URL: publicURL, ContentType: contentType,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, "", "", err
+	}
+	rows.Close()
+
+	items := make([]map[string]any, 0, len(assetsByKey))
+	urls := make([]string, 0, len(assetsByKey))
+	videoURL := ""
+	imageURL := ""
+	for _, key := range keys {
+		asset, ok := assetsByKey[key]
+		if !ok {
+			continue
+		}
+		items = append(items, map[string]any{
+			"key": asset.Key, "url": asset.URL, "content_type": asset.ContentType,
+		})
+		urls = append(urls, asset.URL)
+		if videoURL == "" && strings.HasPrefix(asset.ContentType, "video/") {
+			videoURL = asset.URL
+		}
+		if imageURL == "" && strings.HasPrefix(asset.ContentType, "image/") {
+			imageURL = asset.URL
+		}
+	}
+	return items, urls, videoURL, imageURL, nil
+}
+
 func publicMediaURLForStorage(key, ownerID, storageNamespace string) string {
 	if storageNamespace == "legacy-media" || storageNamespace == "" {
 		return publicMediaURL(key)
