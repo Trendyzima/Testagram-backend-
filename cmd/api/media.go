@@ -724,12 +724,11 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 {
 		return "", http.StatusUnauthorized, errors.New("missing bearer token")
 	}
-	switch strings.ToLower(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "supabase"))) {
+	switch strings.ToLower(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "appwrite"))) {
 	case "appwrite":
 		return s.authenticatedAppwriteUser(r, parts[1])
 	case "supabase", "legacy_supabase":
-		// Transitional compatibility only. Production cutover must explicitly set
-		// TESTAGRAM_AUTH_PROVIDER=appwrite and remove legacy Supabase credentials.
+		// Legacy compatibility is opt-in only; the default identity provider is Appwrite.
 	default:
 		return "", http.StatusServiceUnavailable, errors.New("unsupported authentication provider configuration")
 	}
