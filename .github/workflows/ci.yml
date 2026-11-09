@@ -193,6 +193,7 @@ jobs:
           SQL
           for migration in \
             migrations/005_media_assets.sql \
+            migrations/006_media_lifecycle.sql \
             migrations/007_media_product_bridge.sql \
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261108_testagram_polls.sql \
