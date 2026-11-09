@@ -1023,6 +1023,98 @@ type publicPostMediaItem struct {
 	Visibility  string
 }
 
+func (s *service) resolvePublicPostMediaBatch(ctx context.Context, posts []map[string]any) error {
+	ownerSet := make(map[string]struct{})
+	keySet := make(map[string]struct{})
+	for _, post := range posts {
+		ownerID, _ := post["author_id"].(string)
+		keys, _ := post["_media_keys"].([]string)
+		if ownerID == "" {
+			continue
+		}
+		ownerSet[ownerID] = struct{}{}
+		for _, key := range keys {
+			if key != "" {
+				keySet[key] = struct{}{}
+			}
+		}
+	}
+	owners := make([]string, 0, len(ownerSet))
+	for owner := range ownerSet {
+		owners = append(owners, owner)
+	}
+	keys := make([]string, 0, len(keySet))
+	for key := range keySet {
+		keys = append(keys, key)
+	}
+	assetsByOwnerAndKey := make(map[string]publicPostMediaItem)
+	if len(owners) > 0 && len(keys) > 0 {
+		rows, err := s.db.Query(ctx, `
+			SELECT owner_id::text, object_key, content_type, storage_namespace
+			FROM testagram_media.assets
+			WHERE owner_id = ANY($1::uuid[])
+			  AND object_key = ANY($2::text[])
+			  AND visibility = 'public'
+			  AND status = 'ready'
+		`, owners, keys)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var ownerID, key, contentType, namespace string
+			if err := rows.Scan(&ownerID, &key, &contentType, &namespace); err != nil {
+				rows.Close()
+				return err
+			}
+			publicURL := publicMediaURLForStorage(key, ownerID, namespace)
+			if publicURL == "" {
+				rows.Close()
+				return errors.New("public media delivery URL is not configured")
+			}
+			assetsByOwnerAndKey[ownerID+"\x00"+key] = publicPostMediaItem{
+				Key: key, URL: publicURL, ContentType: contentType, Visibility: "public",
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+
+	for _, post := range posts {
+		ownerID, _ := post["author_id"].(string)
+		mediaKeys, _ := post["_media_keys"].([]string)
+		media := make([]map[string]any, 0, len(mediaKeys))
+		urls := make([]string, 0, len(mediaKeys))
+		videoURL := ""
+		imageURL := ""
+		for _, key := range mediaKeys {
+			asset, ok := assetsByOwnerAndKey[ownerID+"\x00"+key]
+			if !ok {
+				continue
+			}
+			media = append(media, map[string]any{
+				"key": asset.Key, "url": asset.URL,
+				"content_type": asset.ContentType, "visibility": asset.Visibility,
+			})
+			urls = append(urls, asset.URL)
+			if videoURL == "" && strings.HasPrefix(asset.ContentType, "video/") {
+				videoURL = asset.URL
+			}
+			if imageURL == "" && strings.HasPrefix(asset.ContentType, "image/") {
+				imageURL = asset.URL
+			}
+		}
+		delete(post, "_media_keys")
+		post["media"] = media
+		post["media_urls"] = urls
+		post["video_url"] = videoURL
+		post["image_url"] = imageURL
+	}
+	return nil
+}
+
 func (s *service) resolvePostMedia(ctx context.Context, ownerID, viewerID string, keys []string, allowPrivate bool) ([]map[string]any, []string, string, string, error) {
 	if len(keys) == 0 {
 		return []map[string]any{}, []string{}, "", "", nil
