@@ -306,7 +306,7 @@ func (s *service) updateAdReviewPermission(w http.ResponseWriter, r *http.Reques
 	var input struct {
 		UserID       string `json:"user_id"`
 		Permission   string `json:"permission_key"`
-		Enabled      bool   `json:"enabled"`
+		Enabled      *bool  `json:"enabled"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
