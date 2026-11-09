@@ -218,7 +218,7 @@ func (s *service) discoveryPosts(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		ownerID, _ := item["author_id"].(string)
 		mediaKeys, _ := item["_media_keys"].([]string)
-		media, mediaURLs, videoURL, imageURL, mediaErr := s.resolvePublicPostMedia(r.Context(), ownerID, mediaKeys)
+		media, mediaURLs, videoURL, imageURL, mediaErr := s.resolvePostMedia(r.Context(), ownerID, "", mediaKeys, false)
 		delete(item, "_media_keys")
 		if mediaErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("DISCOVERY_MEDIA_FAILED", "Post media could not be resolved", id))
