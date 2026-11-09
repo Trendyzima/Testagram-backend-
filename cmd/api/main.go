@@ -544,6 +544,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/communities/{community_id}/posts", s.communityPostsList)
 	mux.HandleFunc("POST /api/communities/{community_id}/posts", s.communityPostsCreate)
 	mux.HandleFunc("POST /api/communities/{community_id}/polls", s.communityPollCreate)
+	mux.HandleFunc("GET /api/social/polls", s.pollsList)
 	mux.HandleFunc("GET /api/social/polls/{poll_id}", s.pollGet)
 	mux.HandleFunc("GET /api/social/posts/{post_id}/poll", s.pollGetByPost)
 	mux.HandleFunc("POST /api/social/polls/{poll_id}/vote", s.pollVote)
