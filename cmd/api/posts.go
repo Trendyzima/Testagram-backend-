@@ -32,24 +32,13 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_JSON", "Request body must contain one valid JSON object", id))
 		return
 	}
-	input.Content = strings.TrimSpace(input.Content)
-	if input.Content == "" || len(input.Content) > 5000 {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_CONTENT", "Post text must contain between 1 and 5000 characters", id))
-		return
-	}
-	input.Visibility = strings.ToLower(strings.TrimSpace(input.Visibility))
-	if input.Visibility == "" {
-		input.Visibility = "public"
-	}
-	if input.Visibility != "public" && input.Visibility != "followers" && input.Visibility != "private" {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_VISIBILITY", "Post visibility must be public, followers or private", id))
+	if code, message := validateCreatePostV1(&input, r.Header.Get("Idempotency-Key")); code != "" {
+		status := http.StatusBadRequest
+		if code == "IDEMPOTENCY_KEY_REUSED" { status = http.StatusConflict }
+		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if idempotencyKey == "" || len(idempotencyKey) < 8 || len(idempotencyKey) > 128 || strings.ContainsAny(idempotencyKey, "\r\n") {
-		writeJSON(w, http.StatusBadRequest, errorBody("IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required", id))
-		return
-	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -114,3 +103,25 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+
+
+// validateCreatePostV1 normalizes and bounds user-controlled post data before
+// opening a transaction. It is kept pure so the validation contract is unit-tested.
+func validateCreatePostV1(input *createPostV1Request, rawKey string) (string, string) {
+	input.Content = strings.TrimSpace(input.Content)
+	if input.Content == "" || len(input.Content) > 5000 {
+		return "INVALID_POST_CONTENT", "Post text must contain between 1 and 5000 characters"
+	}
+	input.Visibility = strings.ToLower(strings.TrimSpace(input.Visibility))
+	if input.Visibility == "" {
+		input.Visibility = "public"
+	}
+	if input.Visibility != "public" && input.Visibility != "followers" && input.Visibility != "private" {
+		return "INVALID_POST_VISIBILITY", "Post visibility must be public, followers or private"
+	}
+	key := strings.TrimSpace(rawKey)
+	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "\\r\\n") {
+		return "IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required"
+	}
+	return "", ""
+}
