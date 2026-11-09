@@ -80,6 +80,15 @@ CREATE TABLE IF NOT EXISTS testagram_local.ad_review_audit (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS testagram_local.ad_campaign_status_audit (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id UUID NOT NULL REFERENCES testagram_local.ad_campaigns(id) ON DELETE CASCADE,
+  actor_user_id UUID NOT NULL REFERENCES testagram_local.accounts(user_id) ON DELETE RESTRICT,
+  previous_status TEXT NOT NULL,
+  resulting_status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS testagram_local_ad_review_queue_idx
   ON testagram_local.ad_campaigns(moderation_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS testagram_local_ad_creatives_campaign_idx
@@ -89,6 +98,8 @@ CREATE INDEX IF NOT EXISTS testagram_identity_staff_permissions_active_idx
   WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS testagram_local_ad_review_audit_campaign_idx
   ON testagram_local.ad_review_audit(campaign_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS testagram_local_ad_status_audit_campaign_idx
+  ON testagram_local.ad_campaign_status_audit(campaign_id, created_at DESC);
 
 -- Preserve already funded, serving campaigns if this migration is applied to
 -- a database that already has the campaign tables.
@@ -99,20 +110,20 @@ WHERE status = 'active' AND payment_status = 'funded' AND moderation_status = 'p
 
 REVOKE ALL ON testagram_local.advertisers, testagram_local.ad_campaigns,
   testagram_local.ad_creatives, testagram_local.ad_review_audit,
-  testagram_identity.staff_permissions FROM PUBLIC;
+  testagram_local.ad_campaign_status_audit, testagram_identity.staff_permissions FROM PUBLIC;
 
 DO $grants$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'testagram_app') THEN
     GRANT SELECT, INSERT, UPDATE ON testagram_local.advertisers,
       testagram_local.ad_campaigns, testagram_local.ad_creatives,
-      testagram_local.ad_review_audit TO testagram_app;
+      testagram_local.ad_review_audit, testagram_local.ad_campaign_status_audit TO testagram_app;
     GRANT SELECT, INSERT, UPDATE ON testagram_identity.staff_permissions TO testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
     GRANT SELECT, INSERT, UPDATE ON testagram_local.advertisers,
       testagram_local.ad_campaigns, testagram_local.ad_creatives,
-      testagram_local.ad_review_audit TO service_role;
+      testagram_local.ad_review_audit, testagram_local.ad_campaign_status_audit TO service_role;
     GRANT SELECT, INSERT, UPDATE ON testagram_identity.staff_permissions TO service_role;
   END IF;
 END;
