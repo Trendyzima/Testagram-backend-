@@ -488,6 +488,12 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/feed/public", s.mediaPreflight)
 	mux.HandleFunc("GET /api/feed/public", s.publicHomeFeed)
+	// Versioned public browser API aliases. Keep the legacy /api routes during the
+	// migration window while clients move to the documented /v1 transport.
+	mux.HandleFunc("OPTIONS /v1/feed/home", s.mediaPreflight)
+	mux.HandleFunc("GET /v1/feed/home", s.homeFeed)
+	mux.HandleFunc("OPTIONS /v1/feed/public", s.mediaPreflight)
+	mux.HandleFunc("GET /v1/feed/public", s.publicHomeFeed)
 	mux.HandleFunc("GET /api/search", s.searchAPI)
 	mux.HandleFunc("OPTIONS /api/social/{path...}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/social/follows/{target_user_id}", s.socialFollowState)
