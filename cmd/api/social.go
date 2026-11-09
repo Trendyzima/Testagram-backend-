@@ -1058,10 +1058,14 @@ func (s *service) socialPostRead(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_MEDIA_FAILED", "Post media could not be authorized", requestID))
 		return
 	}
+	videoURL, imageURL := "", ""
+	if len(post.MediaURLs) > 0 {
+		if post.IsVideo { videoURL = post.MediaURLs[0] } else { imageURL = post.MediaURLs[0] }
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok":true,"data":map[string]any{
 		"id":post.ID,"content":post.Content,"created_at":post.CreatedAt,"author_id":post.UserID,"user_id":post.UserID,
 		"visibility":post.Visibility,"language":post.Language,"media_ids":post.MediaIDs,"media_urls":post.MediaURLs,"is_video":post.IsVideo,
-		"video_url":firstVideoURL(post.MediaURLs,post.IsVideo),"image_url":firstImageURL(post.MediaURLs,post.IsVideo),
+		"video_url":videoURL,"image_url":imageURL,
 		"likes_count":post.LikesCount,"replies_count":post.RepliesCount,"reposts_count":post.RepostsCount,
 		"profiles":post.Author,"user_profiles":post.Author,
 	},"error":nil,"request_id":requestID})
