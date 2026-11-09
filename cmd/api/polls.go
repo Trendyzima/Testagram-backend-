@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -107,8 +108,8 @@ func (s *service) pollCreate(w http.ResponseWriter,r *http.Request) {
 	var in pollCreateRequest
 	if err:=decodeMediaJSON(w,r,&in);err!=nil {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL","Poll payload is invalid",requestID));return}
 	in.Question=strings.TrimSpace(in.Question);in.Description=strings.TrimSpace(in.Description)
-	if len(in.Question)<5||len(in.Question)>500||len(in.Description)>1000||len(in.Options)<2||len(in.Options)>8 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL","A poll needs a 5–500 character question and 2–8 options",requestID));return}
-	for i:=range in.Options {in.Options[i]=strings.TrimSpace(in.Options[i]);if len(in.Options[i])<1||len(in.Options[i])>200 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_OPTION","Each option must contain 1–200 characters",requestID));return}}
+	if utf8.RuneCountInString(in.Question)<5||utf8.RuneCountInString(in.Question)>500||utf8.RuneCountInString(in.Description)>1000||len(in.Options)<2||len(in.Options)>8 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL","A poll needs a 5–500 character question and 2–8 options",requestID));return}
+	for i:=range in.Options {in.Options[i]=strings.TrimSpace(in.Options[i]);if utf8.RuneCountInString(in.Options[i])<1||utf8.RuneCountInString(in.Options[i])>200 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_OPTION","Each option must contain 1–200 characters",requestID));return}}
 	if in.EndsAt!=nil&&!in.EndsAt.After(time.Now()) {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_END_DATE","Poll closing time must be in the future",requestID));return}
 if in.MediaObjectKey != "" {
 		var visibility, assetStatus, contentType string
