@@ -108,49 +108,6 @@ func (s *service) socialAuth(w http.ResponseWriter, r *http.Request) (string, st
 	return strings.ToLower(userID), requestID, true
 }
 
-func (s *service) socialOptionalReadAuth(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	requestID := requestID(r)
-	if !s.cors(w, r) {
-		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID))
-		return "", requestID, false
-	}
-	if s.db == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_DATABASE_UNAVAILABLE", "Social data service is unavailable", requestID))
-		return "", requestID, false
-	}
-	if strings.TrimSpace(r.Header.Get("Authorization")) == "" {
-		return "", requestID, true
-	}
-	userID, status, err := s.authenticatedMediaUser(r)
-	if err != nil {
-		code, message := "AUTH_REQUIRED", "The supplied session is invalid"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, requestID))
-		return "", requestID, false
-	}
-	if !socialUUIDPattern.MatchString(userID) {
-		writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CANONICAL_IDENTITY", "The authenticated identity is not a valid Testagram account", requestID))
-		return "", requestID, false
-	}
-	var accountStatus string
-	err = s.db.QueryRow(r.Context(), "SELECT account_status FROM testagram_local.accounts WHERE user_id=$1", strings.ToLower(userID)).Scan(&accountStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusConflict, errorBody("ACCOUNT_NOT_MIGRATED", "This account has not been migrated to the independent Testagram database", requestID))
-		return "", requestID, false
-	}
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("ACCOUNT_LOOKUP_FAILED", "Canonical account verification is unavailable", requestID))
-		return "", requestID, false
-	}
-	if accountStatus != "active" {
-		writeJSON(w, http.StatusForbidden, errorBody("ACCOUNT_NOT_ACTIVE", "This account cannot read social content", requestID))
-		return "", requestID, false
-	}
-	return strings.ToLower(userID), requestID, true
-}
-
 func (s *service) socialRateLimit(ctx context.Context, userID, action string, maxAttempts int) (bool, error) {
 	digest := sha256.Sum256([]byte(action + ":" + userID))
 	var attempts int
