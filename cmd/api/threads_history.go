@@ -87,11 +87,12 @@ func (s *service) threadDelete(w http.ResponseWriter,r *http.Request) {
   if len(mediaJSON)>0{if err=json.Unmarshal(mediaJSON,&media);err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread media metadata is invalid",rid));return}}
   for _,item:=range media{
     key:=strings.TrimSpace(item.Key);if key==""{continue}
-    var visibility,namespace,provider string
-    err=tx.QueryRow(ctx,`SELECT visibility,storage_namespace,storage_provider FROM testagram_media.assets
-      WHERE object_key=$1 AND owner_id=$2 AND status='ready' FOR UPDATE`,key,userID).Scan(&visibility,&namespace,&provider)
+    var visibility,namespace,provider,externalMediaID string
+    err=tx.QueryRow(ctx,`SELECT visibility,storage_namespace,storage_provider,coalesce(external_media_id::text,'') FROM testagram_media.assets
+      WHERE object_key=$1 AND owner_id=$2 AND status='ready' FOR UPDATE`,key,userID).Scan(&visibility,&namespace,&provider,&externalMediaID)
     if errors.Is(err,pgx.ErrNoRows){continue}
     if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread media ownership could not be verified",rid));return}
+    if externalMediaID!=""{continue}
     var referenced bool
     err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_local.polls WHERE media_object_key=$1) OR EXISTS(SELECT 1 FROM testagram_local.threads t,jsonb_array_elements(t.media_urls) attached WHERE t.id<>$2 AND t.deleted_at IS NULL AND attached->>'key'=$1)`,key,id).Scan(&referenced)
     if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread media references could not be checked",rid));return}
