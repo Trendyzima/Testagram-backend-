@@ -524,6 +524,7 @@ jobs:
             v_count BIGINT;
             v_text TEXT;
             v_sensitive BOOLEAN;
+            v_projected_sensitive TEXT;
           BEGIN
             INSERT INTO testagram_local.accounts(user_id,username,display_name)
             VALUES (gen_random_uuid(),'ci_idempotency_user','Idempotency User')
@@ -537,8 +538,15 @@ jobs:
             SELECT count(*) INTO v_count FROM testagram_local.posts
               WHERE author_id=v_user AND idempotency_key='ci-post-key-0001';
             SELECT text,sensitive INTO v_text,v_sensitive FROM testagram_local.posts WHERE id=v_post;
+            SELECT payload->>'sensitive' INTO v_projected_sensitive
+              FROM public.platform_replication_outbox
+              WHERE entity_type='post' AND entity_id=v_post::text
+              ORDER BY entity_version DESC LIMIT 1;
             IF v_count <> 1 OR v_text <> 'idempotent body' OR NOT v_sensitive THEN
               RAISE EXCEPTION 'post idempotency did not preserve the original payload';
+            END IF;
+            IF v_projected_sensitive <> 'true' THEN
+              RAISE EXCEPTION 'sensitive marker was not carried into the transactional replication event';
             END IF;
           END $idempotency$;
           UPDATE testagram_local.accounts SET protected_account=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174005';
