@@ -311,8 +311,20 @@ func (s *service) communityProfileUpdate(w http.ResponseWriter, r *http.Request)
 	if in.Description!=nil && len(*in.Description)>2000 || in.IconURL!=nil && len(*in.IconURL)>2048 || in.BannerURL!=nil && len(*in.BannerURL)>2048 || in.Category!=nil && (len(*in.Category)<1 || len(*in.Category)>48) || len(in.Rules)>20 {
 		writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_UPDATE","One or more community fields exceed their limits",id));return
 	}
-	var rulesJSON any
-	if in.Rules!=nil { for _,rule:=range in.Rules {if len(rule)>240 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_RULES","Community rules must be at most 240 characters each",id));return}}; encoded,_:=json.Marshal(in.Rules);rulesJSON=string(encoded) }
+	var rulesJSON, pinnedJSON any
+	if in.Rules!=nil {
+		for _,rule:=range in.Rules { if len(rule)>240 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_RULES","Community rules must be at most 240 characters each",id)); return } }
+		encoded,marshalErr:=json.Marshal(in.Rules)
+		if marshalErr!=nil { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_COMMUNITY_RULES","Community rules are invalid",id)); return }
+		rulesJSON=string(encoded)
+	}
+	if in.PinnedPostIDs!=nil {
+		if len(in.PinnedPostIDs)>10 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PINNED_POSTS","At most ten posts may be pinned",id)); return }
+		for _,postID:=range in.PinnedPostIDs { if !socialUUIDPattern.MatchString(postID) { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PINNED_POSTS","Pinned post identifiers must be valid",id)); return } }
+		encoded,marshalErr:=json.Marshal(in.PinnedPostIDs)
+		if marshalErr!=nil { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_PINNED_POSTS","Pinned post identifiers are invalid",id)); return }
+		pinnedJSON=string(encoded)
+	}
 	_,err=s.db.Exec(r.Context(),`UPDATE testagram_local.communities SET
 		name=COALESCE($2,name),description=COALESCE($3,description),icon_url=COALESCE($4,icon_url),
 		banner_url=COALESCE($5,banner_url),category=COALESCE($6,category),
