@@ -17,6 +17,7 @@ type threadCreateInput struct {
 }
 type threadMediaInput struct { Key string `json:"key"` }
 type threadMediaDTO struct {
+  Key string `json:"key,omitempty"`
   URL string `json:"url"`
   Name string `json:"name"`
   Type string `json:"type"`
@@ -59,7 +60,7 @@ func (s *service) threadAttachMedia(w http.ResponseWriter, r *http.Request) {
   }
   mediaURL:=publicMediaURLForStorage(strings.TrimSpace(in.Key),userID,namespace)
   if mediaURL==""{writeJSON(w,503,errorBody("MEDIA_PUBLIC_URL_INVALID","Media delivery URL is unavailable",rid));return}
-  mediaJSON,marshalErr:=json.Marshal([]threadMediaDTO{{URL:mediaURL,Name:name,Type:contentType,Size:size}})
+  mediaJSON,marshalErr:=json.Marshal([]threadMediaDTO{{Key:strings.TrimSpace(in.Key),URL:mediaURL,Name:name,Type:contentType,Size:size}})
   if marshalErr!=nil{writeJSON(w,500,errorBody("THREAD_MEDIA_FAILED","Media metadata could not be encoded",rid));return}
   tag,err:=tx.Exec(ctx,`UPDATE testagram_local.threads
     SET media_urls=media_urls || $3::jsonb,updated_at=now()
@@ -68,17 +69,43 @@ func (s *service) threadAttachMedia(w http.ResponseWriter, r *http.Request) {
   if err!=nil{writeJSON(w,503,errorBody("THREAD_MEDIA_FAILED","Media could not be attached",rid));return}
   if tag.RowsAffected()==0{writeJSON(w,409,errorBody("THREAD_MEDIA_LIMIT_OR_DUPLICATE","Thread already has this attachment or reached the 20-file limit",rid));return}
   if err=tx.Commit(ctx);err!=nil{writeJSON(w,503,errorBody("THREAD_MEDIA_FAILED","Media attachment could not be committed",rid));return}
-  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_id":threadID,"attached":true,"media":threadMediaDTO{URL:mediaURL,Name:name,Type:contentType,Size:size}},"error":nil,"request_id":rid})
+  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_id":threadID,"attached":true,"media":threadMediaDTO{Key:strings.TrimSpace(in.Key),URL:mediaURL,Name:name,Type:contentType,Size:size}},"error":nil,"request_id":rid})
 }
 
 
 func (s *service) threadDelete(w http.ResponseWriter,r *http.Request) {
   userID,rid,ok:=s.socialAuth(w,r);if !ok{return}
   id:=strings.ToLower(r.PathValue("thread_id"));if !socialUUIDPattern.MatchString(id){writeJSON(w,400,errorBody("INVALID_THREAD_ID","A valid thread ID is required",rid));return}
-  tag,err:=s.db.Exec(r.Context(),`UPDATE testagram_local.threads SET deleted_at=now(),updated_at=now() WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`,id,userID)
+  ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second);defer cancel()
+  tx,err:=s.db.Begin(ctx);if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread could not be deleted",rid));return};defer tx.Rollback(ctx)
+  var mediaJSON []byte
+  err=tx.QueryRow(ctx,`SELECT media_urls FROM testagram_local.threads WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL FOR UPDATE`,id,userID).Scan(&mediaJSON)
+  if errors.Is(err,pgx.ErrNoRows){writeJSON(w,404,errorBody("THREAD_NOT_FOUND","Thread was not found",rid));return}
+  if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread could not be loaded",rid));return}
+  media:=make([]threadMediaDTO,0)
+  if len(mediaJSON)>0{if err=json.Unmarshal(mediaJSON,&media);err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread media metadata is invalid",rid));return}}
+  for _,item:=range media{
+    key:=strings.TrimSpace(item.Key);if key==""{continue}
+    var visibility,namespace,provider string
+    err=tx.QueryRow(ctx,`SELECT visibility,storage_namespace,storage_provider FROM testagram_media.assets
+      WHERE object_key=$1 AND owner_id=$2 AND status='ready' FOR UPDATE`,key,userID).Scan(&visibility,&namespace,&provider)
+    if errors.Is(err,pgx.ErrNoRows){continue}
+    if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread media ownership could not be verified",rid));return}
+    _,err=tx.Exec(ctx,`INSERT INTO testagram_media.storage_deletion_jobs
+      (object_key,owner_id,visibility,storage_namespace,storage_provider,reason)
+      VALUES($1,$2,$3,$4,$5,'user_delete')
+      ON CONFLICT (object_key,reason) WHERE status IN ('pending','processing','retry') DO NOTHING`,key,userID,visibility,namespace,provider)
+    if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread media cleanup could not be queued",rid));return}
+    _,err=tx.Exec(ctx,`UPDATE testagram_media.assets SET status='deletion_pending',updated_at=now()
+      WHERE object_key=$1 AND owner_id=$2 AND status='ready'`,key,userID)
+    if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread media could not be marked for cleanup",rid));return}
+  }
+  tag,err:=tx.Exec(ctx,`UPDATE testagram_local.threads SET deleted_at=now(),updated_at=now()
+    WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`,id,userID)
   if err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread could not be deleted",rid));return}
   if tag.RowsAffected()==0{writeJSON(w,404,errorBody("THREAD_NOT_FOUND","Thread was not found",rid));return}
-  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"id":id,"deleted":true},"error":nil,"request_id":rid})
+  if err=tx.Commit(ctx);err!=nil{writeJSON(w,503,errorBody("THREAD_DELETE_FAILED","Thread deletion could not be committed",rid));return}
+  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"id":id,"deleted":true,"media_cleanup_queued":true},"error":nil,"request_id":rid})
 }
 
 type browsingHistoryInput struct { EntityType string `json:"entity_type"`; EntityID string `json:"entity_id"`; Metadata map[string]any `json:"metadata"` }
