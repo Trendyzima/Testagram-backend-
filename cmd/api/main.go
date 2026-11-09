@@ -488,6 +488,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/social/follows/{target_user_id}", s.socialUnfollow)
 	mux.HandleFunc("POST /api/social/blocks", s.socialBlock)
 	mux.HandleFunc("DELETE /api/social/blocks/{target_user_id}", s.socialUnblock)
+	mux.HandleFunc("GET /api/social/posts/{post_id}", s.socialPostGet)
 	mux.HandleFunc("GET /api/social/posts/{post_id}/interaction-summary", s.socialInteractionSummary)
 	mux.HandleFunc("GET /api/social/posts/{post_id}/reaction", s.socialReactionState)
 	mux.HandleFunc("POST /api/social/posts/{post_id}/reaction", s.socialReact)
