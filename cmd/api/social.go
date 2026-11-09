@@ -1003,6 +1003,66 @@ func (s *service) socialRejectFollowRequest(w http.ResponseWriter, r *http.Reque
 	s.socialRespondFollowRequest(w, r, false)
 }
 
+func (s *service) socialPostView(w http.ResponseWriter, r *http.Request) {
+	userID, reqID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	if !s.socialWriteAllowed(w, r, userID, reqID, "social-post-view", 120) {
+		return
+	}
+	postID := strings.ToLower(strings.TrimSpace(r.PathValue("post_id")))
+	if !socialUUIDPattern.MatchString(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "Post ID is invalid", reqID))
+		return
+	}
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_VIEW_FAILED", "Post view could not be recorded", reqID))
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	if _, err := socialCanViewPostReadWith(r.Context(), tx, userID, postID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	tag, err := tx.Exec(r.Context(), `
+		INSERT INTO testagram_local.post_views(post_id,viewer_id,view_date)
+		VALUES($1::uuid,$2::uuid,(now() AT TIME ZONE 'UTC')::date)
+		ON CONFLICT(post_id,viewer_id,view_date) DO NOTHING
+	`, postID, userID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_VIEW_FAILED", "Post view could not be recorded", reqID))
+		return
+	}
+	recorded := tag.RowsAffected() == 1
+	var views int64
+	if recorded {
+		err = tx.QueryRow(r.Context(), `
+			UPDATE testagram_local.posts
+			SET views_count=views_count+1,updated_at=updated_at
+			WHERE id=$1::uuid AND deleted_at IS NULL
+			RETURNING views_count
+		`, postID).Scan(&views)
+	} else {
+		err = tx.QueryRow(r.Context(), "SELECT views_count FROM testagram_local.posts WHERE id=$1::uuid AND deleted_at IS NULL", postID).Scan(&views)
+	}
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_VIEW_FAILED", "Post view could not be recorded", reqID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{"post_id": postID, "views_count": views, "recorded": recorded},
+		"error": nil,
+		"request_id": reqID,
+	})
+}
+
 func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	userID, reqID, ok := s.socialAuth(w, r)
 	if !ok {
