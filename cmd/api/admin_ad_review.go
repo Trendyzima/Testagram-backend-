@@ -315,11 +315,11 @@ func (s *service) updateAdReviewPermission(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	targetID := strings.ToLower(strings.TrimSpace(input.UserID))
-	if !socialUUIDPattern.MatchString(targetID) || input.Permission != "platform.ads" {
+	if !socialUUIDPattern.MatchString(targetID) || input.Permission != "platform.ads" || input.Enabled == nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PERMISSION_REQUEST", "A valid user ID and platform.ads permission are required", reqID))
 		return
 	}
-	if input.Enabled {
+	if *input.Enabled {
 		_, err := s.db.Exec(r.Context(), `
 			INSERT INTO testagram_identity.staff_permissions(user_id, permission_key, granted_by, granted_at, revoked_at)
 			VALUES($1::uuid, $2, $3::uuid, now(), NULL)
@@ -343,7 +343,7 @@ func (s *service) updateAdReviewPermission(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true,
-		"data": map[string]any{"user_id": targetID, "permission_key": input.Permission, "enabled": input.Enabled},
+		"data": map[string]any{"user_id": targetID, "permission_key": input.Permission, "enabled": *input.Enabled},
 		"error": nil, "request_id": reqID,
 	})
 }
