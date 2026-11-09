@@ -1340,7 +1340,7 @@ func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	if len(mediaJSON) > 0 {
 		_ = json.Unmarshal(mediaJSON, &mediaIDs)
 	}
-	media, mediaURLs, videoURL, imageURL, mediaErr := s.resolvePublicPostMedia(r.Context(), authorID, mediaIDs)
+	media, mediaURLs, videoURL, imageURL, mediaErr := s.resolvePostMedia(r.Context(), authorID, userID, mediaIDs, visibility != "public")
 	if mediaErr != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_MEDIA_FAILED", "Post media could not be resolved", reqID))
 		return
