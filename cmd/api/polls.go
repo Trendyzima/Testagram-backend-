@@ -16,6 +16,7 @@ type pollCreateRequest struct {
 	Description string `json:"description"`
 	Options []string `json:"options"`
 	EndsAt *time.Time `json:"ends_at"`
+	MediaObjectKey string `json:"media_object_key"`
 }
 
 type pollOptionDTO struct {
@@ -35,17 +36,24 @@ type pollDTO struct {
 	TotalVotes int64 `json:"total_votes"`
 	Options []pollOptionDTO `json:"options"`
 	HasVoted bool `json:"has_voted"`
+	MediaURL string `json:"media_url,omitempty"`
 }
 
 func (s *service) pollLoad(ctx context.Context, pollID, viewerID string) (pollDTO, error) {
 	var p pollDTO
-	var status string
+	var status, viewerOwnerID string
 	err := s.db.QueryRow(ctx, `SELECT id::text,question,description,
 		CASE WHEN status='open' AND ends_at IS NOT NULL AND ends_at<=now() THEN 'closed' ELSE status END,
-		ends_at,created_at FROM testagram_local.polls WHERE id=$1`, pollID).Scan(
-		&p.ID,&p.Question,&p.Description,&status,&p.EndsAt,&p.CreatedAt)
+		ends_at,created_at,coalesce(media_object_key,''),author_id::text FROM testagram_local.polls WHERE id=$1`, pollID).Scan(
+		&p.ID,&p.Question,&p.Description,&status,&p.EndsAt,&p.CreatedAt,&p.MediaObjectKey,&viewerOwnerID)
 	if err != nil { return p, err }
 	p.Status=status
+	if p.MediaObjectKey != "" {
+		var visibility, assetStatus, namespace string
+		if mediaErr := s.db.QueryRow(ctx, "SELECT visibility,status,storage_namespace FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", p.MediaObjectKey, viewerOwnerID).Scan(&visibility,&assetStatus,&namespace); mediaErr == nil && visibility == "public" && assetStatus == "ready" {
+			p.MediaURL = publicMediaURLForStorage(p.MediaObjectKey, viewerOwnerID, namespace)
+		}
+	}
 	p.Options=[]pollOptionDTO{}
 	rows, err := s.db.Query(ctx, `SELECT o.id::text,o.label,o.position,count(v.user_id)::bigint
 		FROM testagram_local.poll_options o
@@ -91,11 +99,19 @@ func (s *service) pollCreate(w http.ResponseWriter,r *http.Request) {
 	if len(in.Question)<5||len(in.Question)>500||len(in.Description)>1000||len(in.Options)<2||len(in.Options)>8 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL","A poll needs a 5–500 character question and 2–8 options",requestID));return}
 	for i:=range in.Options {in.Options[i]=strings.TrimSpace(in.Options[i]);if len(in.Options[i])<1||len(in.Options[i])>200 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_OPTION","Each option must contain 1–200 characters",requestID));return}}
 	if in.EndsAt!=nil&&!in.EndsAt.After(time.Now()) {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_END_DATE","Poll closing time must be in the future",requestID));return}
+if in.MediaObjectKey != "" {
+		var visibility, assetStatus, contentType string
+		err := s.db.QueryRow(r.Context(), "SELECT visibility,status,content_type FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", strings.TrimSpace(in.MediaObjectKey), userID).Scan(&visibility,&assetStatus,&contentType)
+		if err != nil || visibility != "public" || assetStatus != "ready" || (!strings.HasPrefix(contentType,"image/") && !strings.HasPrefix(contentType,"video/")) {
+			writeJSON(w,http.StatusBadRequest,errorBody("POLL_MEDIA_NOT_ATTACHABLE","Poll media must be a ready public image or video owned by this account",requestID));return
+		}
+		in.MediaObjectKey = strings.TrimSpace(in.MediaObjectKey)
+	}
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
 	tx,err:=s.db.Begin(ctx);if err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("POLL_CREATE_FAILED","Poll could not be created",requestID));return};defer tx.Rollback(ctx)
 	var pollID string
-	err=tx.QueryRow(ctx,`INSERT INTO testagram_local.polls(author_id,question,description,ends_at)
-		VALUES($1,$2,$3,$4) RETURNING id::text`,userID,in.Question,in.Description,in.EndsAt).Scan(&pollID)
+	err=tx.QueryRow(ctx,`INSERT INTO testagram_local.polls(author_id,question,description,ends_at,media_object_key)
+		VALUES($1,$2,$3,$4,NULLIF($5,'')) RETURNING id::text`,userID,in.Question,in.Description,in.EndsAt,in.MediaObjectKey).Scan(&pollID)
 	if err==nil {for i,label:=range in.Options {_,err=tx.Exec(ctx,`INSERT INTO testagram_local.poll_options(poll_id,label,position) VALUES($1,$2,$3)`,pollID,label,i);if err!=nil{break}}}
 	if err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("POLL_CREATE_FAILED","Poll could not be saved",requestID));return}
 	if err=tx.Commit(ctx);err!=nil {writeJSON(w,http.StatusServiceUnavailable,errorBody("POLL_CREATE_FAILED","Poll could not be committed",requestID));return}
