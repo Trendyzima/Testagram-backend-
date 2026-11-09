@@ -197,7 +197,8 @@ jobs:
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261108_testagram_polls.sql \
             migrations/20261109_threads_browsing_history.sql \
-            migrations/20261109_thread_interactions.sql; do
+            migrations/20261109_thread_interactions.sql \\
+            migrations/20261109_iptv_social.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify media attachment, poll voting and private history constraints
@@ -251,6 +252,16 @@ jobs:
           SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
           INSERT INTO testagram_local.follows(follower_id,following_id,status)
           VALUES ('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','accepted');
+          INSERT INTO testagram_local.iptv_channel_reactions(channel_id,user_id)
+          VALUES ('ci-channel','00000000-0000-4000-8000-000000000002');
+          INSERT INTO testagram_local.iptv_channel_comments(channel_id,user_id,content)
+          VALUES ('ci-channel','00000000-0000-4000-8000-000000000002','CI IPTV comment');
+          INSERT INTO testagram_local.iptv_channel_favorites(user_id,channel_id,channel_data)
+          VALUES ('00000000-0000-4000-8000-000000000002','ci-channel','{"id":"ci-channel","name":"CI channel"}'::jsonb);
+          INSERT INTO testagram_local.iptv_watch_history(user_id,channel_id,channel_data)
+          VALUES ('00000000-0000-4000-8000-000000000002','ci-channel','{"id":"ci-channel","name":"CI channel"}'::jsonb);
+          INSERT INTO testagram_local.iptv_channel_reports(channel_id,user_id,reason)
+          VALUES ('ci-channel','00000000-0000-4000-8000-000000000002','Stream is unavailable');
           DO $feed$
           BEGIN
             IF NOT EXISTS (
@@ -260,6 +271,13 @@ jobs:
                 AND f.status='accepted' AND t.visibility='public' AND t.deleted_at IS NULL
             ) THEN
               RAISE EXCEPTION 'following thread feed query returned no visible thread';
+            END IF;
+            IF (SELECT count(*) FROM testagram_local.iptv_channel_reactions WHERE channel_id='ci-channel') <> 1
+              OR (SELECT count(*) FROM testagram_local.iptv_channel_comments WHERE channel_id='ci-channel' AND deleted_at IS NULL) <> 1
+              OR (SELECT count(*) FROM testagram_local.iptv_channel_favorites WHERE channel_id='ci-channel') <> 1
+              OR (SELECT count(*) FROM testagram_local.iptv_watch_history WHERE channel_id='ci-channel') <> 1
+              OR (SELECT count(*) FROM testagram_local.iptv_channel_reports WHERE channel_id='ci-channel') <> 1 THEN
+              RAISE EXCEPTION 'IPTV social records were not persisted';
             END IF;
           END $feed$;
           DO $ci$
