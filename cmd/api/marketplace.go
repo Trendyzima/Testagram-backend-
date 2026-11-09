@@ -144,9 +144,9 @@ func (s *service) marketplaceProductGet(w http.ResponseWriter, r *http.Request) 
 		JOIN testagram_local.accounts a ON a.user_id=p.owner_id
 		WHERE p.id=$1::uuid AND p.is_active AND a.account_status='active'
 	`, productID).Scan(
-		&ownerID,&name,&description,&category,&price,&currency,
-		&imageURL,&externalLink,&rating,&reviews,&views,&sales,&featured,&created,
-		&username,&displayName,&avatarKey,&verifiedTier,
+		&ownerID, &name, &description, &category, &price, &currency,
+		&imageURL, &externalLink, &rating, &reviews, &views, &sales, &featured, &created,
+		&username, &displayName, &avatarKey, &verifiedTier,
 	)
 	if err != nil {
 		http.NotFound(w, r)
