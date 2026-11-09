@@ -31,7 +31,7 @@ REVOKE ALL ON testagram_local.posts FROM PUBLIC;
 CREATE OR REPLACE FUNCTION testagram_local.emit_public_post_event()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public, testagram_local
-AS $
+AS $$
 DECLARE author_public BOOLEAN := FALSE; old_public BOOLEAN := FALSE; new_public BOOLEAN := FALSE; v BIGINT; payload JSONB;
 BEGIN
   IF TG_OP <> 'INSERT' THEN
@@ -58,6 +58,6 @@ BEGIN
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END;
-$;
+$$;
 
 COMMIT;
