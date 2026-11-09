@@ -19,7 +19,7 @@ func (s *service) socialPostView(w http.ResponseWriter,r *http.Request) {
   err=tx.QueryRow(ctx,`UPDATE testagram_local.posts
     SET views_count=views_count+1,updated_at=now()
     WHERE id=$1 AND deleted_at IS NULL
-      AND (visibility='public' OR (author_id=$2::uuid))
+      AND (visibility='public' OR author_id=$2::uuid OR (visibility='followers' AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$2::uuid AND f.following_id=author_id AND f.status='accepted')))
     RETURNING views_count`,postID,viewer).Scan(&views)
   if err!=nil{writeJSON(w,404,errorBody("POST_NOT_FOUND","Post was not found",rid));return}
   if userID!=""{
