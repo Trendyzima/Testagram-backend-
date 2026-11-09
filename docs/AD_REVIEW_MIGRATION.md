@@ -13,6 +13,7 @@ The ad-review API is owned by Testagram Backend. It does not call Supabase RPCs 
 ## Routes
 
 - `GET /api/admin/ads/review-queue?status=pending&limit=100`
+- `POST /api/admin/ads/{campaign_id}/status` with `{"status":"active"|"paused"}`
 - `POST /api/admin/ads/{campaign_id}/review` with `{"decision":"approved"|"rejected","note":"..."}`
 - `POST /api/admin/staff/permissions` with `{"user_id":"...","permission_key":"platform.ads","enabled":true|false}`
 
