@@ -64,12 +64,17 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		var previousContent, previousVisibility string
 		var previousSensitive bool
+		var deletedAt *time.Time
 		err = tx.QueryRow(ctx, `
-			SELECT id::text,text,visibility,sensitive,created_at
+			SELECT id::text,text,visibility,sensitive,created_at,deleted_at
 			FROM testagram_local.posts
-			WHERE author_id=$1::uuid AND idempotency_key=$2 AND deleted_at IS NULL
-		`, userID, idempotencyKey).Scan(&postID, &previousContent, &previousVisibility, &previousSensitive, &createdAt)
+			WHERE author_id=$1::uuid AND idempotency_key=$2
+		`, userID, idempotencyKey).Scan(&postID, &previousContent, &previousVisibility, &previousSensitive, &createdAt, &deletedAt)
 		if err == nil {
+			if deletedAt != nil {
+				writeJSON(w, http.StatusConflict, errorBody("POST_ALREADY_DELETED", "This idempotent post was previously deleted", id))
+				return
+			}
 			if previousContent != input.Content || previousVisibility != input.Visibility || previousSensitive != input.Sensitive {
 				writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENCY_KEY_REUSED", "This idempotency key was already used for a different post", id))
 				return
