@@ -105,7 +105,7 @@ func TestCapabilityDoesNotFallbackToSupabase(t *testing.T) {
 		t.Fatalf("unsupported capability status = %d, want %d: %s", response.Code, http.StatusNotImplemented, response.Body.String())
 	}
 	if upstreamCalls != 0 {
-		t.Fatalf("legacy Supabase upstream was called %d times", upstreamCalls.Load())
+		t.Fatalf("legacy Supabase upstream was called %d times", upstreamCalls)
 	}
 	if !strings.Contains(response.Body.String(), "CAPABILITY_NOT_IMPLEMENTED") {
 		t.Fatalf("expected explicit fail-closed response, got %s", response.Body.String())
