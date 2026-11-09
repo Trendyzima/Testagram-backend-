@@ -70,6 +70,20 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 		}
 	}
 
+	// A viewer contributes at most one counted view per post per UTC day.
+	viewTag, err := tx.Exec(ctx, `INSERT INTO testagram_local.post_views(post_id,viewer_id,view_date)
+		VALUES($1,$2,(now() AT TIME ZONE 'UTC')::date)
+		ON CONFLICT(post_id,viewer_id,view_date) DO NOTHING`, publicPostID, viewerID)
+	if err != nil || viewTag.RowsAffected() != 1 {
+		t.Fatalf("insert first post view: rows=%d err=%v", viewTag.RowsAffected(), err)
+	}
+	viewTag, err = tx.Exec(ctx, `INSERT INTO testagram_local.post_views(post_id,viewer_id,view_date)
+		VALUES($1,$2,(now() AT TIME ZONE 'UTC')::date)
+		ON CONFLICT(post_id,viewer_id,view_date) DO NOTHING`, publicPostID, viewerID)
+	if err != nil || viewTag.RowsAffected() != 0 {
+		t.Fatalf("duplicate daily post view was not suppressed: rows=%d err=%v", viewTag.RowsAffected(), err)
+	}
+
 	assertVisible := func(name, viewer, post string, want bool) {
 		t.Helper()
 		_, err := socialCanViewPostWith(ctx, tx, viewer, post)
