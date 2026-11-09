@@ -204,15 +204,30 @@ func (s *service) discoveryPosts(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{
 			"id": postID, "user_id": authorID, "author_id": authorID,
 			"content": content, "text": content, "visibility": visibility,
-			"media_ids": mediaIDs, "media_urls": []string{}, "is_video": video,
+			"media_ids": mediaIDs, "is_video": video,
 			"views_count": views, "created_at": created, "updated_at": updated,
 			"likes_count": likes, "replies_count": replies, "reposts_count": reposts,
-			"user_profiles": profile,
+			"user_profiles": profile, "_media_keys": mediaIDs,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("DISCOVERY_POSTS_FAILED", "Post records could not be read", id))
 		return
+	}
+	rows.Close()
+	for _, item := range items {
+		ownerID, _ := item["author_id"].(string)
+		mediaKeys, _ := item["_media_keys"].([]string)
+		media, mediaURLs, videoURL, imageURL, mediaErr := s.resolvePublicPostMedia(r.Context(), ownerID, mediaKeys)
+		delete(item, "_media_keys")
+		if mediaErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("DISCOVERY_MEDIA_FAILED", "Post media could not be resolved", id))
+			return
+		}
+		item["media"] = media
+		item["media_urls"] = mediaURLs
+		item["video_url"] = videoURL
+		item["image_url"] = imageURL
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items, "next_cursor": nil}})
 }
