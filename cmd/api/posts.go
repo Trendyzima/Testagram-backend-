@@ -46,7 +46,7 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if idempotencyKey == "" || len(idempotencyKey) > 200 || strings.ContainsAny(idempotencyKey, "\r\n") {
+	if idempotencyKey == "" || len(idempotencyKey) < 8 || len(idempotencyKey) > 128 || strings.ContainsAny(idempotencyKey, "\r\n") {
 		writeJSON(w, http.StatusBadRequest, errorBody("IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required", id))
 		return
 	}
