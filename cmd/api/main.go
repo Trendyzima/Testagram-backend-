@@ -498,6 +498,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/social/blocks", s.socialBlock)
 	mux.HandleFunc("DELETE /api/social/blocks/{target_user_id}", s.socialUnblock)
 	mux.HandleFunc("GET /api/social/posts/{post_id}", s.socialPostRead)
+	mux.HandleFunc("GET /api/threads/{thread_id}", s.threadRead)
 	mux.HandleFunc("POST /api/threads", s.threadCreate)
 	mux.HandleFunc("POST /api/threads/{thread_id}/media", s.threadAttachMedia)
 	mux.HandleFunc("DELETE /api/threads/{thread_id}", s.threadDelete)
