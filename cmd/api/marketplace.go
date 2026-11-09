@@ -53,7 +53,7 @@ func (s *service) marketplaceProductsList(w http.ResponseWriter, r *http.Request
 		       p.price::text, p.currency, COALESCE(p.image_url,''), COALESCE(p.external_link,''),
 		       p.avg_rating, p.review_count, p.views_count, p.sales_count,
 		       p.is_featured, p.created_at, a.username, COALESCE(a.display_name,''),
-		       COALESCE(a.avatar_key,''), COALESCE(a.verified_tier,'')
+		       COALESCE(a.avatar_key,'')
 		FROM testagram_local.marketplace_products p
 		JOIN testagram_local.accounts a ON a.user_id = p.owner_id
 		WHERE p.is_active
@@ -71,7 +71,7 @@ func (s *service) marketplaceProductsList(w http.ResponseWriter, r *http.Request
 	items := make([]map[string]any, 0)
 	for rows.Next() {
 		var productID, ownerID, name, description, itemCategory, price, currency string
-		var imageURL, externalLink, username, displayName, avatarKey, verifiedTier string
+		var imageURL, externalLink, username, displayName, avatarKey string
 		var rating float64
 		var reviews, views, sales int64
 		var featured bool
@@ -80,14 +80,14 @@ func (s *service) marketplaceProductsList(w http.ResponseWriter, r *http.Request
 			&productID, &ownerID, &name, &description, &itemCategory,
 			&price, &currency, &imageURL, &externalLink,
 			&rating, &reviews, &views, &sales, &featured, &created,
-			&username, &displayName, &avatarKey, &verifiedTier,
+			&username, &displayName, &avatarKey,
 		); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MARKETPLACE_PRODUCTS_FAILED", "Marketplace product records could not be read", id))
 			return
 		}
 		profile := map[string]any{
 			"id": ownerID, "username": username, "display_name": displayName,
-			"avatar_url": avatarKey, "verified_tier": verifiedTier,
+			"avatar_url": avatarKey,
 		}
 		items = append(items, map[string]any{
 			"id": productID, "user_id": ownerID, "owner_id": ownerID,
