@@ -236,6 +236,8 @@ jobs:
           INSERT INTO testagram_local.browsing_history(user_id,entity_type,entity_id,metadata)
           SELECT '00000000-0000-4000-8000-000000000001','thread',id,'{"surface":"thread-detail"}'::jsonb
           FROM testagram_local.threads;
+          INSERT INTO testagram_local.thread_likes(thread_id,user_id)
+          SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
           INSERT INTO testagram_local.thread_reposts(thread_id,user_id)
           SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
           INSERT INTO testagram_local.thread_bookmarks(thread_id,user_id)
@@ -257,6 +259,9 @@ jobs:
           BEGIN
             IF (SELECT count(*) FROM testagram_local.threads) <> 1 THEN
               RAISE EXCEPTION 'native thread row was not persisted';
+            END IF;
+            IF (SELECT likes_count FROM testagram_local.threads) <> 1 THEN
+              RAISE EXCEPTION 'native thread like trigger did not update the counter';
             END IF;
             IF (SELECT reposts_count FROM testagram_local.threads) <> 1 THEN
               RAISE EXCEPTION 'native thread repost trigger did not update the counter';
