@@ -166,3 +166,88 @@ func (s *service) marketplaceProductGet(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": product, "error": nil, "request_id": id})
 }
+
+func (s *service) marketplaceProductsByIDs(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MARKETPLACE_UNAVAILABLE", "Marketplace is unavailable", id))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	defer r.Body.Close()
+	var input struct {
+		IDs []string `json:"ids"`
+	}
+	if err := decodeSingleJSON(r.Body, &input); err != nil || len(input.IDs) < 1 || len(input.IDs) > 100 {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MARKETPLACE_PRODUCT_IDS", "Provide between 1 and 100 product IDs", id))
+		return
+	}
+	ids := make([]string, 0, len(input.IDs))
+	seen := make(map[string]struct{}, len(input.IDs))
+	for _, raw := range input.IDs {
+		productID := strings.ToLower(strings.TrimSpace(raw))
+		if !socialUUIDPattern.MatchString(productID) {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MARKETPLACE_PRODUCT_ID", "A product ID is invalid", id))
+			return
+		}
+		if _, exists := seen[productID]; exists {
+			continue
+		}
+		seen[productID] = struct{}{}
+		ids = append(ids, productID)
+	}
+	rows, err := s.db.Query(r.Context(), `
+		SELECT p.id::text, p.owner_id::text, p.name, COALESCE(p.description,''), p.category,
+		       p.price::text, p.currency, COALESCE(p.image_url,''), COALESCE(p.external_link,''),
+		       p.avg_rating, p.review_count, p.views_count, p.sales_count,
+		       p.is_featured, p.created_at, a.username, COALESCE(a.display_name,''),
+		       COALESCE(a.avatar_key,'')
+		FROM testagram_local.marketplace_products p
+		JOIN testagram_local.accounts a ON a.user_id = p.owner_id
+		WHERE p.id = ANY($1::uuid[]) AND p.is_active AND a.account_status = 'active'
+		ORDER BY array_position($1::uuid[], p.id)
+	`, ids)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MARKETPLACE_PRODUCTS_FAILED", "Saved products could not be loaded", id))
+		return
+	}
+	defer rows.Close()
+	items := make([]map[string]any, 0)
+	for rows.Next() {
+		var productID, ownerID, name, description, category, price, currency string
+		var imageURL, externalLink, username, displayName, avatarKey string
+		var rating float64
+		var reviews, views, sales int64
+		var featured bool
+		var created time.Time
+		if err := rows.Scan(
+			&productID, &ownerID, &name, &description, &category,
+			&price, &currency, &imageURL, &externalLink,
+			&rating, &reviews, &views, &sales, &featured, &created,
+			&username, &displayName, &avatarKey,
+		); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MARKETPLACE_PRODUCTS_FAILED", "Saved product records could not be read", id))
+			return
+		}
+		profile := map[string]any{
+			"id": ownerID, "username": username, "display_name": displayName, "avatar_url": avatarKey,
+		}
+		items = append(items, map[string]any{
+			"id": productID, "owner_id": ownerID, "user_id": ownerID,
+			"name": name, "description": description, "category": category,
+			"price": price, "currency": currency, "image_url": imageURL,
+			"external_link": externalLink, "avg_rating": rating,
+			"review_count": reviews, "views_count": views, "sales_count": sales,
+			"is_featured": featured, "created_at": created, "user_profiles": profile,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MARKETPLACE_PRODUCTS_FAILED", "Saved product records could not be read", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items}})
+}
