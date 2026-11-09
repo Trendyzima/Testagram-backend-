@@ -185,7 +185,8 @@ jobs:
             migrations/007_media_product_bridge.sql \
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261108_testagram_polls.sql \
-            migrations/20261109_threads_browsing_history.sql; do
+            migrations/20261109_threads_browsing_history.sql \\
+            migrations/20261109_thread_interactions.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify media attachment, poll voting and private history constraints
@@ -224,10 +225,15 @@ jobs:
           INSERT INTO testagram_local.browsing_history(user_id,entity_type,entity_id,metadata)
           SELECT '00000000-0000-4000-8000-000000000001','thread',id,'{"surface":"thread-detail"}'::jsonb
           FROM testagram_local.threads;
+          INSERT INTO testagram_local.thread_reposts(thread_id,user_id)
+          SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
           DO $ci$
           BEGIN
             IF (SELECT count(*) FROM testagram_local.threads) <> 1 THEN
               RAISE EXCEPTION 'native thread row was not persisted';
+            END IF;
+            IF (SELECT reposts_count FROM testagram_local.threads) <> 1 THEN
+              RAISE EXCEPTION 'native thread repost trigger did not update the counter';
             END IF;
             IF (SELECT count(*) FROM testagram_local.browsing_history WHERE user_id='00000000-0000-4000-8000-000000000001') <> 1 THEN
               RAISE EXCEPTION 'per-account browsing history was not persisted';
