@@ -572,7 +572,7 @@ func (s *service) socialRepliesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := tx.Query(r.Context(), `
-		SELECT r.id::text,r.user_id::text,r.post_id::text,r.parent_reply_id::text,
+		SELECT r.id::text,r.user_id::text,r.post_id::text,COALESCE(r.parent_reply_id::text,''),
 		       r.content,r.created_at,r.updated_at,
 		       a.username,a.display_name,a.avatar_key,a.verified_tier
 		FROM testagram_local.replies r
@@ -590,13 +590,11 @@ func (s *service) socialRepliesList(w http.ResponseWriter, r *http.Request) {
 		var replyID, authorID, parentID, content, username, displayName, avatar, tier string
 		var postIDValue string
 		var created, updated time.Time
-		var parent *string
-		if err := rows.Scan(&replyID,&authorID,&postIDValue,&parent,&content,&created,&updated,&username,&displayName,&avatar,&tier); err != nil {
+		if err := rows.Scan(&replyID,&authorID,&postIDValue,&parentID,&content,&created,&updated,&username,&displayName,&avatar,&tier); err != nil {
 			rows.Close()
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLIES_UNAVAILABLE", "Reply records could not be read", reqID))
 			return
 		}
-		if parent != nil { parentID = *parent }
 		profile := map[string]any{"id": authorID, "username": username, "display_name": displayName, "avatar_url": avatar, "verified_tier": tier}
 		items = append(items, map[string]any{
 			"id": replyID, "user_id": authorID, "post_id": postIDValue,
@@ -661,7 +659,7 @@ func (s *service) socialReplyChainGet(w http.ResponseWriter, r *http.Request) {
 		  JOIN reply_tree parent ON child.parent_reply_id=parent.id AND child.post_id=parent.post_id
 		  WHERE child.deleted_at IS NULL
 		)
-		SELECT t.id::text,t.user_id::text,t.post_id::text,t.parent_reply_id::text,
+		SELECT t.id::text,t.user_id::text,t.post_id::text,COALESCE(t.parent_reply_id::text,''),
 		       t.content,t.created_at,t.updated_at,a.username,a.display_name,a.avatar_key,a.verified_tier
 		FROM reply_tree t
 		JOIN testagram_local.accounts a ON a.user_id=t.user_id
@@ -676,7 +674,7 @@ func (s *service) socialReplyChainGet(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0)
 	for rows.Next() {
 		var id, author, post, content, username, display, avatar, tier string
-		var parent *string
+		var parent string
 		var created, updated time.Time
 		if err := rows.Scan(&id,&author,&post,&parent,&content,&created,&updated,&username,&display,&avatar,&tier); err != nil {
 			rows.Close()
