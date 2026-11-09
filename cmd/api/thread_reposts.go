@@ -79,3 +79,37 @@ func (s *service) threadRepostStates(w http.ResponseWriter,r *http.Request) {
   if err:=rows.Err();err!=nil{writeJSON(w,503,errorBody("THREAD_REPOST_STATE_FAILED","Repost states could not be loaded",rid));return}
   writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_ids":result},"error":nil,"request_id":rid})
 }
+
+func (s *service) threadBookmarkStates(w http.ResponseWriter,r *http.Request) {
+  userID,rid,ok:=s.socialAuth(w,r);if !ok{return}
+  var in struct{ThreadIDs []string `json:"thread_ids"`}
+  if err:=decodeMediaJSON(w,r,&in);err!=nil||len(in.ThreadIDs)>100{writeJSON(w,400,errorBody("INVALID_THREAD_IDS","Provide up to 100 valid thread IDs",rid));return}
+  ids:=make([]string,0,len(in.ThreadIDs))
+  for _,id:=range in.ThreadIDs{id=strings.ToLower(strings.TrimSpace(id));if !socialUUIDPattern.MatchString(id){writeJSON(w,400,errorBody("INVALID_THREAD_IDS","Every thread ID must be a valid UUID",rid));return};ids=append(ids,id)}
+  if len(ids)==0{writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_ids":[]string{}},"error":nil,"request_id":rid});return}
+  rows,err:=s.db.Query(r.Context(),`SELECT thread_id::text FROM testagram_local.thread_bookmarks WHERE user_id=$1 AND thread_id=ANY($2::uuid[])`,userID,ids)
+  if err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_STATE_FAILED","Bookmark states could not be loaded",rid));return}
+  defer rows.Close();result:=make([]string,0)
+  for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_STATE_FAILED","Bookmark states could not be loaded",rid));return};result=append(result,id)}
+  if err:=rows.Err();err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_STATE_FAILED","Bookmark states could not be loaded",rid));return}
+  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_ids":result},"error":nil,"request_id":rid})
+}
+func (s *service) threadBookmarkToggle(w http.ResponseWriter,r *http.Request) {
+  userID,rid,ok:=s.socialAuth(w,r);if !ok{return}
+  if !s.socialWriteAllowed(w,r,userID,rid,"thread-bookmark",60){return}
+  id:=threadIDFromRequest(w,r,rid);if id==""{return}
+  ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
+  tx,err:=s.db.Begin(ctx);if err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_FAILED","Bookmark could not be updated",rid));return};defer tx.Rollback(ctx)
+  var visibility,ownerID string
+  err=tx.QueryRow(ctx,`SELECT visibility,owner_id::text FROM testagram_local.threads WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`,id).Scan(&visibility,&ownerID)
+  if err==pgx.ErrNoRows{writeJSON(w,404,errorBody("THREAD_NOT_FOUND","Thread was not found",rid));return}
+  if err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_FAILED","Thread could not be loaded",rid));return}
+  if visibility=="private"&&ownerID!=userID{writeJSON(w,404,errorBody("THREAD_NOT_FOUND","Thread was not found",rid));return}
+  var exists bool
+  if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks WHERE thread_id=$1 AND user_id=$2)`,id,userID).Scan(&exists);err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_FAILED","Bookmark state could not be loaded",rid));return}
+  active:=!exists
+  if active{_,err=tx.Exec(ctx,`INSERT INTO testagram_local.thread_bookmarks(thread_id,user_id) VALUES($1,$2)`,id,userID)}else{_,err=tx.Exec(ctx,`DELETE FROM testagram_local.thread_bookmarks WHERE thread_id=$1 AND user_id=$2`,id,userID)}
+  if err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_FAILED","Bookmark could not be updated",rid));return}
+  if err=tx.Commit(ctx);err!=nil{writeJSON(w,503,errorBody("THREAD_BOOKMARK_FAILED","Bookmark could not be committed",rid));return}
+  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_id":id,"bookmarked":active},"error":nil,"request_id":rid})
+}
