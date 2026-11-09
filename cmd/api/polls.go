@@ -74,8 +74,16 @@ func (s *service) pollLoad(ctx context.Context, pollID, viewerID string) (pollDT
 	return p,err
 }
 
+func (s *service) socialOptionalReadAuth(w http.ResponseWriter,r *http.Request)(string,string,bool){
+  rid:=requestID(r)
+  if !s.cors(w,r){writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",rid));return "",rid,false}
+  if s.db==nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("SOCIAL_DATABASE_UNAVAILABLE","Social data service is unavailable",rid));return "",rid,false}
+  if strings.TrimSpace(r.Header.Get("Authorization"))==""{return "",rid,true}
+  return s.socialAuth(w,r)
+}
+
 func (s *service) pollsList(w http.ResponseWriter,r *http.Request) {
-	userID,requestID,ok:=s.socialAuth(w,r); if !ok{return}
+	userID,requestID,ok:=s.socialOptionalReadAuth(w,r); if !ok{return}
 	limit:=20
 	if raw:=r.URL.Query().Get("limit");raw!="" { n,err:=strconv.Atoi(raw); if err!=nil||n<1||n>50 { writeJSON(w,http.StatusBadRequest,errorBody("INVALID_LIMIT","Limit must be between 1 and 50",requestID));return }; limit=n }
 	offset:=0
@@ -121,14 +129,14 @@ if in.MediaObjectKey != "" {
 }
 
 func (s *service) pollRead(w http.ResponseWriter,r *http.Request) {
-	userID,requestID,ok:=s.socialAuth(w,r);if !ok{return}
+	userID,requestID,ok:=s.socialOptionalReadAuth(w,r);if !ok{return}
 	id:=strings.ToLower(r.PathValue("poll_id"));if !socialUUIDPattern.MatchString(id){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POLL_ID","A valid poll ID is required",requestID));return}
 	p,err:=s.pollLoad(r.Context(),id,userID);if errors.Is(err,pgx.ErrNoRows){writeJSON(w,http.StatusNotFound,errorBody("POLL_NOT_FOUND","Poll was not found",requestID));return};if err!=nil{writeJSON(w,http.StatusServiceUnavailable,errorBody("POLL_READ_FAILED","Poll could not be loaded",requestID));return}
 	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":p,"error":nil,"request_id":requestID})
 }
 
 func (s *service) pollByPostRead(w http.ResponseWriter,r *http.Request) {
-	userID,requestID,ok:=s.socialAuth(w,r);if !ok{return}
+	userID,requestID,ok:=s.socialOptionalReadAuth(w,r);if !ok{return}
 	postID:=strings.ToLower(r.PathValue("post_id"));if !socialUUIDPattern.MatchString(postID){writeJSON(w,http.StatusBadRequest,errorBody("INVALID_POST_ID","A valid post ID is required",requestID));return}
 	var id string
 	err:=s.db.QueryRow(r.Context(),`SELECT id::text FROM testagram_local.polls WHERE post_id=$1`,postID).Scan(&id)
