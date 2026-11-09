@@ -120,7 +120,7 @@ func validateCreatePostV1(input *createPostV1Request, rawKey string) (string, st
 		return "INVALID_POST_VISIBILITY", "Post visibility must be public, followers or private"
 	}
 	key := strings.TrimSpace(rawKey)
-	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "\\r\\n") {
+	if len(key) < 8 || len(key) > 128 || strings.ContainsAny(key, "\r\n") {
 		return "IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required"
 	}
 	return "", ""
