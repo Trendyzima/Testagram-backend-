@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"strings"
 	"testing"
 	"time"
@@ -46,8 +47,8 @@ func TestFetchAppwriteAccountRejectsInvalidSession(t *testing.T) {
 }
 
 func TestFetchAppwriteAccountDoesNotFollowRedirects(t *testing.T) {
-	var targetHit bool
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetHit = true }))
+	var targetHit atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetHit.Store(true) }))
 	defer target.Close()
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
@@ -57,7 +58,7 @@ func TestFetchAppwriteAccountDoesNotFollowRedirects(t *testing.T) {
 	if err == nil || status != http.StatusBadGateway {
 		t.Fatalf("status=%d err=%v", status, err)
 	}
-	if targetHit {
+	if targetHit.Load() {
 		t.Fatal("Appwrite JWT was forwarded through a redirect")
 	}
 }
