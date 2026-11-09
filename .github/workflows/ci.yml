@@ -227,6 +227,8 @@ jobs:
           FROM testagram_local.threads;
           INSERT INTO testagram_local.thread_reposts(thread_id,user_id)
           SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
+          INSERT INTO testagram_local.thread_bookmarks(thread_id,user_id)
+          SELECT id,'00000000-0000-4000-8000-000000000002' FROM testagram_local.threads;
           DO $ci$
           BEGIN
             IF (SELECT count(*) FROM testagram_local.threads) <> 1 THEN
@@ -234,6 +236,9 @@ jobs:
             END IF;
             IF (SELECT reposts_count FROM testagram_local.threads) <> 1 THEN
               RAISE EXCEPTION 'native thread repost trigger did not update the counter';
+            END IF;
+            IF (SELECT count(*) FROM testagram_local.thread_bookmarks) <> 1 THEN
+              RAISE EXCEPTION 'native thread bookmark was not persisted';
             END IF;
             IF (SELECT count(*) FROM testagram_local.browsing_history WHERE user_id='00000000-0000-4000-8000-000000000001') <> 1 THEN
               RAISE EXCEPTION 'per-account browsing history was not persisted';
