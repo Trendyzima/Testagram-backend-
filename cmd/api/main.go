@@ -486,8 +486,6 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/feed/public", s.mediaPreflight)
 	mux.HandleFunc("GET /api/feed/public", s.publicHomeFeed)
-	mux.HandleFunc("OPTIONS /v1/posts", s.mediaPreflight)
-	mux.HandleFunc("POST /v1/posts", s.createPostV1)
 	mux.HandleFunc("OPTIONS /api/social/{path...}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/social/follows/{target_user_id}", s.socialFollowState)
 	mux.HandleFunc("POST /api/social/follows", s.socialFollow)
