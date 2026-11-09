@@ -126,7 +126,7 @@ func newTestPlatformClient(t *testing.T, handler http.Handler) *platformclient.C
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := platformclient.New(server.URL, "test-platform-token", time.Second)
+	client, err := platformclient.New(server.URL, "test-platform-token-0123456789abcdef0123456789", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
