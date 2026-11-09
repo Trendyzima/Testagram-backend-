@@ -112,3 +112,57 @@ func (s *service) marketplaceProductsList(w http.ResponseWriter, r *http.Request
 		},
 	})
 }
+
+func (s *service) marketplaceProductGet(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	productID := strings.ToLower(strings.TrimSpace(r.PathValue("product_id")))
+	if !socialUUIDPattern.MatchString(productID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MARKETPLACE_PRODUCT_ID", "Product ID is invalid", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MARKETPLACE_UNAVAILABLE", "Marketplace is unavailable", id))
+		return
+	}
+
+	var ownerID, name, description, category, price, currency string
+	var imageURL, externalLink, username, displayName, avatarKey, verifiedTier string
+	var rating float64
+	var reviews, views, sales int64
+	var featured bool
+	var created time.Time
+	err := s.db.QueryRow(r.Context(), `
+		SELECT p.owner_id::text,p.name,p.description,p.category,p.price::text,p.currency,
+		       p.image_url,p.external_link,p.avg_rating,p.review_count,p.views_count,
+		       p.sales_count,p.is_featured,p.created_at,
+		       a.username,a.display_name,a.avatar_key,a.verified_tier
+		FROM testagram_local.marketplace_products p
+		JOIN testagram_local.accounts a ON a.user_id=p.owner_id
+		WHERE p.id=$1::uuid AND p.is_active AND a.account_status='active'
+	`, productID).Scan(
+		&ownerID,&name,&description,&category,&price,&currency,
+		&imageURL,&externalLink,&rating,&reviews,&views,&sales,&featured,&created,
+		&username,&displayName,&avatarKey,&verifiedTier,
+	)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	profile := map[string]any{
+		"id": ownerID, "username": username, "display_name": displayName,
+		"avatar_url": avatarKey, "verified_tier": verifiedTier,
+	}
+	product := map[string]any{
+		"id": productID, "owner_id": ownerID, "user_id": ownerID,
+		"name": name, "description": description, "category": category,
+		"price": price, "currency": currency, "image_url": imageURL,
+		"external_link": externalLink, "avg_rating": rating,
+		"review_count": reviews, "views_count": views, "sales_count": sales,
+		"is_featured": featured, "created_at": created, "user_profiles": profile,
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": product, "error": nil, "request_id": id})
+}
