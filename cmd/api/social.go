@@ -1003,6 +1003,88 @@ func (s *service) socialRejectFollowRequest(w http.ResponseWriter, r *http.Reque
 	s.socialRespondFollowRequest(w, r, false)
 }
 
+func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
+	userID, reqID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	postID := strings.ToLower(strings.TrimSpace(r.PathValue("post_id")))
+	if !socialUUIDPattern.MatchString(postID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "Post ID is invalid", reqID))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_DATABASE_UNAVAILABLE", "Social service is unavailable", reqID))
+		return
+	}
+
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_READ_FAILED", "Post could not be loaded", reqID))
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+
+	authorID, err := socialCanViewPostReadWith(r.Context(), tx, userID, postID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	var postIDValue, content, visibility, username, displayName, avatar, verifiedTier, accountType, creatorTier string
+	var mediaJSON []byte
+	var video bool
+	var views, likes, replies, reposts, followers, following, postsCount int64
+	var created, updated time.Time
+	var liked, reposted, bookmarked bool
+	err = tx.QueryRow(r.Context(), `
+		SELECT p.id::text,p.text,p.visibility,p.media_ids,p.is_video,p.views_count,
+		       p.likes_count,p.replies_count,p.reposts_count,p.created_at,p.updated_at,
+		       a.username,a.display_name,a.avatar_key,a.verified_tier,a.account_type,
+		       a.creator_tier,a.follower_count,a.following_count,a.posts_count,
+		       EXISTS(SELECT 1 FROM testagram_local.post_reactions x WHERE x.post_id=p.id AND x.user_id=$3),
+		       EXISTS(SELECT 1 FROM testagram_local.reposts x WHERE x.post_id=p.id AND x.user_id=$3),
+		       EXISTS(SELECT 1 FROM testagram_local.bookmarks x WHERE x.post_id=p.id AND x.user_id=$3)
+		FROM testagram_local.posts p
+		JOIN testagram_local.accounts a ON a.user_id=p.author_id
+		WHERE p.id=$1::uuid AND p.author_id=$2::uuid AND p.deleted_at IS NULL
+	`, postID, authorID, userID).Scan(
+		&postIDValue,&content,&visibility,&mediaJSON,&video,&views,
+		&likes,&replies,&reposts,&created,&updated,
+		&username,&displayName,&avatar,&verifiedTier,&accountType,
+		&creatorTier,&followers,&following,&postsCount,&liked,&reposted,&bookmarked,
+	)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_READ_FAILED", "Post could not be loaded", reqID))
+		return
+	}
+
+	var mediaIDs []string
+	if len(mediaJSON) > 0 {
+		_ = json.Unmarshal(mediaJSON, &mediaIDs)
+	}
+	profile := map[string]any{
+		"id": authorID, "username": username, "display_name": displayName,
+		"avatar_url": avatar, "verified_tier": verifiedTier,
+		"account_type": accountType, "creator_tier": creatorTier,
+		"follower_count": followers, "following_count": following, "posts_count": postsCount,
+	}
+	post := map[string]any{
+		"id": postIDValue, "user_id": authorID, "author_id": authorID,
+		"content": content, "text": content, "visibility": visibility,
+		"media_ids": mediaIDs, "media_urls": []string{}, "is_video": video,
+		"views_count": views, "likes_count": likes, "replies_count": replies,
+		"reposts_count": reposts, "created_at": created, "updated_at": updated,
+		"user_profiles": profile, "profiles": profile,
+		"is_liked": liked, "is_reposted": reposted, "is_bookmarked": bookmarked,
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": post, "error": nil, "request_id": reqID})
+}
+
 func (s *service) socialInteractionSummary(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
