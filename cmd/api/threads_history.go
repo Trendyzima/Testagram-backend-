@@ -59,14 +59,12 @@ func (s *service) threadAttachMedia(w http.ResponseWriter, r *http.Request) {
   }
   mediaURL:=publicMediaURLForStorage(strings.TrimSpace(in.Key),userID,namespace)
   if mediaURL==""{writeJSON(w,503,errorBody("MEDIA_PUBLIC_URL_INVALID","Media delivery URL is unavailable",rid));return}
-  mediaType:="file";if strings.HasPrefix(contentType,"image/"){mediaType="image"}else if strings.HasPrefix(contentType,"video/"){mediaType="video"}else if strings.HasPrefix(contentType,"audio/"){mediaType="audio"}
   _,err=tx.Exec(ctx,`UPDATE testagram_local.threads SET media_urls=media_urls || $3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2`,threadID,userID,mustJSON([]threadMediaDTO{{URL:mediaURL,Name:name,Type:contentType,Size:size}}))
   if err!=nil{writeJSON(w,503,errorBody("THREAD_MEDIA_FAILED","Media could not be attached",rid));return}
   if err=tx.Commit(ctx);err!=nil{writeJSON(w,503,errorBody("THREAD_MEDIA_FAILED","Media attachment could not be committed",rid));return}
   writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_id":threadID,"attached":true,"media":threadMediaDTO{URL:mediaURL,Name:name,Type:contentType,Size:size}},"error":nil,"request_id":rid})
 }
 
-func mustJSON(v any) []byte { b,_:=json.Marshal(v); return b }
 
 func (s *service) threadDelete(w http.ResponseWriter,r *http.Request) {
   userID,rid,ok:=s.socialAuth(w,r);if !ok{return}
