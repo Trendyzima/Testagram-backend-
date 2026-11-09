@@ -1340,6 +1340,11 @@ func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	if len(mediaJSON) > 0 {
 		_ = json.Unmarshal(mediaJSON, &mediaIDs)
 	}
+	media, mediaURLs, videoURL, imageURL, mediaErr := s.resolvePublicPostMedia(r.Context(), authorID, mediaIDs)
+	if mediaErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_MEDIA_FAILED", "Post media could not be resolved", reqID))
+		return
+	}
 	profile := map[string]any{
 		"id": authorID, "username": username, "display_name": displayName,
 		"avatar_url": avatar, "bio": bio, "website_url": website,
@@ -1348,7 +1353,8 @@ func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	post := map[string]any{
 		"id": postIDValue, "user_id": authorID, "author_id": authorID,
 		"content": content, "text": content, "visibility": visibility,
-		"media_ids": mediaIDs, "media_urls": []string{}, "is_video": video,
+		"media_ids": mediaIDs, "media": media, "media_urls": mediaURLs,
+		"video_url": videoURL, "image_url": imageURL, "is_video": video,
 		"views_count": views, "likes_count": likes, "replies_count": replies,
 		"reposts_count": reposts, "created_at": created, "updated_at": updated,
 		"user_profiles": profile, "profiles": profile,
