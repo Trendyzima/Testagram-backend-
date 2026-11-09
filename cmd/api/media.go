@@ -1049,7 +1049,8 @@ func (s *service) resolvePublicPostMedia(ctx context.Context, ownerID string, ke
 		}
 		publicURL := publicMediaURLForStorage(key, ownerID, namespace)
 		if publicURL == "" {
-			continue
+			rows.Close()
+			return nil, nil, "", "", errors.New("public media delivery URL is not configured")
 		}
 		assetsByKey[key] = publicPostMediaItem{
 			Key: key, URL: publicURL, ContentType: contentType,
