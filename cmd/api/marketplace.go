@@ -130,7 +130,7 @@ func (s *service) marketplaceProductGet(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var ownerID, name, description, category, price, currency string
-	var imageURL, externalLink, username, displayName, avatarKey, verifiedTier string
+	var imageURL, externalLink, username, displayName, avatarKey string
 	var rating float64
 	var reviews, views, sales int64
 	var featured bool
@@ -139,14 +139,14 @@ func (s *service) marketplaceProductGet(w http.ResponseWriter, r *http.Request) 
 		SELECT p.owner_id::text,p.name,COALESCE(p.description,''),p.category,p.price::text,p.currency,
 		       COALESCE(p.image_url,''),COALESCE(p.external_link,''),p.avg_rating,p.review_count,p.views_count,
 		       p.sales_count,p.is_featured,p.created_at,
-		       a.username,COALESCE(a.display_name,''),COALESCE(a.avatar_key,''),COALESCE(a.verified_tier,'')
+		       a.username, COALESCE(a.display_name,''), COALESCE(a.avatar_key,'')
 		FROM testagram_local.marketplace_products p
 		JOIN testagram_local.accounts a ON a.user_id=p.owner_id
 		WHERE p.id=$1::uuid AND p.is_active AND a.account_status='active'
 	`, productID).Scan(
 		&ownerID, &name, &description, &category, &price, &currency,
 		&imageURL, &externalLink, &rating, &reviews, &views, &sales, &featured, &created,
-		&username, &displayName, &avatarKey, &verifiedTier,
+		&username, &displayName, &avatarKey,
 	)
 	if err != nil {
 		http.NotFound(w, r)
@@ -154,7 +154,7 @@ func (s *service) marketplaceProductGet(w http.ResponseWriter, r *http.Request) 
 	}
 	profile := map[string]any{
 		"id": ownerID, "username": username, "display_name": displayName,
-		"avatar_url": avatarKey, "verified_tier": verifiedTier,
+		"avatar_url": avatarKey,
 	}
 	product := map[string]any{
 		"id": productID, "owner_id": ownerID, "user_id": ownerID,
