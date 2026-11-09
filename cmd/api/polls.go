@@ -37,6 +37,7 @@ type pollDTO struct {
 	Options []pollOptionDTO `json:"options"`
 	HasVoted bool `json:"has_voted"`
 	MediaURL string `json:"media_url,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
 	MediaObjectKey string `json:"-"`
 }
 
@@ -50,9 +51,10 @@ func (s *service) pollLoad(ctx context.Context, pollID, viewerID string) (pollDT
 	if err != nil { return p, err }
 	p.Status=status
 	if p.MediaObjectKey != "" {
-		var visibility, assetStatus, namespace string
-		if mediaErr := s.db.QueryRow(ctx, "SELECT visibility,status,storage_namespace FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", p.MediaObjectKey, viewerOwnerID).Scan(&visibility,&assetStatus,&namespace); mediaErr == nil && visibility == "public" && assetStatus == "ready" {
+		var visibility, assetStatus, namespace, contentType string
+		if mediaErr := s.db.QueryRow(ctx, "SELECT visibility,status,storage_namespace,content_type FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", p.MediaObjectKey, viewerOwnerID).Scan(&visibility,&assetStatus,&namespace,&contentType); mediaErr == nil && visibility == "public" && assetStatus == "ready" {
 			p.MediaURL = publicMediaURLForStorage(p.MediaObjectKey, viewerOwnerID, namespace)
+			p.MediaType = contentType
 		}
 	}
 	p.Options=[]pollOptionDTO{}
