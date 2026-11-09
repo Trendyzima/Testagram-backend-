@@ -48,8 +48,7 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 	for rows.Next(){var id,balance,currency,status string;if err=rows.Scan(&id,&balance,&currency,&status);err!=nil{rows.Close();return "",false,err};v,e:=strconv.ParseFloat(balance,64);if e!=nil{rows.Close();return "",false,e};balances[id]=v;currencies[id]=strings.TrimSpace(currency);statuses[id]=status}
 	if err=rows.Err();err!=nil{rows.Close();return "",false,err};rows.Close()
 	if len(balances)!=2||statuses[sender]!="active"||statuses[recipient]!="active"||currencies[sender]!=currencies[recipient]||currencies[sender]!=senderCurrency{return "",false,pgx.ErrNoRows}
-	sum:=sha256.Sum256([]byte(strings.Join([]string{recipient,amount,senderCurrency,kind,note},"
-")))
+	sum:=sha256.Sum256([]byte(strings.Join([]string{recipient,amount,senderCurrency,kind,note},"\n")))
 	requestHash:=hex.EncodeToString(sum[:])
 	// Recheck after acquiring both wallet row locks so concurrent retries cannot
 	// double-debit or create duplicate ledger entries.
