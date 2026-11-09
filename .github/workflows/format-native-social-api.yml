@@ -1,0 +1,55 @@
+name: Format and verify native social API
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: format-native-social-api
+  cancel-in-progress: false
+
+jobs:
+  format-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.10"
+          cache: true
+      - name: Format touched API handlers and routes
+        run: |
+          gofmt -w \
+            cmd/api/main.go \
+            cmd/api/polls.go \
+            cmd/api/threads_history.go \
+            cmd/api/thread_read.go \
+            cmd/api/thread_list.go \
+            cmd/api/thread_reposts.go \
+            cmd/api/thread_likes.go \
+            cmd/api/iptv_social.go \
+            cmd/api/iptv_social_test.go
+      - name: Commit formatting corrections when needed
+        run: |
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add cmd/api
+            git commit -m "style(api): format native social handlers"
+            git push
+          else
+            echo "All native social API files are gofmt-clean."
+          fi
+      - name: Race tests
+        run: go test -race -count=1 ./...
+      - name: Static analysis
+        run: go vet ./...
+      - name: API and admin build
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/api ./admin-console
