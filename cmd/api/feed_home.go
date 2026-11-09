@@ -76,6 +76,7 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := 20
+	followingOnly := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("following_only")), "true")
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 50 {
@@ -119,6 +120,10 @@ WHERE p.deleted_at IS NULL
       SELECT 1 FROM testagram_local.mutes m
       WHERE m.muter_id=$1::uuid AND m.muted_id=p.author_id
   )
+  AND (NOT $5::boolean OR p.author_id=$1::uuid OR EXISTS (
+      SELECT 1 FROM testagram_local.follows f
+      WHERE f.follower_id=$1::uuid AND f.following_id=p.author_id AND f.status='accepted'
+  ))
   AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
@@ -127,7 +132,7 @@ LIMIT $4`
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1)
+	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
