@@ -84,7 +84,7 @@ LIMIT $3`
 		}
 		post.MediaIDs = []string{}
 		_ = json.Unmarshal(mediaRaw, &post.MediaIDs)
-		post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName, "avatar_key": avatarKey, "protected_account": protected}
+		post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName, "avatar_key": avatarKey, "avatar_url": publicMediaURL(avatarKey), "protected_account": protected}
 		post.Origin = "local"
 		quality := math.Min(1, float64(post.LikesCount+2*post.RepliesCount+2*post.RepostsCount)/50)
 		conversation := math.Min(1, float64(post.RepliesCount)/20)

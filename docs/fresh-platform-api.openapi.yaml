@@ -100,6 +100,46 @@ paths:
           description: Idempotency key reused with a different payload
         "401":
           description: Invalid Appwrite session
+  /api/feed/home:
+    get:
+      summary: Read authenticated home feed
+      description: Backend applies follow, block, account visibility and post visibility rules before optionally calling the private Algorithm ranker.
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - in: query
+          name: before
+          required: false
+          schema: { type: string, maxLength: 256 }
+        - in: query
+          name: following_only
+          required: false
+          description: When true, include only the authenticated user's own posts and posts from accounts they actively follow; all visibility, block and mute checks remain enforced.
+          schema: { type: boolean, default: false }
+      responses:
+        '200': { description: Authorized home feed page with next_cursor, has_more and ranking_mode }
+        '400': { description: Invalid pagination parameters }
+        '401': { description: Invalid or expired Appwrite JWT }
+        '503': { description: Feed dependencies unavailable; no unfiltered fallback is returned }
+  /api/feed/public:
+    get:
+      security: []
+      summary: Read the anonymous public home feed
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - in: query
+          name: before
+          required: false
+          schema: { type: string, maxLength: 256 }
+      responses:
+        '200': { description: Public posts only; private and followers-only posts are excluded }
+        '400': { description: Invalid pagination parameters }
+        '503': { description: Public feed store or media delivery unavailable }
   /v1/feed/home:
     get:
       summary: Read authenticated home feed
@@ -113,11 +153,33 @@ paths:
           name: before
           required: false
           schema: { type: string, maxLength: 256 }
+        - in: query
+          name: following_only
+          required: false
+          description: When true, include only the authenticated user's own posts and posts from accounts they actively follow; all visibility, block and mute checks remain enforced.
+          schema: { type: boolean, default: false }
       responses:
         '200': { description: Authorized home feed page with next_cursor, has_more and ranking_mode }
         '400': { description: Invalid pagination parameters }
         '401': { description: Invalid or expired Appwrite JWT }
         '503': { description: Feed dependencies unavailable; no unfiltered fallback is returned }
+  /v1/feed/public:
+    get:
+      security: []
+      summary: Read the anonymous public home feed
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - in: query
+          name: before
+          required: false
+          schema: { type: string, maxLength: 256 }
+      responses:
+        '200': { description: Public posts only; private and followers-only posts are excluded }
+        '400': { description: Invalid pagination parameters }
+        '503': { description: Public feed store or media delivery unavailable }
   /v1/media/uploads/reservations:
     post:
       summary: Reserve media quota and obtain upload capability

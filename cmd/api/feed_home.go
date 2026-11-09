@@ -14,6 +14,14 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
+func parseFollowingOnly(value string) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
+}
+
 type homeFeedCursor struct {
 	CreatedAt time.Time `json:"created_at"`
 	ID        string    `json:"id"`
@@ -76,6 +84,11 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := 20
+	followingOnly, followingErr := parseFollowingOnly(r.URL.Query().Get("following_only"))
+	if followingErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_FOLLOWING_FILTER", "following_only must be a boolean", requestID))
+		return
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 50 {
@@ -119,6 +132,10 @@ WHERE p.deleted_at IS NULL
       SELECT 1 FROM testagram_local.mutes m
       WHERE m.muter_id=$1::uuid AND m.muted_id=p.author_id
   )
+  AND (NOT $5::boolean OR p.author_id=$1::uuid OR EXISTS (
+      SELECT 1 FROM testagram_local.follows f
+      WHERE f.follower_id=$1::uuid AND f.following_id=p.author_id AND f.status='accepted'
+  ))
   AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
@@ -127,7 +144,7 @@ LIMIT $4`
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1)
+	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
@@ -154,7 +171,7 @@ LIMIT $4`
 		}
 		post.MediaIDs = []string{}
 		_ = json.Unmarshal(mediaRaw, &post.MediaIDs)
-		post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName, "avatar_key": avatarKey, "protected_account": protected}
+		post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName, "avatar_key": avatarKey, "avatar_url": publicMediaURL(avatarKey), "protected_account": protected}
 		post.IsFollowing = following
 		post.Origin = "local"
 		quality := math.Min(1, float64(post.LikesCount+2*post.RepliesCount+2*post.RepostsCount)/50)
