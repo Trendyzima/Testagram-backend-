@@ -547,6 +547,10 @@ func (s *service) socialUnreact(w http.ResponseWriter, r *http.Request) {
 func (s *service) socialRepliesList(w http.ResponseWriter, r *http.Request) {
 	userID, reqID, ok := s.socialAuth(w, r)
 	if !ok { return }
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_DATABASE_UNAVAILABLE", "Social service is unavailable", reqID))
+		return
+	}
 	postID := strings.ToLower(strings.TrimSpace(r.PathValue("post_id")))
 	if !socialUUIDPattern.MatchString(postID) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "Post ID is invalid", reqID))
@@ -703,6 +707,10 @@ func (s *service) socialReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.socialWriteAllowed(w, r, userID, requestID, "social-reply", 30) {
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_DATABASE_UNAVAILABLE", "Social service is unavailable", reqID))
 		return
 	}
 	postID := strings.ToLower(r.PathValue("post_id"))
@@ -1164,6 +1172,10 @@ func (s *service) socialPostView(w http.ResponseWriter, r *http.Request) {
 	if !s.socialWriteAllowed(w, r, userID, reqID, "social-post-view", 120) {
 		return
 	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_DATABASE_UNAVAILABLE", "Social service is unavailable", reqID))
+		return
+	}
 	postID := strings.ToLower(strings.TrimSpace(r.PathValue("post_id")))
 	if !socialUUIDPattern.MatchString(postID) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "Post ID is invalid", reqID))
@@ -1219,6 +1231,10 @@ func (s *service) socialPostView(w http.ResponseWriter, r *http.Request) {
 func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	userID, reqID, ok := s.socialAuth(w, r)
 	if !ok {
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_DATABASE_UNAVAILABLE", "Social service is unavailable", reqID))
 		return
 	}
 	postID := strings.ToLower(strings.TrimSpace(r.PathValue("post_id")))
