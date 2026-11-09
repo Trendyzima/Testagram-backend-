@@ -597,6 +597,17 @@ func TestUnifiedSearchRPCBodyRejectsUnboundedInput(t *testing.T) {
 	}
 }
 
+func TestParseFollowingOnly(t *testing.T) {
+	for _, tc := range []struct { input string; want bool; wantErr bool }{
+		{"", false, false}, {"true", true, false}, {"false", false, false}, {"TRUE", true, false}, {"not-a-bool", false, true},
+	} {
+		got, err := parseFollowingOnly(tc.input)
+		if (err != nil) != tc.wantErr || (err == nil && got != tc.want) {
+			t.Fatalf("parseFollowingOnly(%q) = %v, %v; want %v, error=%v", tc.input, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
 func TestHomeFeedRequiresAuthenticatedSession(t *testing.T) {
 	s := &service{}
 	r := httptest.NewRequest(http.MethodGet, "/api/feed/home?limit=20", nil)
