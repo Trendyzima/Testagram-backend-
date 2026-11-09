@@ -30,6 +30,8 @@ func iptvChannel(payload map[string]json.RawMessage)(string,map[string]any,error
     if value,ok:=channel[key];ok{safe[key]=value}
   }
   if value,ok:=safe["countryCode"];ok{safe["country_code"]=value}
+  if value,ok:=safe["name"];ok{safe["channel_name"]=value}
+  if value,ok:=safe["logo"];ok{safe["channel_logo"]=value}
   return id,safe,nil
 }
 func iptvJSON(v any) []byte { b,_:=json.Marshal(v);return b }
