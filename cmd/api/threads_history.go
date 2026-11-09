@@ -7,6 +7,7 @@ import (
   "net/http"
   "strings"
   "time"
+  "unicode/utf8"
 
   "github.com/jackc/pgx/v5"
 )
@@ -30,7 +31,7 @@ func (s *service) threadCreate(w http.ResponseWriter, r *http.Request) {
   var in threadCreateInput
   if err:=decodeMediaJSON(w,r,&in); err!=nil { writeJSON(w,400,errorBody("INVALID_THREAD","Thread payload is invalid",rid)); return }
   in.Body=strings.TrimSpace(in.Body)
-  if len(in.Body)>500 { writeJSON(w,400,errorBody("THREAD_TOO_LONG","Thread text must be 500 characters or fewer",rid)); return }
+  if utf8.RuneCountInString(in.Body)>500 { writeJSON(w,400,errorBody("THREAD_TOO_LONG","Thread text must be 500 characters or fewer",rid)); return }
   if in.Visibility=="" { in.Visibility="public" }
   if in.Visibility!="public" && in.Visibility!="unlisted" && in.Visibility!="private" { writeJSON(w,400,errorBody("INVALID_VISIBILITY","Thread visibility is invalid",rid)); return }
   ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
