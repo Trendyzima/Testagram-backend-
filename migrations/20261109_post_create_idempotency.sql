@@ -15,7 +15,7 @@ BEGIN
   ) THEN
     ALTER TABLE testagram_local.posts
       ADD CONSTRAINT testagram_local_posts_idempotency_key_length
-      CHECK (idempotency_key IS NULL OR length(idempotency_key) BETWEEN 1 AND 200);
+      CHECK (idempotency_key IS NULL OR length(idempotency_key) BETWEEN 8 AND 128);
   END IF;
 END $$;
 
