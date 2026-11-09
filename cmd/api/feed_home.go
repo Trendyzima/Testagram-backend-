@@ -27,6 +27,7 @@ type homeFeedPost struct {
 	MediaIDs       []string       `json:"media_ids"`
 	MediaURLs      []string       `json:"media_urls"`
 	IsVideo        bool           `json:"is_video"`
+	IsFollowing    bool           `json:"is_following"`
 	Language       string         `json:"language"`
 	CreatedAt      time.Time      `json:"created_at"`
 	LikesCount     int64          `json:"likes_count"`
@@ -154,6 +155,7 @@ LIMIT $4`
 		post.MediaIDs = []string{}
 		_ = json.Unmarshal(mediaRaw, &post.MediaIDs)
 		post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName, "avatar_key": avatarKey, "protected_account": protected}
+		post.IsFollowing = following
 		post.Origin = "local"
 		quality := math.Min(1, float64(post.LikesCount+2*post.RepliesCount+2*post.RepostsCount)/50)
 		conversation := math.Min(1, float64(post.RepliesCount)/20)
