@@ -25,7 +25,12 @@ func iptvChannel(payload map[string]json.RawMessage)(string,map[string]any,error
   if err:=json.Unmarshal(raw,&channel);err!=nil||channel==nil{return "",nil,pgx.ErrNoRows}
   id,_:=channel["id"].(string);id=strings.TrimSpace(id)
   if id==""||len(id)>256{return "",nil,pgx.ErrNoRows}
-  return id,channel,nil
+  safe:=map[string]any{"id":id}
+  for _,key:=range []string{"name","logo","country","countryCode","categories","language","group","description","website","streamType"} {
+    if value,ok:=channel[key];ok{safe[key]=value}
+  }
+  if value,ok:=safe["countryCode"];ok{safe["country_code"]=value}
+  return id,safe,nil
 }
 func iptvJSON(v any) []byte { b,_:=json.Marshal(v);return b }
 
@@ -104,6 +109,7 @@ func (s *service) iptvSocial(w http.ResponseWriter,r *http.Request) {
     channelID,channel,err:=iptvChannel(in.Payload);if err!=nil{writeJSON(w,400,errorBody("INVALID_CHANNEL","Channel metadata with an ID is required",rid));return}
     data:=iptvJSON(channel);if len(data)>32768{writeJSON(w,400,errorBody("CHANNEL_METADATA_TOO_LARGE","Channel metadata is too large",rid));return}
     tx,err:=s.db.Begin(ctx);if err!=nil{writeJSON(w,503,errorBody("IPTV_FAVORITES_FAILED","Favorite could not be updated",rid));return};defer tx.Rollback(ctx)
+    if _,err=tx.Exec(ctx,`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,userID+":"+channelID);err!=nil{writeJSON(w,503,errorBody("IPTV_FAVORITES_FAILED","Favorite could not be locked",rid));return}
     var exists bool;if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_local.iptv_channel_favorites WHERE user_id=$1 AND channel_id=$2)`,userID,channelID).Scan(&exists);err!=nil{writeJSON(w,503,errorBody("IPTV_FAVORITES_FAILED","Favorite state could not be loaded",rid));return}
     active:=!exists
     if active{_,err=tx.Exec(ctx,`INSERT INTO testagram_local.iptv_channel_favorites(user_id,channel_id,channel_data) VALUES($1,$2,$3::jsonb)`,userID,channelID,data)}else{_,err=tx.Exec(ctx,`DELETE FROM testagram_local.iptv_channel_favorites WHERE user_id=$1 AND channel_id=$2`,userID,channelID)}
@@ -114,7 +120,7 @@ func (s *service) iptvSocial(w http.ResponseWriter,r *http.Request) {
     rows,err:=s.db.Query(ctx,`SELECT channel_id,channel_data,watched_at FROM testagram_local.iptv_watch_history WHERE user_id=$1 ORDER BY watched_at DESC LIMIT 200`,userID)
     if err!=nil{writeJSON(w,503,errorBody("IPTV_HISTORY_FAILED","Watch history could not be loaded",rid));return}
     defer rows.Close();items:=make([]map[string]any,0)
-    for rows.Next(){var id string;var data []byte;var watched time.Time;if err:=rows.Scan(&id,&data,&watched);err!=nil{writeJSON(w,503,errorBody("IPTV_HISTORY_FAILED","Watch history could not be loaded",rid));return};var channel map[string]any;_=json.Unmarshal(data,&channel);channel["channel_id"]=id;channel["watched_at"]=watched;items=append(items,channel)}
+    for rows.Next(){var id string;var data []byte;var watched time.Time;if err:=rows.Scan(&id,&data,&watched);err!=nil{writeJSON(w,503,errorBody("IPTV_HISTORY_FAILED","Watch history could not be loaded",rid));return};var channel map[string]any;_=json.Unmarshal(data,&channel);if channel==nil{channel=map[string]any{}};channel["channel_id"]=id;channel["watched_at"]=watched;items=append(items,channel)}
     if err:=rows.Err();err!=nil{writeJSON(w,503,errorBody("IPTV_HISTORY_FAILED","Watch history could not be loaded",rid));return}
     writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"history":items},"error":nil,"request_id":rid})
   case "history_upsert":
