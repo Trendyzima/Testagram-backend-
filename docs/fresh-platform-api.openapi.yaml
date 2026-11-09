@@ -113,6 +113,11 @@ paths:
           name: before
           required: false
           schema: { type: string, maxLength: 256 }
+        - in: query
+          name: following_only
+          required: false
+          description: When true, include only the authenticated user's own posts and posts from accounts they actively follow; all visibility, block and mute checks remain enforced.
+          schema: { type: boolean, default: false }
       responses:
         '200': { description: Authorized home feed page with next_cursor, has_more and ranking_mode }
         '400': { description: Invalid pagination parameters }
