@@ -100,6 +100,27 @@ func (s *service) iptvSocial(w http.ResponseWriter,r *http.Request) {
     tag,err:=s.db.Exec(ctx,`UPDATE testagram_local.iptv_channel_comments SET deleted_at=now() WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`,id,userID)
     if err!=nil{writeJSON(w,503,errorBody("IPTV_COMMENT_FAILED","Comment could not be deleted",rid));return}
     writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"deleted":tag.RowsAffected()>0},"error":nil,"request_id":rid})
+  case "notifications":
+    lastCheck:=iptvString(in.Payload,"lastCheck")
+    since:=time.Now().UTC().Add(-time.Hour)
+    if parsed,parseErr:=time.Parse(time.RFC3339Nano,lastCheck);parseErr==nil&&!parsed.After(time.Now().Add(time.Minute)){since=parsed}
+    reactRows,err:=s.db.Query(ctx,`SELECT r.channel_id FROM testagram_local.iptv_channel_reactions r
+      WHERE r.user_id<>$1 AND r.created_at >= $2
+        AND EXISTS(SELECT 1 FROM testagram_local.iptv_channel_favorites f WHERE f.user_id=$1 AND f.channel_id=r.channel_id)
+      ORDER BY r.created_at DESC LIMIT 500`,userID,since)
+    if err!=nil{writeJSON(w,503,errorBody("IPTV_NOTIFICATIONS_FAILED","Notifications could not be loaded",rid));return}
+    reacts:=make([]map[string]any,0)
+    for reactRows.Next(){var channelID string;if err:=reactRows.Scan(&channelID);err!=nil{reactRows.Close();writeJSON(w,503,errorBody("IPTV_NOTIFICATIONS_FAILED","Notifications could not be loaded",rid));return};reacts=append(reacts,map[string]any{"channel_id":channelID})}
+    err=reactRows.Err();reactRows.Close();if err!=nil{writeJSON(w,503,errorBody("IPTV_NOTIFICATIONS_FAILED","Notifications could not be loaded",rid));return}
+    commentRows,err:=s.db.Query(ctx,`SELECT c.channel_id FROM testagram_local.iptv_channel_comments c
+      WHERE c.user_id<>$1 AND c.created_at >= $2 AND c.deleted_at IS NULL AND c.expires_at>now()
+        AND EXISTS(SELECT 1 FROM testagram_local.iptv_channel_favorites f WHERE f.user_id=$1 AND f.channel_id=c.channel_id)
+      ORDER BY c.created_at DESC LIMIT 500`,userID,since)
+    if err!=nil{writeJSON(w,503,errorBody("IPTV_NOTIFICATIONS_FAILED","Notifications could not be loaded",rid));return}
+    comms:=make([]map[string]any,0)
+    for commentRows.Next(){var channelID string;if err:=commentRows.Scan(&channelID);err!=nil{commentRows.Close();writeJSON(w,503,errorBody("IPTV_NOTIFICATIONS_FAILED","Notifications could not be loaded",rid));return};comms=append(comms,map[string]any{"channel_id":channelID})}
+    err=commentRows.Err();commentRows.Close();if err!=nil{writeJSON(w,503,errorBody("IPTV_NOTIFICATIONS_FAILED","Notifications could not be loaded",rid));return}
+    writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"reacts":reacts,"comms":comms},"error":nil,"request_id":rid})
   case "bookmark_list":
     rows,err:=s.db.Query(ctx,`SELECT channel_id,channel_data,created_at FROM testagram_local.iptv_channel_favorites WHERE user_id=$1 ORDER BY created_at DESC LIMIT 200`,userID)
     if err!=nil{writeJSON(w,503,errorBody("IPTV_FAVORITES_FAILED","Favorites could not be loaded",rid));return}
