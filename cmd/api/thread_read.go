@@ -24,15 +24,17 @@ func (s *service) threadRead(w http.ResponseWriter,r *http.Request) {
   var threadID,ownerID,body,visibility,username,displayName,avatarKey string
   var mediaJSON []byte
   var created time.Time
+  var likes,reposts,quotes,replies,views int64
   var viewer any
   if userID!=""{viewer=userID}
   err:=s.db.QueryRow(ctx,`SELECT t.id::text,t.owner_id::text,t.body,t.visibility,t.media_urls,t.created_at,
+      t.likes_count,t.reposts_count,t.quotes_count,t.replies_count,t.views_count,
       a.username,a.display_name,a.avatar_key
     FROM testagram_local.threads t
     JOIN testagram_local.accounts a ON a.user_id=t.owner_id
     WHERE t.id=$1 AND t.deleted_at IS NULL
       AND (t.visibility IN ('public','unlisted') OR ($2::uuid IS NOT NULL AND t.owner_id=$2::uuid))
-      AND a.account_status='active'`,id,viewer).Scan(&threadID,&ownerID,&body,&visibility,&mediaJSON,&created,&username,&displayName,&avatarKey)
+      AND a.account_status='active'`,id,viewer).Scan(&threadID,&ownerID,&body,&visibility,&mediaJSON,&created,&likes,&reposts,&quotes,&replies,&views,&username,&displayName,&avatarKey)
   if err!=nil{writeJSON(w,404,errorBody("THREAD_NOT_FOUND","Thread was not found",rid));return}
   media:=make([]map[string]any,0)
   if len(mediaJSON)>0{_ = json.Unmarshal(mediaJSON,&media)}
@@ -40,7 +42,7 @@ func (s *service) threadRead(w http.ResponseWriter,r *http.Request) {
   if strings.TrimSpace(avatarKey)!="" { avatarURL=publicMediaURL(avatarKey) }
   writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{
     "id":threadID,"owner_id":ownerID,"body":body,"visibility":visibility,"media_urls":media,"created_at":created,
-    "likes_count":0,"reposts_count":0,"quotes_count":0,"replies_count":0,"views_count":0,
+    "likes_count":likes,"reposts_count":reposts,"quotes_count":quotes,"replies_count":replies,"views_count":views,
     "profiles":map[string]any{"id":ownerID,"username":username,"display_name":displayName,"avatar_url":avatarURL,"verified":false},
   },"error":nil,"request_id":rid})
 }
