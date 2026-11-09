@@ -502,6 +502,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/threads", s.threadCreate)
 	mux.HandleFunc("POST /api/threads/{thread_id}/media", s.threadAttachMedia)
 	mux.HandleFunc("DELETE /api/threads/{thread_id}", s.threadDelete)
+	mux.HandleFunc("POST /api/threads/reposts/states", s.threadRepostStates)
 	mux.HandleFunc("GET /api/threads/{thread_id}/reposts", s.threadRepostsList)
 	mux.HandleFunc("GET /api/threads/{thread_id}/reposts/state", s.threadRepostState)
 	mux.HandleFunc("POST /api/threads/{thread_id}/reposts/toggle", s.threadRepostToggle)
