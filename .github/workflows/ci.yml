@@ -185,7 +185,7 @@ jobs:
             migrations/007_media_product_bridge.sql \
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261108_testagram_polls.sql \
-            migrations/20261109_threads_browsing_history.sql \\
+            migrations/20261109_threads_browsing_history.sql \
             migrations/20261109_thread_interactions.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
