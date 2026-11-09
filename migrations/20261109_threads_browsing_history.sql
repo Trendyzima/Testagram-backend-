@@ -9,8 +9,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.threads (
   media_urls JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(media_urls)='array'),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ NULL,
-  CHECK (length(btrim(body)) > 0 OR jsonb_array_length(media_urls) > 0)
+  deleted_at TIMESTAMPTZ NULL
 );
 CREATE INDEX IF NOT EXISTS testagram_threads_owner_created_idx
   ON testagram_local.threads(owner_id,created_at DESC) WHERE deleted_at IS NULL;
