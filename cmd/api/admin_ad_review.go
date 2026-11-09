@@ -353,3 +353,93 @@ func (s *service) updateAdReviewPermission(w http.ResponseWriter, r *http.Reques
 		"error": nil, "request_id": reqID,
 	})
 }
+
+
+func (s *service) updateAdCampaignStatus(w http.ResponseWriter, r *http.Request) {
+	userID, reqID, ok := s.requireAdReviewAdmin(w, r)
+	if !ok {
+		return
+	}
+	campaignID := strings.ToLower(strings.TrimSpace(r.PathValue("campaign_id")))
+	if !socialUUIDPattern.MatchString(campaignID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CAMPAIGN_ID", "Campaign ID is invalid", reqID))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	defer r.Body.Close()
+	var input struct {
+		Status string `json:"status"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CAMPAIGN_STATUS", "Status request is invalid", reqID))
+		return
+	}
+	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
+	if input.Status != "active" && input.Status != "paused" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CAMPAIGN_STATUS", "Status must be active or paused", reqID))
+		return
+	}
+
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CAMPAIGN_STATUS_FAILED", "Campaign status could not be updated", reqID))
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	var previousStatus, moderationStatus, paymentStatus string
+	err = tx.QueryRow(r.Context(), `
+		SELECT status, moderation_status, payment_status
+		FROM testagram_local.ad_campaigns
+		WHERE id = $1::uuid
+		FOR UPDATE
+	`, campaignID).Scan(&previousStatus, &moderationStatus, &paymentStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CAMPAIGN_STATUS_FAILED", "Campaign could not be loaded", reqID))
+		return
+	}
+	if input.Status == "active" && (moderationStatus != "approved" || paymentStatus != "funded") {
+		writeJSON(w, http.StatusConflict, errorBody("CAMPAIGN_NOT_ELIGIBLE", "Only approved and funded campaigns can be resumed", reqID))
+		return
+	}
+	if input.Status == "paused" && previousStatus != "active" {
+		writeJSON(w, http.StatusConflict, errorBody("CAMPAIGN_NOT_ACTIVE", "Only active campaigns can be paused", reqID))
+		return
+	}
+	if previousStatus == input.Status {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "data": map[string]any{"campaign_id": campaignID, "status": previousStatus, "changed": false},
+			"error": nil, "request_id": reqID,
+		})
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `
+		UPDATE testagram_local.ad_campaigns
+		SET status = $2, updated_at = now()
+		WHERE id = $1::uuid
+	`, campaignID, input.Status); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CAMPAIGN_STATUS_FAILED", "Campaign status could not be saved", reqID))
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `
+		INSERT INTO testagram_local.ad_campaign_status_audit(
+		  campaign_id, actor_user_id, previous_status, resulting_status
+		) VALUES($1::uuid, $2::uuid, $3, $4)
+	`, campaignID, userID, previousStatus, input.Status); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CAMPAIGN_STATUS_AUDIT_FAILED", "Campaign status audit could not be recorded", reqID))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CAMPAIGN_STATUS_FAILED", "Campaign status could not be committed", reqID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "data": map[string]any{"campaign_id": campaignID, "status": input.Status, "changed": true},
+		"error": nil, "request_id": reqID,
+	})
+}
