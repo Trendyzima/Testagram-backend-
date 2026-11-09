@@ -515,6 +515,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/threads/{thread_id}/reposts/toggle", s.threadRepostToggle)
 	mux.HandleFunc("GET /api/social/history", s.browsingHistoryList)
 	mux.HandleFunc("POST /api/social/history", s.browsingHistoryRecord)
+	mux.HandleFunc("POST /api/iptv/social", s.iptvSocial)
 	mux.HandleFunc("DELETE /api/social/history", s.browsingHistoryClear)
 	mux.HandleFunc("GET /api/social/polls", s.pollsList)
 	mux.HandleFunc("POST /api/social/polls", s.pollCreate)
