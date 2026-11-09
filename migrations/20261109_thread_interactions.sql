@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.thread_likes (
 CREATE INDEX IF NOT EXISTS testagram_thread_likes_user_created_idx
   ON testagram_local.thread_likes(user_id,created_at DESC);
 CREATE OR REPLACE FUNCTION testagram_local.update_thread_like_count()
-RETURNS trigger LANGUAGE plpgsql AS $
+RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP='INSERT' THEN
     UPDATE testagram_local.threads SET likes_count=likes_count+1,updated_at=now() WHERE id=NEW.thread_id;
