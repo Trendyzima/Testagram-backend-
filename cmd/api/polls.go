@@ -37,6 +37,7 @@ type pollDTO struct {
 	Options []pollOptionDTO `json:"options"`
 	HasVoted bool `json:"has_voted"`
 	MediaURL string `json:"media_url,omitempty"`
+	MediaObjectKey string `json:"-"`
 }
 
 func (s *service) pollLoad(ctx context.Context, pollID, viewerID string) (pollDTO, error) {
