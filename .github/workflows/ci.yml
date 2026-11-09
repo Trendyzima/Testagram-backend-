@@ -502,7 +502,8 @@ jobs:
             migrations/20261019_testagram_media_replication_producers.sql \
             migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
-            migrations/20261106_social_core.sql; do
+            migrations/20261106_social_core.sql \
+            migrations/20261109_post_create_idempotency.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
