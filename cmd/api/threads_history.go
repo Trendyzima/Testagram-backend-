@@ -59,8 +59,14 @@ func (s *service) threadAttachMedia(w http.ResponseWriter, r *http.Request) {
   }
   mediaURL:=publicMediaURLForStorage(strings.TrimSpace(in.Key),userID,namespace)
   if mediaURL==""{writeJSON(w,503,errorBody("MEDIA_PUBLIC_URL_INVALID","Media delivery URL is unavailable",rid));return}
-  _,err=tx.Exec(ctx,`UPDATE testagram_local.threads SET media_urls=media_urls || $3::jsonb,updated_at=now() WHERE id=$1 AND owner_id=$2`,threadID,userID,mustJSON([]threadMediaDTO{{URL:mediaURL,Name:name,Type:contentType,Size:size}}))
+  mediaJSON,marshalErr:=json.Marshal([]threadMediaDTO{{URL:mediaURL,Name:name,Type:contentType,Size:size}})
+  if marshalErr!=nil{writeJSON(w,500,errorBody("THREAD_MEDIA_FAILED","Media metadata could not be encoded",rid));return}
+  tag,err:=tx.Exec(ctx,`UPDATE testagram_local.threads
+    SET media_urls=media_urls || $3::jsonb,updated_at=now()
+    WHERE id=$1 AND owner_id=$2 AND jsonb_array_length(media_urls)<20
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(media_urls) AS existing WHERE existing->>'url'=$4)`,threadID,userID,mediaJSON,mediaURL)
   if err!=nil{writeJSON(w,503,errorBody("THREAD_MEDIA_FAILED","Media could not be attached",rid));return}
+  if tag.RowsAffected()==0{writeJSON(w,409,errorBody("THREAD_MEDIA_LIMIT_OR_DUPLICATE","Thread already has this attachment or reached the 20-file limit",rid));return}
   if err=tx.Commit(ctx);err!=nil{writeJSON(w,503,errorBody("THREAD_MEDIA_FAILED","Media attachment could not be committed",rid));return}
   writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_id":threadID,"attached":true,"media":threadMediaDTO{URL:mediaURL,Name:name,Type:contentType,Size:size}},"error":nil,"request_id":rid})
 }
@@ -83,7 +89,8 @@ func (s *service) browsingHistoryRecord(w http.ResponseWriter,r *http.Request) {
   in.EntityType=strings.ToLower(strings.TrimSpace(in.EntityType));in.EntityID=strings.ToLower(strings.TrimSpace(in.EntityID))
   if (in.EntityType!="post"&&in.EntityType!="thread"&&in.EntityType!="video")||!socialUUIDPattern.MatchString(in.EntityID){writeJSON(w,400,errorBody("INVALID_HISTORY_ITEM","Only valid post, thread or video IDs can be recorded",rid));return}
   if in.Metadata==nil{in.Metadata=map[string]any{}}
-  metadata:=mustJSON(in.Metadata)
+  metadata,marshalErr:=json.Marshal(in.Metadata)
+  if marshalErr!=nil{writeJSON(w,400,errorBody("INVALID_HISTORY_METADATA","History metadata must be valid JSON",rid));return}
   _,err:=s.db.Exec(r.Context(),`INSERT INTO testagram_local.browsing_history(user_id,entity_type,entity_id,metadata,viewed_at) VALUES($1,$2,$3,$4::jsonb,now()) ON CONFLICT(user_id,entity_type,entity_id) DO UPDATE SET metadata=EXCLUDED.metadata,viewed_at=now()`,userID,in.EntityType,in.EntityID,metadata)
   if err!=nil{writeJSON(w,503,errorBody("HISTORY_RECORD_FAILED","Browsing history could not be saved",rid));return}
   writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"recorded":true},"error":nil,"request_id":rid})
