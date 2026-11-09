@@ -17,7 +17,7 @@ func (s *service) socialPostView(w http.ResponseWriter,r *http.Request) {
   var viewer any;if userID!=""{viewer=userID}
   var views int64
   err=tx.QueryRow(ctx,`UPDATE testagram_local.posts
-    SET views_count=views_count+1,updated_at=now()
+    SET views_count=views_count+1
     WHERE id=$1 AND deleted_at IS NULL
       AND (visibility='public' OR author_id=$2::uuid OR (visibility='followers' AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$2::uuid AND f.following_id=author_id AND f.status='accepted')))
     RETURNING views_count`,postID,viewer).Scan(&views)
