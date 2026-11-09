@@ -2,6 +2,7 @@ package main
 
 import (
   "context"
+  "encoding/base64"
   "encoding/json"
   "net/http"
   "strconv"
@@ -27,6 +28,14 @@ func (s *service) threadsList(w http.ResponseWriter,r *http.Request) {
   limit:=6
   if raw:=r.URL.Query().Get("limit");raw!=""{n,err:=strconv.Atoi(raw);if err!=nil||n<1||n>30{writeJSON(w,400,errorBody("INVALID_LIMIT","Limit must be between 1 and 30",rid));return};limit=n}
   cursor:=strings.TrimSpace(r.URL.Query().Get("cursor"))
+  cursorTime,cursorID:="",""
+  if cursor!=""{
+    decoded,decodeErr:=base64.RawURLEncoding.DecodeString(cursor)
+    if decodeErr!=nil{writeJSON(w,400,errorBody("INVALID_CURSOR","Thread cursor is invalid",rid));return}
+    parts:=strings.SplitN(string(decoded),"|",2)
+    if len(parts)!=2||!socialUUIDPattern.MatchString(parts[1]){writeJSON(w,400,errorBody("INVALID_CURSOR","Thread cursor is invalid",rid));return}
+    cursorTime,cursorID=parts[0],strings.ToLower(parts[1])
+  }
   ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
   var rows pgx.Rows
   var err error
@@ -38,11 +47,11 @@ func (s *service) threadsList(w http.ResponseWriter,r *http.Request) {
     WHERE t.deleted_at IS NULL AND t.visibility='public' AND a.account_status='active'`
   switch tab {
   case "following":
-    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') AND t.created_at<$2::timestamptz ORDER BY t.created_at DESC,t.id DESC LIMIT $3`,userID,cursor,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
+    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') AND (t.created_at,t.id)<($2::timestamptz,$3::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $4`,userID,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
   case "saved":
-    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1 AND t.created_at<$2::timestamptz) ORDER BY t.created_at DESC,t.id DESC LIMIT $3`,userID,cursor,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1) ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
+    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1 AND (t.created_at,t.id)<($2::timestamptz,$3::uuid)) ORDER BY t.created_at DESC,t.id DESC LIMIT $4`,userID,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1) ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
   default:
-    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND t.created_at<$1::timestamptz ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,cursor,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` ORDER BY t.created_at DESC,t.id DESC LIMIT $1`,limit+1) }
+    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND (t.created_at,t.id)<($1::timestamptz,$2::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $3`,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` ORDER BY t.created_at DESC,t.id DESC LIMIT $1`,limit+1) }
   }
   if err!=nil{writeJSON(w,503,errorBody("THREAD_LIST_FAILED","Threads could not be loaded",rid));return}
   defer rows.Close()
@@ -59,6 +68,6 @@ func (s *service) threadsList(w http.ResponseWriter,r *http.Request) {
   }
   if err:=rows.Err();err!=nil{writeJSON(w,503,errorBody("THREAD_LIST_FAILED","Thread list could not be read",rid));return}
   hasMore:=len(items)>limit;if hasMore{items=items[:limit]}
-  next:="";if len(items)>0{next=items[len(items)-1]["created_at"].(time.Time).Format(time.RFC3339Nano)}
+  next:="";if len(items)>0{last:=items[len(items)-1];next=base64.RawURLEncoding.EncodeToString([]byte(last["created_at"].(time.Time).Format(time.RFC3339Nano)+"|"+last["id"].(string)))}
   writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"items":items,"next_cursor":next,"has_more":hasMore},"error":nil,"request_id":rid})
 }
