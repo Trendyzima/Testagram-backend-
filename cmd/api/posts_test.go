@@ -18,6 +18,7 @@ func TestValidateCreatePostV1(t *testing.T) {
 		{name: "valid followers visibility", input: createPostV1Request{Content: "hello", Visibility: "FOLLOWERS"}, key: "request-key-0002", wantText: "hello", wantVis: "followers"},
 		{name: "empty body rejected", input: createPostV1Request{Content: "  "}, key: "request-key-0003", wantCode: "INVALID_POST_CONTENT"},
 		{name: "body over limit rejected", input: createPostV1Request{Content: strings.Repeat("x", 5001)}, key: "request-key-0004", wantCode: "INVALID_POST_CONTENT"},
+		{name: "unicode body at character limit accepted", input: createPostV1Request{Content: strings.Repeat("界", 5000)}, key: "request-key-0004a", wantText: strings.Repeat("界", 5000), wantVis: "public"},
 		{name: "invalid visibility rejected", input: createPostV1Request{Content: "hello", Visibility: "everyone"}, key: "request-key-0005", wantCode: "INVALID_POST_VISIBILITY"},
 		{name: "missing idempotency key rejected", input: createPostV1Request{Content: "hello"}, key: "", wantCode: "IDEMPOTENCY_KEY_REQUIRED"},
 		{name: "short idempotency key rejected", input: createPostV1Request{Content: "hello"}, key: "short", wantCode: "IDEMPOTENCY_KEY_REQUIRED"},
