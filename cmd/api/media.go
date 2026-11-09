@@ -1020,9 +1020,10 @@ type publicPostMediaItem struct {
 	Key         string
 	URL         string
 	ContentType string
+	Visibility  string
 }
 
-func (s *service) resolvePublicPostMedia(ctx context.Context, ownerID string, keys []string) ([]map[string]any, []string, string, string, error) {
+func (s *service) resolvePostMedia(ctx context.Context, ownerID, viewerID string, keys []string, allowPrivate bool) ([]map[string]any, []string, string, string, error) {
 	if len(keys) == 0 {
 		return []map[string]any{}, []string{}, "", "", nil
 	}
@@ -1030,11 +1031,11 @@ func (s *service) resolvePublicPostMedia(ctx context.Context, ownerID string, ke
 		return nil, nil, "", "", errors.New("media metadata database is unavailable")
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT object_key, content_type, storage_namespace
+		SELECT object_key, content_type, storage_namespace, visibility
 		FROM testagram_media.assets
 		WHERE owner_id = $1::uuid
 		  AND object_key = ANY($2::text[])
-		  AND visibility = 'public'
+		  AND visibility IN ('public', 'private')
 		  AND status = 'ready'
 	`, ownerID, keys)
 	if err != nil {
@@ -1042,18 +1043,37 @@ func (s *service) resolvePublicPostMedia(ctx context.Context, ownerID string, ke
 	}
 	assetsByKey := make(map[string]publicPostMediaItem, len(keys))
 	for rows.Next() {
-		var key, contentType, namespace string
-		if err := rows.Scan(&key, &contentType, &namespace); err != nil {
+		var key, contentType, namespace, visibility string
+		if err := rows.Scan(&key, &contentType, &namespace, &visibility); err != nil {
 			rows.Close()
 			return nil, nil, "", "", err
 		}
-		publicURL := publicMediaURLForStorage(key, ownerID, namespace)
-		if publicURL == "" {
-			rows.Close()
-			return nil, nil, "", "", errors.New("public media delivery URL is not configured")
+		var mediaURL string
+		if visibility == "public" {
+			mediaURL = publicMediaURLForStorage(key, ownerID, namespace)
+			if mediaURL == "" {
+				rows.Close()
+				return nil, nil, "", "", errors.New("public media delivery URL is not configured")
+			}
+		} else {
+			if !allowPrivate || viewerID == "" {
+				continue
+			}
+			switch {
+			case s.virtualStorage != nil:
+				mediaURL, err = s.virtualStorage.DownloadURL(ctx, ownerID, viewerID, namespace, key)
+			case s.media != nil:
+				mediaURL, err = s.media.PresignPrivateDownload(ownerID, key, 5*time.Minute, time.Now())
+			default:
+				err = errors.New("private media signing is not configured")
+			}
+			if err != nil || mediaURL == "" {
+				rows.Close()
+				return nil, nil, "", "", errors.New("private post media could not be signed")
+			}
 		}
 		assetsByKey[key] = publicPostMediaItem{
-			Key: key, URL: publicURL, ContentType: contentType,
+			Key: key, URL: mediaURL, ContentType: contentType, Visibility: visibility,
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -1072,7 +1092,8 @@ func (s *service) resolvePublicPostMedia(ctx context.Context, ownerID string, ke
 			continue
 		}
 		items = append(items, map[string]any{
-			"key": asset.Key, "url": asset.URL, "content_type": asset.ContentType,
+			"key": asset.Key, "url": asset.URL,
+			"content_type": asset.ContentType, "visibility": asset.Visibility,
 		})
 		urls = append(urls, asset.URL)
 		if videoURL == "" && strings.HasPrefix(asset.ContentType, "video/") {
