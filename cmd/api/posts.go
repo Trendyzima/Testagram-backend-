@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -24,7 +25,7 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 	defer r.Body.Close()
 
 	var input createPostV1Request
@@ -109,7 +110,7 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 // opening a transaction. It is kept pure so the validation contract is unit-tested.
 func validateCreatePostV1(input *createPostV1Request, rawKey string) (string, string) {
 	input.Content = strings.TrimSpace(input.Content)
-	if input.Content == "" || len(input.Content) > 5000 {
+	if input.Content == "" || utf8.RuneCountInString(input.Content) > 5000 {
 		return "INVALID_POST_CONTENT", "Post text must contain between 1 and 5000 characters"
 	}
 	input.Visibility = strings.ToLower(strings.TrimSpace(input.Visibility))
