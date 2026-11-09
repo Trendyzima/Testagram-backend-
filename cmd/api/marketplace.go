@@ -49,11 +49,11 @@ func (s *service) marketplaceProductsList(w http.ResponseWriter, r *http.Request
 	}
 
 	rows, err := s.db.Query(r.Context(), `
-		SELECT p.id::text, p.owner_id::text, p.name, p.description, p.category,
-		       p.price::text, p.currency, p.image_url, p.external_link,
+		SELECT p.id::text, p.owner_id::text, p.name, COALESCE(p.description,''), p.category,
+		       p.price::text, p.currency, COALESCE(p.image_url,''), COALESCE(p.external_link,''),
 		       p.avg_rating, p.review_count, p.views_count, p.sales_count,
-		       p.is_featured, p.created_at, a.username, a.display_name,
-		       a.avatar_key, a.verified_tier
+		       p.is_featured, p.created_at, a.username, COALESCE(a.display_name,''),
+		       COALESCE(a.avatar_key,''), COALESCE(a.verified_tier,'')
 		FROM testagram_local.marketplace_products p
 		JOIN testagram_local.accounts a ON a.user_id = p.owner_id
 		WHERE p.is_active
@@ -136,10 +136,10 @@ func (s *service) marketplaceProductGet(w http.ResponseWriter, r *http.Request) 
 	var featured bool
 	var created time.Time
 	err := s.db.QueryRow(r.Context(), `
-		SELECT p.owner_id::text,p.name,p.description,p.category,p.price::text,p.currency,
-		       p.image_url,p.external_link,p.avg_rating,p.review_count,p.views_count,
+		SELECT p.owner_id::text,p.name,COALESCE(p.description,''),p.category,p.price::text,p.currency,
+		       COALESCE(p.image_url,''),COALESCE(p.external_link,''),p.avg_rating,p.review_count,p.views_count,
 		       p.sales_count,p.is_featured,p.created_at,
-		       a.username,a.display_name,a.avatar_key,a.verified_tier
+		       a.username,COALESCE(a.display_name,''),COALESCE(a.avatar_key,''),COALESCE(a.verified_tier,'')
 		FROM testagram_local.marketplace_products p
 		JOIN testagram_local.accounts a ON a.user_id=p.owner_id
 		WHERE p.id=$1::uuid AND p.is_active AND a.account_status='active'
