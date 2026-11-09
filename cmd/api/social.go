@@ -1503,7 +1503,7 @@ func (s *service) socialReplyChainGet(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT t.id::text, t.user_id::text, t.post_id::text, COALESCE(t.parent_reply_id::text, ''),
 		       t.content, t.created_at, t.updated_at,
-		       a.username, a.display_name, a.avatar_key, a.verified_tier
+		       a.username, a.display_name, a.avatar_key
 		FROM reply_tree t
 		JOIN testagram_local.accounts a ON a.user_id = t.user_id
 		WHERE a.account_status = 'active'
