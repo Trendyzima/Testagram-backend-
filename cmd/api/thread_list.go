@@ -44,14 +44,14 @@ func (s *service) threadsList(w http.ResponseWriter,r *http.Request) {
       a.username,a.display_name,a.avatar_key
     FROM testagram_local.threads t
     JOIN testagram_local.accounts a ON a.user_id=t.owner_id
-    WHERE t.deleted_at IS NULL AND t.visibility='public' AND a.account_status='active'`
+    WHERE t.deleted_at IS NULL AND a.account_status='active'`
   switch tab {
   case "following":
-    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') AND (t.created_at,t.id)<($2::timestamptz,$3::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $4`,userID,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
+    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND t.visibility='public' AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') AND (t.created_at,t.id)<($2::timestamptz,$3::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $4`,userID,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=t.owner_id AND f.status='accepted') ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
   case "saved":
-    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1 AND (t.created_at,t.id)<($2::timestamptz,$3::uuid)) ORDER BY t.created_at DESC,t.id DESC LIMIT $4`,userID,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1) ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
+    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND (t.visibility IN ('public','unlisted') OR t.owner_id=$1) AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1 AND (t.created_at,t.id)<($2::timestamptz,$3::uuid)) ORDER BY t.created_at DESC,t.id DESC LIMIT $4`,userID,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND (t.visibility IN ('public','unlisted') OR t.owner_id=$1) AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1) ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit+1) }
   default:
-    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND (t.created_at,t.id)<($1::timestamptz,$2::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $3`,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` ORDER BY t.created_at DESC,t.id DESC LIMIT $1`,limit+1) }
+    if cursor!="" { rows,err=s.db.Query(ctx,baseSelect+` AND t.visibility='public' AND (t.created_at,t.id)<($1::timestamptz,$2::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $3`,cursorTime,cursorID,limit+1) } else { rows,err=s.db.Query(ctx,baseSelect+` AND t.visibility='public' ORDER BY t.created_at DESC,t.id DESC LIMIT $1`,limit+1) }
   }
   if err!=nil{writeJSON(w,503,errorBody("THREAD_LIST_FAILED","Threads could not be loaded",rid));return}
   defer rows.Close()
