@@ -124,7 +124,7 @@ func (s *service) discoveryPosts(w http.ResponseWriter, r *http.Request) {
 		  AND ($4='' OR ($4='video' AND p.is_video=TRUE) OR ($4='image' AND p.is_video=FALSE))
 		  AND ($6<>'following' OR EXISTS(
 		       SELECT 1 FROM testagram_local.follows f
-		       WHERE f.follower_id=$7::uuid AND f.following_id=p.author_id AND f.status='accepted'))
+		       WHERE f.follower_id=NULLIF($7,'')::uuid AND f.following_id=p.author_id AND f.status='accepted'))
 		ORDER BY ` + order + `
 		LIMIT $3 OFFSET $8
 	`
