@@ -1264,7 +1264,7 @@ func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var postIDValue, content, visibility, username, displayName, avatar string
-	var verifiedTier, accountType, creatorTier string
+	var bio, website string
 	var mediaJSON []byte
 	var video bool
 	var views, likes, replies, reposts, followers, following, postsCount int64
@@ -1273,8 +1273,9 @@ func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(r.Context(), `
 		SELECT p.id::text, p.text, p.visibility, p.media_ids, p.is_video, p.views_count,
 		       p.likes_count, p.replies_count, p.reposts_count, p.created_at, p.updated_at,
-		       a.username, a.display_name, a.avatar_key, a.verified_tier, a.account_type,
-		       a.creator_tier, a.follower_count, a.following_count, a.posts_count,
+		       a.username, a.display_name, a.avatar_key, a.bio, a.website,
+		       a.follower_count, a.following_count,
+		       (SELECT count(*) FROM testagram_local.posts authored WHERE authored.author_id = a.user_id AND authored.deleted_at IS NULL),
 		       EXISTS(SELECT 1 FROM testagram_local.post_reactions x WHERE x.post_id = p.id AND x.user_id = $3),
 		       EXISTS(SELECT 1 FROM testagram_local.reposts x WHERE x.post_id = p.id AND x.user_id = $3),
 		       EXISTS(SELECT 1 FROM testagram_local.bookmarks x WHERE x.post_id = p.id AND x.user_id = $3)
@@ -1284,8 +1285,8 @@ func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	`, postID, authorID, userID).Scan(
 		&postIDValue, &content, &visibility, &mediaJSON, &video, &views,
 		&likes, &replies, &reposts, &created, &updated,
-		&username, &displayName, &avatar, &verifiedTier, &accountType,
-		&creatorTier, &followers, &following, &postsCount, &liked, &reposted, &bookmarked,
+		&username, &displayName, &avatar, &bio, &website,
+		&followers, &following, &postsCount, &liked, &reposted, &bookmarked,
 	)
 	if err != nil {
 		http.NotFound(w, r)
@@ -1302,8 +1303,7 @@ func (s *service) socialPostGet(w http.ResponseWriter, r *http.Request) {
 	}
 	profile := map[string]any{
 		"id": authorID, "username": username, "display_name": displayName,
-		"avatar_url": avatar, "verified_tier": verifiedTier,
-		"account_type": accountType, "creator_tier": creatorTier,
+		"avatar_url": avatar, "bio": bio, "website_url": website,
 		"follower_count": followers, "following_count": following, "posts_count": postsCount,
 	}
 	post := map[string]any{
@@ -1356,7 +1356,7 @@ func (s *service) socialRepliesList(w http.ResponseWriter, r *http.Request) {
 	rows, err := tx.Query(r.Context(), `
 		SELECT r.id::text, r.user_id::text, r.post_id::text, COALESCE(r.parent_reply_id::text, ''),
 		       r.content, r.created_at, r.updated_at,
-		       a.username, a.display_name, a.avatar_key, a.verified_tier
+		       a.username, a.display_name, a.avatar_key
 		FROM testagram_local.replies r
 		JOIN testagram_local.accounts a ON a.user_id = r.user_id
 		WHERE r.post_id = $1::uuid AND r.deleted_at IS NULL AND a.account_status = 'active'
@@ -1370,11 +1370,11 @@ func (s *service) socialRepliesList(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0)
 	for rows.Next() {
 		var replyID, authorID, postIDValue, parentID string
-		var content, username, displayName, avatar, tier string
+		var content, username, displayName, avatar string
 		var created, updated time.Time
 		if err := rows.Scan(
 			&replyID, &authorID, &postIDValue, &parentID, &content, &created, &updated,
-			&username, &displayName, &avatar, &tier,
+			&username, &displayName, &avatar,
 		); err != nil {
 			rows.Close()
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLIES_UNAVAILABLE", "Reply records could not be read", reqID))
@@ -1382,7 +1382,7 @@ func (s *service) socialRepliesList(w http.ResponseWriter, r *http.Request) {
 		}
 		profile := map[string]any{
 			"id": authorID, "username": username, "display_name": displayName,
-			"avatar_url": avatar, "verified_tier": tier,
+			"avatar_url": avatar,
 		}
 		items = append(items, map[string]any{
 			"id": replyID, "user_id": authorID, "post_id": postIDValue,
@@ -1478,11 +1478,11 @@ func (s *service) socialReplyChainGet(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0)
 	for rows.Next() {
 		var id, author, post, parent, content string
-		var username, display, avatar, tier string
+		var username, display, avatar string
 		var created, updated time.Time
 		if err := rows.Scan(
 			&id, &author, &post, &parent, &content, &created, &updated,
-			&username, &display, &avatar, &tier,
+			&username, &display, &avatar,
 		); err != nil {
 			rows.Close()
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_CHAIN_UNAVAILABLE", "Reply chain records could not be read", reqID))
@@ -1490,7 +1490,7 @@ func (s *service) socialReplyChainGet(w http.ResponseWriter, r *http.Request) {
 		}
 		profile := map[string]any{
 			"id": author, "username": username, "display_name": display,
-			"avatar_url": avatar, "verified_tier": tier,
+			"avatar_url": avatar,
 		}
 		items = append(items, map[string]any{
 			"id": id, "user_id": author, "post_id": post, "parent_reply_id": parent,
