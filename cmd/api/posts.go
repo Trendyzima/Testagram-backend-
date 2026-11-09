@@ -1,0 +1,118 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+type createPostV1Request struct {
+	Content    string `json:"content"`
+	Visibility string `json:"visibility"`
+	Sensitive  bool   `json:"sensitive"`
+}
+
+// createPostV1 is the native Appwrite-authenticated post creation route.
+// Canonical account IDs are resolved by socialAuth; post rows and idempotency
+// state are owned by Neon/PostgreSQL, never by a browser database client.
+func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
+	userID, id, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	defer r.Body.Close()
+
+	var input createPostV1Request
+	if err := decodeSingleJSON(r.Body, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_JSON", "Request body must contain one valid JSON object", id))
+		return
+	}
+	input.Content = strings.TrimSpace(input.Content)
+	if input.Content == "" || len(input.Content) > 5000 {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_CONTENT", "Post text must contain between 1 and 5000 characters", id))
+		return
+	}
+	input.Visibility = strings.ToLower(strings.TrimSpace(input.Visibility))
+	if input.Visibility == "" {
+		input.Visibility = "public"
+	}
+	if input.Visibility != "public" && input.Visibility != "followers" && input.Visibility != "private" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_VISIBILITY", "Post visibility must be public, followers or private", id))
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 200 || strings.ContainsAny(idempotencyKey, "\r\n") {
+		writeJSON(w, http.StatusBadRequest, errorBody("IDEMPOTENCY_KEY_REQUIRED", "A valid Idempotency-Key header is required", id))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_STORE_UNAVAILABLE", "Post storage is temporarily unavailable", id))
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var postID string
+	var createdAt time.Time
+	err = tx.QueryRow(ctx, `
+		INSERT INTO testagram_local.posts(author_id,text,visibility,sensitive,idempotency_key)
+		VALUES($1::uuid,$2,$3,$4,$5)
+		ON CONFLICT (author_id,idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+		RETURNING id::text,created_at`,
+		userID, input.Content, input.Visibility, input.Sensitive, idempotencyKey,
+	).Scan(&postID, &createdAt)
+
+	replayed := false
+	if errors.Is(err, pgx.ErrNoRows) {
+		var previousContent, previousVisibility string
+		var previousSensitive bool
+		err = tx.QueryRow(ctx, `
+			SELECT id::text,text,visibility,sensitive,created_at
+			FROM testagram_local.posts
+			WHERE author_id=$1::uuid AND idempotency_key=$2 AND deleted_at IS NULL
+		`, userID, idempotencyKey).Scan(&postID, &previousContent, &previousVisibility, &previousSensitive, &createdAt)
+		if err == nil {
+			if previousContent != input.Content || previousVisibility != input.Visibility || previousSensitive != input.Sensitive {
+				writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENCY_KEY_REUSED", "This idempotency key was already used for a different post", id))
+				return
+			}
+			replayed = true
+		}
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_CREATE_FAILED", "Post could not be saved", id))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_COMMIT_FAILED", "Post could not be committed", id))
+		return
+	}
+
+	w.Header().Set("Cache-Control", "private, no-store")
+	status := http.StatusCreated
+	if replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"$id": postID, "id": postID, "post_id": postID,
+			"author_id": userID, "body": input.Content, "content": input.Content,
+			"visibility": input.Visibility, "sensitive": input.Sensitive,
+			"status": "published", "created_at": createdAt.UTC().Format(time.RFC3339Nano),
+			"replayed": replayed,
+		},
+		"error": nil, "request_id": id,
+	})
+}
+
+var _ = json.Valid
