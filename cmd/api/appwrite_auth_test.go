@@ -82,8 +82,8 @@ func TestValidAppwriteUserID(t *testing.T) {
 	}
 }
 
-func TestAppwriteProviderDoesNotFallbackToSupabase(t *testing.T) {
-	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "appwrite")
+func TestDefaultProviderDoesNotFallbackToSupabase(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "")
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
 	t.Setenv("SUPABASE_URL", "https://legacy-auth.example.test")
