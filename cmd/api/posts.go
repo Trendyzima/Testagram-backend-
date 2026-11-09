@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -115,4 +114,3 @@ func (s *service) createPostV1(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-var _ = json.Valid
