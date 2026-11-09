@@ -389,12 +389,13 @@ func (s *service) updateAdCampaignStatus(w http.ResponseWriter, r *http.Request)
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	var previousStatus, moderationStatus, paymentStatus string
+	var endsAt *time.Time
 	err = tx.QueryRow(r.Context(), `
-		SELECT status, moderation_status, payment_status
+		SELECT status, moderation_status, payment_status, ends_at
 		FROM testagram_local.ad_campaigns
 		WHERE id = $1::uuid
 		FOR UPDATE
-	`, campaignID).Scan(&previousStatus, &moderationStatus, &paymentStatus)
+	`, campaignID).Scan(&previousStatus, &moderationStatus, &paymentStatus, &endsAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.NotFound(w, r)
 		return
@@ -405,6 +406,10 @@ func (s *service) updateAdCampaignStatus(w http.ResponseWriter, r *http.Request)
 	}
 	if input.Status == "active" && (moderationStatus != "approved" || paymentStatus != "funded") {
 		writeJSON(w, http.StatusConflict, errorBody("CAMPAIGN_NOT_ELIGIBLE", "Only approved and funded campaigns can be resumed", reqID))
+		return
+	}
+	if input.Status == "active" && endsAt != nil && !endsAt.After(time.Now().UTC()) {
+		writeJSON(w, http.StatusConflict, errorBody("CAMPAIGN_EXPIRED", "An expired campaign cannot be resumed", reqID))
 		return
 	}
 	if input.Status == "paused" && previousStatus != "active" {
