@@ -36,7 +36,7 @@ BEGIN
   END IF;
   RETURN NULL;
 END;
-$;
+$$;
 DROP TRIGGER IF EXISTS testagram_thread_likes_count ON testagram_local.thread_likes;
 CREATE TRIGGER testagram_thread_likes_count
 AFTER INSERT OR DELETE ON testagram_local.thread_likes
