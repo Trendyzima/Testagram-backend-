@@ -678,23 +678,24 @@ func (s *service) socialReplyChainGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := tx.Query(r.Context(), `
-		WITH RECURSIVE reply_tree AS (
-		  SELECT r.id, r.user_id, r.post_id, r.parent_reply_id, r.content, r.created_at, r.updated_at
+		WITH RECURSIVE reply_path AS (
+		  SELECT r.id, r.user_id, r.post_id, r.parent_reply_id, r.content, r.created_at, r.updated_at, 0 AS depth
 		  FROM testagram_local.replies r
 		  WHERE r.id = $1::uuid AND r.post_id = $2::uuid AND r.deleted_at IS NULL
 		  UNION ALL
-		  SELECT child.id, child.user_id, child.post_id, child.parent_reply_id, child.content, child.created_at, child.updated_at
-		  FROM testagram_local.replies child
-		  JOIN reply_tree parent ON child.parent_reply_id = parent.id AND child.post_id = parent.post_id
-		  WHERE child.deleted_at IS NULL
+		  SELECT parent.id, parent.user_id, parent.post_id, parent.parent_reply_id,
+		         parent.content, parent.created_at, parent.updated_at, child.depth + 1
+		  FROM testagram_local.replies parent
+		  JOIN reply_path child ON child.parent_reply_id = parent.id AND child.post_id = parent.post_id
+		  WHERE parent.deleted_at IS NULL AND child.depth < 500
 		)
 		SELECT t.id::text, t.user_id::text, t.post_id::text, COALESCE(t.parent_reply_id::text, ''),
 		       t.content, t.created_at, t.updated_at,
 		       a.username, a.display_name, a.avatar_key
-		FROM reply_tree t
+		FROM reply_path t
 		JOIN testagram_local.accounts a ON a.user_id = t.user_id
 		WHERE a.account_status = 'active'
-		ORDER BY t.created_at ASC, t.id ASC
+		ORDER BY t.depth DESC
 		LIMIT $3
 	`, replyID, postID, limit)
 	if err != nil {
