@@ -134,6 +134,7 @@ func newTestPlatformClient(t *testing.T, handler http.Handler) *platformclient.C
 }
 
 func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "supabase")
 	t.Setenv("SUPABASE_URL", "https://supabase.example")
 	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
 	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +178,7 @@ func testMediaSigner(t *testing.T) *media.Signer {
 
 func testSupabaseAuthServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "supabase")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/auth/v1/user" {
 			http.NotFound(w, r)
