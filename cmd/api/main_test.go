@@ -128,7 +128,9 @@ func TestUnifiedSearchRequiresLinkedAppwriteIdentity(t *testing.T) {
 		t.Fatalf("search without configured Appwrite identity must fail closed: status=%d body=%s", w.Code, w.Body.String())
 	}
 	if upstreamCalls != 0 { t.Fatalf("legacy upstream was called %d times", upstreamCalls) }
-}func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
+}
+
+func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.health.read","input":{}}`))
 	r.Header.Set("Origin", "https://evil.example")
 	w := httptest.NewRecorder()
