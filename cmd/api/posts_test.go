@@ -43,3 +43,15 @@ func TestValidateCreatePostV1(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeCreatePostV1JSONRejectsUnknownAndTrailingFields(t *testing.T) {
+	for _, raw := range []string{
+		`{"content":"hello","visibility":"public","legacy_supabase_table":"posts"}`,
+		`{"content":"hello","visibility":"public"} {"content":"second"}`,
+	} {
+		var input createPostV1Request
+		if err := decodeCreatePostV1JSON(strings.NewReader(raw), &input); err == nil {
+			t.Errorf("decodeCreatePostV1JSON(%q) unexpectedly succeeded", raw)
+		}
+	}
+}
