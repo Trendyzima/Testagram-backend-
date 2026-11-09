@@ -19,4 +19,7 @@ func TestIPTVChannelMetadataDropsStreamCredentials(t *testing.T) {
     t.Fatalf("safe display metadata was not retained: %#v",channel)
   }
   if channel["country_code"]!="KE"{t.Fatalf("country_code compatibility alias missing: %#v",channel)}
+  if channel["channel_name"]!="News"||channel["channel_logo"]!="https://cdn.example/logo.png"{
+    t.Fatalf("watch-history display aliases missing: %#v",channel)
+  }
 }
