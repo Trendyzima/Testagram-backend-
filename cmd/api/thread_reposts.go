@@ -64,3 +64,18 @@ func (s *service) threadRepostToggle(w http.ResponseWriter,r *http.Request) {
   if err=tx.Commit(ctx);err!=nil{writeJSON(w,503,errorBody("THREAD_REPOST_FAILED","Repost could not be committed",rid));return}
   writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_id":id,"reposted":active},"error":nil,"request_id":rid})
 }
+
+func (s *service) threadRepostStates(w http.ResponseWriter,r *http.Request) {
+  userID,rid,ok:=s.socialAuth(w,r);if !ok{return}
+  var in struct{ThreadIDs []string `json:"thread_ids"`}
+  if err:=decodeMediaJSON(w,r,&in);err!=nil||len(in.ThreadIDs)>100{writeJSON(w,400,errorBody("INVALID_THREAD_IDS","Provide up to 100 valid thread IDs",rid));return}
+  ids:=make([]string,0,len(in.ThreadIDs))
+  for _,id:=range in.ThreadIDs{id=strings.ToLower(strings.TrimSpace(id));if !socialUUIDPattern.MatchString(id){writeJSON(w,400,errorBody("INVALID_THREAD_IDS","Every thread ID must be a valid UUID",rid));return};ids=append(ids,id)}
+  if len(ids)==0{writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_ids":[]string{}},"error":nil,"request_id":rid});return}
+  rows,err:=s.db.Query(r.Context(),`SELECT thread_id::text FROM testagram_local.thread_reposts WHERE user_id=$1 AND thread_id=ANY($2::uuid[])`,userID,ids)
+  if err!=nil{writeJSON(w,503,errorBody("THREAD_REPOST_STATE_FAILED","Repost states could not be loaded",rid));return}
+  defer rows.Close();result:=make([]string,0)
+  for rows.Next(){var id string;if err:=rows.Scan(&id);err!=nil{writeJSON(w,503,errorBody("THREAD_REPOST_STATE_FAILED","Repost states could not be loaded",rid));return};result=append(result,id)}
+  if err:=rows.Err();err!=nil{writeJSON(w,503,errorBody("THREAD_REPOST_STATE_FAILED","Repost states could not be loaded",rid));return}
+  writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"thread_ids":result},"error":nil,"request_id":rid})
+}
