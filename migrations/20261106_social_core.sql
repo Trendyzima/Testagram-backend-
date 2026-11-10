@@ -19,6 +19,21 @@ CREATE TABLE IF NOT EXISTS testagram_local.follows (
   PRIMARY KEY (follower_id, following_id),
   CHECK (follower_id <> following_id)
 );
+
+-- Upgrade any pre-existing local follows table in place. Earlier deployments
+-- may have created only follower_id/following_id/status before this migration.
+ALTER TABLE testagram_local.follows
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+DELETE FROM testagram_local.follows older
+USING testagram_local.follows newer
+WHERE older.ctid < newer.ctid
+  AND older.follower_id = newer.follower_id
+  AND older.following_id = newer.following_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS testagram_local_follows_pair_uidx
+  ON testagram_local.follows(follower_id, following_id);
 CREATE INDEX IF NOT EXISTS testagram_local_follows_following_idx ON testagram_local.follows(following_id,created_at DESC,follower_id) WHERE status='accepted';
 CREATE INDEX IF NOT EXISTS testagram_local_follows_follower_idx ON testagram_local.follows(follower_id,created_at DESC,following_id) WHERE status='accepted';
 CREATE INDEX IF NOT EXISTS testagram_local_follows_pending_idx ON testagram_local.follows(following_id,created_at DESC) WHERE status='pending';
