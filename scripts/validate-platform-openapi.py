@@ -13,9 +13,7 @@ contracts = [
         "Testagram Internal Platform API",
         {
             "/healthz", "/readyz", "/metrics",
-            "/v1/cache/get", "/v1/cache/set", "/v1/cache/delete",
-            "/v1/rate-limit/check", "/v1/queue/enqueue", "/v1/queue/claim",
-            "/v1/queue/ack", "/v1/queue/reclaim", "/v1/config/set",
+            "/v1/config/set",
             "/v1/config/{key}", "/v1/events", "/v1/audit",
         },
     ),
