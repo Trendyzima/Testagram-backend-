@@ -10,46 +10,23 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 type server struct {
-	db *pgxpool.Pool
-	redis *redis.Client
-	internal string
-	ready atomic.Bool
-	cacheHits atomic.Uint64
-	cacheMiss atomic.Uint64
-	queueAdds atomic.Uint64
-	queueAcks atomic.Uint64
-	rateChecks atomic.Uint64
-	queueMonitorErrors atomic.Uint64
+	db           *pgxpool.Pool
+	internal     string
+	ready        atomic.Bool
+	configWrites atomic.Uint64
+	eventsStored atomic.Uint64
+	auditWrites  atomic.Uint64
 }
 
-type cacheRequest struct {
-	Key string `json:"key"`
-	Value string `json:"value"`
-	TTL int `json:"ttl_seconds"`
-}
-type queueRequest struct {
-	Queue string `json:"queue"`
-	Payload map[string]string `json:"payload"`
-	Group string `json:"group"`
-	Consumer string `json:"consumer"`
-	Count int64 `json:"count"`
-}
-type rateRequest struct {
-	Key string `json:"key"`
-	Limit int64 `json:"limit"`
-	Window int64 `json:"window_seconds"`
-}
 type flagRequest struct {
 	Key string `json:"key"`
 	Enabled bool `json:"enabled"`
@@ -73,27 +50,22 @@ type auditRequest struct {
 func main() {
 	ctx := context.Background()
 	dbURL := required("DATABASE_URL")
-	redisURL := env("REDIS_URL", "redis://redis:6379/0")
 	internal := required("PLATFORM_INTERNAL_TOKEN")
-	db, err := pgxpool.New(ctx, dbURL); if err != nil { log.Fatal(err) }; defer db.Close()
-	opts, err := redis.ParseURL(redisURL); if err != nil { log.Fatal(err) }
-	// Compose can inject the secret directly, avoiding URL-encoding pitfalls in passwords.
-	if password := env("VALKEY_PASSWORD", ""); password != "" { opts.Password = password }
-	rdb := redis.NewClient(opts); defer rdb.Close()
-	s := &server{db: db, redis: rdb, internal: internal}; s.ready.Store(true)
+	db, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Ping(ctx); err != nil {
+		log.Fatalf("platform PostgreSQL is unavailable: %v", err)
+	}
+	s := &server{db: db, internal: internal}
+	s.ready.Store(true)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/readyz", s.readyz)
 	mux.HandleFunc("/metrics", s.metrics)
-	mux.HandleFunc("/v1/cache/get", s.cacheGet)
-	mux.HandleFunc("/v1/cache/set", s.cacheSet)
-	mux.HandleFunc("/v1/cache/delete", s.cacheDelete)
-	mux.HandleFunc("/v1/rate-limit/check", s.rateLimit)
-	mux.HandleFunc("/v1/queue/enqueue", s.queueEnqueue)
-	mux.HandleFunc("/v1/queue/claim", s.queueClaim)
-	mux.HandleFunc("/v1/queue/ack", s.queueAck)
-	mux.HandleFunc("/v1/queue/reclaim", s.queueReclaim)
 	mux.HandleFunc("/v1/config/set", s.configSet)
 	mux.HandleFunc("/v1/events", s.events)
 	mux.HandleFunc("/v1/audit", s.audit)
@@ -104,106 +76,21 @@ func main() {
 	log.Fatal((&http.Server{Addr:addr, Handler:requestLog(mux), ReadHeaderTimeout:5*time.Second, ReadTimeout:15*time.Second, WriteTimeout:30*time.Second, IdleTimeout:60*time.Second}).ListenAndServe())
 }
 func (s *server) health(w http.ResponseWriter,_ *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
-func (s *server) readyz(w http.ResponseWriter,r *http.Request){if !s.ready.Load(){http.Error(w,"not ready",503);return};ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};if err:=s.redis.Ping(ctx).Err();err!=nil{http.Error(w,"redis unavailable",503);return};_,_=w.Write([]byte("ready\n"))}
-func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
+func (s *server) readyz(w http.ResponseWriter,r *http.Request){if !s.ready.Load(){http.Error(w,"not ready",503);return};ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};_,_=w.Write([]byte("ready\n"))}
+func (s *server) metrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	fmt.Fprintf(w, "testagram_platform_cache_hits_total %d\n", s.cacheHits.Load())
-	fmt.Fprintf(w, "testagram_platform_cache_misses_total %d\n", s.cacheMiss.Load())
-	fmt.Fprintf(w, "testagram_platform_queue_enqueued_total %d\n", s.queueAdds.Load())
-	fmt.Fprintf(w, "testagram_platform_queue_acked_total %d\n", s.queueAcks.Load())
-	fmt.Fprintf(w, "testagram_platform_rate_limit_checks_total %d\n", s.rateChecks.Load())
-	fmt.Fprintf(w, "testagram_platform_queue_monitor_errors_total %d\n", s.queueMonitorErrors.Load())
-
+	fmt.Fprintf(w, "testagram_platform_config_writes_total %d\n", s.configWrites.Load())
+	fmt.Fprintf(w, "testagram_platform_events_stored_total %d\n", s.eventsStored.Load())
+	fmt.Fprintf(w, "testagram_platform_audit_writes_total %d\n", s.auditWrites.Load())
 	if s.db != nil {
 		stats := s.db.Stat()
-		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_total_connections Total PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_total_connections gauge\ntestagram_platform_db_pool_total_connections %d\n", stats.TotalConns())
-		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_idle_connections Idle PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_idle_connections gauge\ntestagram_platform_db_pool_idle_connections %d\n", stats.IdleConns())
-		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_acquired_connections Acquired PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_acquired_connections gauge\ntestagram_platform_db_pool_acquired_connections %d\n", stats.AcquiredConns())
-		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_max_connections Configured maximum PostgreSQL pool connections for the platform service.\n# TYPE testagram_platform_db_pool_max_connections gauge\ntestagram_platform_db_pool_max_connections %d\n", stats.MaxConns())
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_total_connections Total PostgreSQL pool connections.\n# TYPE testagram_platform_db_pool_total_connections gauge\ntestagram_platform_db_pool_total_connections %d\n", stats.TotalConns())
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_idle_connections Idle PostgreSQL pool connections.\n# TYPE testagram_platform_db_pool_idle_connections gauge\ntestagram_platform_db_pool_idle_connections %d\n", stats.IdleConns())
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_acquired_connections Acquired PostgreSQL pool connections.\n# TYPE testagram_platform_db_pool_acquired_connections gauge\ntestagram_platform_db_pool_acquired_connections %d\n", stats.AcquiredConns())
+		fmt.Fprintf(w, "# HELP testagram_platform_db_pool_max_connections Configured maximum PostgreSQL pool connections.\n# TYPE testagram_platform_db_pool_max_connections gauge\ntestagram_platform_db_pool_max_connections %d\n", stats.MaxConns())
 	}
-
-	// Queue names/groups are explicit configuration, avoiding a costly or
-	// unbounded Redis key scan on every Prometheus scrape.
-	monitors := parseQueueMonitorConfigs(os.Getenv("PLATFORM_MONITORED_QUEUE_GROUPS"))
-	if len(monitors) == 0 { return }
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
-	for _, monitor := range monitors {
-		stream := "testagram:queue:" + monitor.Queue
-		length, err := s.redis.XLen(ctx, stream).Result()
-		if err != nil {
-			s.queueMonitorErrors.Add(1)
-			continue
-		}
-		fmt.Fprintf(w, "testagram_platform_queue_stream_length{queue=%q} %d\n", monitor.Queue, length)
-		pending, err := s.redis.XPending(ctx, stream, monitor.Group).Result()
-		if err != nil {
-			// A queue without a consumer group has no pending-entry summary yet.
-			s.queueMonitorErrors.Add(1)
-			continue
-		}
-		fmt.Fprintf(w, "testagram_platform_queue_pending_messages{queue=%q,group=%q} %d\n", monitor.Queue, monitor.Group, pending.Count)
-		age, ok := streamEntryAgeSeconds(pending.Lower, time.Now())
-		if ok && pending.Count > 0 {
-			fmt.Fprintf(w, "testagram_platform_queue_oldest_pending_entry_age_seconds{queue=%q,group=%q} %.3f\n", monitor.Queue, monitor.Group, age)
-		}
-	}
-}
-
-type queueMonitorConfig struct {
-	Queue string
-	Group string
-}
-
-// parseQueueMonitorConfigs accepts comma-separated queue:group pairs.
-func parseQueueMonitorConfigs(raw string) []queueMonitorConfig {
-	var result []queueMonitorConfig
-	seen := make(map[string]struct{})
-	for _, item := range strings.Split(raw, ",") {
-		parts := strings.Split(strings.TrimSpace(item), ":")
-		if len(parts) != 2 || !validKey(parts[0]) || !validKey(parts[1]) {
-			continue
-		}
-		key := parts[0] + ":" + parts[1]
-		if _, exists := seen[key]; exists { continue }
-		seen[key] = struct{}{}
-		result = append(result, queueMonitorConfig{Queue: parts[0], Group: parts[1]})
-	}
-	return result
-}
-
-// Stream IDs start with the enqueue timestamp in Unix milliseconds. This is
-// message age, not time spent pending after delivery.
-func streamEntryAgeSeconds(id string, now time.Time) (float64, bool) {
-	parts := strings.SplitN(id, "-", 2)
-	if len(parts) != 2 { return 0, false }
-	millis, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil || millis < 0 { return 0, false }
-	age := now.Sub(time.UnixMilli(millis)).Seconds()
-	if age < 0 { age = 0 }
-	return age, true
 }
 func (s *server) authorize(w http.ResponseWriter,r *http.Request)bool{got:=strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer "));if got==""||subtle.ConstantTimeCompare([]byte(got),[]byte(s.internal))!=1{http.Error(w,"unauthorized",401);return false};return true}
-func (s *server) cacheGet(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};key:=r.URL.Query().Get("key");if !validKey(key){http.Error(w,"invalid key",400);return};v,err:=s.redis.Get(r.Context(),key).Result();if errors.Is(err,redis.Nil){s.cacheMiss.Add(1);http.Error(w,"not found",404);return};if err!=nil{http.Error(w,"cache unavailable",503);return};s.cacheHits.Add(1);writeJSON(w,map[string]string{"value":v})}
-func (s *server) cacheSet(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};var in cacheRequest;if !decodeJSON(w,r,&in)||!validKey(in.Key)||in.TTL<1||in.TTL>86400{http.Error(w,"invalid request",400);return};if err:=s.redis.Set(r.Context(),in.Key,in.Value,time.Duration(in.TTL)*time.Second).Err();err!=nil{http.Error(w,"cache unavailable",503);return};w.WriteHeader(204)}
-func (s *server) cacheDelete(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};key:=r.URL.Query().Get("key");if !validKey(key){http.Error(w,"invalid key",400);return};if err:=s.redis.Del(r.Context(),key).Err();err!=nil{http.Error(w,"cache unavailable",503);return};w.WriteHeader(204)}
-
-var rateScript=redis.NewScript(`
-local current = redis.call("INCR", KEYS[1])
-if current == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]) end
-if current > tonumber(ARGV[2]) then return {0, current, redis.call("TTL", KEYS[1])} end
-return {1, current, redis.call("TTL", KEYS[1])}
-`)
-func (s *server) rateLimit(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};var in rateRequest;if !decodeJSON(w,r,&in)||!validKey(in.Key)||in.Limit<1||in.Limit>100000||in.Window<1||in.Window>86400{http.Error(w,"invalid request",400);return};s.rateChecks.Add(1);v,err:=rateScript.Run(r.Context(),s.redis,[]string{"testagram:rl:"+in.Key},in.Window,in.Limit).Result();if err!=nil{http.Error(w,"rate limiter unavailable",503);return};a,ok:=v.([]interface{});if !ok||len(a)!=3{http.Error(w,"invalid limiter response",500);return};allowed,_:=strconv.ParseInt(fmt.Sprint(a[0]),10,64);count,_:=strconv.ParseInt(fmt.Sprint(a[1]),10,64);ttl,_:=strconv.ParseInt(fmt.Sprint(a[2]),10,64);writeJSON(w,map[string]any{"allowed":allowed==1,"count":count,"remaining":max64(in.Limit-count,0),"retry_after_seconds":max64(ttl,0)})}
-
-func (s *server) queueEnqueue(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};var in queueRequest;if !decodeJSON(w,r,&in)||!validKey(in.Queue)||!validQueuePayload(in.Payload){http.Error(w,"invalid request: queue and payload required; payload limited to 64 fields and 256 KiB",400);return};fields:=make([]any,0,len(in.Payload)*2);for k,v:=range in.Payload{if !validKey(k){http.Error(w,"invalid payload key",400);return};fields=append(fields,k,v)};// Do not trim the stream: dropping old entries silently can lose feed, federation, or media jobs.
- id,err:=s.redis.XAdd(r.Context(),&redis.XAddArgs{Stream:"testagram:queue:"+in.Queue,Values:fields}).Result();if err!=nil{http.Error(w,"queue unavailable",503);return};s.queueAdds.Add(1);writeJSON(w,map[string]string{"id":id})}
-func (s *server) queueClaim(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};var in queueRequest;if !decodeJSON(w,r,&in)||!validKey(in.Queue)||!validKey(in.Group)||!validKey(in.Consumer){http.Error(w,"invalid request",400);return};if in.Count<1||in.Count>100{in.Count=10};stream:="testagram:queue:"+in.Queue;if err:=s.redis.XGroupCreateMkStream(r.Context(),stream,in.Group,"0").Err();err!=nil&&!strings.Contains(err.Error(),"BUSYGROUP"){http.Error(w,"queue unavailable",503);return};entries,err:=s.redis.XReadGroup(r.Context(),&redis.XReadGroupArgs{Group:in.Group,Consumer:in.Consumer,Streams:[]string{stream,">"},Count:in.Count,Block:time.Second}).Result();if errors.Is(err,redis.Nil){writeJSON(w,map[string]any{"messages":[]any{}});return};if err!=nil{http.Error(w,"queue unavailable",503);return};messages:=make([]map[string]any,0);for _,entry:=range entries{for _,message:=range entry.Messages{messages=append(messages,map[string]any{"id":message.ID,"values":message.Values})}};writeJSON(w,map[string]any{"messages":messages})}
-func (s *server) queueAck(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};queue:=r.URL.Query().Get("queue");group:=r.URL.Query().Get("group");id:=r.URL.Query().Get("id");if !validKey(queue)||!validKey(group)||id==""{http.Error(w,"invalid request",400);return};n,err:=s.redis.XAck(r.Context(),"testagram:queue:"+queue,group,id).Result();if err!=nil{http.Error(w,"queue unavailable",503);return};s.queueAcks.Add(uint64(n));writeJSON(w,map[string]int64{"acked":n})}
-
-
-func (s *server) queueReclaim(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};queue:=r.URL.Query().Get("queue");group:=r.URL.Query().Get("group");consumer:=r.URL.Query().Get("consumer");if !validKey(queue)||!validKey(group)||!validKey(consumer){http.Error(w,"invalid request",400);return};idleMS,_:=strconv.ParseInt(r.URL.Query().Get("min_idle_ms"),10,64);if idleMS<1||idleMS>86400000{idleMS=30000};count,_:=strconv.ParseInt(r.URL.Query().Get("count"),10,64);if count<1||count>100{count=10};startCursor:=strings.TrimSpace(r.URL.Query().Get("start"));if startCursor==""{startCursor="0-0"};messages,start,err:=s.redis.XAutoClaim(r.Context(),&redis.XAutoClaimArgs{Stream:"testagram:queue:"+queue,Group:group,Consumer:consumer,MinIdle:time.Duration(idleMS)*time.Millisecond,Start:startCursor,Count:count}).Result();if err!=nil{http.Error(w,"queue unavailable",503);return};normalized:=make([]map[string]any,0,len(messages));for _,message:=range messages{normalized=append(normalized,map[string]any{"id":message.ID,"values":message.Values})};writeJSON(w,map[string]any{"messages":normalized,"next_start":start})}
-
 func (s *server) configSet(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};var in flagRequest;if !decodeJSON(w,r,&in)||!validKey(in.Key)||len(in.Value)==0||!json.Valid(in.Value){http.Error(w,"invalid request",400);return};_,err:=s.db.Exec(r.Context(),`insert into testagram_platform.feature_flags(key,enabled,public,value,version,updated_at) values($1,$2,$3,$4::jsonb,1,now()) on conflict(key) do update set enabled=excluded.enabled,public=excluded.public,value=excluded.value,version=testagram_platform.feature_flags.version+1,updated_at=now()`,in.Key,in.Enabled,in.Public,string(in.Value));if err!=nil{http.Error(w,"database unavailable",503);return};w.WriteHeader(http.StatusNoContent)}
 
 func (s *server) events(w http.ResponseWriter,r *http.Request){if !s.authorize(w,r){return};var in eventRequest;if !decodeJSON(w,r,&in)||len(in.EventName)<1||len(in.EventName)>160||!json.Valid(in.Properties){http.Error(w,"invalid request",400);return};var userID any;if in.UserID!=nil{userID=*in.UserID};_,err:=s.db.Exec(r.Context(),`insert into testagram_platform.events(event_name,user_id,session_hash,properties) values($1,$2,$3,$4::jsonb)`,in.EventName,userID,in.SessionHash,string(in.Properties));if err!=nil{http.Error(w,"database unavailable",503);return};w.WriteHeader(http.StatusNoContent)}
@@ -221,7 +108,6 @@ func validQueuePayload(payload map[string]string) bool {
 }
 
 func validKey(s string)bool{if len(s)<1||len(s)>160{return false};for _,c:=range s{if !(c=='-'||c=='_'||c=='.'||c==':'||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')){return false}};return true}
-func max64(a,b int64)int64{if a>b{return a};return b}
 func required(k string)string{v:=strings.TrimSpace(os.Getenv(k));if v==""{log.Fatalf("%s is required",k)};return v}
 func env(k,d string)string{if v:=strings.TrimSpace(os.Getenv(k));v!=""{return v};return d}
 func requestLog(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){start:=time.Now();next.ServeHTTP(w,r);log.Printf("%s %s %s",r.Method,r.URL.Path,time.Since(start))})}
