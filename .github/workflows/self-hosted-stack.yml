@@ -61,6 +61,9 @@ jobs:
           go test -race -count=1 ./control-plane
           go vet ./control-plane
           CGO_ENABLED=0 go build -trimpath -o /tmp/testagram-control-plane ./control-plane
+          go test -race -count=1 ./admin-console
+          go vet ./admin-console
+          CGO_ENABLED=0 go build -trimpath -o /tmp/testagram-admin-console ./admin-console
       - name: Validate OpenAPI contracts
         run: |
           python -m pip install --disable-pip-version-check PyYAML
