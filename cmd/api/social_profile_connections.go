@@ -49,9 +49,9 @@ func (s *service) socialProfileConnections(w http.ResponseWriter, r *http.Reques
 
 	var relationshipColumn string
 	if kind == "followers" {
-		relationshipColumn = "f.following_id"
-	} else {
 		relationshipColumn = "f.follower_id"
+	} else {
+		relationshipColumn = "f.following_id"
 	}
 	query := `
 SELECT a.user_id::text,a.username,a.display_name,a.avatar_key,a.bio,
