@@ -350,6 +350,15 @@ func TestCreatePostUsesVerifiedIdentityAndIdempotency(t *testing.T) {
 		payload["sensitive"] != false || payload["created_at"] == "" {
 		t.Fatalf("outbox event does not satisfy the Federation published-post contract: event=%#v payload=%#v", outbox, payload)
 	}
+	for name, value := range map[string]any{"event.created_at": outbox["created_at"], "payload.created_at": payload["created_at"]} {
+		timestamp, ok := value.(string)
+		if !ok {
+			t.Fatalf("%s is not a timestamp string: %#v", name, value)
+		}
+		if _, err := time.Parse(time.RFC3339, timestamp); err != nil {
+			t.Fatalf("%s is not RFC3339: %q (%v)", name, timestamp, err)
+		}
+	}
 	var firstEnvelope struct {
 		Data map[string]any `json:"data"`
 	}
