@@ -82,7 +82,7 @@ services:
     volumes: [object-data:/data]
     ports: ["127.0.0.1:9000:9000"]
     restart: unless-stopped
-    networks: [data]
+    networks: [data, egress]
 
   object-init:
     build:
