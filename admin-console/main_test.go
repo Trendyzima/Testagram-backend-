@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
@@ -12,19 +14,25 @@ import (
 
 func testApp(t *testing.T) *app {
 	t.Helper()
-	t.Setenv("ADMIN_SESSION_KEY", strings.Repeat("ab", 32))
-	t.Setenv("SUPABASE_URL", "https://auth.example.test")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable")
-	t.Setenv("ADMIN_PUBLIC_URL", "https://ops.example.test")
-	a, err := newApp()
+	key, err := hex.DecodeString(strings.Repeat("ab", 32))
 	if err != nil { t.Fatal(err) }
-	return a
+	block, err := aes.NewCipher(key)
+	if err != nil { t.Fatal(err) }
+	aead, err := cipher.NewGCM(block)
+	if err != nil { t.Fatal(err) }
+	return &app{
+		appwriteEndpoint: "https://appwrite.example.test/v1",
+		appwriteProject: "test-project",
+		publicURL: "https://ops.example.test",
+		publicOrigin: "https://ops.example.test",
+		cookieSecure: true,
+		aead: aead,
+		client: &http.Client{Timeout: time.Second},
+	}
 }
 
 func TestNewAppRejectsInvalidSessionKey(t *testing.T) {
 	t.Setenv("ADMIN_SESSION_KEY", "too-short")
-	t.Setenv("SUPABASE_URL", "https://auth.example.test")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable")
 	t.Setenv("ADMIN_PUBLIC_URL", "https://ops.example.test")
 	if _, err := newApp(); err == nil { t.Fatal("expected invalid session key to be rejected") }
 }
@@ -32,24 +40,24 @@ func TestNewAppRejectsInvalidSessionKey(t *testing.T) {
 func TestSessionCookieIsEncryptedAndRoundTrips(t *testing.T) {
 	a := testApp(t)
 	w := httptest.NewRecorder()
-	want := session{AccessToken:"access-secret", RefreshToken:"refresh-secret", ExpiresAt:time.Now().Add(time.Hour).Unix()}
+	want := session{Secret:"appwrite-session-secret", ExpiresAt:time.Now().Add(time.Hour).Unix()}
 	if err := a.setSession(w,want); err != nil { t.Fatal(err) }
 	cookies := w.Result().Cookies()
 	if len(cookies)!=1 { t.Fatalf("got %d cookies",len(cookies)) }
 	cookie:=cookies[0]
 	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite!=http.SameSiteStrictMode { t.Fatalf("unsafe session cookie attributes: %#v",cookie) }
-	if strings.Contains(cookie.Value,want.AccessToken)||strings.Contains(cookie.Value,want.RefreshToken) { t.Fatal("tokens must not be visible in cookie value") }
+	if strings.Contains(cookie.Value,want.Secret)||strings.Contains(cookie.Value,want.Secret) { t.Fatal("tokens must not be visible in cookie value") }
 	req:=httptest.NewRequest("GET","https://ops.example.test/api/session",nil)
 	req.AddCookie(cookie)
 	got,err:=a.readSession(req)
 	if err!=nil { t.Fatal(err) }
-	if got.AccessToken!=want.AccessToken||got.RefreshToken!=want.RefreshToken { t.Fatalf("session mismatch: %#v",got) }
+	if got.Secret!=want.Secret { t.Fatalf("session mismatch: %#v",got) }
 }
 
 func TestSessionCookieRejectsTampering(t *testing.T) {
 	a:=testApp(t)
 	w:=httptest.NewRecorder()
-	if err:=a.setSession(w,session{AccessToken:"access",RefreshToken:"refresh",ExpiresAt:time.Now().Add(time.Hour).Unix()});err!=nil{t.Fatal(err)}
+	if err:=a.setSession(w,session{Secret:"session",ExpiresAt:time.Now().Add(time.Hour).Unix()});err!=nil{t.Fatal(err)}
 	cookie:=w.Result().Cookies()[0]
 	raw,err:=hex.DecodeString(cookie.Value);if err!=nil{t.Fatal(err)}
 	raw[len(raw)-1]^=0x01
@@ -58,15 +66,14 @@ func TestSessionCookieRejectsTampering(t *testing.T) {
 	if _,err:=a.readSession(req);err==nil{t.Fatal("tampered cookie must be rejected")}
 }
 
-func TestStaffRoleUsesOnlyServerControlledAppMetadata(t *testing.T) {
-	cases:=[]struct{name string; user authUser; want string}{
-		{"owner",authUser{AppMetadata:map[string]any{"staff_role":"owner"},UserMetadata:map[string]any{"staff_role":"support"}},"owner"},
-		{"approved engineer",authUser{AppMetadata:map[string]any{"staff_role":"engineer"}},"engineer"},
-		{"user metadata cannot grant role",authUser{UserMetadata:map[string]any{"staff_role":"owner"}},""},
-		{"unknown role denied",authUser{AppMetadata:map[string]any{"staff_role":"superuser"}},""},
-		{"empty role denied",authUser{AppMetadata:map[string]any{}},""},
+func TestStaffRoleUsesOnlyPostgreSQLAssignedRole(t *testing.T) {
+	cases := []struct{name string; user authUser; want string}{
+		{"owner",authUser{StaffRole:"owner"},"owner"},
+		{"approved engineer",authUser{StaffRole:"engineer"},"engineer"},
+		{"unassigned user",authUser{StaffRole:""},""},
+		{"unknown role denied",authUser{StaffRole:"superuser"},""},
 	}
-	for _,tc:=range cases{t.Run(tc.name,func(t *testing.T){if got:=staffRole(tc.user);got!=tc.want{t.Fatalf("staffRole()=%q want %q",got,tc.want)}})}
+	for _,tc:=range cases { t.Run(tc.name,func(t *testing.T){ if got:=staffRole(tc.user);got!=tc.want{t.Fatalf("staffRole()=%q want %q",got,tc.want)} }) }
 }
 
 func TestSameOriginRequiresExactConfiguredOrigin(t *testing.T) {
