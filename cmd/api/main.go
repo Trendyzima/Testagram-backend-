@@ -769,6 +769,10 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if observation != nil {
 		observation.group = capabilityGroup(body.Capability)
 	}
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	public := body.Capability == "testagram.capabilities.list" ||
+		body.Capability == "testagram.health.read" ||
+		body.Capability == "testagram.news.trending"
 	if !public && !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
 		return
@@ -781,10 +785,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
-	public := body.Capability == "testagram.capabilities.list" ||
-		body.Capability == "testagram.health.read" ||
-		body.Capability == "testagram.news.trending"
 	limit := int64(120)
 	if isWriteCapability(body.Capability) {
 		limit = 30
