@@ -90,6 +90,36 @@ RETURNING attempts`, rateBucket).Scan(&attempts)
 		}
 	}
 
+	// Post media references are native storage object keys in PostgreSQL;
+	// there is no PostgREST media_assets/post_media join.
+	mediaKey := "tenants/" + authorID + "/integration-" + suffix + ".jpg"
+	if _, err := tx.Exec(ctx, `UPDATE testagram_local.posts
+		SET media_ids=CASE WHEN media_ids @> jsonb_build_array($2::text)
+			THEN media_ids ELSE media_ids || jsonb_build_array($2::text) END
+		WHERE id=$1 AND author_id=$3`, publicPostID, mediaKey, authorID); err != nil {
+		t.Fatalf("attach native media key to post: %v", err)
+	}
+	var mediaIDs []string
+	if err := tx.QueryRow(ctx, `SELECT ARRAY(SELECT jsonb_array_elements_text(media_ids))
+		FROM testagram_local.posts WHERE id=$1`, publicPostID).Scan(&mediaIDs); err != nil {
+		t.Fatalf("read native post media references: %v", err)
+	}
+	if len(mediaIDs) != 1 || mediaIDs[0] != mediaKey {
+		t.Fatalf("native post media IDs = %#v, want [%q]", mediaIDs, mediaKey)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE testagram_local.posts p
+		SET media_ids=COALESCE((
+			SELECT jsonb_agg(item.value ORDER BY item.ordinality)
+			FROM jsonb_array_elements(p.media_ids) WITH ORDINALITY AS item(value,ordinality)
+			WHERE item.value #>> '{}' <> $2
+		),'[]'::jsonb)
+		WHERE p.id=$1 AND p.media_ids @> jsonb_build_array($2::text)`, publicPostID, mediaKey); err != nil {
+		t.Fatalf("detach native media key from post: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT jsonb_array_length(media_ids) FROM testagram_local.posts WHERE id=$1`, publicPostID).Scan(new(int)); err != nil {
+		t.Fatalf("verify native media detachment: %v", err)
+	}
+
 	assertVisible := func(name, viewer, post string, want bool) {
 		t.Helper()
 		_, err := socialCanViewPostWith(ctx, tx, viewer, post)
