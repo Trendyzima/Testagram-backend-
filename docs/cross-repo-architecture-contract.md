@@ -1,8 +1,8 @@
-# XClone ↔ Testagram cross-repository architecture contract
+# Testagram five-repository integration contract
 
-Status: implementation and staging contract; not a production cutover authorization.
+Status: target architecture and staging contract; not a production cutover authorization.
 
-This document defines the integration boundary between [XClone](https://github.com/Trendyzima/XClone-9b4dz1-9b4dz1-8936-20260809tr) and this Go application backend. It supplements, rather than replaces, the [hybrid integration contract](server-e-hybrid-integration.md), [replication transport contract](dual-backend-replication-transport.md), and [virtual storage contract](platform/virtual-storage.md).
+This document defines the runtime ownership and API boundaries across the five retained repositories: [Flutter client](https://github.com/Trendyzima/testagram-flutter-client-), [Testagram Backend](https://github.com/Trendyzima/Testagram-backend-), [Data Centre](https://github.com/Trendyzima/Testagram-data-centre-), [The Algorithm](https://github.com/Trendyzima/the-algorithm), and [Federated Content](https://github.com/Trendyzima/federated-content). Legacy XClone is a migration source, not a runtime service. This contract supplements the [replication transport contract](dual-backend-replication-transport.md) and [virtual storage contract](platform/virtual-storage.md).
 
 ## Ownership boundaries
 
@@ -12,7 +12,8 @@ This document defines the integration boundary between [XClone](https://github.c
 - **Replication transport** provides authenticated, bounded, at-least-once event delivery with idempotent intake. A transport acknowledgement means durable peer acceptance, not successful product projection.
 - **Projection tables** are read models only. They must not silently replace the source tables or grant write authority.
 - **Object storage/CDN** owns binary transfer and delivery. The application API authorizes lifecycle transitions; private objects must never be exposed via public CDN paths.
-- **Cloudflare, Firebase, Redis/Valkey, and Upstash** remain in place until each responsibility has an explicitly reviewed migration and rollback.
+- **Supabase is migration-source-only**: no Supabase authentication, database, storage, realtime, SDK, credentials, URLs, or runtime fallback may remain in the five retained repositories or their deployment configuration.
+- **Upstash and Redis/Valkey are excluded from the target architecture**: do not add clients, credentials, URLs, cache wrappers, or service dependencies. Use native PostgreSQL and the existing bounded service contracts where persistence or coordination is required.
 
 ## Replication v1 wire contract
 
@@ -40,7 +41,7 @@ Required fields: `id`, `origin`, `entity_type`, `entity_id`, `entity_version`, `
 
 ## API and media compatibility
 
-- During transition, keep the current Supabase identity project and RLS behavior for unmigrated domains. After Appwrite cutover, validate Appwrite JWTs server-side and resolve them through the explicit identity bridge. Never use a service-role credential to impersonate a user or bypass authorization.
+- Validate Appwrite JWTs server-side and resolve them through the explicit identity bridge. Never accept a client-supplied account ID as authenticated identity, use a service-role credential to impersonate a user, or bypass authorization. Supabase must not be used as a runtime fallback for any retained capability.
 - Browser configuration may contain only publishable values. Backend origins, signing keys, database credentials, and internal platform tokens remain server-side.
 - Preserve existing client response/error shapes or add an explicit versioned adapter. Unknown endpoints fail clearly; do not silently switch data stores.
 - Upload lifecycle must be tested end-to-end: authenticated intent → signed upload → provider-observed verification → completion → authorized attachment → public CDN rendering or private retrieval → deletion and cleanup.
@@ -55,7 +56,8 @@ Required fields: `id`, `origin`, `entity_type`, `entity_id`, `entity_version`, `
 - [ ] Privacy transition and delete tombstones prevent stale-event resurrection.
 - [ ] Peer outage, retry, lease expiry, duplicate delivery, dead-letter inspection, and reconciliation are exercised using disposable databases.
 - [ ] Media lifecycle, cross-tenant denial, expired URLs, checksum/type verification, cleanup retries, and CDN cache behavior pass against a real staging object provider.
-- [ ] XClone and backend CI pass on the exact commits proposed for rollout.
+- [ ] Flutter client, Backend, Data Centre, Algorithm, and Federated Content CI pass on the exact coordinated commits proposed for rollout.
+- [ ] Dependency-boundary scans confirm no Supabase, Upstash, or Redis runtime references, credentials, or service configuration in the retained five-repository architecture.
 - [ ] Staging verifies Auth/RLS, rollback to the old route, dashboards, and alert delivery.
 - [ ] Production migrations are backed up, reviewed, and applied separately; CI integration does not prove production migration success.
 
