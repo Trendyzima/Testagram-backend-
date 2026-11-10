@@ -136,10 +136,6 @@ FROM testagram_local.accounts a WHERE a.user_id=$2 AND a.account_status='active'
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("CONNECTIONS_UNAVAILABLE", "Profile connections could not be loaded", requestID))
 		return
 	}
-	if err := rows.Err(); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("CONNECTIONS_UNAVAILABLE", "Profile connections could not be loaded", requestID))
-		return
-	}
 	var nextCursor string
 	if hasMore && len(items)>0 {
 		nextCursor=encodeSocialCursor(next)
