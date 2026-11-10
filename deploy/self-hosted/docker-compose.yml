@@ -30,6 +30,7 @@ services:
       - ../../migrations/20261106_social_core.sql:/docker-entrypoint-initdb.d/019_social_core.sql:ro
       - ../../migrations/20261110_native_media_post_links.sql:/docker-entrypoint-initdb.d/020_native_media_post_links.sql:ro
       - ../../migrations/20261110_staff_roles.sql:/docker-entrypoint-initdb.d/021_staff_roles.sql:ro
+      - ../../migrations/20261110_federation_outbox.sql:/docker-entrypoint-initdb.d/022_federation_outbox.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
