@@ -525,6 +525,7 @@ func (a *app) handleOverview(w http.ResponseWriter,r *http.Request) {
 
 func main() {
 	a,err:=newApp();if err!=nil{log.Fatal(err)}
+	defer a.database.Close()
 	addr:=env("ADMIN_ADDR",":8090")
 	srv:=&http.Server{Addr:addr,Handler:a.routes(),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second,IdleTimeout:60*time.Second,MaxHeaderBytes:1<<20}
 	log.Printf("Testagram staff console listening on %s",addr)
