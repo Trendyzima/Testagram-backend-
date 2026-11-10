@@ -36,7 +36,7 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
-    networks: [data]
+    networks: [data, platform]
 
   platform:
     build:
@@ -58,7 +58,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [data, monitoring]
+    networks: [data, monitoring, platform]
 
   control-plane:
     build:
@@ -177,7 +177,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [edge, data, monitoring]
+    networks: [edge, data, monitoring, platform, egress]
 
   admin-console:
     build:
@@ -340,6 +340,13 @@ networks:
     internal: true
   monitoring:
     internal: true
+  # Stable private network shared with the Data Centre service overlay.
+  platform:
+    name: testagram-platform
+    internal: true
+  # Egress-only network for services that must validate Appwrite sessions.
+  egress:
+    name: testagram-egress
   notifications:
   control-plane:
     internal: true
