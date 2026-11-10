@@ -22,42 +22,7 @@ func (s *service) socialProfileRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var profile map[string]any
-	err := s.db.QueryRow(r.Context(), `
-SELECT a.user_id::text,a.username,a.display_name,a.bio,a.website,a.avatar_key,
-       a.protected_account,a.follower_count,a.following_count,
-       COALESCE((
-         SELECT f.status FROM testagram_local.follows f
-         WHERE f.follower_id=$1 AND f.following_id=a.user_id
-       ),'') AS follow_status,
-       EXISTS(
-         SELECT 1 FROM testagram_local.follows f
-         WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
-       ) AS is_following,
-       EXISTS(
-         SELECT 1 FROM testagram_local.follows f
-         WHERE f.follower_id=a.user_id AND f.following_id=$1 AND f.status='accepted'
-       ) AS is_followed_by,
-       (a.user_id=$1 OR NOT a.protected_account OR EXISTS(
-         SELECT 1 FROM testagram_local.follows f
-         WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
-       )) AS can_view_posts
-FROM testagram_local.accounts a
-WHERE a.user_id=$2 AND a.account_status='active'
-  AND (a.user_id=$1 OR a.discoverable_by_username OR EXISTS(
-    SELECT 1 FROM testagram_local.follows f
-    WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
-  ))
-  AND NOT EXISTS(
-    SELECT 1 FROM testagram_local.blocks b
-    WHERE (b.blocker_id=$1 AND b.blocked_id=a.user_id)
-       OR (b.blocker_id=a.user_id AND b.blocked_id=$1)
-  )`, viewerID, targetID).Scan(
-		new(string), new(string), new(string), new(string), new(string), new(string),
-		new(bool), new(int64), new(int64), new(string), new(bool), new(bool), new(bool),
-	)
-	// Decode the profile in a second, explicit scan so every response field
-	// remains typed and the storage key is never exposed as a public URL.
+	// Keep response fields typed and never expose a storage key as a public URL.
 	var id, username, displayName, bio, website, avatarKey, followStatus string
 	var protected, following, followedBy, canViewPosts bool
 	var followers, followingCount int64
