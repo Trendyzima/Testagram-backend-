@@ -26,7 +26,7 @@ func (s *service) socialProfileRead(w http.ResponseWriter, r *http.Request) {
 	var id, username, displayName, bio, website, avatarKey, followStatus string
 	var protected, following, followedBy, canViewPosts bool
 	var followers, followingCount int64
-	err = s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(r.Context(), `
 SELECT a.user_id::text,a.username,a.display_name,a.bio,a.website,a.avatar_key,
        a.protected_account,a.follower_count,a.following_count,
        COALESCE((SELECT f.status FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=a.user_id),''),
@@ -47,7 +47,7 @@ WHERE a.user_id=$2 AND a.account_status='active'
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_UNAVAILABLE", "The profile could not be loaded", requestID))
 		return
 	}
-	profile = map[string]any{
+	profile := map[string]any{
 		"id": id, "user_id": id, "username": username, "display_name": displayName,
 		"bio": bio, "website": website, "avatar_key": avatarKey,
 		"avatar_url": publicMediaURL(avatarKey), "protected_account": protected,
