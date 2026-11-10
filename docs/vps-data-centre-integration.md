@@ -1,55 +1,62 @@
-# VPS data-centre integration contract
+# VPS Data Centre integration contract
 
-This repository is the canonical application/control-plane source for Testagram. The companion [Testagram data-centre repository](https://github.com/Trendyzima/Testagram-data-centre-) owns the VPS assembly and upstream Supabase source inventory. Keep the boundary explicit: do not fork or patch official Supabase components here; consume their pinned builds through the data-centre deployment layer.
+The [Testagram Data Centre](https://github.com/Trendyzima/Testagram-data-centre-)
+owns VPS assembly, storage/node operations, video processing, notifications
+and platform infrastructure. This repository owns the canonical product API,
+authorization, PostgreSQL data model, media metadata and service contracts.
 
-## Cross-repository work in review
+## Cross-repository release gates
 
-The data-centre changes are deliberately separate draft PRs until their own CI and runtime gates pass:
+- Backend and Data Centre use the same canonical PostgreSQL identity bridge.
+- Flutter obtains Appwrite sessions; Backend, video and notification services
+  validate Appwrite JWTs and resolve canonical Testagram UUIDs.
+- Storage services use signed, bounded upload/download contracts and durable
+  PostgreSQL deletion jobs.
+- The Data Centre platform API is PostgreSQL-backed configuration, telemetry
+  and audit only. It is not a Redis/Valkey/Upstash cache or generic queue.
+- Node workloads require immutable image digests, an exact allowlist and
+  explicit workload-execution capability from the node agent.
+- Federation remains unavailable for production until signature verification,
+  consent, durable inbox/outbox, deduplication and actor resolution pass.
 
-- [#5 — Node-agent workload execution hardening](https://github.com/Trendyzima/Testagram-data-centre-/pull/5): immutable image references, explicit allowlist, safer volume resolution, bounded execution and cleanup work.
-- [#6 — Edge request limits and immutable Supabase source pins](https://github.com/Trendyzima/Testagram-data-centre-/pull/6): route-specific Caddy body limits and an upstream lock inventory.
-- [#7 — Encrypted off-host backup and isolated restore drill](https://github.com/Trendyzima/Testagram-data-centre-/pull/7): operator-run backup/restore scripts; not yet a successful production restore or an RPO/RTO claim.
-- [#8 — Video upload quota and disk safeguards](https://github.com/Trendyzima/Testagram-data-centre-/pull/8): bounded per-instance upload concurrency, per-account video quota reservations and free-disk reserve checks.
+## Deployment contract
 
-Those PRs are not deployed by linking them from this repository. Merge/deploy remains blocked until CI passes and the operator validates the target host configuration.
+Configure the same Appwrite endpoint/project ID and canonical PostgreSQL
+connection for Backend and Data Centre services that need identity resolution.
+Keep server-only Appwrite API keys, storage credentials and internal service
+tokens in the protected host environment.
 
-## Workload policy contract
+The Data Centre Compose stack must pass PostgreSQL readiness before starting
+identity-dependent services. A local PostgreSQL schema migration is required
+before deploying application code that depends on new columns or tables.
 
-The control plane now requires all three conditions before it can assign a workload:
+## Recovery and verification
 
-1. The request names an immutable `sha256:` image digest.
-2. The full `image@sha256:...` reference is an exact entry in `VPS_ALLOWED_WORKLOAD_IMAGES`.
-3. The candidate node advertises `capabilities.workloadExecution=true`, which the node agent should only advertise when it has the same non-empty allowlist configured.
+Before production enablement:
 
-Configure the **same comma-separated exact image references** in the control-plane and every eligible node-agent environment. Keep the setting empty until the node agent version that enforces this policy is deployed. An empty setting intentionally prevents new workload scheduling. Do not add mutable tags, wildcards, or user-supplied image references.
+- Run Go tests, race detector, vet/build, Compose validation and all five
+  repository CI workflows on the exact release commits.
+- Verify Appwrite session rejection, disabled-account rejection and unknown
+  identity mapping behavior.
+- Test cross-account media ownership, private media access, quota reservation,
+  checksum mismatch, concurrent upload completion and idempotent deletion.
+- Back up PostgreSQL and object storage off-host; restore into an isolated
+  environment and verify login, upload, private-media retrieval and playback.
+- Test node-agent path confinement, immutable workload allowlists, timeout and
+  cancellation cleanup against the supported container runtime.
+- Confirm database saturation, outbox age, media deletion backlog and storage
+  capacity alerts before enabling workloads.
 
-Example (replace with actual, reviewed digests; these are illustrative only):
-
-```dotenv
-VPS_ALLOWED_WORKLOAD_IMAGES=ghcr.io/your-org/approved-worker@sha256:REPLACE_WITH_64_HEX_DIGEST
-```
-
-The control-plane and node-agent must be upgraded as a coordinated pair. If the control plane is upgraded first, old nodes that do not advertise the capability will be skipped. This fail-closed behavior may pause workload scheduling, but it avoids assigning jobs to agents that have not asserted the execution policy.
-
-## Release gates
-
-Before enabling workloads or virtual storage on a real VPS:
-
-- Run Go race tests, vet/build, Compose validation and the full CI workflow for both repositories.
-- Confirm node-agent volume paths cannot escape the approved root through symlinks, and verify timeout/cancellation cleanup against both Docker and Podman.
-- Verify workload network isolation, PID/disk limits, command authorization, aggregate resource reservations and orphan-container cleanup under forced termination.
-- Test upload quota reservation under concurrent requests; exercise upload cancellation, disk pressure, oversized and chunked bodies, and confirm expired reservations are reclaimed.
-- Run an encrypted backup to a genuinely off-host destination; restore the exact artifact into an isolated environment and test login, upload, private-media retrieval and playback. Record elapsed restore time and observed RPO/RTO.
-- Confirm pinned Supabase revisions build and pass a full staged-stack smoke test before promoting those exact artifacts.
-- Keep `VIRTUAL_STORAGE_ENABLED=false` until tenant-prefixed object paths and end-to-end tests pass.
-
-## Responsibility split
+## Ownership
 
 | Area | Source of truth |
-| --- | --- |
-| Application API, media metadata/quota claims, platform service and hosting control plane | This repository |
-| VPS assembly, node-agent packaging/operations, Supabase upstream source lock, edge configuration and host backup/restore procedures | [Testagram data-centre](https://github.com/Trendyzima/Testagram-data-centre-) |
-| Browser/mobile behavior and opt-in API routing | Testagram client repositories |
-| Auth, database, realtime and object-storage engines | Official Supabase upstream revisions, pinned by the data-centre build |
+|---|---|
+| Product API, social authorization, PostgreSQL schema and media metadata | Testagram Backend |
+| VPS assembly, storage nodes, video/notification services and operations | Testagram Data Centre |
+| Native product UI and Appwrite session acquisition | Flutter client |
+| Feed ranking | The Algorithm |
+| Signed federation inbox/outbox and remote delivery | Federated Content |
 
-Do not copy the whole data-centre repository into this one. Integrate through explicit environment contracts, API/schema compatibility, shared CI release gates, and immutable build artifacts so security fixes do not drift between duplicate implementations.
+Supabase, PostgREST, Redis/Valkey and Upstash are not part of the retained
+runtime. Do not restore those dependencies as shortcuts for cross-repository
+integration.
