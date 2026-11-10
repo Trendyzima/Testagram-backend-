@@ -307,7 +307,6 @@ type homeFeedMediaAsset struct {
 	OwnerID          string
 	Visibility       string
 	ContentType      string
-	ExternalID       string
 	StorageNamespace string
 }
 
@@ -332,11 +331,9 @@ func (s *service) attachHomeFeedMediaURLs(ctx context.Context, viewerID string, 
 	mediaCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(mediaCtx, `
-SELECT object_key, owner_id, visibility, content_type,
-       COALESCE(external_media_id::text,''), storage_namespace
+SELECT object_key, owner_id, visibility, content_type, storage_namespace
 FROM testagram_media.assets
-WHERE status='ready'
-  AND (object_key = ANY($1::text[]) OR external_media_id::text = ANY($1::text[]))`, ids)
+WHERE status='ready' AND object_key = ANY($1::text[])`, ids)
 	if err != nil {
 		return err
 	}
@@ -344,13 +341,10 @@ WHERE status='ready'
 	assets := make(map[string]homeFeedMediaAsset, len(ids)*2)
 	for rows.Next() {
 		var asset homeFeedMediaAsset
-		if err := rows.Scan(&asset.ObjectKey, &asset.OwnerID, &asset.Visibility, &asset.ContentType, &asset.ExternalID, &asset.StorageNamespace); err != nil {
+		if err := rows.Scan(&asset.ObjectKey, &asset.OwnerID, &asset.Visibility, &asset.ContentType, &asset.StorageNamespace); err != nil {
 			return err
 		}
 		assets[asset.ObjectKey] = asset
-		if asset.ExternalID != "" {
-			assets[asset.ExternalID] = asset
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
