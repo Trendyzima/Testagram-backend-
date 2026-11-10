@@ -470,8 +470,6 @@ func (s *service) routes() http.Handler {
 		mux.HandleFunc("OPTIONS /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 		mux.HandleFunc("POST /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 	}
-	mux.HandleFunc("OPTIONS /api/identity/link", s.mediaPreflight)
-	mux.HandleFunc("POST /api/identity/link", s.linkAppwriteIdentity)
 	mux.HandleFunc("OPTIONS /api/me/federation", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/federation", s.federationPreference)
 	mux.HandleFunc("PUT /api/me/federation", s.federationPreference)
@@ -654,7 +652,7 @@ func (s *service) cors(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "authorization, apikey, content-type, x-client-info, x-request-id, accept, x-testagram-legacy-authorization")
+	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, x-request-id, accept")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if origin == "" {
 		return true // non-browser clients do not use CORS
