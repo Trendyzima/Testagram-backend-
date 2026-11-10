@@ -44,10 +44,13 @@ docker compose --env-file .env -f docker-compose.yml ps
    PostgreSQL user/password/database as this stack, use the same Appwrite
    endpoint/project ID, and generate independent platform/notification/video
    secrets.
-9. Start the Data Centre overlay:
+9. Start the Data Centre overlay. Its migration runner applies the
+   Data Centre-owned schemas to the Backend-owned PostgreSQL database before
+   the platform, video, notification and worker services start:
 
 ```sh
 docker compose --env-file backend/.env -f backend/docker-compose.yml config
+docker compose --env-file backend/.env -f backend/docker-compose.yml run --rm migrate
 docker compose --env-file backend/.env -f backend/docker-compose.yml up -d --build
 docker compose --env-file backend/.env -f backend/docker-compose.yml ps
 ```
@@ -56,9 +59,10 @@ The Backend Compose stack creates the external networks required by the
 Data Centre overlay. Start it first. The overlay does not publish ports or run
 a second reverse proxy; Caddy remains the only public edge.
 
-The PostgreSQL container applies the ordered SQL migrations on first
-initialization. For an existing database, apply each new migration with
-`psql -v ON_ERROR_STOP=1` before deploying the matching application commit.
+The Backend PostgreSQL container applies Backend-owned migrations on first
+initialization. The Data Centre migration runner tracks its own applied files
+and checksums in the same database. Never edit an already-applied migration;
+add a new forward-only migration instead.
 
 ## Authentication and authorization
 
