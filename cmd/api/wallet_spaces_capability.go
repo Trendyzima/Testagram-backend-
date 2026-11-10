@@ -15,6 +15,19 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
+func validWalletUsername(value string) bool {
+	if len(value) < 2 || len(value) > 30 {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= 'a' && char <= 'z') && !(char >= 'A' && char <= 'Z') &&
+			!(char >= '0' && char <= '9') && char != '_' && char != '.' {
+			return false
+		}
+	}
+	return true
+}
+
 func moneyAmount(value any) (string, float64, bool) {
 	var raw string
 	switch v:=value.(type) {
@@ -79,9 +92,9 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Request,requestID string,body capabilityRequest) bool {
 	name:=strings.TrimSpace(body.Capability)
 	switch name {
-	case "testagram.wallet.balance","testagram.wallet.transactions.list","testagram.wallet.transfer","testagram.wallet.tip",
+	case "testagram.wallet.balance","testagram.wallet.transactions.list","testagram.wallet.recipient.resolve","testagram.wallet.transfer","testagram.wallet.tip",
 		"testagram.audio_spaces.list_live","testagram.audio_spaces.pending_speaker_requests","testagram.audio_spaces.get","testagram.audio_spaces.my_status","testagram.audio_spaces.create","testagram.audio_spaces.join",
-		"testagram.audio_spaces.leave","testagram.audio_spaces.request_speaker","testagram.audio_spaces.decide_speaker",
+		"testagram.audio_spaces.leave","testagram.audio_spaces.request_speaker","testagram.audio_spaces.decide_speaker","testagram.audio_spaces.update",
 		"testagram.audio_spaces.end","testagram.audio_spaces.superchat":
 	default:return false
 	}
@@ -105,15 +118,34 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	case "testagram.wallet.transactions.list":
 		limit:=50;if v,ok:=in["limit"].(float64);ok{limit=int(v)};if limit<1||limit>100{fail("INVALID_LIMIT","Limit must be between 1 and 100",http.StatusBadRequest);return true}
 		rows,e:=s.db.Query(ctx,`SELECT t.id::text,t.kind,t.amount::text,t.currency,t.created_at,
-			COALESCE(x.id::text,top.id::text,''),COALESCE(x.sender_id::text,''),COALESCE(x.recipient_id::text,''),COALESCE(x.note,top.receipt_number,'')
+			COALESCE(x.id::text,top.id::text,''),COALESCE(x.sender_id::text,''),COALESCE(x.recipient_id::text,''),COALESCE(x.note,top.receipt_number,''),
+			CASE WHEN top.id IS NOT NULL THEN top.status ELSE t.status END,
+			CASE WHEN top.id IS NOT NULL THEN 'mpesa' ELSE t.provider END,
+			COALESCE(top.receipt_number,''),COALESCE(top.checkout_request_id,''),COALESCE(top.phone_e164,''),COALESCE(top.amount_kes::text,''),COALESCE(top.wallet_amount::text,'')
 			FROM testagram_local.wallet_transactions t
 			LEFT JOIN testagram_local.wallet_transfers x ON x.id=t.transfer_id
 			LEFT JOIN testagram_local.wallet_topups top ON top.id=t.topup_id
 			WHERE t.user_id=$1 ORDER BY t.created_at DESC,t.id DESC LIMIT $2`,userID,limit)
 		if e!=nil{fail("WALLET_HISTORY_FAILED","Could not load wallet history",http.StatusServiceUnavailable);return true}
 		defer rows.Close();items:=make([]map[string]any,0)
-		for rows.Next(){var id,kind,amount,currency,transferID,sender,recipient,note string;var created time.Time;if rows.Scan(&id,&kind,&amount,&currency,&created,&transferID,&sender,&recipient,&note)!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true};items=append(items,map[string]any{"id":id,"kind":kind,"amount":amount,"currency":strings.TrimSpace(currency),"created_at":created,"transfer_id":transferID,"sender_id":sender,"recipient_id":recipient,"note":note})}
+		for rows.Next(){
+			var id,kind,amount,currency,transferID,sender,recipient,note,state,provider,receipt,checkout,phone,amountKES,walletAmount string
+			var created time.Time
+			if rows.Scan(&id,&kind,&amount,&currency,&created,&transferID,&sender,&recipient,&note,&state,&provider,&receipt,&checkout,&phone,&amountKES,&walletAmount)!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true}
+			items=append(items,map[string]any{"id":id,"kind":kind,"amount":amount,"currency":strings.TrimSpace(currency),"created_at":created,"transfer_id":transferID,"sender_id":sender,"recipient_id":recipient,"note":note,"status":state,"provider":strings.TrimSpace(provider),"receipt_number":receipt,"checkout_request_id":checkout,"phone":phone,"amount_kes":amountKES,"wallet_amount":walletAmount})
+		}
 		if rows.Err()!=nil{fail("WALLET_HISTORY_FAILED","Could not read wallet history",http.StatusServiceUnavailable);return true};writeJSON(w,http.StatusOK,map[string]any{"items":items});return true
+	case "testagram.wallet.recipient.resolve":
+		username:=strings.TrimPrefix(strings.TrimSpace(str("username")),"@")
+		var recipientID,canonicalUsername string
+		if socialUUIDPattern.MatchString(username) {
+			err=s.db.QueryRow(ctx,"SELECT user_id::text,username FROM testagram_local.accounts WHERE user_id=$1 AND account_status='active'",username).Scan(&recipientID,&canonicalUsername)
+		} else {
+			if !validWalletUsername(username){fail("INVALID_RECIPIENT","Enter a valid Testagram username or account ID",http.StatusBadRequest);return true}
+			err=s.db.QueryRow(ctx,"SELECT user_id::text,username FROM testagram_local.accounts WHERE lower(username)=lower($1) AND account_status='active'",username).Scan(&recipientID,&canonicalUsername)
+		}
+		if err!=nil||recipientID==userID{fail("RECIPIENT_NOT_FOUND","An active, different recipient account was not found",http.StatusNotFound);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"user_id":recipientID,"username":canonicalUsername});return true
 	case "testagram.wallet.transfer","testagram.wallet.tip":
 		recipient:=str("recipient_id");amount,_,ok:=moneyAmount(in["amount"]);key:=str("idempotency_key");note:=str("note")
 		if !socialUUIDPattern.MatchString(recipient)||recipient==userID||!ok||len(key)<8||len(key)>128||len(note)>280{fail("INVALID_TRANSFER","Recipient, amount, note or idempotency key is invalid",http.StatusBadRequest);return true}
@@ -181,6 +213,27 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 			WHERE s.id=$1`,id,userID).Scan(&role,&requestStatus)
 		if e!=nil{fail("SPACE_STATUS_FAILED","Could not load Space membership",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"role":role,"speaker_request_status":requestStatus,"joined":role!=""});return true
+	case "testagram.audio_spaces.update":
+		id := str("space_id")
+		title := str("title")
+		description := str("description")
+		if !socialUUIDPattern.MatchString(id) || len(title) == 0 || len(title) > 120 || len(description) > 2000 {
+			fail("INVALID_SPACE", "Space ID, title or description is invalid", http.StatusBadRequest)
+			return true
+		}
+		tag, e := s.db.Exec(ctx, `UPDATE testagram_local.audio_spaces
+			SET title=$3, description=$4, updated_at=now()
+			WHERE id=$1 AND host_id=$2 AND status='live'`, id, userID, title, description)
+		if e != nil {
+			fail("SPACE_UPDATE_FAILED", "Could not update Audio Space", http.StatusServiceUnavailable)
+			return true
+		}
+		if tag.RowsAffected() != 1 {
+			fail("HOST_ONLY", "Only the host can update a live Audio Space", http.StatusForbidden)
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"space_id": id, "updated": true})
+		return true
 	case "testagram.audio_spaces.create":
 		title:=str("title");description:=str("description");if len(title)==0||len(title)>120||len(description)>2000{fail("INVALID_SPACE","Space title or description is invalid",http.StatusBadRequest);return true}
 		max:=1000;if v,ok:=in["max_audience"].(float64);ok{max=int(v)};if max<2||max>10000{fail("INVALID_SPACE","Audience limit must be between 2 and 10000",http.StatusBadRequest);return true}
