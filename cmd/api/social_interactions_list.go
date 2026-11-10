@@ -56,7 +56,7 @@ func (s *service) socialPostInteractionsList(w http.ResponseWriter, r *http.Requ
 		var id,actorID,quote,username,displayName,avatarKey string
 		var createdAt time.Time
 		if err:=rows.Scan(&id,&actorID,&quote,&createdAt,&username,&displayName,&avatarKey);err!=nil{rows.Close();writeJSON(w,http.StatusServiceUnavailable,errorBody("INTERACTIONS_UNAVAILABLE","Interactions could not be decoded",requestID));return}
-		profile:=map[string]any{"id":actorID,"user_id":actorID,"username":username,"display_name":displayName,"avatar_url":avatarKey}
+		profile:=map[string]any{"id":actorID,"user_id":actorID,"username":username,"display_name":displayName,"avatar_key":avatarKey,"avatar_url":publicMediaURL(avatarKey)}
 		item:=map[string]any{"id":id,"user_id":actorID,"post_id":postID,"created_at":createdAt,"profile":profile,"user_profiles":profile}
 		if quote!=""{item["content"]=quote;item["quote"]=quote;item["quoted_post_id"]=postID}
 		items=append(items,item)
