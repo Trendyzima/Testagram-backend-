@@ -133,6 +133,7 @@ jobs:
         run: |
           bash -n scripts/testagram-reconcile.sh
           bash -n scripts/install-testagram-autonomy.sh
+          bash -n deploy/self-hosted/apply-federation-outbox-migration.sh
       - name: Install ShellCheck
         run: |
           sudo apt-get update
