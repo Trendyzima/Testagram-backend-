@@ -201,6 +201,29 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 	}
 	assertVisible("protected author's post visible after follow acceptance", viewerID, protectedPostID, true)
 
+	// The profile connections endpoint must not reveal a protected account's
+	// social graph to a non-follower, but must allow an accepted follower.
+	var viewerCanEnumerate, strangerCanEnumerate bool
+	profileVisibilitySQL := `
+SELECT a.user_id=$1 OR EXISTS(
+  SELECT 1 FROM testagram_local.follows f
+  WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
+) OR (a.discoverable_by_username AND NOT a.protected_account)
+FROM testagram_local.accounts a
+WHERE a.user_id=$2 AND a.account_status='active'
+  AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b
+    WHERE (b.blocker_id=$1 AND b.blocked_id=a.user_id)
+       OR (b.blocker_id=a.user_id AND b.blocked_id=$1))`
+	if err := tx.QueryRow(ctx, profileVisibilitySQL, viewerID, protectedAuthorID).Scan(&viewerCanEnumerate); err != nil {
+		t.Fatalf("check accepted follower profile visibility: %v", err)
+	}
+	if err := tx.QueryRow(ctx, profileVisibilitySQL, authorID, protectedAuthorID).Scan(&strangerCanEnumerate); err != nil {
+		t.Fatalf("check stranger profile visibility: %v", err)
+	}
+	if !viewerCanEnumerate || strangerCanEnumerate {
+		t.Fatalf("protected profile connections visible to accepted follower/stranger = %v/%v, want true/false", viewerCanEnumerate, strangerCanEnumerate)
+	}
+
 	// Exercise the same actor joins and direction filters used by the profile
 	// followers/following endpoint.
 	connectionQueries := map[string]struct {
