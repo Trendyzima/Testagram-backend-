@@ -82,12 +82,10 @@ func TestValidAppwriteUserID(t *testing.T) {
 	}
 }
 
-func TestDefaultProviderDoesNotFallbackToSupabase(t *testing.T) {
+func TestAppwriteAuthenticationFailsClosedWhenNotConfigured(t *testing.T) {
 	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "")
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
-	t.Setenv("SUPABASE_URL", "https://legacy-auth.example.test")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "legacy-publishable-key")
 	service := &service{upstream: &http.Client{Timeout: time.Second}}
 	request := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", nil)
 	request.Header.Set("Authorization", "Bearer appwrite-session-token")
