@@ -201,6 +201,54 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 	}
 	assertVisible("protected author's post visible after follow acceptance", viewerID, protectedPostID, true)
 
+	// Exercise the same actor joins and direction filters used by the profile
+	// followers/following endpoint.
+	connectionQueries := map[string]struct {
+		query string
+		owner string
+		want  string
+	}{
+		"followers": {
+			query: `SELECT a.user_id::text FROM testagram_local.follows f
+				JOIN testagram_local.accounts a ON a.user_id=f.follower_id
+				WHERE f.following_id=$1 AND f.status='accepted' AND a.account_status='active'`,
+			owner: authorID,
+			want: viewerID,
+		},
+		"following": {
+			query: `SELECT a.user_id::text FROM testagram_local.follows f
+				JOIN testagram_local.accounts a ON a.user_id=f.following_id
+				WHERE f.follower_id=$1 AND f.status='accepted' AND a.account_status='active'`,
+			owner: viewerID,
+			want: authorID,
+		},
+	}
+	for kind, fixture := range connectionQueries {
+		rows, err := tx.Query(ctx, fixture.query, fixture.owner)
+		if err != nil {
+			t.Fatalf("query profile %s: %v", kind, err)
+		}
+		found := false
+		for rows.Next() {
+			var accountID string
+			if err := rows.Scan(&accountID); err != nil {
+				rows.Close()
+				t.Fatalf("scan profile %s: %v", kind, err)
+			}
+			if accountID == fixture.want {
+				found = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("iterate profile %s: %v", kind, err)
+		}
+		rows.Close()
+		if !found {
+			t.Errorf("profile %s list did not include expected account %s", kind, fixture.want)
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `INSERT INTO testagram_local.blocks(blocker_id,blocked_id)
 		VALUES($1,$2)`, authorID, viewerID); err != nil {
 		t.Fatalf("insert block: %v", err)
