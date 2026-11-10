@@ -157,7 +157,7 @@ jobs:
             avatar_key text NOT NULL DEFAULT '',
             account_status text NOT NULL DEFAULT 'active'
           );
-          CREATE TABLE testagram_local.posts (id uuid PRIMARY KEY, author_id uuid, visibility text NOT NULL DEFAULT 'public', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), deleted_at timestamptz);
+          CREATE TABLE testagram_local.posts (id uuid PRIMARY KEY, author_id uuid, visibility text NOT NULL DEFAULT 'public', media_ids jsonb NOT NULL DEFAULT '[]'::jsonb, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), deleted_at timestamptz);
           CREATE TABLE testagram_local.follows (
             follower_id uuid NOT NULL,
             following_id uuid NOT NULL,
