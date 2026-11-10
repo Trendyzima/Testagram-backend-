@@ -117,7 +117,7 @@ CREATE INDEX IF NOT EXISTS testagram_local_communication_outbox_pending_idx
 
 -- Message notifications are generated transactionally without exposing plaintext.
 CREATE OR REPLACE FUNCTION testagram_local.notify_conversation_members()
-RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,testagram_local AS $
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,testagram_local AS $$
 BEGIN
   INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
   SELECT cm.user_id,NEW.sender_id,'message.received',
@@ -128,7 +128,7 @@ BEGIN
   ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING;
   RETURN NEW;
 END;
-$;
+$$;
 DROP TRIGGER IF EXISTS testagram_local_message_notifications ON testagram_local.messages;
 CREATE TRIGGER testagram_local_message_notifications AFTER INSERT ON testagram_local.messages
   FOR EACH ROW EXECUTE FUNCTION testagram_local.notify_conversation_members();
