@@ -124,7 +124,7 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 	// Exercise the same visibility-filtered SQL projections used by the
 	// likes/reposts/quotes listing endpoint, including quoted repost content.
 	if _, err := tx.Exec(ctx, `INSERT INTO testagram_local.reposts(post_id,user_id,quote)
-		VALUES($1,$2,'integration quote')`, publicPostID, authorID); err != nil {
+		VALUES($1,$2,'integration quote')`, publicPostID, protectedAuthorID); err != nil {
 		t.Fatalf("insert quote fixture: %v", err)
 	}
 	interactionQueries := map[string]string{
@@ -153,7 +153,7 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 				t.Fatalf("decode %s interaction: %v", kind, err)
 			}
 			count++
-			if kind == "quotes" && quote == "integration quote" && actorID == authorID {
+			if kind == "quotes" && quote == "integration quote" && actorID == protectedAuthorID {
 				quoteFound = true
 			}
 		}
