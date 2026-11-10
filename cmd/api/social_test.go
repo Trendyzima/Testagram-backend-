@@ -39,3 +39,12 @@ func TestSocialUUIDPattern(t *testing.T) {
 		}
 	}
 }
+
+func TestSocialInteractionAvatarURLUsesPublicMediaBase(t *testing.T) {
+	t.Setenv("MEDIA_PUBLIC_BASE_URL", "https://cdn.testagram.site/media")
+	got := publicMediaURL("avatars/account/profile.png")
+	want := "https://cdn.testagram.site/media/avatars/account/profile.png"
+	if got != want {
+		t.Fatalf("publicMediaURL() = %q, want %q", got, want)
+	}
+}
