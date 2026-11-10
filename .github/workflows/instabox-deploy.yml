@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: testagram-instabox-deploy-repair-4
+  group: testagram-instabox-deploy-repair-5
   cancel-in-progress: false
 
 jobs:
@@ -248,7 +248,8 @@ jobs:
 
           echo "Starting PostgreSQL, MinIO and the native Go API..."
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
-          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build postgres object-storage object-init api
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
 
           echo "Waiting for Backend readiness..."
           backend_ready=false
@@ -262,6 +263,12 @@ jobs:
           if [[ "$backend_ready" != "true" ]]; then
             sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
             sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=100 postgres api object-storage object-init
+            exit 1
+          fi
+
+          if ! curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
+            echo "MinIO is healthy inside Docker but its host loopback port is not reachable" >&2
+            sudo docker ps -a
             exit 1
           fi
 
