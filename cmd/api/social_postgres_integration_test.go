@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,25 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 		t.Fatalf("begin fixture transaction: %v", err)
 	}
 	defer tx.Rollback(context.Background())
+
+	// Capability gateway rate limiting now uses the Backend's PostgreSQL
+	// security table directly; it has no Redis/Upstash dependency.
+	rateBucket := strings.Repeat("a", 64)
+	for want := 1; want <= 3; want++ {
+		var attempts int
+		err := tx.QueryRow(ctx, `
+INSERT INTO testagram_auth.rate_limits(action,bucket_hash,window_start,attempts)
+VALUES('capability-api',$1,date_trunc('minute',now()),1)
+ON CONFLICT(action,bucket_hash,window_start) DO UPDATE
+SET attempts=testagram_auth.rate_limits.attempts+1
+RETURNING attempts`, rateBucket).Scan(&attempts)
+		if err != nil {
+			t.Fatalf("increment PostgreSQL capability rate limit: %v", err)
+		}
+		if attempts != want {
+			t.Fatalf("PostgreSQL capability rate-limit attempts = %d, want %d", attempts, want)
+		}
+	}
 
 	suffix := fmt.Sprintf("%09d", time.Now().UnixNano()%1_000_000_000)
 	var viewerID, authorID, protectedAuthorID string
