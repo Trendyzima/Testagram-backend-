@@ -188,6 +188,10 @@ services:
       ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:-https://ops.testagram.site}
       ADMIN_SESSION_KEY: ${ADMIN_SESSION_KEY:?Set ADMIN_SESSION_KEY to 64 hex characters in .env}
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
+      DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set APPWRITE_ENDPOINT in .env}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set APPWRITE_PROJECT_ID in .env}
+      APPWRITE_API_KEY: ${APPWRITE_API_KEY:-}
       PROMETHEUS_URL: http://prometheus:9090
       API_HEALTH_URL: http://api:8080/readyz
       GRAFANA_URL: ${GRAFANA_URL:-http://127.0.0.1:3000}
