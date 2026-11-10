@@ -170,18 +170,39 @@ jobs:
             migrations/007_media_product_bridge.sql \
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261106_social_core.sql \
+            migrations/20261107_federation_actor_consent.sql \
             migrations/20261108_testagram_polls.sql \
             migrations/20261109_threads_browsing_history.sql \
             migrations/20261109_thread_interactions.sql \
             migrations/20261109_iptv_social.sql \
             migrations/20261109_post_views.sql \
-            migrations/20261110_native_media_post_links.sql; do
+            migrations/20261110_native_media_post_links.sql \
+            migrations/20261110_federation_outbox.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify media attachment, poll voting and private history constraints
         run: |
           set -euo pipefail
           docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $federation_outbox$
+          BEGIN
+            IF to_regclass('testagram_local.federation_outbox') IS NULL THEN
+              RAISE EXCEPTION 'Native PostgreSQL Federation outbox migration missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_local' AND indexname='federation_outbox_claim_idx') THEN
+              RAISE EXCEPTION 'Federation outbox claim index missing';
+            END IF;
+          END $federation_outbox$;
+          INSERT INTO testagram_local.federation_outbox(activity_id,actor_user_id,payload)
+          VALUES ('https://testagram.example/activities/ci-outbox',
+                  '00000000-0000-4000-8000-000000000001',
+                  '{"type":"Create","id":"https://testagram.example/activities/ci-outbox"}'::jsonb);
+          DO $federation_outbox_verify$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_local.federation_outbox WHERE activity_id='https://testagram.example/activities/ci-outbox' AND state='pending') <> 1 THEN
+              RAISE EXCEPTION 'Federation outbox durable insert failed';
+            END IF;
+          END $federation_outbox_verify$;
           INSERT INTO testagram_local.accounts(user_id)
           VALUES ('00000000-0000-4000-8000-000000000001'),
                  ('00000000-0000-4000-8000-000000000002');
