@@ -171,6 +171,7 @@ jobs:
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261106_social_core.sql \
             migrations/20261107_federation_actor_consent.sql \
+            migrations/20261108_communication_core.sql \
             migrations/20261108_testagram_polls.sql \
             migrations/20261109_threads_browsing_history.sql \
             migrations/20261109_thread_interactions.sql \
@@ -184,6 +185,21 @@ jobs:
         run: |
           set -euo pipefail
           docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $communication_schema$
+          BEGIN
+            IF to_regclass('testagram_local.conversations') IS NULL
+              OR to_regclass('testagram_local.messages') IS NULL
+              OR to_regclass('testagram_local.communication_outbox') IS NULL THEN
+              RAISE EXCEPTION 'Native communication schema migration missing';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_trigger
+              WHERE tgname='testagram_local_message_notifications'
+                AND NOT tgisinternal
+            ) THEN
+              RAISE EXCEPTION 'Message notification trigger missing';
+            END IF;
+          END $communication_schema$;
           DO $federation_outbox$
           BEGIN
             IF to_regclass('testagram_local.federation_outbox') IS NULL THEN
