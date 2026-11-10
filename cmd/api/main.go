@@ -25,7 +25,6 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
-	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5"
@@ -56,15 +55,12 @@ type service struct {
 	capabilityMetrics       map[string]*requestMetric
 	upstreamMetrics         map[string]*upstreamMetric
 	requests                atomic.Uint64
-	cacheHits               atomic.Uint64
-	cacheMisses             atomic.Uint64
 	rateLimited             atomic.Uint64
-	platformErrors          atomic.Uint64
+	capabilityRateLimitErrors atomic.Uint64
 	algorithmRequests       atomic.Uint64
 	algorithmFailures       atomic.Uint64
 	federationInternalToken string
 	upstream                *http.Client
-	platform                *platformclient.Client
 	media                   *media.Signer
 	virtualStorage          *virtualstorage.Manager
 	algorithm               *algorithmclient.Client
@@ -302,10 +298,8 @@ func (s *service) recordRequest(method, route string, status int, elapsed time.D
 func (s *service) metricsText() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# HELP testagram_http_requests_total Total HTTP requests handled by this process.\n# TYPE testagram_http_requests_total counter\ntestagram_http_requests_total %d\n", s.requests.Load())
-	fmt.Fprintf(&b, "# HELP testagram_platform_cache_hits_total Public capability responses served from the shared cache.\n# TYPE testagram_platform_cache_hits_total counter\ntestagram_platform_cache_hits_total %d\n", s.cacheHits.Load())
-	fmt.Fprintf(&b, "# HELP testagram_platform_cache_misses_total Public capability cache misses.\n# TYPE testagram_platform_cache_misses_total counter\ntestagram_platform_cache_misses_total %d\n", s.cacheMisses.Load())
 	fmt.Fprintf(&b, "# HELP testagram_rate_limited_requests_total Requests denied by the shared rate limiter.\n# TYPE testagram_rate_limited_requests_total counter\ntestagram_rate_limited_requests_total %d\n", s.rateLimited.Load())
-	fmt.Fprintf(&b, "# HELP testagram_platform_errors_total Shared platform API errors observed by the gateway.\n# TYPE testagram_platform_errors_total counter\ntestagram_platform_errors_total %d\n", s.platformErrors.Load())
+	fmt.Fprintf(&b, "# HELP testagram_capability_rate_limit_errors_total PostgreSQL rate-limit check failures (fail-open).\n# TYPE testagram_capability_rate_limit_errors_total counter\ntestagram_capability_rate_limit_errors_total %d\n", s.capabilityRateLimitErrors.Load())
 	fmt.Fprintf(&b, "# HELP testagram_algorithm_requests_total Requests sent to the private feed ranker.\n# TYPE testagram_algorithm_requests_total counter\ntestagram_algorithm_requests_total %d\n", s.algorithmRequests.Load())
 	fmt.Fprintf(&b, "# HELP testagram_algorithm_failures_total Ranker failures that triggered chronological fallback.\n# TYPE testagram_algorithm_failures_total counter\ntestagram_algorithm_failures_total %d\n", s.algorithmFailures.Load())
 
@@ -695,26 +689,27 @@ func requestID(r *http.Request) string {
 	return id
 }
 
-func publicCacheTTL(capability string) (time.Duration, bool) {
-	switch capability {
-	case "testagram.capabilities.list":
-		return 10 * time.Minute, true
-	case "testagram.news.trending":
-		return 30 * time.Second, true
-	case "testagram.health.read":
-		return 10 * time.Second, true
-	default:
-		return 0, false
-	}
-}
-
-func capabilityCacheKey(body capabilityRequest) string {
-	raw, err := json.Marshal(body)
+func (s *service) checkCapabilityRateLimit(ctx context.Context, key string, limit int64) (bool, int64, error) {
+	digest := sha256.Sum256([]byte(key))
+	bucketHash := hex.EncodeToString(digest[:])
+	var attempts int
+	var retryAfter int64
+	err := s.db.QueryRow(ctx, `
+INSERT INTO testagram_auth.rate_limits(action,bucket_hash,window_start,attempts)
+VALUES('capability-api',$1,date_trunc('minute',now()),1)
+ON CONFLICT(action,bucket_hash,window_start) DO UPDATE
+SET attempts=testagram_auth.rate_limits.attempts+1
+RETURNING attempts,
+  GREATEST(1,CEIL(EXTRACT(EPOCH FROM (date_trunc('minute',now()) + interval '1 minute' - now())))::bigint)`,
+		bucketHash).Scan(&attempts,&retryAfter)
 	if err != nil {
-		return ""
+		return false,0,err
 	}
-	sum := sha256.Sum256(raw)
-	return "testagram:api:v1:" + hex.EncodeToString(sum[:])
+	if attempts == 1 {
+		_,_ = s.db.Exec(ctx,`DELETE FROM testagram_auth.rate_limits
+			WHERE action='capability-api' AND window_start < now()-interval '1 day'`)
+	}
+	return int64(attempts)<=limit,retryAfter,nil
 }
 
 func capabilityRateLimitKey(r *http.Request, authorization string) string {
@@ -736,19 +731,6 @@ func isWriteCapability(capability string) bool {
 		}
 	}
 	return false
-}
-
-func writeRawCapability(w http.ResponseWriter, r *http.Request, id string, raw []byte, cacheTTL time.Duration) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Request-ID", id)
-	if cacheTTL > 0 && strings.TrimSpace(r.Header.Get("Authorization")) == "" {
-		w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(cacheTTL.Seconds())))
-	} else {
-		w.Header().Set("Cache-Control", "private, no-store")
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(raw)
 }
 
 func (s *service) capability(w http.ResponseWriter, r *http.Request) {
@@ -798,29 +780,25 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	public := body.Capability == "testagram.capabilities.list" ||
 		body.Capability == "testagram.health.read" ||
 		body.Capability == "testagram.news.trending"
-	if s.platform != nil {
-		limit := int64(120)
-		if isWriteCapability(body.Capability) {
-			limit = 30
+	limit := int64(120)
+	if isWriteCapability(body.Capability) {
+		limit = 30
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+	allowed, retryAfter, rateErr := s.checkCapabilityRateLimit(ctx, capabilityRateLimitKey(r, authorization), limit)
+	cancel()
+	if rateErr != nil {
+		// Rate limiting is defense in depth; a PostgreSQL outage must not take
+		// the capability gateway offline. Never log the caller's identity key.
+		s.capabilityRateLimitErrors.Add(1)
+	} else if !allowed {
+		s.rateLimited.Add(1)
+		if retryAfter < 1 {
+			retryAfter = 1
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
-		result, err := s.platform.Check(ctx, capabilityRateLimitKey(r, authorization), limit, time.Minute)
-		cancel()
-		if err != nil {
-			// Rate limiting is defense in depth; a platform outage must not take
-			// the capability gateway offline. The error is deliberately not logged
-			// with the raw key or credential.
-			s.platformErrors.Add(1)
-		} else if !result.Allowed {
-			s.rateLimited.Add(1)
-			retryAfter := result.RetryAfterSeconds
-			if retryAfter < 1 {
-				retryAfter = 1
-			}
-			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
-			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Request rate limit exceeded", id))
-			return
-		}
+		w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Request rate limit exceeded", id))
+		return
 	}
 	if !public && !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
@@ -940,18 +918,6 @@ func main() {
 		log.Fatalf("database startup check failed: %v", err)
 	}
 
-	var platform *platformclient.Client
-	platformURL := strings.TrimSpace(os.Getenv("PLATFORM_URL"))
-	platformToken := strings.TrimSpace(os.Getenv("PLATFORM_INTERNAL_TOKEN"))
-	if platformURL != "" && platformToken != "" {
-		platform, err = platformclient.New(platformURL, platformToken, 2*time.Second)
-		if err != nil {
-			log.Fatalf("configure internal platform client: %v", err)
-		}
-		log.Printf("internal cache and rate limiting enabled")
-	} else if platformURL != "" || platformToken != "" {
-		log.Printf("internal platform integration disabled: PLATFORM_URL and PLATFORM_INTERNAL_TOKEN must both be configured")
-	}
 	var algorithm *algorithmclient.Client
 	algorithmURL := strings.TrimSpace(os.Getenv("ALGORITHM_URL"))
 	algorithmToken := strings.TrimSpace(os.Getenv("ALGORITHM_INTERNAL_TOKEN"))
