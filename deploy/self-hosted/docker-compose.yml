@@ -196,6 +196,8 @@ services:
       API_HEALTH_URL: http://api:8080/readyz
       GRAFANA_URL: ${GRAFANA_URL:-http://127.0.0.1:3000}
     depends_on:
+      postgres:
+        condition: service_healthy
       api:
         condition: service_started
       prometheus:
