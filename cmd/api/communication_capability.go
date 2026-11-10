@@ -144,7 +144,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			JOIN testagram_local.communication_devices rd ON rd.id=e.recipient_device_id AND rd.revoked_at IS NULL
 			JOIN testagram_local.conversation_members rm ON rm.conversation_id=e.conversation_id AND rm.user_id=rd.user_id AND rm.left_at IS NULL
 			JOIN testagram_local.communication_devices sd ON sd.id=e.sender_device_id AND sd.revoked_at IS NULL
-			WHERE e.conversation_id=$1 ORDER BY e.epoch DESC,e.created_at DESC`, conversationID, userID)
+			WHERE e.conversation_id=$1 AND rd.user_id=$2 ORDER BY e.epoch DESC,e.created_at DESC`, conversationID, userID)
 		if queryErr != nil {
 			fail("COMMUNICATION_KEYS_LIST_FAILED", "Could not load encrypted conversation keys", http.StatusServiceUnavailable)
 			return true
