@@ -62,30 +62,6 @@ jobs:
             fi
           fi
 
-  platform:
-    name: Platform service tests and static checks
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/platform
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.10"
-          cache: true
-          cache-dependency-path: services/platform/go.sum
-      - name: Resolve and verify platform module
-        run: |
-          go mod tidy
-          git diff --exit-code -- services/platform/go.mod services/platform/go.sum
-      - name: Tests (race detector)
-        run: go test -race -count=1 ./...
-      - name: Vet
-        run: go vet ./...
-      - name: Build
-        run: CGO_ENABLED=0 go build -trimpath ./...
-
   dependency-audit:
     name: Go vulnerability scan
     runs-on: ubuntu-latest
@@ -98,9 +74,6 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Scan API module
-        run: govulncheck ./...
-      - name: Scan platform module
-        working-directory: services/platform
         run: govulncheck ./...
 
   tv-health-schema-integration:
@@ -327,12 +300,10 @@ jobs:
       - name: Validate Compose configuration
         env:
           POSTGRES_PASSWORD: ci-only-password-not-for-production
-          VALKEY_PASSWORD: ci-only-valkey-password-not-for-production
           MINIO_ROOT_USER: ci-only-minio-user
           MINIO_ROOT_PASSWORD: ci-only-minio-password-not-for-production
           ACME_EMAIL: ci-only@example.invalid
           DATABASE_URL: postgres://testagram:ci-only-password-not-for-production@db:5432/testagram?sslmode=disable
-          PLATFORM_INTERNAL_TOKEN: ci-only-platform-token-not-for-production
           VPS_INTERNAL_TOKEN: ci-only-vps-token-not-for-production
           VPS_NODE_BOOTSTRAP_TOKEN: ci-only-node-token-not-for-production
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
