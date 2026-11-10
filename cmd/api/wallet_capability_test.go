@@ -59,3 +59,18 @@ func TestNormalizeMpesaPhone(t *testing.T) {
 		})
 	}
 }
+
+func TestValidWalletUsername(t *testing.T) {
+	valid := []string{"trendyzima", "test.user", "user_123", "AbC"}
+	for _, username := range valid {
+		if !validWalletUsername(username) {
+			t.Errorf("validWalletUsername(%q) = false, want true", username)
+		}
+	}
+	invalid := []string{"", "a", "user name", "@username", "user/name", "user!name", "this_username_is_far_too_long_for_the_limit"}
+	for _, username := range invalid {
+		if validWalletUsername(username) {
+			t.Errorf("validWalletUsername(%q) = true, want false", username)
+		}
+	}
+}
