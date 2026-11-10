@@ -74,7 +74,7 @@ jobs:
         working-directory: deploy/self-hosted
         run: |
           docker compose config > /tmp/testagram-compose.yml
-          if grep -Eq 'published: "(5432|6379|8787|8095|9000|9001|9090)"' /tmp/testagram-compose.yml; then
+          if grep -Eq 'published: "(5432|6379|8787|8095|9001|9090)"' /tmp/testagram-compose.yml; then
             echo "A private data/monitoring port is published to the host."
             exit 1
           fi
@@ -83,13 +83,24 @@ jobs:
           with open("/tmp/testagram-compose.yml", encoding="utf-8") as handle:
               compose = yaml.safe_load(handle)
           services = compose.get("services", {})
-          grafana_ports = services.get("grafana", {}).get("ports", [])
-          if not any(str(port.get("published")) == "3000" and port.get("target") == 3000 and port.get("host_ip") == "127.0.0.1" for port in grafana_ports):
-              raise SystemExit("Grafana must publish port 3000 on 127.0.0.1 only.")
+          loopback_requirements = {
+              "api": ("8080", 8080),
+              "object-storage": ("9000", 9000),
+              "grafana": ("3000", 3000),
+          }
+          for service_name, (published, target) in loopback_requirements.items():
+              ports = services.get(service_name, {}).get("ports", [])
+              if not any(
+                  str(port.get("published")) == published
+                  and port.get("target") == target
+                  and port.get("host_ip") == "127.0.0.1"
+                  for port in ports
+              ):
+                  raise SystemExit(f"{service_name} must publish port {published} on 127.0.0.1 only.")
           for service_name, service in services.items():
               for port in service.get("ports", []):
-                  if str(port.get("published")) == "3000" and port.get("host_ip") != "127.0.0.1":
-                      raise SystemExit(f"Grafana port 3000 is exposed beyond loopback by service {service_name}.")
+                  if str(port.get("published")) in {"3000", "8080", "9000"} and port.get("host_ip") != "127.0.0.1":
+                      raise SystemExit(f"Loopback-only service port {port.get('published')} is exposed beyond loopback by {service_name}.")
           PY
       - name: Validate Caddy tenant TLS configuration
         working-directory: deploy/self-hosted
