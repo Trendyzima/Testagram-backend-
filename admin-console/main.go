@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -19,49 +21,54 @@ import (
 	"time"
 	"embed"
 	"io/fs"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 //go:embed web/*
 var webFiles embed.FS
 
 type app struct {
-	supabaseURL string
-	publishableKey string
-	serviceRoleKey string
-	publicURL string
-	publicOrigin string
-	prometheusURL string
-	apiHealthURL string
-	grafanaURL string
-	cookieSecure bool
-	aead cipher.AEAD
-	client *http.Client
+	appwriteEndpoint string
+	appwriteProject  string
+	appwriteAPIKey   string
+	database         *pgxpool.Pool
+	publicURL        string
+	publicOrigin     string
+	prometheusURL    string
+	apiHealthURL     string
+	grafanaURL       string
+	cookieSecure     bool
+	aead             cipher.AEAD
+	client           *http.Client
 }
 
 type session struct {
-	AccessToken string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresAt int64 `json:"expires_at"`
+	Secret    string `json:"secret"`
+	ExpiresAt int64  `json:"expires_at"`
 }
 
 type authUser struct {
-	ID string `json:"id"`
-	Email string `json:"email"`
-	AppMetadata map[string]any `json:"app_metadata"`
-	UserMetadata map[string]any `json:"user_metadata"`
+	ID        string `json:"$id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	Status    bool   `json:"status"`
+	StaffRole string `json:"staff_role,omitempty"`
 }
 
-type authPayload struct {
-	AccessToken string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn int64 `json:"expires_in"`
-	User authUser `json:"user"`
+type appwriteSession struct {
+	ID     string `json:"$id"`
+	UserID string `json:"userId"`
+	Secret string `json:"secret"`
+	Expire string `json:"expire"`
 }
 
 type authInput struct {
-	Email string `json:"email"`
+	Email    string `json:"email"`
 	Password string `json:"password"`
-	AccessToken string `json:"access_token"`
+	UserID   string `json:"user_id"`
+	Secret   string `json:"secret"`
 }
 
 type inviteInput struct {
@@ -81,25 +88,56 @@ func newApp() (*app, error) {
 		return nil, errors.New("ADMIN_SESSION_KEY must be 64 hexadecimal characters (32 random bytes)")
 	}
 	block, err := aes.NewCipher(key)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	aead, err := cipher.NewGCM(block)
-	if err != nil { return nil, err }
-	supabaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("SUPABASE_URL")), "/")
-	publishable := strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
-	if supabaseURL == "" || publishable == "" {
-		return nil, errors.New("SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are required")
+	if err != nil {
+		return nil, err
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT")), "/")
+	project := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
+	parsedEndpoint, err := url.Parse(endpoint)
+	if err != nil || parsedEndpoint.Host == "" || parsedEndpoint.User != nil ||
+		(parsedEndpoint.Scheme != "https" && !(parsedEndpoint.Scheme == "http" && (parsedEndpoint.Hostname() == "localhost" || parsedEndpoint.Hostname() == "127.0.0.1"))) {
+		return nil, errors.New("APPWRITE_ENDPOINT must be HTTPS (HTTP is allowed only for localhost)")
+	}
+	if !strings.HasSuffix(parsedEndpoint.Path, "/v1") {
+		parsedEndpoint.Path = strings.TrimRight(parsedEndpoint.Path, "/") + "/v1"
+	}
+	if project == "" {
+		return nil, errors.New("APPWRITE_PROJECT_ID is required")
+	}
+	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if databaseURL == "" {
+		return nil, errors.New("DATABASE_URL is required for PostgreSQL-owned staff roles")
+	}
+	db, err := pgxpool.New(context.Background(), databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if err := db.Ping(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("staff role database unavailable: %w", err)
 	}
 	publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("ADMIN_PUBLIC_URL")), "/")
 	parsed, err := url.Parse(publicURL)
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
+		db.Close()
 		return nil, errors.New("ADMIN_PUBLIC_URL must be an absolute http(s) URL")
 	}
 	secure := !strings.EqualFold(env("ADMIN_COOKIE_SECURE", "true"), "false")
-	if parsed.Scheme == "https" && !secure { return nil, errors.New("ADMIN_COOKIE_SECURE cannot be false when ADMIN_PUBLIC_URL uses HTTPS") }
+	if parsed.Scheme == "https" && !secure {
+		db.Close()
+		return nil, errors.New("ADMIN_COOKIE_SECURE cannot be false when ADMIN_PUBLIC_URL uses HTTPS")
+	}
 	return &app{
-		supabaseURL: supabaseURL,
-		publishableKey: publishable,
-		serviceRoleKey: strings.TrimSpace(os.Getenv("SUPABASE_SERVICE_ROLE_KEY")),
+		appwriteEndpoint: strings.TrimRight(parsedEndpoint.String(), "/"),
+		appwriteProject: project,
+		appwriteAPIKey: strings.TrimSpace(os.Getenv("APPWRITE_API_KEY")),
+		database: db,
 		publicURL: publicURL,
 		publicOrigin: parsed.Scheme + "://" + parsed.Host,
 		prometheusURL: strings.TrimRight(env("PROMETHEUS_URL", "http://prometheus:9090"), "/"),
@@ -107,7 +145,7 @@ func newApp() (*app, error) {
 		grafanaURL: env("GRAFANA_URL", "http://127.0.0.1:3000"),
 		cookieSecure: secure,
 		aead: aead,
-		client: &http.Client{Timeout: 8 * time.Second},
+		client: &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil
 }
 
@@ -175,50 +213,74 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-func (a *app) authRequest(ctx context.Context, method, path, bearer string, body any, dst any) (int, error) {
+func (a *app) appwriteRequest(ctx context.Context, method, path, sessionSecret string, body any, dst any) (int, error) {
 	var reader io.Reader
 	if body != nil {
-		raw, err := json.Marshal(body); if err != nil { return 0, err }
+		raw, err := json.Marshal(body)
+		if err != nil { return 0, err }
 		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, a.supabaseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, a.appwriteEndpoint+path, reader)
 	if err != nil { return 0, err }
-	req.Header.Set("apikey", a.publishableKey)
-	if bearer != "" { req.Header.Set("Authorization", "Bearer "+bearer) }
+	req.Header.Set("X-Appwrite-Project", a.appwriteProject)
+	req.Header.Set("Accept", "application/json")
+	if sessionSecret != "" { req.Header.Set("X-Appwrite-Session", sessionSecret) }
 	if body != nil { req.Header.Set("Content-Type", "application/json") }
 	resp, err := a.client.Do(req)
 	if err != nil { return 0, err }
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil { return resp.StatusCode, err }
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return resp.StatusCode, fmt.Errorf("auth provider rejected request") }
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, errors.New("Appwrite rejected the request")
+	}
 	if dst != nil {
 		if err := json.Unmarshal(raw, dst); err != nil { return resp.StatusCode, err }
 	}
 	return resp.StatusCode, nil
 }
 
-func (a *app) adminAuthRequest(ctx context.Context, method, path string, body any, dst any) (int, error) {
-	if a.serviceRoleKey == "" { return 0, errors.New("server admin key is not configured") }
-	raw, err := json.Marshal(body); if err != nil { return 0, err }
-	req, err := http.NewRequestWithContext(ctx, method, a.supabaseURL+path, bytes.NewReader(raw)); if err != nil { return 0, err }
-	req.Header.Set("apikey", a.serviceRoleKey)
-	req.Header.Set("Authorization", "Bearer "+a.serviceRoleKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := a.client.Do(req); if err != nil { return 0, err }
+func (a *app) appwriteAdminRequest(ctx context.Context, method, path string, body any, dst any) (int, error) {
+	if a.appwriteAPIKey == "" { return 0, errors.New("APPWRITE_API_KEY is not configured") }
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil { return 0, err }
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, a.appwriteEndpoint+path, reader)
+	if err != nil { return 0, err }
+	req.Header.Set("X-Appwrite-Project", a.appwriteProject)
+	req.Header.Set("X-Appwrite-Key", a.appwriteAPIKey)
+	req.Header.Set("Accept", "application/json")
+	if body != nil { req.Header.Set("Content-Type", "application/json") }
+	resp, err := a.client.Do(req)
+	if err != nil { return 0, err }
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)); if err != nil { return resp.StatusCode, err }
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return resp.StatusCode, errors.New("auth admin operation failed") }
-	if dst != nil { if err := json.Unmarshal(data, dst); err != nil { return resp.StatusCode, err } }
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil { return resp.StatusCode, err }
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, errors.New("Appwrite admin operation failed")
+	}
+	if dst != nil {
+		if err := json.Unmarshal(raw, dst); err != nil { return resp.StatusCode, err }
+	}
 	return resp.StatusCode, nil
 }
 
 func (a *app) setSession(w http.ResponseWriter, s session) error {
-	raw, err := json.Marshal(s); if err != nil { return err }
+	raw, err := json.Marshal(s)
+	if err != nil { return err }
 	nonce := make([]byte, a.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil { return err }
-	sealed := a.aead.Seal(nonce, nonce, raw, []byte("testagram-staff-session-v1"))
-	http.SetCookie(w, &http.Cookie{Name:"testagram-staff", Value:hex.EncodeToString(sealed), Path:"/", HttpOnly:true, Secure:a.cookieSecure, SameSite:http.SameSiteStrictMode, MaxAge:60*60*24*7})
+	sealed := a.aead.Seal(nonce, nonce, raw, []byte("testagram-staff-session-v2"))
+	maxAge := 60 * 60 * 24 * 7
+	if s.ExpiresAt > 0 {
+		remaining := int(s.ExpiresAt - time.Now().Unix())
+		if remaining < maxAge { maxAge = remaining }
+	}
+	if maxAge < 1 { return errors.New("Appwrite session is expired") }
+	http.SetCookie(w, &http.Cookie{Name:"testagram-staff", Value:hex.EncodeToString(sealed), Path:"/", HttpOnly:true, Secure:a.cookieSecure, SameSite:http.SameSiteStrictMode, MaxAge:maxAge})
 	return nil
 }
 
@@ -227,41 +289,48 @@ func (a *app) clearSession(w http.ResponseWriter) {
 }
 
 func (a *app) readSession(r *http.Request) (session, error) {
-	cookie, err := r.Cookie("testagram-staff"); if err != nil { return session{}, err }
-	sealed, err := hex.DecodeString(cookie.Value); if err != nil { return session{}, err }
+	cookie, err := r.Cookie("testagram-staff")
+	if err != nil { return session{}, err }
+	sealed, err := hex.DecodeString(cookie.Value)
+	if err != nil { return session{}, err }
 	n := a.aead.NonceSize()
 	if len(sealed) <= n { return session{}, errors.New("invalid session") }
-	plain, err := a.aead.Open(nil, sealed[:n], sealed[n:], []byte("testagram-staff-session-v1")); if err != nil { return session{}, err }
+	plain, err := a.aead.Open(nil, sealed[:n], sealed[n:], []byte("testagram-staff-session-v2"))
+	if err != nil { return session{}, err }
 	var s session
-	if err := json.Unmarshal(plain, &s); err != nil || s.AccessToken == "" || s.RefreshToken == "" { return session{}, errors.New("invalid session") }
+	if err := json.Unmarshal(plain, &s); err != nil || s.Secret == "" || s.ExpiresAt <= time.Now().Unix() {
+		return session{}, errors.New("invalid session")
+	}
 	return s, nil
 }
 
 func (a *app) currentUser(w http.ResponseWriter, r *http.Request) (session, authUser, bool) {
 	s, err := a.readSession(r)
 	if err != nil { a.clearSession(w); return session{}, authUser{}, false }
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
 	var user authUser
-	_, err = a.authRequest(ctx, http.MethodGet, "/auth/v1/user", s.AccessToken, nil, &user)
-	if err != nil {
-		var refreshed authPayload
-		_, refreshErr := a.authRequest(ctx, http.MethodPost, "/auth/v1/token?grant_type=refresh_token", "", map[string]string{"refresh_token":s.RefreshToken}, &refreshed)
-		if refreshErr == nil && refreshed.AccessToken != "" && refreshed.RefreshToken != "" {
-			s.AccessToken, s.RefreshToken = refreshed.AccessToken, refreshed.RefreshToken
-			s.ExpiresAt = time.Now().Unix() + refreshed.ExpiresIn
-			_, err = a.authRequest(ctx, http.MethodGet, "/auth/v1/user", s.AccessToken, nil, &user)
-			if err == nil { if cookieErr := a.setSession(w, s); cookieErr != nil { log.Printf("refresh session cookie failed: %v", cookieErr) } }
-		}
+	_, err = a.appwriteRequest(ctx, http.MethodGet, "/account", s.Secret, nil, &user)
+	if err != nil || user.ID == "" || !user.Status {
+		a.clearSession(w)
+		return session{}, authUser{}, false
 	}
-	if err != nil { a.clearSession(w); return session{}, authUser{}, false }
+	if a.database == nil { return session{}, authUser{}, false }
+	err = a.database.QueryRow(ctx, `SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1`, user.ID).Scan(&user.StaffRole)
+	if errors.Is(err, pgx.ErrNoRows) {
+		user.StaffRole = ""
+	} else if err != nil {
+		return session{}, authUser{}, false
+	}
 	return s, user, true
 }
 
 func staffRole(user authUser) string {
-	role, _ := user.AppMetadata["staff_role"].(string)
-	switch role {
-	case "owner", "administrator", "engineer", "operations", "support", "moderator": return role
-	default: return ""
+	switch user.StaffRole {
+	case "owner", "administrator", "engineer", "operations", "support", "moderator":
+		return user.StaffRole
+	default:
+		return ""
 	}
 }
 
@@ -276,25 +345,26 @@ func (a *app) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	var input authInput
 	if !decodeBody(w,r,&input) { return }
 	input.Email = strings.TrimSpace(input.Email)
-	if input.Email == "" || len(input.Email)>320 || len(input.Password)<1 || len(input.Password)>1024 { writeJSON(w,400,map[string]string{"error":"Enter a valid email and password"}); return }
-	var result authPayload
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	_,err:=a.authRequest(ctx,http.MethodPost,"/auth/v1/token?grant_type=password","",map[string]string{"email":input.Email,"password":input.Password},&result)
-	if err!=nil || result.AccessToken=="" || result.RefreshToken=="" { writeJSON(w,401,map[string]string{"error":"Sign-in failed. Check your credentials or email confirmation."}); return }
-	s:=session{AccessToken:result.AccessToken,RefreshToken:result.RefreshToken,ExpiresAt:time.Now().Unix()+result.ExpiresIn}
-	if err:=a.setSession(w,s);err!=nil { writeJSON(w,500,map[string]string{"error":"Unable to create secure session"});return }
+	if input.Email == "" || len(input.Email)>320 || len(input.Password)<1 || len(input.Password)>1024 {
+		writeJSON(w,400,map[string]string{"error":"Enter a valid email and password"}); return
+	}
+	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second)
+	defer cancel()
+	var created appwriteSession
+	_,err:=a.appwriteRequest(ctx,http.MethodPost,"/account/sessions/email","",map[string]string{"email":input.Email,"password":input.Password},&created)
+	if err!=nil || created.Secret=="" {
+		writeJSON(w,401,map[string]string{"error":"Sign-in failed. Check your credentials or email confirmation."}); return
+	}
+	expiresAt := time.Now().Add(24*time.Hour).Unix()
+	if parsed, parseErr := time.Parse(time.RFC3339, created.Expire); parseErr == nil { expiresAt = parsed.Unix() }
+	if err:=a.setSession(w,session{Secret:created.Secret,ExpiresAt:expiresAt});err!=nil {
+		writeJSON(w,500,map[string]string{"error":"Unable to create secure session"});return
+	}
 	writeJSON(w,200,map[string]any{"ok":true})
 }
 
-func (a *app) handleSignUp(w http.ResponseWriter, r *http.Request) {
-	var input authInput
-	if !decodeBody(w,r,&input) { return }
-	input.Email=strings.TrimSpace(input.Email)
-	if input.Email==""||len(input.Email)>320||len(input.Password)<12||len(input.Password)>1024 { writeJSON(w,400,map[string]string{"error":"Use a valid email and a password of at least 12 characters"});return }
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
-	_,err:=a.authRequest(ctx,http.MethodPost,"/auth/v1/signup","",map[string]any{"email":input.Email,"password":input.Password,"data":map[string]string{"account_type":"staff_candidate"}},nil)
-	if err!=nil { writeJSON(w,400,map[string]string{"error":"Account creation could not be completed. Check the email or try again later."});return }
-	writeJSON(w,200,map[string]any{"ok":true,"message":"Account request created. Verify your email if prompted; the owner must assign a staff role before you can access the console."})
+func (a *app) handleSignUp(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w,http.StatusForbidden,map[string]string{"error":"Staff accounts are invitation-only. Ask a Testagram owner for an invitation."})
 }
 
 func (a *app) handleRecover(w http.ResponseWriter, r *http.Request) {
@@ -302,28 +372,32 @@ func (a *app) handleRecover(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w,r,&input) { return }
 	input.Email=strings.TrimSpace(input.Email)
 	if input.Email==""||len(input.Email)>320 { writeJSON(w,400,map[string]string{"error":"Enter a valid email address"});return }
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
+	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second)
+	defer cancel()
 	redirect:=a.publicURL+"/reset-password"
-	_,_ = a.authRequest(ctx,http.MethodPost,"/auth/v1/recover?redirect_to="+url.QueryEscape(redirect),"",map[string]string{"email":input.Email},nil)
-	// Always return the same response so callers cannot enumerate accounts.
+	_,_ = a.appwriteRequest(ctx,http.MethodPost,"/account/recovery","",map[string]string{"email":input.Email,"url":redirect},nil)
 	writeJSON(w,200,map[string]string{"message":"If the account exists, a password-reset email will be sent."})
 }
 
 func (a *app) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 	var input authInput
 	if !decodeBody(w,r,&input) { return }
-	if len(input.AccessToken)<20 || len(input.Password)<12 || len(input.Password)>1024 { writeJSON(w,400,map[string]string{"error":"A valid reset link and a password of at least 12 characters are required"});return }
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
-	_,err:=a.authRequest(ctx,http.MethodPut,"/auth/v1/user",input.AccessToken,map[string]string{"password":input.Password},nil)
-	if err!=nil { writeJSON(w,400,map[string]string{"error":"Password could not be updated. The reset link may have expired."});return }
+	if input.UserID=="" || input.Secret=="" || len(input.Password)<12 || len(input.Password)>1024 {
+		writeJSON(w,400,map[string]string{"error":"A valid recovery link and a password of at least 12 characters are required"});return
+	}
+	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second)
+	defer cancel()
+	body:=map[string]string{"userId":input.UserID,"secret":input.Secret,"password":input.Password,"passwordAgain":input.Password}
+	_,err:=a.appwriteRequest(ctx,http.MethodPut,"/account/recovery","",body,nil)
+	if err!=nil { writeJSON(w,400,map[string]string{"error":"Password could not be updated. The recovery link may have expired."});return }
 	writeJSON(w,200,map[string]string{"message":"Password updated. You can now sign in."})
 }
 
 func (a *app) handleSignOut(w http.ResponseWriter, r *http.Request) {
 	s,err:=a.readSession(r)
 	if err==nil {
-		ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second)
-		_,_ = a.authRequest(ctx,http.MethodPost,"/auth/v1/logout",s.AccessToken,nil,nil)
+		ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second)
+		_,_ = a.appwriteRequest(ctx,http.MethodDelete,"/account/sessions/current",s.Secret,nil,nil)
 		cancel()
 	}
 	a.clearSession(w)
@@ -343,6 +417,13 @@ func (a *app) requireStaff(w http.ResponseWriter,r *http.Request,roles ...string
 	return s,user,true
 }
 
+func randomAppwriteUserID() (string,error) {
+	raw:=make([]byte,16)
+	if _,err:=rand.Read(raw);err!=nil{return "",err}
+	encoded:=hex.EncodeToString(raw)
+	return encoded[:8]+"-"+encoded[8:12]+"-"+encoded[12:16]+"-"+encoded[16:20]+"-"+encoded[20:],nil
+}
+
 func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	_,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
 	var input inviteInput
@@ -350,16 +431,43 @@ func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	input.Email=strings.TrimSpace(input.Email)
 	switch input.Role {case "administrator","engineer","operations","support","moderator":default:writeJSON(w,400,map[string]string{"error":"Unsupported staff role"});return}
 	if input.Email==""||len(input.Email)>320||!strings.Contains(input.Email,"@"){writeJSON(w,400,map[string]string{"error":"Enter a valid email address"});return}
-	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second);defer cancel()
-	redirect:=a.publicURL+"/"
+	userID,err:=randomAppwriteUserID()
+	if err!=nil { writeJSON(w,500,map[string]string{"error":"Could not create invitation"});return }
+	randomPassword:=make([]byte,32)
+	if _,err:=rand.Read(randomPassword);err!=nil { writeJSON(w,500,map[string]string{"error":"Could not create invitation"});return }
+	ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second)
+	defer cancel()
 	var invited authUser
-	_,err:=a.adminAuthRequest(ctx,http.MethodPost,"/auth/v1/invite?redirect_to="+url.QueryEscape(redirect),map[string]any{"email":input.Email},&invited)
-	if err!=nil||invited.ID=="" { writeJSON(w,400,map[string]string{"error":"Invitation failed. Verify Auth admin configuration and whether this email already has an account."});return }
-	appMetadata:=map[string]any{};for key,value:=range invited.AppMetadata{appMetadata[key]=value};appMetadata["staff_role"]=input.Role
-	_,err=a.adminAuthRequest(ctx,http.MethodPut,"/auth/v1/admin/users/"+url.PathEscape(invited.ID),map[string]any{"app_metadata":appMetadata},nil)
-	if err!=nil { log.Printf("staff invite role assignment failed actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role);writeJSON(w,502,map[string]string{"error":"Invite was created but staff role assignment failed. Revoke or repair this account in the Supabase Auth admin panel before use."});return }
+	_,err=a.appwriteAdminRequest(ctx,http.MethodPost,"/users",map[string]any{
+		"userId":userID,"email":input.Email,"password":base64.RawURLEncoding.EncodeToString(randomPassword),"name":input.Email,
+	},&invited)
+	if err!=nil||invited.ID=="" { writeJSON(w,400,map[string]string{"error":"Invitation failed. Verify Appwrite user-management permissions and whether this email already has an account."});return }
+	tx,err:=a.database.Begin(ctx)
+	if err!=nil {
+		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
+		writeJSON(w,503,map[string]string{"error":"Staff role database is unavailable"});return
+	}
+	defer func(){_ = tx.Rollback(context.Background())}()
+	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,created_by_appwrite_user_id)
+		VALUES($1,$2,$3) ON CONFLICT(appwrite_user_id) DO UPDATE
+		SET role=EXCLUDED.role,created_by_appwrite_user_id=EXCLUDED.created_by_appwrite_user_id,updated_at=now()`,
+		invited.ID,input.Role,actor.ID);err!=nil {
+		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
+		writeJSON(w,503,map[string]string{"error":"Could not assign the staff role"});return
+	}
+	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_role_audit(actor_appwrite_user_id,target_appwrite_user_id,action,role)
+		VALUES($1,$2,'invited',$3)`,actor.ID,invited.ID,input.Role);err!=nil {
+		writeJSON(w,503,map[string]string{"error":"Could not audit the staff invitation"});return
+	}
+	if err=tx.Commit(ctx);err!=nil { writeJSON(w,503,map[string]string{"error":"Could not commit the staff invitation"});return }
+	_,recoveryErr:=a.appwriteRequest(ctx,http.MethodPost,"/account/recovery","",map[string]string{"email":input.Email,"url":a.publicURL+"/reset-password"},nil)
+	if recoveryErr!=nil {
+		log.Printf("staff invitation recovery email failed actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
+		writeJSON(w,201,map[string]any{"ok":true,"message":"Staff account and role were created. The recipient can use password recovery to set their password."})
+		return
+	}
 	log.Printf("staff invite created actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
-	writeJSON(w,201,map[string]any{"ok":true,"message":"Invitation sent. The recipient must complete email verification and set a password."})
+	writeJSON(w,201,map[string]any{"ok":true,"message":"Invitation sent. The recipient must set a password before accessing the operations workspace."})
 }
 
 type promResponse struct {
