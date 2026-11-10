@@ -1044,7 +1044,7 @@ func main() {
 	if federationInternalToken != "" && len(federationInternalToken) < 32 {
 		log.Fatal("FEDERATION_INTERNAL_TOKEN must contain at least 32 characters")
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, platform: platform, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationInternalToken, replicationReceiver: replicationReceiver}
+	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationInternalToken, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
