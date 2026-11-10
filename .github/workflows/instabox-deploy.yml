@@ -1,0 +1,428 @@
+name: Deploy Testagram to InstaBox
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/instabox-deploy.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-instabox-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy backend and private services
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
+      INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+      APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
+    steps:
+      - name: Resolve and start the InstaBox machine
+        id: machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          if [[ -z "${INSTABOX_API_KEY:-}" ]]; then
+            echo "::error::Missing TESTAGRAM_DB_API repository secret. Add the InstaBox API key there."
+            exit 1
+          fi
+
+          machines="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS \
+            -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
+          machine_id="${INSTABOX_MACHINE_ID:-}"
+          if [[ -z "$machine_id" ]]; then
+            machine_id="$(jq -r '([.machines[] | select(.name == "testagram")][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' <<<"$machines")"
+          fi
+
+          if [[ -z "$machine_id" && "$(jq '.machines | length' <<<"$machines")" == "0" ]]; then
+            body="$(jq -nc '{name:"testagram",templateId:"agent-browser",desiredState:"running",metadata:{app:"testagram",managedBy:"github-actions"}}')"
+            created="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
+              -H "X-API-Key: $INSTABOX_API_KEY" \
+              -H "Idempotency-Key: testagram-create-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              -H "Content-Type: application/json" -d "$body" "$API/v1/machines")"
+            operation_id="$(jq -r '.id // empty' <<<"$created")"
+            machine_id="$(jq -r '.machineId // empty' <<<"$created")"
+            if [[ -z "$operation_id" ]]; then
+              echo "::error::InstaBox did not return a machine creation operation."
+              jq -c '.error // .' <<<"$created"
+              exit 1
+            fi
+            for attempt in $(seq 1 90); do
+              operation="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/operations/$operation_id")"
+              state="$(jq -r '.state // empty' <<<"$operation")"
+              machine_id="$(jq -r '.machineId // .machine.id // empty' <<<"$operation")"
+              if [[ "$state" == "succeeded" && -n "$machine_id" ]]; then break; fi
+              if [[ "$state" == "failed" ]]; then
+                echo "::error::InstaBox machine creation failed."
+                jq -c '.error // .' <<<"$operation"
+                exit 1
+              fi
+              sleep 5
+            done
+          fi
+
+          if [[ -z "$machine_id" ]]; then
+            echo "::error::Could not safely select a machine. Name one machine 'testagram' or add INSTABOX_MACHINE_ID as a repository secret."
+            exit 1
+          fi
+
+          machine="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
+          state="$(jq -r '.state // empty' <<<"$machine")"
+          if [[ "$state" != "running" ]]; then
+            started="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
+              -H "X-API-Key: $INSTABOX_API_KEY" \
+              -H "Idempotency-Key: testagram-start-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              -H "Content-Type: application/json" -d '{}' "$API/v1/machines/$machine_id/start")"
+            operation_id="$(jq -r '.id // empty' <<<"$started")"
+            if [[ -n "$operation_id" ]]; then
+              for attempt in $(seq 1 90); do
+                operation="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/operations/$operation_id")"
+                state="$(jq -r '.state // empty' <<<"$operation")"
+                if [[ "$state" == "succeeded" ]]; then break; fi
+                if [[ "$state" == "failed" ]]; then
+                  echo "::error::InstaBox machine start failed."
+                  jq -c '.error // .' <<<"$operation"
+                  exit 1
+                fi
+                sleep 5
+              done
+            fi
+          fi
+
+          for attempt in $(seq 1 60); do
+            machine="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
+            state="$(jq -r '.state // empty' <<<"$machine")"
+            ready="$(jq -r '.runtime.ready // false' <<<"$machine")"
+            if [[ "$state" == "running" && "$ready" == "true" ]]; then break; fi
+            if [[ "$state" == "error" ]]; then
+              echo "::error::InstaBox machine is in error state."
+              jq -c '{state, runtime, operationId}' <<<"$machine"
+              exit 1
+            fi
+            sleep 5
+          done
+
+          echo "machine_id=$machine_id" >> "$GITHUB_OUTPUT"
+          echo "InstaBox machine is ready."
+
+      - name: Start deployment on the machine
+        id: remote
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+
+          read -r -d '' REMOTE_COMMAND <<'REMOTE_OUTER' || true
+          set -euo pipefail
+          ROOT=/data/home/testagram
+          mkdir -p "$ROOT/repos"
+          cat > "$ROOT/deploy.sh" <<'REMOTE_SCRIPT'
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+          ROOT=/data/home/testagram
+          REPOS="$ROOT/repos"
+          BACKEND="$REPOS/backend"
+          DATACENTRE="$REPOS/data-centre"
+          mkdir -p "$REPOS" "$ROOT/storage/media"
+
+          trap 'code=$?; echo "DEPLOY_EXIT=$code"; echo "Deployment stopped at line $LINENO"; exit "$code"' ERR
+
+          if ! command -v git >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y git openssl curl jq
+          fi
+          if ! command -v docker >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y docker.io docker-compose-v2
+          fi
+          sudo systemctl enable --now docker || sudo service docker start
+          if ! sudo docker compose version >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y docker-compose-v2
+          fi
+          sudo docker info >/dev/null
+
+          sync_repo() {
+            local url="$1" path="$2"
+            if [[ -d "$path/.git" ]]; then
+              git -C "$path" fetch --depth 1 origin main
+              git -C "$path" reset --hard FETCH_HEAD
+            else
+              git clone --depth 1 --branch main "$url" "$path"
+            fi
+          }
+
+          sync_repo https://github.com/Trendyzima/Testagram-backend-.git "$BACKEND"
+          sync_repo https://github.com/Trendyzima/Testagram-data-centre-.git "$DATACENTRE"
+          sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
+          sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content"
+          sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/flutter-client"
+
+          BASE_ENV="$BACKEND/deploy/self-hosted/.env"
+          BASE_COMPOSE="$BACKEND/deploy/self-hosted/docker-compose.yml"
+          if [[ ! -f "$BASE_ENV" ]]; then
+            POSTGRES_PASSWORD="$(openssl rand -hex 32)"
+            MINIO_ROOT_PASSWORD="$(openssl rand -hex 32)"
+            MINIO_MEDIA_SECRET_KEY="$(openssl rand -hex 32)"
+            VPS_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            VPS_NODE_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)"
+            ALGORITHM_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            FEDERATION_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            ADMIN_SESSION_KEY="$(openssl rand -hex 32)"
+            GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+            cat > "$BASE_ENV" <<EOF
+          POSTGRES_DB=testagram
+          POSTGRES_USER=testagram
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          DB_MAX_CONNS=20
+          VPS_INTERNAL_TOKEN=$VPS_INTERNAL_TOKEN
+          VPS_NODE_BOOTSTRAP_TOKEN=$VPS_NODE_BOOTSTRAP_TOKEN
+          VPS_ALLOWED_WORKLOAD_IMAGES=
+          TESTAGRAM_BASE_DOMAIN=
+          TESTAGRAM_DOMAIN=
+          TESTAGRAM_PUBLIC_ORIGIN_IP=
+          TESTAGRAM_DOMAIN_TARGETS=
+          MINIO_ROOT_USER=testagram-admin
+          MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD
+          MINIO_BUCKET=testagram-private-media
+          PUBLIC_MEDIA_BUCKET=testagram-public-media
+          MINIO_MEDIA_ACCESS_KEY=testagram-media-api
+          MINIO_MEDIA_SECRET_KEY=$MINIO_MEDIA_SECRET_KEY
+          VIRTUAL_STORAGE_ENABLED=false
+          APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
+          APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-}
+          ALGORITHM_URL=http://algorithm:8092
+          ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
+          FEDERATION_INTERNAL_URL=http://federation:8081
+          FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
+          APPWRITE_API_KEY=
+          MEDIA_S3_ENDPOINT=
+          MEDIA_S3_SIGNING_HOST=
+          MEDIA_S3_ACCESS_KEY=
+          MEDIA_S3_SECRET_KEY=
+          MEDIA_S3_REGION=us-east-1
+          MEDIA_PRIVATE_BUCKET=testagram-private-media
+          MEDIA_PUBLIC_BUCKET=testagram-public-media
+          MINIO_PUBLIC_ENDPOINT=https://media.testagram.site
+          MEDIA_PUBLIC_BASE_URL=https://media.testagram.site/testagram-public-media
+          MINIO_REGION=us-east-1
+          ALLOWED_ORIGINS=https://testagram.site,https://www.testagram.site
+          API_DOMAIN=api.testagram.site
+          MEDIA_DOMAIN=media.testagram.site
+          ACME_EMAIL=ops@testagram.site
+          ADMIN_DOMAIN=ops.testagram.site
+          ADMIN_PUBLIC_URL=https://ops.testagram.site
+          ADMIN_SESSION_KEY=$ADMIN_SESSION_KEY
+          ADMIN_COOKIE_SECURE=true
+          GRAFANA_URL=http://127.0.0.1:3000
+          GRAFANA_ADMIN_USER=testagram-ops
+          GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
+          ALERTMANAGER_WEBHOOK_URL=
+          MEDIA_USER_QUOTA_BYTES=2147483648
+          MEDIA_MODERATION_TOKEN=
+          EOF
+            chmod 600 "$BASE_ENV"
+          fi
+
+          if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
+            if grep -q '^APPWRITE_PROJECT_ID=' "$BASE_ENV"; then
+              sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$BASE_ENV"
+            else
+              echo "APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID" >> "$BASE_ENV"
+            fi
+          fi
+
+          set -a
+          # shellcheck disable=SC1090
+          source "$BASE_ENV"
+          set +a
+
+          echo "Starting PostgreSQL, MinIO and the native Go API..."
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build postgres object-storage object-init api
+
+          echo "Waiting for Backend readiness..."
+          backend_ready=false
+          for attempt in $(seq 1 60); do
+            if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz; then
+              backend_ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$backend_ready" != "true" ]]; then
+            sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
+            sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=100 postgres api object-storage object-init
+            exit 1
+          fi
+
+          echo "Preparing the Data Centre overlay and shared PostgreSQL migrations..."
+          DC_ENV="$DATACENTRE/backend/.env"
+          mkdir -p "$DATACENTRE/backend"
+          FEDERATION_DATABASE_URL="postgresql://testagram:$POSTGRES_PASSWORD@federation-db:5432/testagram_federation?sslmode=disable"
+          if [[ ! -f "$DC_ENV" ]]; then
+            cat > "$DC_ENV" <<EOF
+          DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
+          TESTAGRAM_NETWORK=testagram-platform
+          TESTAGRAM_EGRESS_NETWORK=testagram-egress
+          TESTAGRAM_ALGORITHM_IMAGE=ghcr.io/trendyzima/testagram-feed:sha-ca585b7fe40cb423d1c5d2f32eb8930ee9558949
+          TESTAGRAM_FEDERATION_IMAGE=ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
+          ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
+          FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
+          FEDERATION_DATABASE_NAME=testagram_federation
+          FEDERATION_DATABASE_URL=$FEDERATION_DATABASE_URL
+          FEDERATION_PUBLIC_BASE_URL=https://federation.testagram.site
+          FEDERATION_INSTANCE_DOMAIN=testagram.site
+          FEDERATION_SERVICE_ACTOR_USERNAME=testagram
+          FEDERATION_DELIVERY_WORKER_ENABLED=false
+          FEDERATION_OUTBOX_POLLER_ENABLED=false
+          FEDERATION_INBOX_WORKER_ENABLED=false
+          APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
+          APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-not-configured}
+          VIDEO_SIGNING_SECRET=$(openssl rand -hex 32)
+          VIDEO_ACCOUNT_QUOTA_BYTES=21474836480
+          VIDEO_MIN_FREE_BYTES=2147483648
+          NOTIFICATION_INTERNAL_TOKEN=$(openssl rand -hex 32)
+          PLATFORM_INTERNAL_TOKEN=$(openssl rand -hex 32)
+          TESTAGRAM_STORAGE_ROOT=$ROOT/storage
+          EOF
+            chmod 600 "$DC_ENV"
+          fi
+          if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
+            sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$DC_ENV"
+          fi
+          set -a
+          # shellcheck disable=SC1090
+          source "$DC_ENV"
+          set +a
+
+          overlay_status=not_started
+          if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" config -q; then
+            if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" run --rm migrate; then
+              if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build algorithm federation-api platform worker video-worker; then
+                overlay_status=core_services_running
+                if [[ -n "${APPWRITE_PROJECT_ID:-}" && "$APPWRITE_PROJECT_ID" != "not-configured" ]]; then
+                  if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build video notification; then
+                    overlay_status=all_data_centre_services_running
+                  else
+                    overlay_status=core_running_appwrite_services_failed
+                  fi
+                else
+                  overlay_status=core_running_appwrite_project_id_missing
+                fi
+              else
+                overlay_status=core_services_failed_check_logs
+              fi
+            else
+              overlay_status=migrations_failed_check_logs
+            fi
+          else
+            overlay_status=compose_validation_failed
+          fi
+
+          echo "Data Centre overlay status: $overlay_status"
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
+          sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
+          printf '%s\n' "$overlay_status" > "$ROOT/overlay-status.txt"
+          echo "DEPLOY_EXIT=0"
+          REMOTE_SCRIPT
+          chmod 700 "$ROOT/deploy.sh"
+          nohup bash "$ROOT/deploy.sh" > "$ROOT/deploy.log" 2>&1 < /dev/null &
+          echo $! > "$ROOT/deploy.pid"
+          echo "REMOTE_DEPLOY_STARTED"
+          REMOTE_OUTER
+
+          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite},timeoutSeconds:90}')"
+          response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
+            -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$payload" "$API/v1/machines/$MACHINE_ID/exec")"
+          code="$(jq -r '.exitCode // 1' <<<"$response")"
+          if [[ "$code" != "0" ]]; then
+            echo "::error::Could not start remote deployment command."
+            jq -r '.stderr, .stdout' <<<"$response"
+            exit 1
+          fi
+          echo "Remote deployment started."
+
+      - name: Wait for deployment and report logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          for attempt in $(seq 1 90); do
+            result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"cmd":"ROOT=/data/home/testagram; if [ -f \"$ROOT/deploy.exit\" ]; then cat \"$ROOT/deploy.exit\"; else if [ -f \"$ROOT/deploy.log\" ]; then tail -n 25 \"$ROOT/deploy.log\"; fi; if [ -f \"$ROOT/overlay-status.txt\" ]; then echo OVERLAY_STATUS=$(cat \"$ROOT/overlay-status.txt\"); fi; echo DEPLOY_STATE=$(if [ -f \"$ROOT/deploy.exit\" ]; then cat \"$ROOT/deploy.exit\"; else echo RUNNING; fi)","timeoutSeconds":60}' \
+              "$API/v1/machines/$MACHINE_ID/exec")"
+            output="$(jq -r '.stdout // empty' <<<"$result")"
+            echo "$output"
+            if grep -q 'DEPLOY_EXIT=0' <<<"$output"; then
+              exit 0
+            fi
+            if grep -q 'DEPLOY_EXIT=' <<<"$output" && ! grep -q 'DEPLOY_EXIT=0' <<<"$output"; then
+              echo "::error::Remote deployment failed. Review the machine deployment log."
+              exit 1
+            fi
+            sleep 25
+          done
+          echo "::error::Deployment exceeded the wait window. The remote log remains at /data/home/testagram/deploy.log."
+          exit 1
+
+      - name: Publish the Backend API over HTTPS
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          body='{"port":8080,"name":"testagram-api","protocol":"http","access":"public"}'
+          published="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
+            -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Content-Type: application/json" -d "$body" \
+            "$API/v1/machines/$MACHINE_ID/ports")"
+          url="$(jq -r '.url // empty' <<<"$published")"
+          if [[ -z "$url" ]]; then
+            echo "::error::InstaBox did not return a public HTTPS URL for port 8080."
+            jq -c '.error // .' <<<"$published"
+            exit 1
+          fi
+          echo "api_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Testagram API URL: $url"
+
+      - name: Verify public API health and readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="${{ steps.publish.outputs.api_url }}"
+          for attempt in $(seq 1 30); do
+            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null; then
+              echo "Testagram Backend is publicly reachable and ready."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The public API URL was created, but health/readiness did not pass."
+          exit 1
+
+      - name: Deployment summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### Testagram deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Machine: ${{ steps.machine.outputs.machine_id || 'not resolved' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API URL: ${{ steps.publish.outputs.api_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backend health: checked at /healthz and /readyz" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Appwrite project ID: ${{ secrets.APPWRITE_PROJECT_ID != '' && 'configured' || 'not configured; login-dependent services are skipped' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
