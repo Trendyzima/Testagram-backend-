@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 )
 
 // socialProfilePosts returns the authenticated viewer's visible page of posts
@@ -53,11 +51,11 @@ WHERE p.author_id=$2
   AND a.account_status='active'
   AND (
     p.author_id=$1
-    OR (
-      (NOT a.protected_account AND p.visibility='public')
-      OR EXISTS(SELECT 1 FROM testagram_local.follows f
-        WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted')
-    )
+    OR (p.visibility='public' AND NOT a.protected_account)
+    OR (p.visibility IN ('public','followers') AND EXISTS(
+      SELECT 1 FROM testagram_local.follows f
+      WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
+    ))
   )
   AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b
     WHERE (b.blocker_id=$1 AND b.blocked_id=a.user_id)
@@ -71,10 +69,6 @@ LIMIT $5`
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
 	rows, err := s.db.Query(ctx, query, viewerID, ownerID, before, beforeID, limit+1)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"posts": []homeFeedPost{}, "has_more": false, "next_cursor": ""}, "error": nil, "request_id": requestID})
-		return
-	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_POSTS_UNAVAILABLE", "Profile posts could not be loaded", requestID))
 		return
