@@ -30,6 +30,20 @@ server-controlled staff roles. It has no Supabase dependency.
 Supported roles: owner, administrator, engineer, operations, support and
 moderator. Only owners can invite staff.
 
+## First-owner bootstrap
+
+After creating the first Appwrite account, verify its Appwrite user ID through
+the Appwrite console, then grant the first owner role directly in PostgreSQL
+using a protected operator session:
+
+```sql
+INSERT INTO testagram_auth.staff_roles(appwrite_user_id, role)
+VALUES ('APPWRITE_USER_ID_FROM_ACCOUNT', 'owner');
+```
+
+Never accept the first owner ID from a public request or browser field. Record
+the bootstrap action in the operator's deployment/change log.
+
 ## Deployment checks
 
 - Keep the console on the private edge route and enforce exact-origin POSTs.
