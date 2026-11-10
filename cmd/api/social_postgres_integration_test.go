@@ -116,8 +116,12 @@ RETURNING attempts`, rateBucket).Scan(&attempts)
 		WHERE p.id=$1 AND p.media_ids @> jsonb_build_array($2::text)`, publicPostID, mediaKey); err != nil {
 		t.Fatalf("detach native media key from post: %v", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT jsonb_array_length(media_ids) FROM testagram_local.posts WHERE id=$1`, publicPostID).Scan(new(int)); err != nil {
+	var remainingMedia int
+	if err := tx.QueryRow(ctx, `SELECT jsonb_array_length(media_ids) FROM testagram_local.posts WHERE id=$1`, publicPostID).Scan(&remainingMedia); err != nil {
 		t.Fatalf("verify native media detachment: %v", err)
+	}
+	if remainingMedia != 0 {
+		t.Fatalf("remaining native media references = %d, want 0", remainingMedia)
 	}
 
 	assertVisible := func(name, viewer, post string, want bool) {
