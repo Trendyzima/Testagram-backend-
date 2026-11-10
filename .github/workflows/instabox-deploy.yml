@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: testagram-instabox-deploy-repair-2
+  group: testagram-instabox-deploy-repair-3
   cancel-in-progress: false
 
 jobs:
@@ -413,19 +413,61 @@ jobs:
           echo "api_url=$url" >> "$GITHUB_OUTPUT"
           echo "Testagram API URL: $url"
 
+      - name: Publish MinIO media endpoint over HTTPS
+        id: publish_media
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          body='{"port":9000,"name":"testagram-media","protocol":"http","access":"public"}'
+          published="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
+            -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Content-Type: application/json" -d "$body" \
+            "$API/v1/machines/$MACHINE_ID/ports")"
+          url="$(jq -r '.url // empty' <<<"$published")"
+          if [[ -z "$url" ]]; then
+            echo "::error::InstaBox did not return a public HTTPS URL for MinIO port 9000."
+            jq -c '.error // .' <<<"$published"
+            exit 1
+          fi
+          echo "media_url=$url" >> "$GITHUB_OUTPUT"
+          echo "MinIO media URL: $url"
+
+      - name: Configure public media URL and restart API
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          MEDIA_URL="${{ steps.publish_media.outputs.media_url }}"
+          cmd='set -euo pipefail; ROOT=/data/home/testagram; BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"; sed -i "s|^MINIO_PUBLIC_ENDPOINT=.*|MINIO_PUBLIC_ENDPOINT=$MEDIA_URL|" "$BASE_ENV"; sed -i "s|^MEDIA_PUBLIC_BASE_URL=.*|MEDIA_PUBLIC_BASE_URL=$MEDIA_URL/testagram-public-media|" "$BASE_ENV"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" up -d api; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz'
+          payload="$(jq -nc --arg cmd "$cmd" --arg media "$MEDIA_URL" '{cmd:$cmd,envs:{MEDIA_URL:$media},timeoutSeconds:120}')"
+          result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Content-Type: application/json" -d "$payload" \
+            "$API/v1/machines/$MACHINE_ID/exec")"
+          code="$(jq -r '.exitCode // 1' <<<"$result")"
+          if [[ "$code" != "0" ]]; then
+            echo "::error::Could not apply the public media URL to the backend."
+            jq -r '.stderr // empty' <<<"$result"
+            exit 1
+          fi
+          echo "Backend now uses the public MinIO endpoint."
+
       - name: Verify public API health and readiness
         shell: bash
         run: |
           set -euo pipefail
           URL="${{ steps.publish.outputs.api_url }}"
+          MEDIA_URL="${{ steps.publish_media.outputs.media_url }}"
           for attempt in $(seq 1 30); do
-            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null; then
-              echo "Testagram Backend is publicly reachable and ready."
+            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null && curl -fsS "$MEDIA_URL/minio/health/live" >/dev/null; then
+              echo "Testagram API and public media storage are reachable and ready."
               exit 0
             fi
             sleep 10
           done
-          echo "::error::The public API URL was created, but health/readiness did not pass."
+          echo "::error::The API or public MinIO endpoint did not pass health checks."
           exit 1
 
       - name: Deployment summary
