@@ -630,7 +630,7 @@ func normalizedRoute(path string) string {
 		"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
 		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
-		"/api/media/list", "/api/identity/link", "/internal/media/quarantine", "/internal/replication/events":
+		"/api/media/list", "/internal/media/quarantine", "/internal/replication/events":
 		return path
 	default:
 		return "unmatched"
