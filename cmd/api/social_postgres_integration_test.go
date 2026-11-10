@@ -224,6 +224,47 @@ WHERE a.user_id=$2 AND a.account_status='active'
 		t.Fatalf("protected profile connections visible to accepted follower/stranger = %v/%v, want true/false", viewerCanEnumerate, strangerCanEnumerate)
 	}
 
+	// Profile-post visibility is stricter than merely being an accepted
+	// follower: private posts remain owner-only.
+	profilePostsSQL := `
+SELECT p.id::text
+FROM testagram_local.posts p
+JOIN testagram_local.accounts a ON a.user_id=p.author_id
+WHERE p.author_id=$2 AND p.deleted_at IS NULL AND a.account_status='active'
+  AND (
+    p.author_id=$1
+    OR (p.visibility='public' AND NOT a.protected_account)
+    OR (p.visibility IN ('public','followers') AND EXISTS(
+      SELECT 1 FROM testagram_local.follows f
+      WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
+    ))
+  )
+  AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b
+    WHERE (b.blocker_id=$1 AND b.blocked_id=a.user_id)
+       OR (b.blocker_id=a.user_id AND b.blocked_id=$1))`
+	profilePostRows, err := tx.Query(ctx, profilePostsSQL, viewerID, protectedAuthorID)
+	if err != nil {
+		t.Fatalf("query protected profile posts: %v", err)
+	}
+	visibleProfilePosts := map[string]bool{}
+	for profilePostRows.Next() {
+		var postID string
+		if err := profilePostRows.Scan(&postID); err != nil {
+			profilePostRows.Close()
+			t.Fatalf("scan protected profile post: %v", err)
+		}
+		visibleProfilePosts[postID] = true
+	}
+	if err := profilePostRows.Err(); err != nil {
+		profilePostRows.Close()
+		t.Fatalf("iterate protected profile posts: %v", err)
+	}
+	profilePostRows.Close()
+	if !visibleProfilePosts[protectedPostID] || visibleProfilePosts[privatePostID] {
+		t.Fatalf("profile post visibility returned public=%v private=%v; want true/false",
+			visibleProfilePosts[protectedPostID], visibleProfilePosts[privatePostID])
+	}
+
 	// Exercise the same actor joins and direction filters used by the profile
 	// followers/following endpoint.
 	connectionQueries := map[string]struct {
