@@ -16,8 +16,8 @@ private networks created by this stack.
 The base stack creates two stable networks for cross-repository services:
 `testagram-platform` (private database/service traffic) and
 `testagram-egress` (controlled outbound Appwrite access). The Data Centre
-overlay owns the platform API, video, notification and background worker
-services.
+overlay owns the private Algorithm ranker, Federation protocol service,
+platform API, video, notification and background worker services.
 
 There is no Supabase, Redis/Valkey, Upstash, generic cache API or Redis queue
 service. Rate limits are PostgreSQL counters; durable async work uses
