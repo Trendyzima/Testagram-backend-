@@ -164,7 +164,7 @@ func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
 	}
 }
 
-func TestMediaUploadIntentFailsClosedWithoutMetadataDatabase(t *testing.T) {
+func TestMediaUploadIntentFailsClosedWithoutIdentityDatabase(t *testing.T) {
 	upstream := testAppwriteAuthServer(t)
 	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":1024}"))
@@ -175,12 +175,12 @@ func TestMediaUploadIntentFailsClosedWithoutMetadataDatabase(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "MEDIA_METADATA_UNAVAILABLE") {
-		t.Fatalf("expected fail-closed metadata error, got %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "AUTH_BACKEND_UNAVAILABLE") {
+		t.Fatalf("expected fail-closed identity database error, got %s", w.Body.String())
 	}
 }
 
-func TestPrivateMediaDownloadURLFailsClosedWithoutMetadataDatabase(t *testing.T) {
+func TestPrivateMediaDownloadURLFailsClosedWithoutIdentityDatabase(t *testing.T) {
 	upstream := testAppwriteAuthServer(t)
 	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef"}`))
@@ -191,8 +191,8 @@ func TestPrivateMediaDownloadURLFailsClosedWithoutMetadataDatabase(t *testing.T)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "MEDIA_METADATA_UNAVAILABLE") {
-		t.Fatalf("expected fail-closed metadata error, got %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "AUTH_BACKEND_UNAVAILABLE") {
+		t.Fatalf("expected fail-closed identity database error, got %s", w.Body.String())
 	}
 }
 
