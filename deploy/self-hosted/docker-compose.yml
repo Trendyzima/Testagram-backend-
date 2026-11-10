@@ -36,35 +36,15 @@ services:
     restart: unless-stopped
     networks: [data]
 
-  redis:
-    image: valkey/valkey:8-alpine
-    command: ["sh", "-ec", "exec valkey-server --appendonly yes --requirepass \"$$VALKEY_PASSWORD\" --maxmemory ${VALKEY_MAXMEMORY:-512mb} --maxmemory-policy noeviction"]
-    environment:
-      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD in .env}
-    volumes: [valkey-data:/data]
-    healthcheck:
-      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    restart: unless-stopped
-    networks: [data]
-
   platform:
     build:
       context: ../..
       dockerfile: services/platform/Dockerfile
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
-      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?Set VALKEY_PASSWORD in .env}
-      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in .env}
       PLATFORM_ADDR: ":8095"
-      PLATFORM_MONITORED_QUEUE_GROUPS: ${PLATFORM_MONITORED_QUEUE_GROUPS:-}
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     expose: ["8095"]
     healthcheck:
@@ -175,7 +155,6 @@ services:
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
-      PLATFORM_URL: ${PLATFORM_URL:-http://platform:8095}
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in .env}
       MINIO_MEDIA_ACCESS_KEY: ${MINIO_MEDIA_ACCESS_KEY:-}
       MINIO_MEDIA_SECRET_KEY: ${MINIO_MEDIA_SECRET_KEY:-}
@@ -366,7 +345,6 @@ networks:
 
 volumes:
   postgres-data:
-  valkey-data:
   object-data:
   media-cache-data:
   caddy-data:
