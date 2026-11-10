@@ -38,28 +38,6 @@ services:
     restart: unless-stopped
     networks: [data, platform]
 
-  platform:
-    build:
-      context: ../..
-      dockerfile: services/platform/Dockerfile
-    environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
-      PLATFORM_ADDR: ":8095"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    expose: ["8095"]
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8095/readyz"]
-      interval: 10s
-      timeout: 3s
-      retries: 6
-    read_only: true
-    tmpfs: ["/tmp"]
-    security_opt: ["no-new-privileges:true"]
-    restart: unless-stopped
-    networks: [data, monitoring, platform]
-
   control-plane:
     build:
       context: ../..
@@ -153,7 +131,6 @@ services:
       MEDIA_PUBLIC_BUCKET: ${MEDIA_PUBLIC_BUCKET:-testagram-public-media}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-20}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
-      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in .env}
       MINIO_MEDIA_ACCESS_KEY: ${MINIO_MEDIA_ACCESS_KEY:-}
       MINIO_MEDIA_SECRET_KEY: ${MINIO_MEDIA_SECRET_KEY:-}
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-https://media.testagram.site}
