@@ -1,7 +1,8 @@
 const byId = (id) => document.getElementById(id);
-const views = ["login", "signup", "recover", "update-password"];
+const views = ["login", "recover", "update-password"];
 let currentUser = null;
-let resetAccessToken = "";
+let resetUserID = "";
+let resetSecret = "";
 let overviewRefreshing = false;
 
 function notice(message, kind = "info") {
@@ -22,7 +23,7 @@ function showView(name) {
   }
   const copy = {
     login: ["Sign in", "Use your approved Testagram staff account."],
-    signup: ["Request an account", "Create your identity; staff access is approved separately."],
+
     recover: ["Reset password", "We'll email you a secure recovery link if the account exists."],
     "update-password": ["Choose a new password", "Set a new password using your recovery link."]
   }[name];
@@ -150,16 +151,6 @@ byId("sign-in-form").addEventListener("submit", async (event) => {
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
 });
-byId("sign-up-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget; busy(form, true);
-  try {
-    const result = await api("/api/auth/sign-up", { email: byId("signup-email").value, password: byId("signup-password").value });
-    showView("login"); notice(result.message || "Account request created. Owner approval is required before staff access.", "success");
-    byId("login-email").value = byId("signup-email").value;
-  } catch (error) { notice(error.message, "error"); }
-  finally { busy(form, false); }
-});
 byId("recover-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget; busy(form, true);
@@ -173,9 +164,10 @@ byId("update-password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget; busy(form, true);
   try {
-    const result = await api("/api/auth/update-password", { access_token: resetAccessToken, password: byId("new-password").value });
+    const result = await api("/api/auth/update-password", { user_id: resetUserID, secret: resetSecret, password: byId("new-password").value });
     history.replaceState(null, "", "/");
-    resetAccessToken = "";
+    resetUserID = "";
+    resetSecret = "";
     showView("login"); notice(result.message || "Password updated. You can now sign in.", "success");
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
@@ -209,19 +201,13 @@ byId("invite-form").addEventListener("submit", async (event) => {
   finally { busy(form, false); }
 });
 
-const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
-const authType = hash.get("type") || "";
-if ((authType === "recovery" || authType === "invite") && hash.get("access_token")) {
-  resetAccessToken = hash.get("access_token");
+const recoveryParams = new URLSearchParams(location.search);
+const resetUser = recoveryParams.get("userId") || "";
+const resetToken = recoveryParams.get("secret") || "";
+if (resetUser && resetToken) {
+  resetUserID = resetUser;
+  resetSecret = resetToken;
   showView("update-password");
   history.replaceState(null, "", "/reset-password");
-} else if (authType === "signup") {
-  history.replaceState(null, "", "/");
-  showView("login");
-  notice("Email confirmation received. You can now sign in; staff access still requires an approved role.", "success");
-} else if (authType === "invite") {
-  history.replaceState(null, "", "/");
-  showView("login");
-  notice("Invitation link detected. Please request a new invitation if this link has expired.", "info");
 }
 loadSession();
