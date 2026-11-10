@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: testagram-instabox-deploy
+  group: testagram-instabox-deploy-repair
   cancel-in-progress: false
 
 jobs:
@@ -134,7 +134,7 @@ jobs:
           DATACENTRE="$REPOS/data-centre"
           mkdir -p "$REPOS" "$ROOT/storage/media"
 
-          trap 'code=$?; echo "DEPLOY_EXIT=$code"; echo "Deployment stopped at line $LINENO"; exit "$code"' ERR
+          trap 'code=$?; echo "DEPLOY_EXIT=$code"; if [[ "$code" -ne 0 ]]; then echo "Deployment stopped at line $LINENO"; fi' EXIT
 
           if ! command -v git >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
             sudo apt-get update
@@ -360,17 +360,24 @@ jobs:
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          cmd='ROOT=/data/home/testagram; tail -n 45 "$ROOT/deploy.log" 2>/dev/null || true'
+          payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:60}')"
           for attempt in $(seq 1 90); do
             result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
-              -H "Content-Type: application/json" \
-              -d '{"cmd":"ROOT=/data/home/testagram; if [ -f \"$ROOT/deploy.exit\" ]; then cat \"$ROOT/deploy.exit\"; else if [ -f \"$ROOT/deploy.log\" ]; then tail -n 25 \"$ROOT/deploy.log\"; fi; if [ -f \"$ROOT/overlay-status.txt\" ]; then echo OVERLAY_STATUS=$(cat \"$ROOT/overlay-status.txt\"); fi; echo DEPLOY_STATE=$(if [ -f \"$ROOT/deploy.exit\" ]; then cat \"$ROOT/deploy.exit\"; else echo RUNNING; fi)","timeoutSeconds":60}' \
+              -H "Content-Type: application/json" -d "$payload" \
               "$API/v1/machines/$MACHINE_ID/exec")"
+            exec_code="$(jq -r '.exitCode // 1' <<<"$result")"
             output="$(jq -r '.stdout // empty' <<<"$result")"
+            if [[ "$exec_code" != "0" ]]; then
+              echo "::error::Could not read the remote deployment log."
+              jq -r '.stderr // empty' <<<"$result"
+              exit 1
+            fi
             echo "$output"
             if grep -q 'DEPLOY_EXIT=0' <<<"$output"; then
               exit 0
             fi
-            if grep -q 'DEPLOY_EXIT=' <<<"$output" && ! grep -q 'DEPLOY_EXIT=0' <<<"$output"; then
+            if grep -q 'DEPLOY_EXIT=' <<<"$output"; then
               echo "::error::Remote deployment failed. Review the machine deployment log."
               exit 1
             fi
@@ -386,6 +393,12 @@ jobs:
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          port_agent_status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$MACHINE_ID/port-agent")"
+          if [[ "$port_agent_status" != "204" ]]; then
+            echo "::error::Could not install InstaBox public-port agent (HTTP $port_agent_status)."
+            exit 1
+          fi
           body='{"port":8080,"name":"testagram-api","protocol":"http","access":"public"}'
           published="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
