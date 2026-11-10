@@ -1221,5 +1221,3 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	}
 	return nil
 }
-
-}
