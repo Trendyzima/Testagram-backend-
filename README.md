@@ -1,163 +1,53 @@
 # Testagram Backend
 
-This repository is the application-service foundation for Testagram. It is separate from:
+The native Go application API and PostgreSQL data plane for Testagram.
 
-- supabase-for-testagram: Supabase platform and database/auth/storage services.
-- cdn-: Go media-delivery/cache data plane.
-- [Testagram data-centre](https://github.com/Trendyzima/Testagram-data-centre-): VPS assembly, pinned Supabase upstreams, node-agent and host backup/restore operations; see [the cross-repository integration contract](docs/vps-data-centre-integration.md).
+## Five-repository ownership
 
-It must not duplicate Supabase's database, authentication, or binary media responsibilities. It provides a separately deployable API/worker layer that can scale horizontally as demand grows.
+- [Flutter client](https://github.com/Trendyzima/testagram-flutter-client-): native Android/web UI; Appwrite session acquisition; all product data through this API.
+- **Testagram Backend (this repository):** Appwrite JWT verification, authorization, canonical PostgreSQL data, social APIs, media lifecycle and service orchestration.
+- [Data Centre](https://github.com/Trendyzima/Testagram-data-centre-): storage nodes, video processing, notifications, platform infrastructure and operations.
+- [The Algorithm](https://github.com/Trendyzima/the-algorithm): feed ranking over Backend-authorized candidate sets.
+- [Federated Content](https://github.com/Trendyzima/federated-content): signed inbox/outbox, federation policy and remote delivery.
 
-## Current service
+## Runtime boundaries
 
-The initial Go service provides:
+- Appwrite is the only client identity provider. The Backend validates Appwrite session JWTs against the Appwrite Account API and resolves the Appwrite ID through the PostgreSQL identity bridge.
+- PostgreSQL is the canonical product database. The API does not proxy product reads/writes to Supabase or PostgREST.
+- Media metadata and post references are native PostgreSQL records. `posts.media_ids` stores ordered `testagram_media.assets.object_key` values; no external media UUID bridge is used.
+- Object bytes are stored through the virtual-storage/S3-compatible boundary. The Backend owns authorization, quotas, checksums, signed upload/download and durable deletion jobs.
+- Capability rate limiting uses PostgreSQL fixed-window counters.
+- Durable asynchronous work uses domain-owned PostgreSQL transactional outboxes and idempotent workers.
+- Supabase, Redis/Valkey and Upstash are not runtime dependencies. Do not add their SDKs, credentials, URLs, cache wrappers or generic queue clients.
+- No copied Supabase Edge Functions or browser PostgREST clients are part of the supported runtime.
 
-- GET /healthz: process liveness only; does not depend on the database.
-- GET /readyz: readiness check with a bounded PostgreSQL ping; returns 503 if the database is not ready.
-- GET /metrics: Prometheus metrics for normalized route request rates/latency/status, bounded capability groups, canonical-upstream latency/status/failure outcomes, shared cache/rate-limit behavior, and PostgreSQL pool pressure.
-- POST /api/capability: Testagram capability gateway compatible with the current web client contract.
-- Bounded PostgreSQL connection pool (maximum 20 per instance by default).
-- Request timeouts, header limit, and graceful shutdown.
-- Non-root, multi-stage container build.
-- Isolated local Docker Compose stack and CI checks.
+## Important API surfaces
 
-This is a foundation, not a claim of production readiness or a 5-million-concurrent-user capacity result. Product endpoints should be added only after the existing Testagram contracts and database schema have been audited.
-
-## Cross-repository integration
-
-## Five-repository Testagram architecture
-
-The fresh Appwrite platform is coordinated across five repositories. Keep the following ownership boundaries intact:
-
-| Repository | Responsibility | Boundary |
-| --- | --- | --- |
-| [XClone](https://github.com/Trendyzima/XClone-9b4dz1-9b4dz1-8936-20260809tr) | Web/mobile UI and presentation | Never owns server authorization or private service credentials |
-| **Testagram Backend (this repository)** | Canonical Appwrite identity, profiles, posts, social graph, permissions, visibility, transactional events and API orchestration | The only authority for local account/post state and access decisions |
-| [Federated Content](https://github.com/Trendyzima/federated-content) | ActivityPub actors, remote keys, signed inbox ingress, protocol outbox and delivery workers | Owns protocol state only; resolves local users through this Backend |
-| [the-algorithm](https://github.com/Trendyzima/the-algorithm) | Private feed ranking and recommendation scoring | Returns ordering only; Backend rechecks visibility and hydrates canonical posts |
-| [Testagram Data Centre](https://github.com/Trendyzima/Testagram-data-centre-) | Runtime deployment, private networks, media durability, storage nodes, backups and recovery | Owns infrastructure and media durability, not product identity or social policy |
-
-Legacy Supabase-compatible modules remain in this repository for migration compatibility. The fresh Appwrite runtime is a separate, explicitly configured path; do not silently fall back between identity providers. The public API remains the only client-facing application boundary. Federation, Algorithm and infrastructure services stay on private networks.
-
-Federation has a dedicated authenticated `GET /internal/v1/federation/readyz` contract. It checks only the Appwrite profile and transactional outbox dependencies needed by Federation, while public `/readyz` continues to include Algorithm/home-feed readiness.
-
-- [XClone + Server E hybrid integration contract](docs/server-e-hybrid-integration.md): staged API/media routing while preserving Cloudflare, Firebase, Redis and Upstash.
-- [VPS data-centre integration contract](docs/vps-data-centre-integration.md): workload policy, release gates and repository ownership.
-
-## Testagram compatibility gateway
-
-`POST /api/capability` implements the same capability-dispatch envelope used by the existing Testagram web client. It forwards the user's Bearer JWT and the publishable API key to the canonical Supabase `capability_dispatch_v2` RPC; it does not use a service-role key to bypass row-level security. It also preserves the bookmark RPC compatibility paths, applies strict origin allow-listing, caps request/response bodies, applies an 8-second upstream deadline, and returns request IDs on gateway errors. `GET /healthz`, `GET /readyz`, and `GET /metrics` remain available.
-
-To opt the web app into this gateway only after deployment, set `VITE_TESTAGRAM_API_URL=https://api.testagram.site` in the frontend build environment. Leave it blank to keep the current same-origin `/api/capability` Vercel route. Configure matching TLS/DNS and `ALLOWED_ORIGINS` before switching production traffic. The gateway requires `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`; never set the Supabase service-role key in browser-visible configuration.
+- `/api/social/*`: posts, profiles, followers/following, replies, reactions, reposts, bookmarks, polls and interaction lists.
+- `/api/media/*`: upload intents, completion, attachment to native posts, private downloads and durable deletion.
+- `/api/search`: privacy-filtered product search.
+- `/api/capability`: bounded, allow-listed capability dispatch. Unimplemented capabilities fail closed; there is no Supabase RPC fallback.
+- `/healthz`, `/readyz`, `/metrics`: health and operational metrics.
 
 ## Local development
 
-Requirements: Go 1.23+, Docker Compose.
+Requirements: Go version declared by `go.mod`, PostgreSQL 17+, and Appwrite project credentials.
 
-1. Copy .env.example to .env.
-2. Set POSTGRES_PASSWORD to a strong local-only password.
-3. Set DATABASE_URL to use the same password, e.g. postgres://testagram:YOUR_PASSWORD@db:5432/testagram?sslmode=disable
-4. Start the stack with docker compose up --build.
-5. Verify GET http://127.0.0.1:8080/healthz, /readyz and /metrics.
+1. Copy `.env.example` to `.env` and configure `DATABASE_URL`, `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`.
+2. Apply migrations in order. The self-hosted Compose stack mounts the complete ordered migration set.
+3. Run `go test ./...` from the repository root and `go test ./...` from `services/platform`.
+4. Start the API with `go run ./cmd/api`.
 
-The local database is for development only and is not automatically wired to the live Supabase project. Do not put production credentials in this repository or in .env.example.
+## Self-hosted deployment
 
-## Testagram platform core
+See [deploy/self-hosted](deploy/self-hosted/README.md). The stack uses PostgreSQL,
+S3-compatible object storage, the Go API, the PostgreSQL-backed platform API,
+control-plane services, the Appwrite-authenticated staff console, and monitoring.
+It does not deploy Supabase, Redis/Valkey or Upstash.
 
-The optional self-hosted stack now includes a private platform service for Valkey-backed cache, atomic rate limiting, Redis Streams queues, PostgreSQL-backed feature configuration, events and audit records. It is available only on the internal Docker network at `platform:8095`; do not publish this port.
+## Migration status
 
-- [Service catalogue](docs/platform/service-catalog.md)
-- [Internal platform API contract](docs/platform/openapi/internal-platform.yaml)
-- [Hosting control-plane API contract](docs/platform/openapi/hosting-control-plane.yaml)
-- [Hosting control-plane runtime](control-plane)
-- [Self-hosted operations and migration notes](deploy/self-hosted/README.md)
-- [Platform client](internal/platformclient)
-- [Operations and readiness gates](docs/platform/self-sustaining-operations.md)
-
-The platform internal token is required in `deploy/self-hosted/.env`. On a new PostgreSQL volume the platform schema is initialized automatically; for an existing volume, follow [the migration instructions](services/platform/README.md). The API gateway now optionally uses the internal platform API for shared rate limiting and short-lived caching of explicitly public capability responses. Authenticated responses are never stored in the shared cache. Rate limiting fails open during a platform outage so it does not take the whole gateway offline; monitor the platform error metrics and keep edge-level protection in place.
-
-## Hosting control plane
-
-The optional stack now packages a private control-plane for node registration, heartbeats, CPU/RAM/disk-aware scheduling, immutable-image deployment requests, domain reservations, DNS-verified activation, gated Caddy on-demand TLS, usage, backup manifests and recovery-drill records. It has no published host port; the TLS edge reaches it over a dedicated internal network. The node agent is not enrolled automatically, secret resolution is deliberately disabled, and DNS writes/registrar purchases are not implemented. Do not treat the hosting API as production-ready until a node-agent deployment test, DNS/TLS end-to-end test and real restore drill pass.
-
-For a fresh PostgreSQL volume, the self-hosted Compose stack applies migrations in the documented order. Existing volumes are never modified by PostgreSQL init scripts; back up and apply the reviewed migrations manually before starting the control plane against an existing database.
-
-## Local-first self-hosted deployment
-
-For the owned-hardware deployment path, see [deploy/self-hosted](deploy/self-hosted/README.md).
-It includes Compose services for PostgreSQL, Valkey, private/public MinIO buckets,
-a media-only Nginx cache, Caddy TLS termination, and Prometheus. It is opt-in and
-does not change production routing.
-
-Important: this is infrastructure groundwork, not yet a complete replacement
-for hosted Supabase or a global Cloudflare network. The capability gateway still
-depends on a compatible Supabase API. Valkey is integrated for bounded shared
-rate limiting and safe public-response caching, but MinIO is not yet connected
-to a user-authorized upload/signing API. Follow the deployment README's
-migration, media integration, backup, restore, and load-test gates before
-cutting over traffic.
-
-
-## Self-hosted operations dashboard
-
-The self-hosted Compose stack provisions **Grafana + Prometheus** from version-controlled files. The dashboard is defined at `deploy/self-hosted/grafana/dashboards/testagram-operations.json`; Prometheus scrapes the API, platform service and host node-exporter every 15 seconds. The dashboard includes request rate by normalized route, p95 latency, 4xx/5xx rates, shared-cache hit ratio, PostgreSQL pool utilization, queue backlog/age, and host CPU, memory, disk and network throughput.
-
-### Enable and access it safely
-
-1. Copy `deploy/self-hosted/.env.example` to `deploy/self-hosted/.env` if you have not already done so. Preserve your existing deployment values; do not overwrite a working production `.env` with the example.
-2. Set `GRAFANA_ADMIN_USER` and a unique, long `GRAFANA_ADMIN_PASSWORD` in that file. Keep the file owner-readable only (`chmod 600 deploy/self-hosted/.env`).
-3. From the repository root, validate and start the monitoring services:
-
-   ```bash
-   docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml config --quiet
-   docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml up -d prometheus grafana node-exporter
-   ```
-
-4. On the VPS, confirm Grafana listens only on loopback: `docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml ps grafana prometheus node-exporter`.
-5. From your own computer, open an SSH tunnel: `ssh -N -L 3000:127.0.0.1:3000 your-vps-user@your-vps-host`. Then open `http://127.0.0.1:3000`, sign in with the configured Grafana credentials, and open the **Testagram Operations** dashboard.
-
-Grafana is deliberately published only as `127.0.0.1:3000`; do not change this to `0.0.0.0:3000` or expose port 3000 publicly. The dashboard and datasource are provisioned read-only from Git, and Grafana state is stored in the `grafana-data` volume.
-
-### Alerting boundaries
-
-Prometheus evaluates the rules in `deploy/self-hosted/prometheus-alerts.yml`, including host disk/memory pressure, unavailable scrape targets, queue backlog/age, API 5xx rate, API p95 latency, database pool saturation, and search-specific latency/error rates. These rules create firing alerts in Prometheus; **this stack does not yet deliver email, SMS, or webhook notifications**. Configure and test an authenticated Alertmanager receiver before treating alerts as an on-call notification system. Metrics are in-process counters/histograms and reset when the API container restarts, so dashboards should use Prometheus `rate()`/histogram functions rather than raw counter values.
-
-Monitoring is not proof of production readiness. Validate the dashboard against a running staging stack, confirm all scrape targets are up, exercise a real search/upload/auth flow, and test an alert end-to-end before any production cutover.
-
-## Staff operations web console
-
-The repository now contains a separate, deployable Go staff console at `admin-console/`. The self-hosted Compose stack routes `https://ops.testagram.site` through Caddy to this console. It provides sign-in, account request, password recovery, server-verified staff roles, an owner-only staff invitation form, and an operational overview backed by internal Prometheus queries and the API readiness endpoint.
-
-Read [the staff-console deployment guide](admin-console/README.md) before enabling it. Configure Supabase Auth and redirect allowlists, generate a unique `ADMIN_SESSION_KEY` with `openssl rand -hex 32`, point DNS at the VPS, and provision the first owner through a trusted Supabase Auth admin operation. Public sign-up never grants staff access. The service-role key is server-only and is optional unless using the console's invite form.
-
-The existing Grafana dashboard remains available at `127.0.0.1:3000` through an SSH tunnel. The new console does not expose Grafana, Prometheus, the private platform API, or the hosting control-plane to the public internet. It is an observability-first staff workspace, not yet a full production control plane for deployments, moderation or destructive operations.
-
-## Production integration rules
-
-- Inject secrets through deployment secrets; never bake them into images.
-- Keep PostgreSQL private. Use the supported Supabase connection/pooler endpoint where appropriate.
-- Use a least-privilege database role for runtime queries; never use the Supabase service-role key in browser code.
-- Put public media delivery through the Testagram CDN and object origin; do not stream large media through this API.
-- Keep long-running federation and notification tasks in bounded, independently scalable workers with idempotent jobs and retry limits.
-- Add request-level authentication/authorization and rate limits before exposing business endpoints.
-- Add dashboards and alerts for p95/p99 latency, 5xx rates, database pool saturation, queue age, CPU, memory and network saturation.
-- Keep production data and local test data separate. Test migrations against staging before applying them to production.
-
-## Scale strategy
-
-Read docs/architecture.md, docs/operations.md, and docs/capacity-model.md. The Kubernetes starting template is in deploy/kubernetes/backend.yaml; replace its image placeholder and provide the named Kubernetes Secret before deploying. The included k6 test is a staged smoke/load test, not a capacity certification. Scale by measured bottleneck: CDN/cache for media, stateless API replicas for request throughput, bounded workers for asynchronous work, and database tuning/replicas when query metrics justify them. Registered account count alone is not a capacity metric.
-
-
-## Virtual Storage
-
-The provider-neutral logical storage policy foundation is documented in [docs/platform/virtual-storage.md](docs/platform/virtual-storage.md). It is not production-enabled until an object-store adapter, durable metadata/quotas, authenticated routes, and live integration tests pass.
-
-## Hybrid Supabase migration foundation
-
-The migration target is Appwrite Auth + independent PostgreSQL + the Go API. PostgreSQL remains the canonical owner of Testagram product, federation, media metadata, quota and node state. Appwrite Realtime is a derived projection, not a second write authority. See [the migration readiness matrix](docs/migration/hybrid-supabase-exit-readiness.md).
-
-The API now supports `TESTAGRAM_AUTH_PROVIDER=appwrite`. It validates an Appwrite session by calling the configured `APPWRITE_ENDPOINT` `/v1/account` endpoint with `X-Appwrite-Project` and `X-Appwrite-JWT`, then resolves the Appwrite ID through the explicit PostgreSQL identity bridge in `migrations/20261106_appwrite_identity_bridge.sql`. Unknown identities fail closed with HTTP 409; authentication never invents a new Testagram identity. New-account provisioning and verified existing-account linking must be implemented as separate transactional flows before enabling Appwrite. The provider defaults to `supabase` for backward compatibility; this is deliberate. Do not enable Appwrite in production until the frontend SDK, existing-account linking, PostgreSQL migration and staging acceptance gates are complete. Appwrite failures do not fall back to Supabase when Appwrite is selected.
-
-For a fresh self-hosted PostgreSQL volume, the Appwrite identity bridge is included after the existing 100 GiB storage migration. Existing database volumes are not changed by init scripts: take a verified backup and apply the reviewed migration through the normal migration process. The API requires `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`; no Appwrite API key is required to validate a session JWT against the authenticated account endpoint.
-
-The backend is not yet a complete Supabase replacement. The capability gateway, admin console, some media metadata operations and the frontend's broad Auth/PostgREST/Realtime/Edge Function usage still depend on Supabase. Keep the old project recoverable until all migration gates pass.
+The migration ledger is the source of truth for completed native Flutter slices.
+A route is not complete merely because it navigates or renders a placeholder.
+Cross-repository CI, PostgreSQL integration tests, Appwrite authentication tests
+and end-to-end API contracts must pass before a feature is marked complete.
