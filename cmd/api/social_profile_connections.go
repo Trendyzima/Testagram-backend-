@@ -76,14 +76,15 @@ LIMIT $5`
 	// whether its social graph can be enumerated by this viewer.
 	var canEnumerate bool
 	err := s.db.QueryRow(r.Context(), `
-SELECT a.user_id=$1 OR (
-  a.account_status='active' AND a.discoverable_by_username
-  AND (NOT a.protected_account OR EXISTS(
-    SELECT 1 FROM testagram_local.follows f
-    WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
-  ))
-)
-FROM testagram_local.accounts a WHERE a.user_id=$2 AND a.account_status='active'`,
+SELECT a.user_id=$1 OR EXISTS(
+  SELECT 1 FROM testagram_local.follows f
+  WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
+) OR (a.discoverable_by_username AND NOT a.protected_account)
+FROM testagram_local.accounts a
+WHERE a.user_id=$2 AND a.account_status='active'
+  AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b
+    WHERE (b.blocker_id=$1 AND b.blocked_id=a.user_id)
+       OR (b.blocker_id=a.user_id AND b.blocked_id=$1))`,
 		viewerID, ownerID).Scan(&canEnumerate)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !canEnumerate) {
 		writeJSON(w, http.StatusNotFound, errorBody("PROFILE_NOT_FOUND", "The profile is unavailable", requestID))
