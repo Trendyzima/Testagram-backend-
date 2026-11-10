@@ -1,0 +1,43 @@
+name: InstaBox deployment diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/instabox-diagnostics.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
+    steps:
+      - name: Read remote deployment status
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          if [[ -z "${INSTABOX_API_KEY:-}" ]]; then
+            echo "::error::Missing TESTAGRAM_DB_API."
+            exit 1
+          fi
+          machines="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
+          machine_id="$(jq -r '([.machines[] | select(.name == "testagram")][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' <<<"$machines")"
+          if [[ -z "$machine_id" ]]; then
+            echo "::error::Could not safely identify the Testagram machine."
+            jq -c '[.machines[] | {id,name,state}]' <<<"$machines"
+            exit 1
+          fi
+          payload="$(jq -nc '{cmd:"set +e; echo ===DEPLOY_LOG===; tail -n 100 /data/home/testagram/deploy.log 2>&1; echo ===OVERLAY_STATUS===; cat /data/home/testagram/overlay-status.txt 2>/dev/null; echo ===CONTAINERS===; sudo docker ps -a --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"; echo ===DISK===; df -h / /data; echo ===MEMORY===; free -m; echo ===MACHINE===; hostname; true",timeoutSeconds:60}')"
+          result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H "Content-Type: application/json" -d "$payload" "$API/v1/machines/$machine_id/exec")"
+          echo "Machine: $machine_id"
+          jq -r '.stdout // empty' <<<"$result"
+          if [[ "$(jq -r '.exitCode // 1' <<<"$result")" != "0" ]]; then
+            jq -r '.stderr // empty' <<<"$result"
+            exit 1
+          fi
