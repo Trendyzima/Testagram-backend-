@@ -46,7 +46,7 @@ func TestSessionCookieIsEncryptedAndRoundTrips(t *testing.T) {
 	if len(cookies)!=1 { t.Fatalf("got %d cookies",len(cookies)) }
 	cookie:=cookies[0]
 	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite!=http.SameSiteStrictMode { t.Fatalf("unsafe session cookie attributes: %#v",cookie) }
-	if strings.Contains(cookie.Value,want.Secret)||strings.Contains(cookie.Value,want.Secret) { t.Fatal("tokens must not be visible in cookie value") }
+	if strings.Contains(cookie.Value,want.Secret) { t.Fatal("tokens must not be visible in cookie value") }
 	req:=httptest.NewRequest("GET","https://ops.example.test/api/session",nil)
 	req.AddCookie(cookie)
 	got,err:=a.readSession(req)
