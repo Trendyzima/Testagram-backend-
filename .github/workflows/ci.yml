@@ -628,6 +628,7 @@ jobs:
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO testagram_auth.identities(email,username,password_hash)
           VALUES ('ci@example.test','ci_user','test-hash');
