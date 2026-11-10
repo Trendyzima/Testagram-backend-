@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -724,50 +725,7 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 {
 		return "", http.StatusUnauthorized, errors.New("missing bearer token")
 	}
-	switch strings.ToLower(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "appwrite"))) {
-	case "appwrite":
-		return s.authenticatedAppwriteUser(r, parts[1])
-	case "supabase", "legacy_supabase":
-		// Legacy compatibility is opt-in only; the default identity provider is Appwrite.
-	default:
-		return "", http.StatusServiceUnavailable, errors.New("unsupported authentication provider configuration")
-	}
-	baseURL := strings.TrimRight(strings.TrimSpace(env("SUPABASE_URL", "")), "/")
-	apiKey := strings.TrimSpace(env("SUPABASE_PUBLISHABLE_KEY", ""))
-	if baseURL == "" || apiKey == "" {
-		return "", http.StatusServiceUnavailable, errors.New("authentication backend is not configured")
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/auth/v1/user", nil)
-	if err != nil {
-		return "", http.StatusBadGateway, err
-	}
-	req.Header.Set("apikey", apiKey)
-	req.Header.Set("Authorization", "Bearer "+parts[1])
-	req.Header.Set("Accept", "application/json")
-	client := s.upstream
-	if client == nil {
-		client = &http.Client{Timeout: 3 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", http.StatusBadGateway, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return "", http.StatusUnauthorized, errors.New("session rejected")
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", http.StatusBadGateway, errors.New("authentication service failed")
-	}
-	var user struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&user); err != nil || user.ID == "" {
-		return "", http.StatusBadGateway, errors.New("authentication service returned invalid user")
-	}
-	return user.ID, http.StatusOK, nil
+	return s.authenticatedAppwriteUser(r, parts[1])
 }
 
 func strconvFormatInt(value int64) string {
@@ -812,8 +770,8 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var ownerID, visibility, currentStatus, externalID, storageNamespace, storageProvider string
-	err = tx.QueryRow(r.Context(), `select owner_id, visibility, status, coalesce(external_media_id::text,''), storage_namespace, storage_provider from testagram_media.assets where object_key=$1 for update`, body.Key).Scan(&ownerID, &visibility, &currentStatus, &externalID, &storageNamespace, &storageProvider)
+	var ownerID, visibility, currentStatus, storageNamespace, storageProvider string
+	err = tx.QueryRow(r.Context(), `select owner_id, visibility, status, storage_namespace, storage_provider from testagram_media.assets where object_key=$1 for update`, body.Key).Scan(&ownerID, &visibility, &currentStatus, &storageNamespace, &storageProvider)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found", id))
 		return
@@ -855,7 +813,7 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
 		return
 	}
-	if err := s.deleteProductMedia(ctx, externalID); err != nil {
+	if err := s.detachMediaFromPosts(ctx, body.Key); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
 		return
 	}
@@ -877,13 +835,6 @@ type mediaAttachRequest struct {
 	PostID string `json:"post_id"`
 }
 
-type productMediaRecord struct {
-	ID      string  `json:"id"`
-	OwnerID string  `json:"owner_id"`
-	PostID  *string `json:"post_id"`
-	Status  string  `json:"status"`
-}
-
 func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	if !s.cors(w, r) {
@@ -892,12 +843,6 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
-		return
-	}
-	serviceKey := strings.TrimSpace(env("SUPABASE_SERVICE_ROLE_KEY", ""))
-	publishableKey := strings.TrimSpace(env("SUPABASE_PUBLISHABLE_KEY", ""))
-	if serviceKey == "" || publishableKey == "" || strings.TrimSpace(env("SUPABASE_URL", "")) == "" {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PRODUCT_BRIDGE_UNAVAILABLE", "Product media linking is not configured on this server", id))
 		return
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
@@ -922,16 +867,6 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	owned, err := s.userOwnsProductPost(ctx, r.Header.Get("Authorization"), publishableKey, userID, body.PostID)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, errorBody("POST_OWNERSHIP_CHECK_FAILED", "Could not verify post ownership", id))
-		return
-	}
-	if !owned {
-		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "Post was not found for this account", id))
-		return
-	}
-
 	// Hold a short row lock while syncing the remote join. Delete/quarantine
 	// transitions cannot race through the middle and resurrect a deleted join.
 	tx, err := s.db.Begin(ctx)
@@ -940,9 +875,9 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var visibility, contentType, originalName, assetStatus, externalID, storageNamespace string
+	var visibility, contentType, originalName, assetStatus, storageNamespace string
 	var sizeBytes int64
-	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, coalesce(external_media_id::text,''), storage_namespace
+	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, storage_namespace
 		from testagram_media.assets where object_key=$1 and owner_id=$2 for update`, body.Key, userID).
 		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &externalID, &storageNamespace)
 	if err != nil {
@@ -967,24 +902,24 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
 		return
 	}
-	externalID, err = s.ensureProductMediaRecord(ctx, serviceKey, userID, body.Key, originalName, contentType, sizeBytes, publicURL, externalID)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_PRODUCT_SYNC_FAILED", "Could not synchronize media metadata with the product data plane", id))
+	var postOwnerID string
+	if err := tx.QueryRow(ctx, `SELECT author_id::text FROM testagram_local.posts
+		WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, body.PostID).Scan(&postOwnerID); err != nil || postOwnerID != userID {
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "Post was not found for this account", id))
 		return
 	}
-	tag, err := tx.Exec(ctx, `update testagram_media.assets set external_media_id=$3, updated_at=now()
-		where object_key=$1 and owner_id=$2 and status='ready'
-		and (external_media_id is null or external_media_id=$3::uuid)`, body.Key, userID, externalID)
+	tag, err := tx.Exec(ctx, `UPDATE testagram_local.posts
+		SET media_ids=CASE
+			WHEN media_ids @> jsonb_build_array($2::text) THEN media_ids
+			ELSE media_ids || jsonb_build_array($2::text)
+		END, updated_at=now()
+		WHERE id=$1 AND author_id=$3 AND deleted_at IS NULL`, body.PostID, body.Key, userID)
 	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not persist product media reference", id))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_POST_LINK_FAILED", "Could not attach media to the post", id))
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_CHANGED", "Media state changed while it was being attached", id))
-		return
-	}
-	if err := s.attachProductMediaToPost(ctx, serviceKey, userID, body.PostID, externalID, contentType, sizeBytes, publicURL); err != nil {
-		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_POST_LINK_FAILED", "Media was registered but could not be linked to the post; retry is safe", id))
+		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "Post was not found for this account", id))
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -994,7 +929,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{
 		"key": body.Key, "post_id": body.PostID, "public_url": publicURL,
 		"size_bytes": sizeBytes, "content_type": contentType, "media_type": mediaType,
-		"status": "uploaded", "external_media_id": externalID,
+		"status": "uploaded",
 	}, "error": nil, "request_id": id})
 }
 
@@ -1037,477 +972,14 @@ func publicMediaURL(key string) string {
 	return base.String()
 }
 
-func (s *service) userOwnsProductPost(ctx context.Context, authorization, publishableKey, userID, postID string) (bool, error) {
-	query := url.Values{}
-	query.Set("id", "eq."+postID)
-	query.Set("select", "id,author_id,user_id")
-	query.Set("limit", "1")
-	data, status, err := s.supabaseREST(ctx, http.MethodGet, "posts", query, authorization, publishableKey, nil, "")
-	if err != nil {
-		return false, err
-	}
-	if status < 200 || status >= 300 {
-		return false, errors.New("post ownership query failed")
-	}
-	var posts []struct {
-		ID       string `json:"id"`
-		AuthorID string `json:"author_id"`
-		UserID   string `json:"user_id"`
-	}
-	if err := json.Unmarshal(data, &posts); err != nil {
-		return false, err
-	}
-	for _, post := range posts {
-		if post.ID == postID && (post.AuthorID == userID || post.UserID == userID) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (s *service) ensureProductMediaRecord(ctx context.Context, serviceKey, ownerID, key, originalName, contentType string, sizeBytes int64, publicURL, knownID string) (string, error) {
-	query := url.Values{}
-	query.Set("storage_key", "eq."+key)
-	query.Set("select", "id,owner_id,post_id,status")
-	query.Set("limit", "1")
-	data, status, err := s.supabaseREST(ctx, http.MethodGet, "media_assets", query, serviceKey, serviceKey, nil, "")
-	if err != nil || status < 200 || status >= 300 {
-		return "", errors.New("product media lookup failed")
-	}
-	var records []productMediaRecord
-	if err := json.Unmarshal(data, &records); err != nil {
-		return "", err
-	}
-	if len(records) > 0 {
-		record := records[0]
-		if record.OwnerID != ownerID || record.Status != "uploaded" {
-			return "", errors.New("existing product media record has different owner or state")
-		}
-		if knownID != "" && record.ID != knownID {
-			return "", errors.New("product media ID conflicts with local metadata")
-		}
-		return record.ID, nil
-	}
-	if knownID != "" {
-		return "", errors.New("local product media reference is missing remotely")
-	}
-	mediaType, supported := productPostMediaType(contentType)
-	if !supported {
-		return "", errors.New("unsupported product post media type")
-	}
-	if sizeBytes < 1 || sizeBytes > maxProductPostMediaBytes {
-		return "", errors.New("product post media size is outside the 1-byte to 20-MiB limit")
-	}
-	payload := map[string]any{
-		"owner_id": ownerID, "post_id": nil, "thread_id": nil,
-		"storage_key": key, "bucket": env("R2_PUBLIC_BUCKET", env("MEDIA_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
-		"original_name": originalName, "mime_type": contentType, "media_type": mediaType,
-		"byte_size": sizeBytes, "status": "uploaded", "media_url": publicURL,
-	}
-	query = url.Values{}
-	query.Set("select", "id,owner_id,post_id,status")
-	data, status, err = s.supabaseREST(ctx, http.MethodPost, "media_assets", query, serviceKey, serviceKey, payload, "return=representation")
-	if err != nil || status < 200 || status >= 300 {
-		return "", errors.New("product media create failed")
-	}
-	records = nil
-	if err := json.Unmarshal(data, &records); err != nil || len(records) != 1 || records[0].ID == "" || records[0].OwnerID != ownerID {
-		return "", errors.New("product media create returned an invalid record")
-	}
-	return records[0].ID, nil
-}
-
-func (s *service) attachProductMediaToPost(ctx context.Context, serviceKey, ownerID, postID, externalID, contentType string, sizeBytes int64, publicURL string) error {
-	query := url.Values{}
-	query.Set("id", "eq."+externalID)
-	query.Set("owner_id", "eq."+ownerID)
-	query.Set("status", "eq.uploaded")
-	data, status, err := s.supabaseREST(ctx, http.MethodGet, "media_assets", query, serviceKey, serviceKey, nil, "")
-	if err != nil || status < 200 || status >= 300 {
-		return errors.New("product media lookup failed")
-	}
-	var records []productMediaRecord
-	if err := json.Unmarshal(data, &records); err != nil || len(records) != 1 {
-		return errors.New("product media record is missing")
-	}
-	if records[0].PostID != nil && *records[0].PostID != "" && *records[0].PostID != postID {
-		return errors.New("media is already attached to a different post")
-	}
-	if records[0].PostID == nil || *records[0].PostID == "" {
-		updateQuery := url.Values{}
-		updateQuery.Set("id", "eq."+externalID)
-		updateQuery.Set("owner_id", "eq."+ownerID)
-		if _, status, err := s.supabaseREST(ctx, http.MethodPatch, "media_assets", updateQuery, serviceKey, serviceKey,
-			map[string]any{"post_id": postID, "updated_at": time.Now().UTC()}, "return=minimal"); err != nil || status < 200 || status >= 300 {
-			return errors.New("product media post assignment failed")
-		}
-	}
-	joinQuery := url.Values{}
-	joinQuery.Set("post_id", "eq."+postID)
-	joinQuery.Set("media_asset_id", "eq."+externalID)
-	joinQuery.Set("select", "id")
-	joinQuery.Set("limit", "1")
-	data, status, err = s.supabaseREST(ctx, http.MethodGet, "post_media", joinQuery, serviceKey, serviceKey, nil, "")
-	if err != nil || status < 200 || status >= 300 {
-		return errors.New("post media join lookup failed")
-	}
-	var joins []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &joins); err != nil {
-		return err
-	}
-	if len(joins) > 0 {
-		return nil
-	}
-	sortQuery := url.Values{}
-	sortQuery.Set("post_id", "eq."+postID)
-	sortQuery.Set("select", "sort_order")
-	sortQuery.Set("order", "sort_order.desc")
-	sortQuery.Set("limit", "1")
-	data, status, err = s.supabaseREST(ctx, http.MethodGet, "post_media", sortQuery, serviceKey, serviceKey, nil, "")
-	if err != nil || status < 200 || status >= 300 {
-		return errors.New("post media sort lookup failed")
-	}
-	var last []struct {
-		SortOrder int `json:"sort_order"`
-	}
-	if err := json.Unmarshal(data, &last); err != nil {
-		return err
-	}
-	sortOrder := 0
-	if len(last) > 0 {
-		sortOrder = last[0].SortOrder + 1
-	}
-	mediaType, supported := productPostMediaType(contentType)
-	if !supported || sizeBytes < 1 || sizeBytes > maxProductPostMediaBytes {
-		return errors.New("unsupported product post media type or size")
-	}
-	join := map[string]any{
-		"post_id": postID, "owner_id": ownerID, "media_url": publicURL,
-		"media_type": mediaType, "mime_type": contentType, "byte_size": sizeBytes,
-		"media_asset_id": externalID, "sort_order": sortOrder,
-	}
-	_, status, err = s.supabaseREST(ctx, http.MethodPost, "post_media", url.Values{}, serviceKey, serviceKey, join, "return=minimal")
-	if err != nil || status < 200 || status >= 300 {
-		return errors.New("post media join insert failed")
-	}
-	return nil
-}
-
-func (s *service) deleteProductMedia(ctx context.Context, externalID string) error {
-	if strings.TrimSpace(externalID) == "" {
-		return nil
-	}
-	serviceKey := strings.TrimSpace(env("SUPABASE_SERVICE_ROLE_KEY", ""))
-	if serviceKey == "" {
-		return errors.New("product media bridge is not configured")
-	}
-	joinQuery := url.Values{}
-	joinQuery.Set("media_asset_id", "eq."+externalID)
-	_, status, err := s.supabaseREST(ctx, http.MethodDelete, "post_media", joinQuery, serviceKey, serviceKey, nil, "return=minimal")
-	if err != nil || status < 200 || status >= 300 {
-		return errors.New("post media join deletion failed")
-	}
-	assetQuery := url.Values{}
-	assetQuery.Set("id", "eq."+externalID)
-	_, status, err = s.supabaseREST(ctx, http.MethodPatch, "media_assets", assetQuery, serviceKey, serviceKey,
-		map[string]any{"status": "deleted", "updated_at": time.Now().UTC()}, "return=minimal")
-	if err != nil || status < 200 || status >= 300 {
-		return errors.New("product media deletion sync failed")
-	}
-	return nil
-}
-
-func (s *service) supabaseREST(ctx context.Context, method, resource string, query url.Values, authorization, apiKey string, payload any, prefer string) ([]byte, int, error) {
-	base := strings.TrimRight(strings.TrimSpace(env("SUPABASE_URL", "")), "/")
-	if base == "" || apiKey == "" || authorization == "" {
-		return nil, 0, errors.New("Supabase REST is not configured")
-	}
-	target := base + "/rest/v1/" + resource
-	if encoded := query.Encode(); encoded != "" {
-		target += "?" + encoded
-	}
-	var reader io.Reader
-	if payload != nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return nil, 0, err
-		}
-		reader = strings.NewReader(string(encoded))
-	}
-	req, err := http.NewRequestWithContext(ctx, method, target, reader)
-	if err != nil {
-		return nil, 0, err
-	}
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(authorization)), "bearer ") {
-		authorization = "Bearer " + authorization
-	}
-	req.Header.Set("Authorization", authorization)
-	req.Header.Set("apikey", apiKey)
-	req.Header.Set("Accept", "application/json")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if prefer != "" {
-		req.Header.Set("Prefer", prefer)
-	}
-	client := s.upstream
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
-	}
-	safeClient := *client
-	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := safeClient.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, resp.StatusCode, err
-	}
-	return data, resp.StatusCode, nil
-}
-
-type mediaDeleteRequest struct {
-	Key string `json:"key"`
-}
-
-// mediaDelete starts a durable deletion before touching object storage. If the
-// storage request fails, the janitor retries deletion_pending assets.
-func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
-	id := requestID(r)
-	if !s.cors(w, r) {
-		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
-		return
-	}
-	if s.media == nil || s.db == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
-		return
-	}
-	userID, status, err := s.authenticatedMediaUser(r)
-	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
-		return
-	}
-	var body mediaDeleteRequest
-	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
-		return
-	}
-	var visibility, currentStatus, externalID, storageNamespace, storageProvider string
-	err = s.db.QueryRow(r.Context(), `select visibility, status, coalesce(external_media_id::text,''), storage_namespace, storage_provider from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &currentStatus, &externalID, &storageNamespace, &storageProvider)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
-		return
-	}
-	if currentStatus == "deleted" {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deleted"}, "error": nil, "request_id": id})
-		return
-	}
-	if currentStatus == "quarantined" {
-		writeJSON(w, http.StatusConflict, errorBody("MEDIA_QUARANTINED", "Quarantined media must be handled by a moderator", id))
-		return
-	}
-	if currentStatus != "ready" && currentStatus != "deletion_pending" {
-		writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_INVALID", "Media asset cannot be deleted in its current state", id))
-		return
-	}
-	if currentStatus == "ready" {
-		tag, err := s.db.Exec(r.Context(), `update testagram_media.assets set status='deletion_pending', updated_at=now()
-			where object_key=$1 and owner_id=$2 and status='ready'`, body.Key, userID)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not schedule media deletion", id))
-			return
-		}
-		if tag.RowsAffected() == 0 {
-			writeJSON(w, http.StatusConflict, errorBody("MEDIA_STATE_CHANGED", "Media state changed; retry the request", id))
-			return
-		}
-	}
-	// Persist the cleanup job before touching object storage. If this process
-	// exits after enqueueing, the background worker resumes the deletion.
-	if _, err := s.db.Exec(r.Context(), `insert into testagram_media.storage_deletion_jobs
-		(object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
-		values ($1,$2,$3,$4,$5,'user_delete','pending')
-		on conflict do nothing`, body.Key, userID, visibility, storageNamespace, storageProvider); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_DELETE_QUEUE_FAILED", "Could not durably schedule media deletion", id))
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	if err := s.deleteMediaObjectWithNamespace(ctx, userID, body.Key, visibility, storageNamespace); err != nil {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
-		return
-	}
-	if err := s.deleteProductMedia(ctx, externalID); err != nil {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
-		return
-	}
-	if _, err := s.db.Exec(ctx, `update testagram_media.assets set status='deleted', updated_at=now()
-		where object_key=$1 and owner_id=$2 and status='deletion_pending'`, body.Key, userID); err != nil {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
-		return
-	}
-	if _, err := s.db.Exec(ctx, `update testagram_media.storage_deletion_jobs
-		set status='completed', completed_at=now(), updated_at=now(), locked_at=null
-		where object_key=$1 and reason='user_delete' and status in ('pending','processing','retry')`, body.Key); err != nil {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deleted"}, "error": nil, "request_id": id})
-}
-
-func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility string) error {
-	return s.deleteMediaObjectWithNamespace(ctx, userID, key, visibility, "legacy-media")
-}
-
-func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
-	if storageNamespace != "" && storageNamespace != "legacy-media" {
-		if s.virtualStorage == nil {
-			return errors.New("virtual storage provider is required for this namespace")
-		}
-		return s.virtualStorage.Delete(ctx, userID, userID, storageNamespace, key)
-	}
-	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, nil)
-	if err != nil {
-		return err
-	}
-	client := s.upstream
-	if client == nil {
-		client = &http.Client{Timeout: 4 * time.Second}
-	}
-	// Never forward a signed storage URL across redirects to another host.
-	safeClient := *client
-	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := safeClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return errors.New("object storage rejected deletion")
-	}
-	return nil
-}
-
-// runMediaJanitor expires unfinished upload reservations and retries durable
-// deletions in bounded batches. It never expires a completed asset's intent as
-// a reason to delete the completed object.
-func (s *service) runMediaJanitor(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for {
-		if err := s.cleanupMediaBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("media janitor pass failed: %v", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-type mediaCleanupObject struct {
-	key, ownerID, visibility, namespace, externalID string
-}
-
-func (s *service) cleanupMediaBatch(ctx context.Context) error {
-	if s.db == nil || s.media == nil {
-		return nil
-	}
-	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-
-	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace
-		from testagram_media.upload_intents
-		where (expires_at <= now() and status in ('issued','uploaded','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '2 hours')
-		order by expires_at asc limit 50`)
-	if err != nil {
-		return err
-	}
-	var intents []mediaCleanupObject
-	for intentRows.Next() {
-		var item mediaCleanupObject
-		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.namespace); err != nil {
-			intentRows.Close()
-			return err
-		}
-		intents = append(intents, item)
-	}
-	if err := intentRows.Err(); err != nil {
-		intentRows.Close()
-		return err
-	}
-	intentRows.Close()
-	for _, item := range intents {
-		tag, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='cleanup_pending', updated_at=now()
-			where object_key=$1 and status in ('issued','uploading','uploaded','cleanup_pending')`, item.key)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			// Completion/cancellation may have won the race after selection.
-			continue
-		}
-		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
-			continue
-		}
-		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='expired', updated_at=now()
-			where object_key=$1 and status='cleanup_pending'`, item.key); err != nil {
-			return err
-		}
-	}
-
-	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status, coalesce(external_media_id::text,''), storage_namespace
-		from testagram_media.assets where status in ('deletion_pending','quarantine_pending')
-		order by updated_at asc limit 50`)
-	if err != nil {
-		return err
-	}
-	type pendingMediaObject struct {
-		mediaCleanupObject
-		status string
-	}
-	var assets []pendingMediaObject
-	for assetRows.Next() {
-		var item pendingMediaObject
-		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.externalID, &item.namespace); err != nil {
-			assetRows.Close()
-			return err
-		}
-		assets = append(assets, item)
-	}
-	if err := assetRows.Err(); err != nil {
-		assetRows.Close()
-		return err
-	}
-	assetRows.Close()
-	for _, item := range assets {
-		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
-			continue
-		}
-		if err := s.deleteProductMedia(batchCtx, item.externalID); err != nil {
-			continue
-		}
-		finalStatus := "deleted"
-		if item.status == "quarantine_pending" {
-			finalStatus = "quarantined"
-		}
-		if _, err := s.db.Exec(batchCtx, `update testagram_media.assets set status=$2, updated_at=now()
-			where object_key=$1 and status=$3`, item.key, finalStatus, item.status); err != nil {
-			return err
-		}
-	}
-	return nil
+func (s *service) detachMediaFromPosts(ctx context.Context, objectKey string) error {
+	_, err := s.db.Exec(ctx, `
+UPDATE testagram_local.posts p
+SET media_ids=COALESCE((
+  SELECT jsonb_agg(item.value ORDER BY item.ordinality)
+  FROM jsonb_array_elements(p.media_ids) WITH ORDINALITY AS item(value,ordinality)
+  WHERE item.value #>> '{}' <> $1
+),'[]'::jsonb), updated_at=now()
+WHERE p.media_ids @> jsonb_build_array($1::text)`, objectKey)
+	return err
 }
