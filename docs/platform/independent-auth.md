@@ -1,6 +1,6 @@
 # Independent Testagram authentication
 
-This is an additive, opt-in rollout for **new Testagram-native identities**. It does not turn Supabase off globally and does not migrate existing Supabase passwords. The backend endpoints use the Testagram PostgreSQL database directly and do not call Supabase Auth, Cloudflare APIs, Redis, or Upstash during signup, login, verification, or password recovery.
+This document describes an optional legacy PostgreSQL password-auth flow. It is not the product's primary authentication path: Flutter signs in with Appwrite, and all user-data APIs validate Appwrite session JWTs and resolve the canonical account through `testagram_identity.appwrite_accounts`. These legacy routes are not enabled by default because `TESTAGRAM_AUTH_JWT_SECRET` is intentionally absent from the deployment templates. Do not point the Flutter client at these routes.
 
 ## Endpoints
 
@@ -13,7 +13,7 @@ All request bodies are JSON. Routes are under `/api/auth`:
 - `POST /forgot-password` — `{"email":"person@example.com"}`; always returns a generic accepted response to reduce account enumeration.
 - `POST /reset-password` — `{"token":"...","password":"new password with at least 12 characters"}`; consumes a single-use 30-minute token and increments the credential version.
 
-Password hashes use PBKDF2-HMAC-SHA256 with a per-password random salt and 210,000 rounds. Verification and reset tokens are stored only as SHA-256 hashes. Login attempts and recovery requests are rate-limited in PostgreSQL, so Redis/Upstash availability is not required. Authentication responses are private/no-store.
+Password hashes use PBKDF2-HMAC-SHA256 with a per-password random salt and 210,000 rounds. Verification and reset tokens are stored only as SHA-256 hashes. Login attempts and recovery requests are rate-limited in PostgreSQL. There is no Redis, Valkey, Upstash, or external cache dependency. Authentication responses are private/no-store.
 
 ## Required runtime configuration
 
@@ -38,6 +38,6 @@ Mail delivery is deliberately fail-closed: SMTP TLS and authentication are requi
 
 ## Existing users and boundaries
 
-Supabase password hashes are not readable through normal application APIs. Existing users therefore cannot simply be copied into this credential table. They need a secure account-linking/verified reset migration, including a collision policy for UUIDs, usernames, and emails. Until that exists, this service only authenticates identities created in Testagram's local auth store.
+Historical accounts must be imported and linked through a trusted offline migration that verifies ownership and preserves the canonical Testagram UUID. Runtime identity linking against a legacy provider is not supported. Appwrite account IDs are mapped to canonical UUIDs only through the protected identity bridge; unknown mappings fail closed.
 
-This first release returns short-lived access tokens but does not implement refresh tokens, device/session management, MFA, passkeys, or a distributed revocation list. Password reset increments a token version in the database, but existing access tokens expire naturally within 15 minutes; do not describe this as immediate global session revocation. The gateway still has other legacy Supabase-backed capabilities, and a Cloudflare-only public route remains a separate availability dependency.
+This legacy flow returns short-lived access tokens but does not implement refresh tokens, device/session management, MFA, passkeys, or a distributed revocation list. Its tokens are not accepted as Appwrite sessions by the product data APIs. The Backend does not proxy unknown capabilities to Supabase; unimplemented capabilities return an explicit not-implemented response.
