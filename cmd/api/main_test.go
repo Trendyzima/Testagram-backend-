@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
-	"github.com/Trendyzima/Testagram-backend-/internal/platformclient"
 )
 
 func TestHealthz(t *testing.T) {
@@ -72,8 +70,6 @@ func TestMetricsCountsRequests(t *testing.T) {
 }
 
 func TestCapabilityRequiresBearerForPrivateCalls(t *testing.T) {
-	t.Setenv("SUPABASE_URL", "https://supabase.example")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "public-test-key")
 	s := &service{}
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
 	r.Header.Set("Content-Type", "application/json")
@@ -84,15 +80,13 @@ func TestCapabilityRequiresBearerForPrivateCalls(t *testing.T) {
 	}
 }
 
-func TestCapabilityDoesNotFallbackToSupabase(t *testing.T) {
+func TestCapabilityDoesNotFallbackToExternalGateway(t *testing.T) {
 	var upstreamCalls int
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalls++
 		http.Error(w, "legacy upstream must not be called", http.StatusInternalServerError)
 	}))
 	defer upstream.Close()
-	t.Setenv("SUPABASE_URL", upstream.URL)
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "legacy-test-key")
 
 	request := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -105,7 +99,7 @@ func TestCapabilityDoesNotFallbackToSupabase(t *testing.T) {
 		t.Fatalf("unsupported capability status = %d, want %d: %s", response.Code, http.StatusNotImplemented, response.Body.String())
 	}
 	if upstreamCalls != 0 {
-		t.Fatalf("legacy Supabase upstream was called %d times", upstreamCalls)
+		t.Fatalf("legacy upstream was called %d times", upstreamCalls)
 	}
 	if !strings.Contains(response.Body.String(), "CAPABILITY_NOT_IMPLEMENTED") {
 		t.Fatalf("expected explicit fail-closed response, got %s", response.Body.String())
@@ -122,47 +116,6 @@ func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
 	}
 }
 
-func newTestPlatformClient(t *testing.T, handler http.Handler) *platformclient.Client {
-	t.Helper()
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	client, err := platformclient.New(server.URL, "test-platform-token-0123456789abcdef0123456789", time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return client
-}
-
-func TestPlatformRateLimitStopsCapabilityDispatch(t *testing.T) {
-	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "supabase")
-	t.Setenv("SUPABASE_URL", "https://supabase.example")
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "publishable-test-key")
-	platform := newTestPlatformClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/rate-limit/check" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = fmt.Fprint(w, `{"allowed":false,"count":31,"remaining":0,"retry_after_seconds":17}`)
-	}))
-	upstreamCalls := 0
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { upstreamCalls++; _, _ = w.Write([]byte(`{}`)) }))
-	defer upstream.Close()
-	s := &service{upstream: upstream.Client(), platform: platform}
-	r := httptest.NewRequest(http.MethodPost, "/api/capability", strings.NewReader(`{"capability":"testagram.posts.create","input":{"content":"hello"}}`))
-	r.Header.Set("Authorization", "Bearer user-session-token")
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-	if w.Header().Get("Retry-After") != "17" {
-		t.Fatalf("Retry-After=%q", w.Header().Get("Retry-After"))
-	}
-	if upstreamCalls != 0 {
-		t.Fatalf("upstream called %d times after rate-limit denial", upstreamCalls)
-	}
-}
-
 func testMediaSigner(t *testing.T) *media.Signer {
 	t.Helper()
 	signer, err := media.NewSigner(media.Config{
@@ -176,33 +129,32 @@ func testMediaSigner(t *testing.T) *media.Signer {
 	return signer
 }
 
-func testSupabaseAuthServer(t *testing.T) *httptest.Server {
+func testAppwriteAuthServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "supabase")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/auth/v1/user" {
+		if r.URL.Path != "/v1/account" {
 			http.NotFound(w, r)
 			return
 		}
-		if r.Header.Get("apikey") != "test-publishable-key" {
-			http.Error(w, "bad key", http.StatusUnauthorized)
+		if r.Header.Get("X-Appwrite-Project") != "test-project" {
+			http.Error(w, "bad project", http.StatusUnauthorized)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer valid-session-token" {
-			http.Error(w, "bad token", http.StatusUnauthorized)
+		if r.Header.Get("X-Appwrite-JWT") != "valid-session-token" {
+			http.Error(w, "bad session", http.StatusUnauthorized)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{\"id\":\"user-123\"}"))
+		_, _ = w.Write([]byte(`{"$id":"appwrite-user-123","email":"person@example.com","emailVerification":true,"status":true}`))
 	}))
 	t.Cleanup(server.Close)
-	t.Setenv("SUPABASE_URL", server.URL)
-	t.Setenv("SUPABASE_PUBLISHABLE_KEY", "test-publishable-key")
+	t.Setenv("APPWRITE_ENDPOINT", server.URL)
+	t.Setenv("APPWRITE_PROJECT_ID", "test-project")
 	return server
 }
 
 func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
-	testSupabaseAuthServer(t)
+	testAppwriteAuthServer(t)
 	s := &service{media: testMediaSigner(t)}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":100}"))
 	r.Header.Set("Content-Type", "application/json")
@@ -214,7 +166,7 @@ func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
 }
 
 func TestMediaUploadIntentFailsClosedWithoutMetadataDatabase(t *testing.T) {
-	upstream := testSupabaseAuthServer(t)
+	upstream := testAppwriteAuthServer(t)
 	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":1024}"))
 	r.Header.Set("Content-Type", "application/json")
@@ -230,7 +182,7 @@ func TestMediaUploadIntentFailsClosedWithoutMetadataDatabase(t *testing.T) {
 }
 
 func TestPrivateMediaDownloadURLFailsClosedWithoutMetadataDatabase(t *testing.T) {
-	upstream := testSupabaseAuthServer(t)
+	upstream := testAppwriteAuthServer(t)
 	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef"}`))
 	r.Header.Set("Content-Type", "application/json")
@@ -293,86 +245,6 @@ func TestPublicMediaURLUsesCanonicalCDNPrefix(t *testing.T) {
 	t.Setenv("MEDIA_PUBLIC_BASE_URL", "https://media.example.test/v1?cache=1")
 	if got := publicMediaURL("users/user-123/0123456789abcdef0123456789abcdef"); got != "" {
 		t.Fatalf("publicMediaURL accepted a query-bearing base URL: %q", got)
-	}
-}
-
-func TestEnsureProductMediaRecordCreatesServerSideRecord(t *testing.T) {
-	t.Setenv("SUPABASE_URL", "")
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer service-secret" || r.Header.Get("apikey") != "service-secret" {
-			t.Errorf("missing server-only bearer/API key headers")
-		}
-		if r.URL.Path != "/rest/v1/media_assets" {
-			t.Errorf("path=%q want=/rest/v1/media_assets", r.URL.Path)
-		}
-		switch r.Method {
-		case http.MethodGet:
-			if r.URL.Query().Get("storage_key") != "eq.users/user-123/0123456789abcdef0123456789abcdef" {
-				t.Errorf("unexpected storage key filter: %s", r.URL.RawQuery)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte("[]"))
-		case http.MethodPost:
-			var body map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Errorf("decode create payload: %v", err)
-			}
-			if body["owner_id"] != "user-123" || body["status"] != "uploaded" || body["original_name"] != "photo.png" || body["media_url"] != "https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef" {
-				t.Errorf("unexpected product media payload: %#v", body)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`[{"id":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","owner_id":"user-123","post_id":null,"status":"uploaded"}]`))
-		default:
-			t.Errorf("unexpected method %s", r.Method)
-			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("SUPABASE_URL", server.URL)
-	s := &service{upstream: server.Client()}
-	got, err := s.ensureProductMediaRecord(context.Background(), "service-secret", "user-123",
-		"users/user-123/0123456789abcdef0123456789abcdef", "photo.png", "image/png", 1234,
-		"https://media.example.test/public/users/user-123/0123456789abcdef0123456789abcdef", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" {
-		t.Fatalf("external media ID=%q", got)
-	}
-}
-
-func TestUserOwnsProductPostUsesAuthenticatedPostgRESTContext(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/rest/v1/posts" {
-			t.Errorf("unexpected PostgREST request %s %s", r.Method, r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer user-session-token" || r.Header.Get("apikey") != "publishable-key" {
-			t.Errorf("post ownership lookup did not use the caller session")
-		}
-		if r.URL.Query().Get("id") != "eq.post-123" {
-			t.Errorf("post filter=%q", r.URL.Query().Get("id"))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"id":"post-123","author_id":"user-123","user_id":"someone-else"}]`))
-	}))
-	defer server.Close()
-	t.Setenv("SUPABASE_URL", server.URL)
-	s := &service{upstream: server.Client()}
-	owned, err := s.userOwnsProductPost(context.Background(), "Bearer user-session-token", "publishable-key", "user-123", "post-123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !owned {
-		t.Fatal("expected the authenticated post author to be allowed")
-	}
-	owned, err = s.userOwnsProductPost(context.Background(), "Bearer user-session-token", "publishable-key", "other-user", "post-123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if owned {
-		t.Fatal("post must not be attachable by a non-owner")
 	}
 }
 
@@ -528,9 +400,6 @@ func TestMediaUploadGatewayPreflightAllowsConfiguredOrigin(t *testing.T) {
 	allowedHeaders := strings.ToLower(w.Header().Get("Access-Control-Allow-Headers"))
 	if !strings.Contains(allowedHeaders, "authorization") || !strings.Contains(allowedHeaders, "content-type") {
 		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization and content-type", allowedHeaders)
-	}
-	if !strings.Contains(allowedHeaders, "x-testagram-legacy-authorization") {
-		t.Fatalf("Access-Control-Allow-Headers = %q, want the explicit legacy proof header", allowedHeaders)
 	}
 }
 
