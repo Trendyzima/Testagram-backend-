@@ -49,22 +49,22 @@ type upstreamMetric struct {
 }
 
 type service struct {
-	db                      *pgxpool.Pool
-	metricsMu               sync.Mutex
-	routeMetrics            map[string]*requestMetric
-	capabilityMetrics       map[string]*requestMetric
-	upstreamMetrics         map[string]*upstreamMetric
-	requests                atomic.Uint64
-	rateLimited             atomic.Uint64
+	db                        *pgxpool.Pool
+	metricsMu                 sync.Mutex
+	routeMetrics              map[string]*requestMetric
+	capabilityMetrics         map[string]*requestMetric
+	upstreamMetrics           map[string]*upstreamMetric
+	requests                  atomic.Uint64
+	rateLimited               atomic.Uint64
 	capabilityRateLimitErrors atomic.Uint64
-	algorithmRequests       atomic.Uint64
-	algorithmFailures       atomic.Uint64
-	federationInternalToken string
-	upstream                *http.Client
-	media                   *media.Signer
-	virtualStorage          *virtualstorage.Manager
-	algorithm               *algorithmclient.Client
-	replicationReceiver     http.Handler
+	algorithmRequests         atomic.Uint64
+	algorithmFailures         atomic.Uint64
+	federationInternalToken   string
+	upstream                  *http.Client
+	media                     *media.Signer
+	virtualStorage            *virtualstorage.Manager
+	algorithm                 *algorithmclient.Client
+	replicationReceiver       http.Handler
 }
 
 type capabilityRequest struct {
@@ -701,15 +701,15 @@ ON CONFLICT(action,bucket_hash,window_start) DO UPDATE
 SET attempts=testagram_auth.rate_limits.attempts+1
 RETURNING attempts,
   GREATEST(1,CEIL(EXTRACT(EPOCH FROM (date_trunc('minute',now()) + interval '1 minute' - now())))::bigint)`,
-		bucketHash).Scan(&attempts,&retryAfter)
+		bucketHash).Scan(&attempts, &retryAfter)
 	if err != nil {
-		return false,0,err
+		return false, 0, err
 	}
 	if attempts == 1 {
-		_,_ = s.db.Exec(ctx,`DELETE FROM testagram_auth.rate_limits
+		_, _ = s.db.Exec(ctx, `DELETE FROM testagram_auth.rate_limits
 			WHERE action='capability-api' AND window_start < now()-interval '1 day'`)
 	}
-	return int64(attempts)<=limit,retryAfter,nil
+	return int64(attempts) <= limit, retryAfter, nil
 }
 
 func capabilityRateLimitKey(r *http.Request, authorization string) string {
