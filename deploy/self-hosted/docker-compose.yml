@@ -80,6 +80,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       MINIO_SITE_REGION: ${MINIO_REGION:-us-east-1}
     volumes: [object-data:/data]
+    ports: ["127.0.0.1:9000:9000"]
     restart: unless-stopped
     networks: [data]
 
@@ -142,6 +143,7 @@ services:
         condition: service_healthy
       object-init:
         condition: service_completed_successfully
+    ports: ["127.0.0.1:8080:8080"]
     expose: ["8080"]
     read_only: true
     tmpfs: ["/tmp"]
