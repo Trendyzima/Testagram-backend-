@@ -125,7 +125,7 @@ async function refreshOverview() {
     const acquired = metricValue(m, "db_acquired");
     const max = metricValue(m, "db_max");
     setMetric("metric-db", acquired === null || max === null ? "N/A" : Math.round(acquired) + " / " + Math.round(max), acquired !== null && max !== null);
-    const pending = metricValue(m, "queue_pending");
+    const pending = metricValue(m, "outbox_pending");
     setMetric("metric-queue", pending === null ? "N/A" : Math.max(0, Math.round(pending)).toLocaleString(), pending !== null);
     if (data.grafana_url) byId("grafana-link").href = data.grafana_url;
   } catch (error) {
