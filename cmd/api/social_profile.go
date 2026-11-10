@@ -53,7 +53,7 @@ WHERE a.user_id=$2 AND a.account_status='active'
 		"avatar_url": publicMediaURL(avatarKey), "protected_account": protected,
 		"followers_count": followers, "following_count": followingCount,
 		"follow_status": followStatus, "is_following": following,
-		"is_followed_by": followedBy, "can_view_posts": canViewPosts,
+		"is_followed_by": followedBy, "can_view_posts": canViewPosts, "is_self": id == viewerID,
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "data": profile, "error": nil, "request_id": requestID,
