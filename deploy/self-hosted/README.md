@@ -1,31 +1,37 @@
 # Self-hosted Testagram Backend
 
-Portable PostgreSQL-first deployment for owned hardware or any Docker host.
+Portable PostgreSQL-first base deployment for owned hardware or any Docker host.
+The Data Centre services are deployed as a separate Compose overlay on stable
+private networks created by this stack.
 
-## Included services
+## Base services
 
 - PostgreSQL 17: canonical product, identity bridge, media metadata, security counters and transactional outboxes.
 - Testagram Go API: Appwrite JWT verification, social/search/media APIs and service orchestration.
-- Platform API: PostgreSQL-backed configuration, event and audit operations only.
 - Control plane: node/workload inventory and hosting operations.
 - S3-compatible object storage: private and public media buckets.
 - Appwrite-authenticated staff console: server-side PostgreSQL role checks.
 - Caddy, Prometheus, Alertmanager and Grafana.
 
+The base stack creates two stable networks for cross-repository services:
+`testagram-platform` (private database/service traffic) and
+`testagram-egress` (controlled outbound Appwrite access). The Data Centre
+overlay owns the platform API, video, notification and background worker
+services.
+
 There is no Supabase, Redis/Valkey, Upstash, generic cache API or Redis queue
-service in this stack. Rate limits are PostgreSQL counters; durable async work
-uses the owning service's PostgreSQL outbox and idempotent workers.
+service. Rate limits are PostgreSQL counters; durable async work uses
+service-owned PostgreSQL outboxes and idempotent workers.
 
 ## First deployment
 
 1. Copy `.env.example` to `.env`.
 2. Set strong unique values for PostgreSQL, MinIO, control-plane, media and admin session secrets.
 3. Set `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`. Set `APPWRITE_API_KEY` only if owners will issue staff invitations; restrict it to user-management operations.
-4. Point the API and staff console at the same canonical PostgreSQL database.
-5. Confirm the Appwrite identity bridge and staff-role migrations are included.
-6. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
-7. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
-8. Start the stack:
+4. Confirm the Appwrite identity bridge, native media-link and staff-role migrations are included.
+5. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
+6. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
+7. Start the Backend base stack:
 
 ```sh
 docker compose --env-file .env -f docker-compose.yml config
@@ -33,15 +39,33 @@ docker compose --env-file .env -f docker-compose.yml up -d --build
 docker compose --env-file .env -f docker-compose.yml ps
 ```
 
-The PostgreSQL container applies the ordered SQL migrations on first initialization.
-For an existing database, apply each new migration with `psql -v ON_ERROR_STOP=1`
-before deploying the matching application commit.
+8. Clone the Data Centre repository on the same host. Copy
+   `backend/.env.example` to `backend/.env`; set `DATABASE_URL` to the same
+   PostgreSQL user/password/database as this stack, use the same Appwrite
+   endpoint/project ID, and generate independent platform/notification/video
+   secrets.
+9. Start the Data Centre overlay:
+
+```sh
+docker compose --env-file backend/.env -f backend/docker-compose.yml config
+docker compose --env-file backend/.env -f backend/docker-compose.yml up -d --build
+docker compose --env-file backend/.env -f backend/docker-compose.yml ps
+```
+
+The Backend Compose stack creates the external networks required by the
+Data Centre overlay. Start it first. The overlay does not publish ports or run
+a second reverse proxy; Caddy remains the only public edge.
+
+The PostgreSQL container applies the ordered SQL migrations on first
+initialization. For an existing database, apply each new migration with
+`psql -v ON_ERROR_STOP=1` before deploying the matching application commit.
 
 ## Authentication and authorization
 
 - Flutter obtains an Appwrite session and sends its JWT to the Backend.
 - The Backend validates the JWT with Appwrite and resolves the canonical Testagram UUID in PostgreSQL.
-- Video and notification services use the same Appwrite validation and identity bridge.
+- Data Centre video and notification services use the same Appwrite validation and identity bridge.
+- The Data Centre platform API uses PostgreSQL and a private internal token.
 - The staff console validates Appwrite sessions and reads roles from
   `testagram_auth.staff_roles`; browser metadata cannot grant staff privileges.
 - No Supabase JWT secret, PostgREST service key, or provider fallback is accepted.
@@ -53,14 +77,14 @@ before deploying the matching application commit.
 3. Completion validates ownership, size and checksum before marking the asset ready.
 4. Attaching media writes the native object key into `testagram_local.posts.media_ids`.
 5. Delete/quarantine writes a durable PostgreSQL deletion job before removing bytes.
-6. The janitor retries pending jobs idempotently.
+6. The Data Centre video worker uses the same canonical database and its persistent media root for FFmpeg processing.
 
 Do not manually delete object bytes or edit asset status rows outside the API/worker lifecycle.
 
 ## Backup and restore
 
 - Back up PostgreSQL with a consistent snapshot and test restores regularly.
-- Back up MinIO/object storage and preserve object checksums and namespace metadata.
+- Back up MinIO/object storage and the Data Centre video media root; preserve checksums and namespace metadata.
 - Back up Caddy data/config, Grafana/Prometheus data where required, and all deployment secrets.
 - Preserve `ADMIN_SESSION_KEY`, Appwrite project configuration and server-only Appwrite API key securely.
 - No Redis/Valkey queue state exists to back up; transactional outbox rows are in PostgreSQL.
