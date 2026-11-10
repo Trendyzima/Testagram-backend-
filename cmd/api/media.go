@@ -867,8 +867,8 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
-	// Hold a short row lock while syncing the remote join. Delete/quarantine
-	// transitions cannot race through the middle and resurrect a deleted join.
+	// Hold a short row lock while attaching the local object key to the post.
+	// Delete/quarantine transitions cannot race through this transaction.
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not begin media attachment", id))
@@ -879,7 +879,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	var sizeBytes int64
 	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, storage_namespace
 		from testagram_media.assets where object_key=$1 and owner_id=$2 for update`, body.Key, userID).
-		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &externalID, &storageNamespace)
+		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &storageNamespace)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
 		return
@@ -936,8 +936,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 const maxProductPostMediaBytes int64 = 20 << 20
 
 // productPostMediaType maps upload MIME types to values accepted by the
-// product database's post_media.media_type constraint. Files may be stored as
-// private media, but unsupported document types must not reach the post bridge.
+// native post-media validation. Unsupported document types never enter media_ids.
 func productPostMediaType(contentType string) (string, bool) {
 	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
 	switch {
