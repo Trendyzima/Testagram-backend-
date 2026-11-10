@@ -7,7 +7,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 )
 
 // runStorageDeletionWorker drains durable object-deletion jobs. It is safe to
@@ -30,7 +29,7 @@ func (s *service) runStorageDeletionWorker(ctx context.Context) {
 
 type storageDeletionJob struct {
 	id                                                      int64
-	key, ownerID, visibility, namespace, reason, externalID string
+	key, ownerID, visibility, namespace, reason string
 	attempts                                                int
 }
 
@@ -122,19 +121,7 @@ func (s *service) performStorageDeletion(ctx context.Context, job storageDeletio
 		return err
 	}
 	if job.reason == "user_delete" || job.reason == "moderation" {
-		var externalID string
-		err := s.db.QueryRow(ctx, `select coalesce(external_media_id::text,'')
-			from testagram_media.assets where object_key=$1 and owner_id=$2`, job.key, job.ownerID).Scan(&externalID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				// An already-removed asset is safe to treat as completed after object
-				// deletion; there is no remaining product-media link to update.
-				externalID = ""
-			} else {
-				return err
-			}
-		}
-		if err := s.deleteProductMedia(ctx, externalID); err != nil {
+		if err := s.detachMediaFromPosts(ctx, job.key); err != nil {
 			return err
 		}
 		finalStatus := "deleted"
