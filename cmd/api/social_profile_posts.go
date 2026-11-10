@@ -49,6 +49,10 @@ JOIN testagram_local.accounts a ON a.user_id=p.author_id
 WHERE p.author_id=$2
   AND p.deleted_at IS NULL
   AND a.account_status='active'
+  AND (p.author_id=$1 OR a.discoverable_by_username OR EXISTS(
+    SELECT 1 FROM testagram_local.follows f
+    WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'
+  ))
   AND (
     p.author_id=$1
     OR (p.visibility='public' AND NOT a.protected_account)
