@@ -403,7 +403,7 @@ jobs:
             ready=false
             status=missing
             for attempt in $(seq 1 36); do
-              status="$(sudo docker inspect --format '''{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}''' "$container" 2>/dev/null || echo missing)"
+              status="$(sudo docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" "$container" 2>/dev/null || echo missing)"
               if [[ "$status" == healthy || "$status" == running ]]; then ready=true; break; fi
               if [[ "$status" == missing || "$status" == exited || "$status" == dead || "$status" == unhealthy ]]; then break; fi
               sleep 5
