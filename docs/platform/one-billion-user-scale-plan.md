@@ -14,8 +14,8 @@ This document is a target architecture and phased engineering plan, not a claim 
    - Explicit request budgets, body-size limits, timeouts, concurrency caps, and overload shedding at every boundary.
 
 2. **Stateless application cells**
-   - Deploy multiple independent regional cells. Each cell contains API instances, background workers, regional cache, queue consumers, and access to the appropriate data partitions.
-   - Keep API instances stateless; store sessions/tokens and durable state in managed/shared services with defined failure semantics.
+   - Deploy multiple independent regional cells. Each cell contains API instances, background workers, bounded PostgreSQL outbox workers, and access to the appropriate data partitions.
+   - Keep API instances stateless; validate Appwrite sessions and keep durable state in PostgreSQL with defined failure semantics.
    - Use cell isolation so one bad deploy, tenant, region, or queue backlog does not exhaust all regions. Start with one region and a tested standby, then add regions based on measured demand.
    - Avoid synchronous cross-region calls in ordinary request paths. Define data residency, ownership, and failover rules per data domain.
 
@@ -23,7 +23,7 @@ This document is a target architecture and phased engineering plan, not a claim 
    - PostgreSQL remains authoritative for transactional records, but a single primary database is not a billion-user scaling strategy. Partition data by a stable tenant/account key; establish ownership and migration rules before sharding.
    - Use connection pooling, short transactions, indexes validated against production-like query plans, statement/lock timeouts, read replicas for suitable read workloads, and explicit write routing.
    - Do not assume all data can be active-active. Select consistency and conflict rules per domain; identity, billing, quotas, and authorization generally require strong transactional semantics.
-   - Redis is an expendable cache/coordination layer, not the source of truth for durable work, quota accounting, or payments. Cache invalidation, stampede protection, memory bounds, and fail-open/fail-closed policy must be explicit.
+   - Do not add Redis/Valkey, Upstash, or generic application cache wrappers. Rate limits use PostgreSQL counters; durable work uses service-owned transactional outboxes and idempotent workers. If measured scale eventually requires a separate broker, it must be self-hostable, durable, and independent of Redis/Upstash.
    - Move search and analytics to purpose-built systems fed by durable, replayable events; do not run expensive analytics against the transactional primary.
 
 4. **Media and object storage**
@@ -33,8 +33,8 @@ This document is a target architecture and phased engineering plan, not a claim 
    - Serve public immutable media through CDN; serve private media through authorization-aware delivery. Track storage bytes, requests, egress, transformation costs, and abuse by tenant.
 
 5. **Durable asynchronous processing**
-   - Use a durable queue/event log with at-least-once delivery, idempotent consumers, bounded retries, dead-letter handling, replay tooling, and queue-age SLOs.
-   - Separate worker pools for media transforms, feed/federation, notifications, search indexing, and scheduled tasks. Autoscale on backlog age and throughput, not CPU alone.
+   - Use service-owned PostgreSQL transactional outboxes with idempotent workers, bounded leases/retries, reconciliation, replay tooling, and oldest-outbox-age SLOs. Add a separate durable broker only when measured throughput proves PostgreSQL outboxes insufficient; the broker must not be Redis/Upstash.
+   - Separate worker pools for media transforms, feed/federation, notifications, search indexing, and scheduled tasks. Autoscale on outbox age and throughput, not CPU alone.
    - Use an outbox or equivalent transactional handoff where database writes must reliably create events. Do not promise exactly-once processing across independent systems.
 
 6. **Multi-tenant hosted platform**
@@ -44,12 +44,12 @@ This document is a target architecture and phased engineering plan, not a claim 
 
 7. **Security and operations**
    - Secrets manager, least-privilege service identities, rotation, supply-chain scanning/signing, dependency patching, encrypted transport/storage, audit logs, abuse response, and tested incident runbooks.
-   - Observe RED metrics (rate, errors, duration), saturation, queue age, DB pool waits, replication lag, cache hit rate, storage capacity, upload spool use, CDN hit ratio, egress, and per-tenant cost.
+   - Observe RED metrics (rate, errors, duration), saturation, oldest outbox age, DB pool waits, replication lag, storage capacity, upload spool use, CDN hit ratio, egress, and per-tenant cost.
    - Define SLOs and error budgets. Alert on user-visible symptoms and leading indicators; sample high-volume traces and avoid logging secrets or private media URLs.
 
 8. **Resilience and disaster recovery**
    - Define RPO/RTO per data domain. Keep encrypted backups outside the failure domain and test point-in-time recovery plus object-data restoration on a schedule.
-   - Exercise zone loss, region loss, database failover, queue outage, cache loss, object-store degradation, bad deployment rollback, credential rotation, and restore from clean infrastructure.
+   - Exercise zone loss, region loss, database failover, outbox backlog, object-store degradation, bad deployment rollback, credential rotation, and restore from clean infrastructure.
    - Failover must be rehearsed and measured; DNS changes or a green health endpoint alone do not prove recovery.
 
 ## Capacity model before purchasing or deploying infrastructure
@@ -59,7 +59,7 @@ Measure at least:
 - peak and sustained requests/second by endpoint, p50/p95/p99 latency, error rate, and payload size;
 - database reads/writes per request, transaction duration, hot-key concentration, pool wait time, replication lag, and storage growth;
 - media upload count/bytes per second, maximum object size, concurrent uploads, transform CPU/GPU, CDN hit ratio, and egress;
-- queue event rate, processing time, retry rate, oldest-message age, and replay rate;
+- outbox event rate, processing time, retry rate, oldest-pending age, and replay rate;
 - cost per active user, request, GB stored, GB delivered, and background job.
 
 Use production-like load tests with realistic skew, hot accounts, large tenants, cache misses, and bursts. Establish a baseline, test at 2x expected peak, test overload behavior, and test recovery after the load stops. Never extrapolate a billion-user capacity claim from a small synthetic request test.
@@ -72,7 +72,7 @@ Use production-like load tests with realistic skew, hot accounts, large tenants,
 - Exercise upload limit enforcement for fixed-length and chunked requests, interrupted uploads, duplicate/concurrent intent use, wrong content type, expired intents, checksum mismatch, and object-store failure.
 - Configure proxy body limits and timeouts, dedicated bounded upload spool, disk alerts, stale spool cleanup, and per-user/per-tenant concurrent-upload limits.
 - Back up the live database off-host; verify archive integrity and restore it into an isolated environment before applying migrations 008/009.
-- Verify public/private access, cross-tenant denial, deletion, expiry, cache invalidation, and restore on the actual deployment.
+- Verify public/private access, cross-tenant denial, deletion, expiry, and restore on the actual deployment.
 
 ### Phase 1 — Instrumented single-region production
 - Add dashboards and alerts, SLOs, resource limits, capacity estimates, on-call runbooks, and load-test automation.
@@ -81,7 +81,7 @@ Use production-like load tests with realistic skew, hot accounts, large tenants,
 
 ### Phase 2 — Horizontal scaling and workload isolation
 - Run multiple API instances behind a load balancer; remove local disk/session assumptions.
-- Separate worker pools and queue classes. Add admission control and tenant fairness.
+- Separate worker pools and outbox consumers. Add admission control and tenant fairness.
 - Load-test database pooling, cache failure, object storage, CDN behavior, and backpressure.
 
 ### Phase 3 — Multi-zone resilience and regional expansion
@@ -107,7 +107,7 @@ The platform is not ready to move to the next phase until:
 - uploads are bounded during receipt, completion verifies actual stored bytes, and concurrent/replayed intents cannot corrupt object state;
 - backup restoration and migration rollback/recovery have been demonstrated on an isolated target;
 - load tests report the tested hardware, topology, traffic mix, throughput, p95/p99 latency, errors, saturation, and cost;
-- operational dashboards and actionable alerts cover database, queues, object storage, temporary disk, CDN, and regional health.
+- operational dashboards and actionable alerts cover database, transactional outboxes, object storage, temporary disk, CDN, and regional health.
 
 ## Current known constraints
 
