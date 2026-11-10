@@ -121,6 +121,56 @@ func TestSocialPostVisibilityPostgresIntegration(t *testing.T) {
 		t.Fatalf("viewer repost/bookmark state = %v/%v, want true/true", reposted, bookmarked)
 	}
 
+	// Exercise the same visibility-filtered SQL projections used by the
+	// likes/reposts/quotes listing endpoint, including quoted repost content.
+	if _, err := tx.Exec(ctx, `INSERT INTO testagram_local.reposts(post_id,user_id,quote)
+		VALUES($1,$2,'integration quote')`, publicPostID, authorID); err != nil {
+		t.Fatalf("insert quote fixture: %v", err)
+	}
+	interactionQueries := map[string]string{
+		"likes": `SELECT r.id::text,r.user_id::text,''::text,r.created_at,a.username,a.display_name,a.avatar_key
+			FROM testagram_local.post_reactions r JOIN testagram_local.accounts a ON a.user_id=r.user_id
+			WHERE r.post_id=$1 AND r.emoji='❤️' AND a.account_status='active'`,
+		"reposts": `SELECT r.id::text,r.user_id::text,r.quote,r.created_at,a.username,a.display_name,a.avatar_key
+			FROM testagram_local.reposts r JOIN testagram_local.accounts a ON a.user_id=r.user_id
+			WHERE r.post_id=$1 AND a.account_status='active'`,
+		"quotes": `SELECT r.id::text,r.user_id::text,r.quote,r.created_at,a.username,a.display_name,a.avatar_key
+			FROM testagram_local.reposts r JOIN testagram_local.accounts a ON a.user_id=r.user_id
+			WHERE r.post_id=$1 AND btrim(r.quote)<>'' AND a.account_status='active'`,
+	}
+	for kind, query := range interactionQueries {
+		rows, err := tx.Query(ctx, query, publicPostID)
+		if err != nil {
+			t.Fatalf("query %s interaction list: %v", kind, err)
+		}
+		count := 0
+		quoteFound := false
+		for rows.Next() {
+			var id, actorID, quote, username, displayName, avatarKey string
+			var createdAt time.Time
+			if err := rows.Scan(&id, &actorID, &quote, &createdAt, &username, &displayName, &avatarKey); err != nil {
+				rows.Close()
+				t.Fatalf("decode %s interaction: %v", kind, err)
+			}
+			count++
+			if kind == "quotes" && quote == "integration quote" && actorID == authorID {
+				quoteFound = true
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("iterate %s interactions: %v", kind, err)
+		}
+		rows.Close()
+		want := map[string]int{"likes": 1, "reposts": 2, "quotes": 1}[kind]
+		if count != want {
+			t.Errorf("%s interaction count = %d, want %d", kind, count, want)
+		}
+		if kind == "quotes" && !quoteFound {
+			t.Error("quotes listing did not return the quoted repost content and actor")
+		}
+	}
+
 	assertVisible("public post visible to another active account", viewerID, publicPostID, true)
 	assertVisible("private post hidden from another account", viewerID, privatePostID, false)
 	assertVisible("author can view own private post", authorID, privatePostID, true)
