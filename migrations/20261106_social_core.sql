@@ -1,5 +1,5 @@
 -- Independent PostgreSQL social graph and post-interaction foundation.
--- Additive only; legacy Supabase tables and user data are untouched.
+-- Additive only; existing canonical PostgreSQL accounts and posts are preserved.
 BEGIN;
 
 ALTER TABLE testagram_local.accounts
