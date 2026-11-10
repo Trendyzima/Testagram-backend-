@@ -391,6 +391,41 @@ jobs:
           echo "::error::Deployment exceeded the wait window. The remote log remains at /data/home/testagram/deploy.log."
           exit 1
 
+      - name: Verify all deployed service health
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          cmd='set -euo pipefail
+          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
+          for container in "${containers[@]}"; do
+            ready=false
+            status=missing
+            for attempt in $(seq 1 36); do
+              status="$(sudo docker inspect --format '''{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}''' "$container" 2>/dev/null || echo missing)"
+              if [[ "$status" == healthy || "$status" == running ]]; then ready=true; break; fi
+              if [[ "$status" == missing || "$status" == exited || "$status" == dead || "$status" == unhealthy ]]; then break; fi
+              sleep 5
+            done
+            echo "$container: $status"
+            if [[ "$ready" != true ]]; then
+              sudo docker logs --tail=100 "$container" 2>&1 || true
+              exit 1
+            fi
+          done'
+          payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:180}')"
+          result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Content-Type: application/json" -d "$payload" \
+            "$API/v1/machines/$MACHINE_ID/exec")"
+          code="$(jq -r '.exitCode // 1' <<<"$result")"
+          if [[ "$code" != "0" ]]; then
+            echo "::error::One or more deployed Testagram services are not healthy."
+            jq -r '.stderr // empty, .stdout // empty' <<<"$result"
+            exit 1
+          fi
+          jq -r '.stdout // empty' <<<"$result"
+
       - name: Publish the Backend API over HTTPS
         id: publish
         shell: bash
