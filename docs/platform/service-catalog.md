@@ -12,8 +12,8 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 | Data API | REST gateway over PostgreSQL | /rest/v1/* | gateway probe plus database probe | PostgreSQL | Upstream-compatible |
 | Realtime | Realtime service | /realtime/v1/* | release-specific endpoint smoke test | PostgreSQL is system of record; pub/sub is not | Upstream-compatible |
 | Object/media API | Storage API plus Testagram media service | /storage/v1/*, /v1/videos*, /v1/channels*, /v1/feed | storage status; media /healthz and /readyz | Originals and ownership metadata | Mixed upstream/Testagram |
-| Cache/rate limiting | Testagram platform API backed by Valkey/Redis protocol | /v1/cache/*, /v1/rate-limit/check | /healthz, /readyz, /metrics on private port 8095 | Disposable cache; never canonical user state | Implemented in services/platform |
-| Queues | Testagram platform API backed by Valkey Streams | /v1/queue/* | /readyz checks database and Valkey | Critical jobs must be reconciled from durable DB state | API implemented; operational semantics need service tests |
+| Rate limiting | Backend-native PostgreSQL fixed-window counters | `testagram_auth.rate_limits` | PostgreSQL readiness | PostgreSQL rows with bounded expiry cleanup | Implemented in Backend; no external cache service |
+| Durable asynchronous work | Owning service's PostgreSQL transactional outbox and idempotent worker | Domain-specific outbox/lease contracts | Owning service readiness and oldest-pending metrics | PostgreSQL outbox rows are authoritative | Implemented for replication/federation; no generic queue API |
 | Feature configuration | Testagram platform API backed by PostgreSQL | /v1/config/set, public /v1/config/{key} | /readyz | Versioned PostgreSQL rows | Implemented |
 | Events/audit | Testagram platform API backed by PostgreSQL | /v1/events, /v1/audit | /readyz | PostgreSQL rows; retention policy required | Implemented |
 | Video processing | Testagram video API and FFmpeg worker | /v1/videos*, /v1/channels*, /v1/feed | API /healthz and /readyz; worker readiness endpoint | Original files and job state durable; HLS/posters rebuildable | Implemented; load/resource testing required |
@@ -22,8 +22,8 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 | Distributed compute | Testagram control plane and node agent | Authenticated control-plane API; outbound node channel | control plane /healthz and /readyz | Node/workload state in PostgreSQL; scratch is disposable | Baseline implemented; keep control endpoints private |
 | Hosting control plane | Testagram control-plane hosting API | /v1/hosting/domains, /v1/hosting/deployments, /v1/hosting/nodes, /v1/hosting/usage | /v1/hosting/health plus /healthz and /readyz | PostgreSQL hosting schema; workload state in PostgreSQL | API implemented in progress; DNS records are operator-applied, activation verifies origin IP, Caddy on-demand TLS is gated by active reservations; secret resolver is not implemented |
 | Search | PostgreSQL search first; optional search engine behind adapter | App-owned search interface | Adapter-specific readiness probe | Index is rebuildable; canonical content in PostgreSQL | Architecture target; no separate search engine claimed |
-| Email | Durable transactional outbox plus SMTP/provider adapter | Internal enqueue/send contract to finalize | Queue/worker readiness and adapter probe | Outbox and retry state durable | Adapter boundary planned |
-| AI | Local inference adapter plus optional external provider adapters | Versioned AI gateway contract to finalize | Model availability, timeout, queue depth | Outputs/embeddings follow retention policy | Architecture target; no local GPU service claimed |
+| Email | Durable transactional outbox plus SMTP/provider adapter | Domain-specific outbox worker | Worker readiness and adapter probe | Outbox and retry state durable | Adapter boundary planned |
+| AI | Local inference adapter plus optional external provider adapters | Versioned AI gateway contract to finalize | Model availability, timeout, worker backlog | Outputs/embeddings follow retention policy | Architecture target; no local GPU service claimed |
 | Deployment/monitoring | Compose/systemd, Caddy, Prometheus-compatible metrics | Deployment and scrape interfaces | Container checks, HTTP probes, metrics | Secured config, rotated logs, defined metrics retention | Partial and host-specific |
 
 ## Layer 3 — infrastructure
@@ -34,7 +34,7 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 | Networking/TLS | Caddy ingress and private Docker networks | Persistent certificate state | Only intended public ports; renewal monitoring |
 | PostgreSQL | PostgreSQL wire protocol on private network | Primary relational data | Authenticated access, migration checks, WAL-aware backup, restore drills |
 | Object storage | S3-compatible adapter or local filesystem adapter | Original media and object metadata | Private by default, signed access, checksums, quotas, restore tests |
-| Valkey | Redis protocol adapter | Cache disposable; queue durability explicitly configured | ACL/password, private network, memory/persistence policies, metrics |
+| PostgreSQL rate-limit storage | Native PostgreSQL UPSERT against bounded security counters | No separate service; database readiness | Access controls, expiry cleanup, migration and restore tests |
 | CDN/cache | Caddy/Nginx edge and local media cache | Cache disposable | Never cache authenticated API responses; invalidation; immutable public assets only |
 | Backups | Database, object data, configuration and key escrow | Off-host copies required for disaster recovery | Encryption, access control, retention, checksums, regular restore tests |
 | Domains/DNS | Authoritative DNS provider or self-hosted DNS | Zone export and registrar recovery data | Domain registration remains a cost; self-hosting DNS does not make registration free |
@@ -46,9 +46,9 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 - /metrics is private-network-only unless protected separately at the edge.
 - JSON writes use bounded request bodies, stable status codes, and strict field validation where practical.
 - Internal APIs require bearer credentials or stronger workload identity. Never ship internal tokens to browsers or mobile apps.
-- Cache is never authoritative for users, credentials, posts, payments, job completion, or media ownership.
-- Durable jobs need idempotency, leases, bounded retries, dead-letter/reconciliation paths, and queue-age metrics.
-- Adapters need contract tests so implementations can change without rewriting business logic. The reusable Go client in internal/platformclient exposes Cache, RateLimiter, and Queue interfaces over the versioned internal HTTP API; consumers should depend on these interfaces rather than importing a Redis/Valkey SDK. New consumers still need to be migrated and tested before claiming full decoupling.
+
+- Durable jobs use the owning service's PostgreSQL outbox, idempotency keys, leases, bounded retries and reconciliation; do not introduce a generic queue service.
+- Cross-repository APIs require versioned contract tests. Cache clients, Redis/Valkey adapters, Upstash URLs, and generic queue wrappers are excluded from the retained architecture.
 
 ## Hosting control plane implementation boundary
 
