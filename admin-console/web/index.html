@@ -37,14 +37,7 @@
             <label for="login-email">Work email</label><input id="login-email" name="email" type="email" autocomplete="username" placeholder="you@testagram.site" required maxlength="320">
             <label for="login-password">Password</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
             <button class="button button-primary full" type="submit">Sign in <span>→</span></button>
-            <div class="form-links"><button type="button" class="text-button" data-view="recover">Forgot password?</button><button type="button" class="text-button" data-view="signup">Create account</button></div>
-          </form>
-          <form id="sign-up-form" class="form hidden">
-            <label for="signup-email">Work email</label><input id="signup-email" name="email" type="email" autocomplete="email" required maxlength="320">
-            <label for="signup-password">Create password</label><input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="12" required maxlength="1024">
-            <p class="field-help">Use at least 12 characters. Creating an account does not grant staff privileges; the owner must approve your role.</p>
-            <button class="button button-primary full" type="submit">Request an account <span>→</span></button>
-            <div class="form-links"><button type="button" class="text-button" data-view="login">Back to sign in</button></div>
+            <div class="form-links"><button type="button" class="text-button" data-view="recover">Forgot password?</button></div>
           </form>
           <form id="recover-form" class="form hidden">
             <label for="recover-email">Account email</label><input id="recover-email" name="email" type="email" autocomplete="email" required maxlength="320">
@@ -83,7 +76,7 @@
           <section class="panel"><div class="panel-heading"><div><div class="eyebrow">YOUR WORKSPACE</div><h2>Operations tools</h2></div><span class="panel-symbol">⌘</span></div>
             <a class="tool-row" href="https://github.com/Trendyzima/Testagram-backend-" target="_blank" rel="noreferrer"><span class="tool-icon">⌘</span><span><b>Backend repository</b><small>Code, pull requests and CI runs</small></span><span class="arrow">↗</span></a>
             <a class="tool-row" id="grafana-link" href="http://127.0.0.1:3000" target="_blank" rel="noreferrer"><span class="tool-icon">▥</span><span><b>Grafana dashboards</b><small>Detailed charts; may require your private SSH tunnel</small></span><span class="arrow">↗</span></a>
-            <div class="tool-row static-row"><span class="tool-icon">◉</span><span><b>Access policy</b><small>Roles are read from server-controlled Supabase app_metadata.</small></span><span class="pill">ENFORCED</span></div>
+            <div class="tool-row static-row"><span class="tool-icon">◉</span><span><b>Access policy</b><small>Staff roles are read from PostgreSQL and cannot be self-assigned.</small></span><span class="pill">ENFORCED</span></div>
           </section>
           <section id="invite-panel" class="panel hidden"><div class="panel-heading"><div><div class="eyebrow">OWNER TOOLS</div><h2>Invite a teammate</h2></div><span class="panel-symbol">＋</span></div>
             <form id="invite-form" class="form compact"><label for="invite-email">Teammate email</label><input id="invite-email" name="email" type="email" required maxlength="320" placeholder="colleague@example.com"><label for="invite-role">Staff role</label><select id="invite-role" name="role"><option value="engineer">Engineer</option><option value="operations">Operations</option><option value="administrator">Administrator</option><option value="support">Support</option><option value="moderator">Moderator</option></select><button class="button button-primary full" type="submit">Send secure invitation</button><p class="field-help">Owner role cannot be granted from this form. Invitations require the server-side Auth admin key.</p></form>
