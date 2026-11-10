@@ -33,7 +33,7 @@ jobs:
             jq -c '[.machines[] | {id,name,state}]' <<<"$machines"
             exit 1
           fi
-          payload="$(jq -nc '{cmd:"set +e; echo ===DEPLOY_LOG===; tail -n 100 /data/home/testagram/deploy.log 2>&1; echo ===OVERLAY_STATUS===; cat /data/home/testagram/overlay-status.txt 2>/dev/null; echo ===CONTAINERS===; sudo docker ps -a --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"; echo ===DISK===; df -h / /data; echo ===MEMORY===; free -m; echo ===MACHINE===; hostname; true",timeoutSeconds:60}')"
+          payload="$(jq -nc '{cmd:"set +e; echo ===DEPLOY_LOG===; tail -n 100 /data/home/testagram/deploy.log 2>&1; echo ===OVERLAY_STATUS===; cat /data/home/testagram/overlay-status.txt 2>/dev/null; echo ===CONTAINERS===; sudo docker ps -a --format \"table {{.Names}}\\t{{.Status}}\\t{{.Ports}}\"; echo ===OBJECT_INIT_LOG===; sudo docker logs --tail 100 testagram-self-hosted-object-init-1 2>&1; echo ===MINIO_LOG===; sudo docker logs --tail 60 testagram-self-hosted-object-storage-1 2>&1; echo ===DISK=== df -h / /data; echo ===MEMORY===; free -m; echo ===MACHINE===; hostname; true",timeoutSeconds:60}')"
           result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H "Content-Type: application/json" -d "$payload" "$API/v1/machines/$machine_id/exec")"
           echo "Machine: $machine_id"
           jq -r '.stdout // empty' <<<"$result"
