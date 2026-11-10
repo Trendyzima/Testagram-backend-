@@ -522,3 +522,12 @@ func TestPublicHomeFeedRejectsInvalidLimit(t *testing.T) {
 		t.Fatalf("public feed invalid limit status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 }
+
+func TestNormalizedRouteDoesNotExposeRetiredIdentityLink(t *testing.T) {
+	if got := normalizedRoute("/api/identity/link"); got != "unmatched" {
+		t.Fatalf("retired identity route normalized to %q, want unmatched", got)
+	}
+	if got := normalizedRoute("/api/media/list"); got != "/api/media/list" {
+		t.Fatalf("media route normalized to %q, want /api/media/list", got)
+	}
+}
