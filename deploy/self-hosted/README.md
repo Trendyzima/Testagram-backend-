@@ -60,7 +60,18 @@ Data Centre overlay. Start it first. The overlay does not publish ports or run
 a second reverse proxy; Caddy remains the only public edge.
 
 The Backend PostgreSQL container applies Backend-owned migrations on first
-initialization. The Data Centre migration runner tracks its own applied files
+initialization. Existing PostgreSQL volumes do not rerun Docker init scripts.
+For an already-initialized database, apply the new Federation outbox migration
+through the backup-verified operator script before enabling Federation publishing:
+
+```sh
+./apply-federation-outbox-migration.sh
+```
+
+The script waits for PostgreSQL, creates and validates a custom-format backup,
+requires an explicit confirmation phrase, applies migration 022, and verifies
+the outbox table. Retain the backup until the Backend and Federation runtime
+smoke tests pass. The Data Centre migration runner tracks its own applied files
 and checksums in the same database. Never edit an already-applied migration;
 add a new forward-only migration instead.
 
