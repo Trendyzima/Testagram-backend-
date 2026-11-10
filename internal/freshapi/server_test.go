@@ -341,6 +341,15 @@ func TestCreatePostUsesVerifiedIdentityAndIdempotency(t *testing.T) {
 	if !ok || payload["id"] != outbox["object_id"] || payload["author_id"] != "new_user_1" || payload["content"] != "Hello Testagram" {
 		t.Fatalf("outbox event is missing the authorized post snapshot: %#v", outbox["payload"])
 	}
+	// Keep the durable event aligned with federated-content's strict
+	// publishedPostPayload decoder. A locally valid post event that omits
+	// these fields would otherwise be quarantined by the Federation worker.
+	if outbox["$id"] != outbox["event_id"] || outbox["event_type"] != "testagram.post.published" ||
+		outbox["schema_version"] != float64(1) || outbox["federation_eligible"] != true ||
+		payload["actor_handle"] != "tester" || payload["visibility"] != "public" ||
+		payload["sensitive"] != false || payload["created_at"] == "" {
+		t.Fatalf("outbox event does not satisfy the Federation published-post contract: event=%#v payload=%#v", outbox, payload)
+	}
 	var firstEnvelope struct {
 		Data map[string]any `json:"data"`
 	}
