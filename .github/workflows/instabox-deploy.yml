@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: testagram-instabox-deploy-repair
+  group: testagram-instabox-deploy-repair-2
   cancel-in-progress: false
 
 jobs:
