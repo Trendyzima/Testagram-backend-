@@ -688,6 +688,9 @@ func requestID(r *http.Request) string {
 }
 
 func (s *service) checkCapabilityRateLimit(ctx context.Context, key string, limit int64) (bool, int64, error) {
+	if s.db == nil {
+		return false, 0, errors.New("rate limit database is unavailable")
+	}
 	digest := sha256.Sum256([]byte(key))
 	bucketHash := hex.EncodeToString(digest[:])
 	var attempts int
@@ -766,6 +769,10 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if observation != nil {
 		observation.group = capabilityGroup(body.Capability)
 	}
+	if !public && !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
+		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
+		return
+	}
 	if body.Input == nil {
 		body.Input = map[string]any{}
 	}
@@ -796,10 +803,6 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
 		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Request rate limit exceeded", id))
-		return
-	}
-	if !public && !strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
-		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "Authentication required", id))
 		return
 	}
 	if body.Capability == "testagram.search.unified" && s.nativeUnifiedSearch(w, r, id, body.Input) {
