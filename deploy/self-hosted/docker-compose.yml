@@ -126,6 +126,8 @@ services:
       MEDIA_S3_REGION: ${MEDIA_S3_REGION:-us-east-1}
       MEDIA_PRIVATE_BUCKET: ${MEDIA_PRIVATE_BUCKET:-testagram-private-media}
       MEDIA_PUBLIC_BUCKET: ${MEDIA_PUBLIC_BUCKET:-testagram-public-media}
+      CDN_MEDIA_BASE_URL: ${CDN_MEDIA_BASE_URL:-}
+      CLOUDFLARE_MEDIA_SIGNING_SECRET: ${CLOUDFLARE_MEDIA_SIGNING_SECRET:-}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-20}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
       MINIO_MEDIA_ACCESS_KEY: ${MINIO_MEDIA_ACCESS_KEY:-}
