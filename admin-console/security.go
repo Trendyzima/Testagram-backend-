@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -342,4 +343,41 @@ func (a *app) handleAdminAudit(w http.ResponseWriter,r *http.Request) {
 	}
 	if err:=rows.Err(); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the security audit ledger"}); return }
 	writeJSON(w,200,map[string]any{"items":entries})
+}
+
+
+type internalAuthorizationInput struct {
+	AppwriteUserID string `json:"appwrite_user_id"`
+	Permission string `json:"permission"`
+}
+
+func (a *app) handleInternalAuthorize(w http.ResponseWriter,r *http.Request) {
+	if r.Method!=http.MethodPost { writeJSON(w,http.StatusMethodNotAllowed,map[string]string{"error":"Method not allowed"}); return }
+	if len(a.serviceAuthKey)!=32 { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Internal authorization is not configured"}); return }
+	provided:=r.Header.Get("X-Testagram-Admin-Service-Key")
+	if len(provided)!=64 {
+		writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Invalid service credentials"}); return
+	}
+	decoded,err:=hex.DecodeString(provided)
+	if err!=nil || subtle.ConstantTimeCompare(decoded,a.serviceAuthKey)!=1 {
+		writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Invalid service credentials"}); return
+	}
+	var input internalAuthorizationInput
+	if !decodeBody(w,r,&input) { return }
+	input.AppwriteUserID=strings.TrimSpace(input.AppwriteUserID)
+	input.Permission=strings.TrimSpace(input.Permission)
+	if len(input.AppwriteUserID)<1 || len(input.AppwriteUserID)>36 || len(input.Permission)<1 || len(input.Permission)>100 {
+		writeJSON(w,http.StatusBadRequest,map[string]string{"error":"A valid staff identity and permission are required"}); return
+	}
+	ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second); defer cancel()
+	var role string
+	err=a.database.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL",input.AppwriteUserID).Scan(&role)
+	if err!=nil {
+		if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusForbidden,map[string]any{"authorized":false,"reason":"not_active_staff"}); return }
+		writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Staff authorization database is unavailable"}); return
+	}
+	user:=authUser{ID:input.AppwriteUserID,StaffRole:role}
+	allowed,err:=a.hasPermission(user,input.Permission)
+	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Permission service is unavailable"}); return }
+	writeJSON(w,http.StatusOK,map[string]any{"authorized":allowed,"user_id":input.AppwriteUserID,"permission":input.Permission,"role":role})
 }
