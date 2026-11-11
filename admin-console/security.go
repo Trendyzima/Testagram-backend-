@@ -25,6 +25,13 @@ type sensitiveActionInput struct {
 }
 type decisionInput struct { Decision string `json:"decision"`; Reason string `json:"reason"` }
 
+func normalizeSensitiveDecision(decision string) (string, error) {
+	decision = strings.TrimSpace(decision)
+	if decision == "" { return "approved", nil }
+	if decision != "approved" && decision != "rejected" { return "", errors.New("unsupported decision") }
+	return decision, nil
+}
+
 func permissionForAction(action string) (string, error) {
 	switch action {
 	case "identity.approve": return "identity.review", nil
@@ -108,7 +115,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter,r *http.Reques
 	id:=r.PathValue("id")
 	if len(id)!=36 || !regexp.MustCompile("^[0-9a-fA-F-]{36}$").MatchString(id) { writeJSON(w,400,map[string]string{"error":"Invalid approval request ID"}); return }
 	var input decisionInput; if !decodeBody(w,r,&input) { return }
-	input.Reason=strings.TrimSpace(input.Reason); if input.Decision=="" { input.Decision="approved" }; if input.Decision!="approved" && input.Decision!="rejected" { writeJSON(w,400,map[string]string{"error":"Decision must be approved or rejected"}); return }; if len(input.Reason)<8 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A decision reason of at least 8 characters is required"}); return }
+	input.Reason=strings.TrimSpace(input.Reason); input.Decision,err=normalizeSensitiveDecision(input.Decision); if err!=nil { writeJSON(w,400,map[string]string{"error":"Decision must be approved or rejected"}); return }; if len(input.Reason)<8 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A decision reason of at least 8 characters is required"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second); defer cancel()
 	var action,requester,status string
 	err:=a.database.QueryRow(ctx,"SELECT action_type,requested_by_appwrite_user_id,status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid AND expires_at>now()",id).Scan(&action,&requester,&status)
