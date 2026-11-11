@@ -99,7 +99,9 @@ func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request
 	if len(input.TargetReference)<1 || len(input.TargetReference)>200 || len(input.Reason)<12 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A target reference and a reason of at least 12 characters are required"}); return }
 	payload:=input.Payload; if len(payload)==0 { payload=json.RawMessage("{}") }
 	var value any; if err:=json.Unmarshal(payload,&value); err!=nil { writeJSON(w,400,map[string]string{"error":"Payload must be valid JSON"}); return }
-	canonical,err:=json.Marshal(value); if err!=nil || len(canonical)>12<<10 { writeJSON(w,400,map[string]string{"error":"Payload is invalid or too large"}); return }
+	object,ok:=value.(map[string]any)
+	if !ok { writeJSON(w,400,map[string]string{"error":"Payload must be a JSON object"}); return }
+	canonical,err:=json.Marshal(object); if err!=nil || len(canonical)>12<<10 { writeJSON(w,400,map[string]string{"error":"Payload is invalid or too large"}); return }
 	digest:=sha256.Sum256(canonical)
 	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second); defer cancel()
 	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Approval service is unavailable"}); return }
