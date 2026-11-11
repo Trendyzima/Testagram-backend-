@@ -17,6 +17,20 @@ import (
 )
 
 type stepUpInput struct { Password string `json:"password"` }
+
+func (a *app) consumeAdminRateLimit(ctx context.Context, actorID, operation string, limit int, window time.Duration) (bool, error) {
+	digest:=sha256.Sum256([]byte(actorID+"\x00"+operation))
+	key:=hex.EncodeToString(digest[:])
+	var count int
+	err:=a.database.QueryRow(ctx, `INSERT INTO testagram_auth.admin_rate_limits AS current
+		(rate_key,window_started_at,request_count) VALUES($1,now(),1)
+		ON CONFLICT(rate_key) DO UPDATE SET
+			request_count=CASE WHEN current.window_started_at <= now()-($2 * interval '1 second') THEN 1 ELSE current.request_count+1 END,
+			window_started_at=CASE WHEN current.window_started_at <= now()-($2 * interval '1 second') THEN now() ELSE current.window_started_at END
+		RETURNING request_count`,key,int64(window.Seconds())).Scan(&count)
+	if err!=nil { return false,err }
+	return count<=limit,nil
+}
 type sensitiveActionInput struct {
 	ActionType string `json:"action_type"`
 	TargetReference string `json:"target_reference"`
@@ -81,6 +95,9 @@ func (a *app) handleStepUp(w http.ResponseWriter, r *http.Request) {
 	var input stepUpInput; if !decodeBody(w,r,&input) { return }
 	if len(input.Password)<1 || len(input.Password)>1024 { writeJSON(w,400,map[string]string{"error":"Password is required"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second); defer cancel()
+	allowed,rateErr:=a.consumeAdminRateLimit(ctx,user.ID,"step-up",5,15*time.Minute)
+	if rateErr!=nil { writeJSON(w,503,map[string]string{"error":"Security rate-limit service is unavailable"}); return }
+	if !allowed { writeJSON(w,429,map[string]string{"error":"Too many re-authentication attempts. Try again later."}); return }
 	var temporary appwriteSession
 	_,err:=a.appwriteRequest(ctx,http.MethodPost,"/account/sessions/email","",map[string]string{"email":user.Email,"password":input.Password},&temporary)
 	if err!=nil || temporary.Secret=="" || temporary.ID=="" { writeJSON(w,401,map[string]string{"error":"Re-authentication failed"}); return }
@@ -95,6 +112,7 @@ func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request
 	permission,err:=permissionForAction(input.ActionType); if err!=nil { writeJSON(w,400,map[string]string{"error":"Unsupported sensitive action type"}); return }
 	s,actor,ok:=a.requirePermission(w,r,permission); if !ok { return }
 	if !a.requireRecentStepUp(w,s) { return }
+	if allowed,rateErr:=a.consumeAdminRateLimit(r.Context(),actor.ID,"sensitive-request",10,time.Hour); rateErr!=nil { writeJSON(w,503,map[string]string{"error":"Security rate-limit service is unavailable"}); return } else if !allowed { writeJSON(w,429,map[string]string{"error":"Too many sensitive-action requests. Try again later."}); return }
 	input.TargetReference=strings.TrimSpace(input.TargetReference); input.Reason=strings.TrimSpace(input.Reason)
 	if len(input.TargetReference)<1 || len(input.TargetReference)>200 || len(input.Reason)<12 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A target reference and a reason of at least 12 characters are required"}); return }
 	payload:=input.Payload; if len(payload)==0 { payload=json.RawMessage("{}") }
@@ -126,6 +144,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter,r *http.Reques
 	permission,err:=approvalPermissionForAction(action); if err!=nil { writeJSON(w,400,map[string]string{"error":"Unsupported approval type"}); return }
 	s,approver,ok:=a.requirePermission(w,r,permission); if !ok { return }
 	if !a.requireRecentStepUp(w,s) { return }
+	if allowed,rateErr:=a.consumeAdminRateLimit(ctx,approver.ID,"sensitive-decision",30,time.Hour); rateErr!=nil { writeJSON(w,503,map[string]string{"error":"Security rate-limit service is unavailable"}); return } else if !allowed { writeJSON(w,429,map[string]string{"error":"Too many approval decisions. Try again later."}); return }
 	if approver.ID==requester { writeJSON(w,403,map[string]string{"error":"The requester cannot approve their own sensitive action"}); return }
 	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Approval service is unavailable"}); return }
 	defer func(){_ = tx.Rollback(context.Background())}()
