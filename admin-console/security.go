@@ -373,7 +373,7 @@ func (a *app) handleInternalAuthorize(w http.ResponseWriter,r *http.Request) {
 	}
 	ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second); defer cancel()
 	var role string
-	err=a.database.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL",input.AppwriteUserID).Scan(&role)
+	err:=a.database.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL",input.AppwriteUserID).Scan(&role)
 	if err!=nil {
 		if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusForbidden,map[string]any{"authorized":false,"reason":"not_active_staff"}); return }
 		writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Staff authorization database is unavailable"}); return
