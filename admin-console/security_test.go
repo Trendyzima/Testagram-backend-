@@ -64,3 +64,23 @@ func TestRecentStepUpRequiresUnexpiredWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeSensitiveDecision(t *testing.T) {
+	cases := []struct {
+		input string
+		want string
+		wantErr bool
+	}{
+		{"", "approved", false},
+		{" approved ", "approved", false},
+		{"rejected", "rejected", false},
+		{"pending", "", true},
+		{"APPROVED", "", true},
+	}
+	for _, test := range cases {
+		got, err := normalizeSensitiveDecision(test.input)
+		if (err != nil) != test.wantErr || got != test.want {
+			t.Errorf("normalizeSensitiveDecision(%q) = %q, %v; want %q, error=%v", test.input, got, err, test.want, test.wantErr)
+		}
+	}
+}
