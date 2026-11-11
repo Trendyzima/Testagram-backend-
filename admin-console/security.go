@@ -166,10 +166,8 @@ type permissionGrantInput struct {
 }
 
 func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
-	_, actor, ok := a.requireStaff(w, r, "owner")
+	s, actor, ok := a.requireStaff(w, r, "owner")
 	if !ok { return }
-	s, _, ok := a.currentUser(w, r)
-	if !ok { writeJSON(w,401,map[string]string{"error":"Sign in required"}); return }
 	if !a.requireRecentStepUp(w,s) { return }
 	target:=r.PathValue("id")
 	if len(target)<1 || len(target)>36 { writeJSON(w,400,map[string]string{"error":"Invalid staff user ID"}); return }
