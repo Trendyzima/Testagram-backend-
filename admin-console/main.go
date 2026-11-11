@@ -44,8 +44,9 @@ type app struct {
 }
 
 type session struct {
-	Secret    string `json:"secret"`
-	ExpiresAt int64  `json:"expires_at"`
+	Secret      string `json:"secret"`
+	ExpiresAt   int64  `json:"expires_at"`
+	StepUpUntil int64  `json:"step_up_until,omitempty"`
 }
 
 type authUser struct {
@@ -164,6 +165,10 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/sign-out", a.handleSignOut)
 	mux.HandleFunc("GET /api/overview", a.handleOverview)
 	mux.HandleFunc("POST /api/staff/invite", a.handleInvite)
+	mux.HandleFunc("POST /api/admin/step-up", a.handleStepUp)
+	mux.HandleFunc("POST /api/admin/sensitive-actions", a.handleSensitiveActionRequest)
+	mux.HandleFunc("GET /api/admin/sensitive-actions", a.handleSensitiveActionQueue)
+	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/approve", a.handleSensitiveActionDecision)
 	return a.securityHeaders(mux)
 }
 
