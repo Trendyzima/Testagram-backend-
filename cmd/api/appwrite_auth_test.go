@@ -94,3 +94,28 @@ func TestAppwriteAuthenticationFailsClosedWhenNotConfigured(t *testing.T) {
 		t.Fatalf("status=%d err=%v; expected Appwrite configuration failure", status, err)
 	}
 }
+
+
+func TestAuthenticatedAppwriteUserRejectsUnverifiedEmailBeforeIdentityLookup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/account" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"$id":"user_123","email":"person@example.test","emailVerification":false,"status":true}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("APPWRITE_ENDPOINT", server.URL)
+	t.Setenv("APPWRITE_PROJECT_ID", "test-project")
+	service := &service{upstream: server.Client()}
+	request := httptest.NewRequest(http.MethodPost, "/api/social/posts", nil)
+	_, status, err := service.authenticatedAppwriteUser(request, "valid-but-unverified-session")
+	if err == nil || status != http.StatusForbidden {
+		t.Fatalf("status=%d err=%v; expected verified-email authorization failure", status, err)
+	}
+	if !strings.Contains(err.Error(), "email verification is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
