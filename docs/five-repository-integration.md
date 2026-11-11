@@ -1,3 +1,5 @@
+> **Superseded:** This is a historical five-repository design note. The authoritative current scope and service-to-service contract is [`docs/six-repository-runtime-integration-contract.md`](six-repository-runtime-integration-contract.md), which covers all six retained repositories. Do not use this historical document to infer current deployment wiring.
+
 # Five-repository integration contract
 
 ## Repositories and ownership
