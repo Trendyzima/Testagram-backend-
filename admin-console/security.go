@@ -23,7 +23,7 @@ type sensitiveActionInput struct {
 	Reason string `json:"reason"`
 	Payload json.RawMessage `json:"payload"`
 }
-type decisionInput struct { Reason string `json:"reason"` }
+type decisionInput struct { Decision string `json:"decision"`; Reason string `json:"reason"` }
 
 func permissionForAction(action string) (string, error) {
 	switch action {
@@ -108,7 +108,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter,r *http.Reques
 	id:=r.PathValue("id")
 	if len(id)!=36 || !regexp.MustCompile("^[0-9a-fA-F-]{36}$").MatchString(id) { writeJSON(w,400,map[string]string{"error":"Invalid approval request ID"}); return }
 	var input decisionInput; if !decodeBody(w,r,&input) { return }
-	input.Reason=strings.TrimSpace(input.Reason); if len(input.Reason)<8 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A decision reason of at least 8 characters is required"}); return }
+	input.Reason=strings.TrimSpace(input.Reason); if input.Decision=="" { input.Decision="approved" }; if input.Decision!="approved" && input.Decision!="rejected" { writeJSON(w,400,map[string]string{"error":"Decision must be approved or rejected"}); return }; if len(input.Reason)<8 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A decision reason of at least 8 characters is required"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second); defer cancel()
 	var action,requester,status string
 	err:=a.database.QueryRow(ctx,"SELECT action_type,requested_by_appwrite_user_id,status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid AND expires_at>now()",id).Scan(&action,&requester,&status)
@@ -123,16 +123,16 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter,r *http.Reques
 	var locked string
 	err=tx.QueryRow(ctx,"SELECT status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid AND expires_at>now() FOR UPDATE",id).Scan(&locked)
 	if err!=nil || locked!="pending" { writeJSON(w,409,map[string]string{"error":"This request is no longer pending"}); return }
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_appwrite_user_id,decision,reason) VALUES($1::uuid,$2,'approved',$3)",id,approver.ID,input.Reason)
+	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_appwrite_user_id,decision,reason) VALUES($1::uuid,$2,$3,$4)",id,approver.ID,input.Decision,input.Reason)
 	if err!=nil { writeJSON(w,409,map[string]string{"error":"You have already decided this request or the approval could not be recorded"}); return }
 	var count int
 	err=tx.QueryRow(ctx,"SELECT count(*) FROM testagram_auth.sensitive_action_approvals WHERE request_id=$1::uuid AND decision='approved'",id).Scan(&count)
-	if err==nil && count>=2 { _,err=tx.Exec(ctx,"UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now() WHERE id=$1::uuid AND status='pending'",id) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,request_id,metadata) SELECT $1,'sensitive_action.approved',target_reference,id,jsonb_build_object('action_type',action_type,'approval_count',$2) FROM testagram_auth.sensitive_action_requests WHERE id=$3::uuid",approver.ID,count,id) }
+	state:="pending"
+	if input.Decision=="rejected" { state="rejected"; _,err=tx.Exec(ctx,"UPDATE testagram_auth.sensitive_action_requests SET status='rejected',decided_at=now() WHERE id=$1::uuid AND status='pending'",id) } else if err==nil && count>=2 { state="approved"; _,err=tx.Exec(ctx,"UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now() WHERE id=$1::uuid AND status='pending'",id) }
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,request_id,metadata) SELECT $1,$2,target_reference,id,jsonb_build_object('action_type',action_type,'decision', $3, 'approval_count',$4) FROM testagram_auth.sensitive_action_requests WHERE id=$5::uuid",approver.ID,"sensitive_action."+input.Decision,input.Decision,count,id) }
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely record the approval"}); return }
-	state:="pending"; if count>=2 { state="approved" }
-	writeJSON(w,200,map[string]any{"ok":true,"status":state,"approval_count":count,"required_approvals":2,"message":"Approval recorded. Approval does not itself execute the underlying action."})
+	writeJSON(w,200,map[string]any{"ok":true,"status":state,"approval_count":count,"required_approvals":2,"message":"Decision recorded. The underlying action is not executed by this approval ledger."})
 }
 func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) {
 	if _,_,ok:=a.requirePermission(w,r,"audit.read"); !ok { return }
