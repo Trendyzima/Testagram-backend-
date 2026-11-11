@@ -806,6 +806,17 @@ jobs:
               NULL;
             END IF;
           END $approval$;
+          UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
+          WHERE appwrite_user_id='ci-engineer-user';
+          DO $revocation$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id='ci-engineer-user' AND access_revoked_at IS NOT NULL) THEN
+              RAISE EXCEPTION 'staff revocation timestamp was not persisted';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id='ci-engineer-user' AND permission_key='deployment.approve') THEN
+              RAISE EXCEPTION 'revocation must preserve permission audit history';
+            END IF;
+          END $revocation$;
           SQL
       - name: Stop isolated PostgreSQL
         if: always()
