@@ -467,9 +467,13 @@ func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	}
 	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_role_audit(actor_appwrite_user_id,target_appwrite_user_id,action,role)
 		VALUES($1,$2,'invited',$3)`,actor.ID,invited.ID,input.Role);err!=nil {
+		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
 		writeJSON(w,503,map[string]string{"error":"Could not audit the staff invitation"});return
 	}
-	if err=tx.Commit(ctx);err!=nil { writeJSON(w,503,map[string]string{"error":"Could not commit the staff invitation"});return }
+	if err=tx.Commit(ctx);err!=nil {
+		log.Printf("staff invitation commit outcome requires reconciliation actor=%s target_user=%s",actor.ID,invited.ID)
+		writeJSON(w,503,map[string]string{"error":"Could not confirm the staff invitation commit. Check the staff directory before retrying."});return
+	}
 	_,recoveryErr:=a.appwriteRequest(ctx,http.MethodPost,"/account/recovery","",map[string]string{"email":input.Email,"url":a.publicURL+"/reset-password"},nil)
 	if recoveryErr!=nil {
 		log.Printf("staff invitation recovery email failed actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
