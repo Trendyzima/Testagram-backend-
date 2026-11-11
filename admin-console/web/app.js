@@ -30,9 +30,9 @@ function showView(name) {
   byId("auth-title").textContent = copy[0];
   byId("auth-subtitle").textContent = copy[1];
 }
-async function api(path, body) {
+async function api(path, body, method) {
   const response = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
+    method: method || (body === undefined ? "GET" : "POST"),
     credentials: "same-origin",
     headers: body === undefined ? { "Accept": "application/json" } : { "Content-Type": "application/json", "Accept": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -74,7 +74,10 @@ function renderDashboard(user) {
   byId("avatar").textContent = (user.email || "T").trim().slice(0, 1).toUpperCase();
   byId("welcome").textContent = "Signed in as " + (user.email || "an approved staff member") + ". Service metrics refresh on demand.";
   byId("invite-panel").classList.toggle("hidden", user.role !== "owner");
+  byId("permission-panel").classList.toggle("hidden", user.role !== "owner");
+  byId("approval-panel").classList.toggle("hidden", user.role !== "owner" && user.role !== "administrator");
   refreshOverview();
+  if (user.role === "owner" || user.role === "administrator") loadApprovalQueue();
 }
 async function loadSession() {
   try {
@@ -211,3 +214,100 @@ if (resetUser && resetToken) {
   history.replaceState(null, "", "/reset-password");
 }
 loadSession();
+
+
+byId("stepup-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget; busy(form, true);
+  try {
+    const result = await api("/api/admin/step-up", { password: byId("stepup-password").value });
+    byId("stepup-password").value = "";
+    byId("stepup-state").textContent = "Re-authenticated. Sensitive actions are unlocked until " + new Date(result.step_up_expires_at * 1000).toLocaleTimeString() + ".";
+    notice("Identity confirmed. The step-up window expires in five minutes.", "success");
+  } catch (error) {
+    byId("stepup-state").textContent = "Re-authentication was not completed.";
+    notice(error.message, "error");
+  } finally { busy(form, false); }
+});
+
+byId("permission-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget; busy(form, true);
+  try {
+    const userID = byId("permission-user").value.trim();
+    const result = await api("/api/admin/staff/" + encodeURIComponent(userID) + "/permissions", {
+      permission: byId("permission-key").value,
+      granted: byId("permission-granted").value === "true",
+      reason: byId("permission-reason").value.trim()
+    }, "PUT");
+    notice((result.granted ? "Granted " : "Denied ") + result.permission + " for " + result.user_id + ".", "success");
+    byId("permission-reason").value = "";
+  } catch (error) { notice(error.message, "error"); }
+  finally { busy(form, false); }
+});
+
+async function loadApprovalQueue() {
+  const list = byId("approval-list");
+  if (!list) return;
+  list.replaceChildren();
+  try {
+    const data = await api("/api/admin/sensitive-actions");
+    const items = data.items || [];
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "field-help";
+      empty.textContent = "No pending sensitive actions.";
+      list.appendChild(empty);
+      return;
+    }
+    for (const item of items) {
+      const card = document.createElement("article");
+      card.className = "approval-item";
+      const heading = document.createElement("b");
+      heading.textContent = item.action_type + " · " + item.target_reference;
+      const detail = document.createElement("p");
+      detail.textContent = item.reason + " · " + item.approval_count + "/" + item.required_approvals + " approvals";
+      const requester = document.createElement("small");
+      requester.textContent = "Requested by " + item.requested_by + " · expires " + new Date(item.expires_at).toLocaleString();
+      card.append(heading, detail, requester);
+      if (currentUser && currentUser.user_id !== item.requested_by) {
+        const form = document.createElement("form");
+        form.className = "form compact";
+        const reason = document.createElement("input");
+        reason.required = true;
+        reason.minLength = 8;
+        reason.maxLength = 1000;
+        reason.placeholder = "Reason for approving this request";
+        const button = document.createElement("button");
+        button.type = "submit";
+        button.className = "button button-primary";
+        button.textContent = "Approve";
+        form.append(reason, button);
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          button.disabled = true;
+          try {
+            const result = await api("/api/admin/sensitive-actions/" + encodeURIComponent(item.id) + "/approve", { reason: reason.value.trim() });
+            notice("Approval recorded. Current state: " + result.status + " (" + result.approval_count + "/" + result.required_approvals + ").", "success");
+            await loadApprovalQueue();
+          } catch (error) {
+            notice(error.message, "error");
+            button.disabled = false;
+          }
+        });
+        card.appendChild(form);
+      } else if (currentUser && currentUser.user_id === item.requested_by) {
+        const own = document.createElement("small");
+        own.textContent = "You requested this action and cannot approve it.";
+        card.appendChild(own);
+      }
+      list.appendChild(card);
+    }
+  } catch (error) {
+    const failed = document.createElement("p");
+    failed.className = "field-help";
+    failed.textContent = error.message;
+    list.appendChild(failed);
+  }
+}
+byId("approval-refresh").addEventListener("click", loadApprovalQueue);
