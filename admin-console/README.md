@@ -92,12 +92,12 @@ written to the security audit ledger.
   and recent step-up.
 - `GET /api/admin/sensitive-actions` — view the pending approval queue; requires
   `audit.read`.
-- `POST /api/admin/sensitive-actions/{id}/approve` — approve a pending request;
-  requires the action-specific approval permission and recent step-up.
+- `POST /api/admin/sensitive-actions/{id}/decision` — approve or reject a pending request; requires the action-specific approval permission, a reason and recent step-up.
+- `GET /api/admin/audit` — read the latest 200 security events; requires `audit.read`.
 
 All state-changing HTTP methods require the exact configured Origin. Sensitive
 request payloads are size-limited, canonicalised and SHA-256 fingerprinted.
-The approval ledger records decisions but **does not execute the underlying
+The approval ledger records approvals and rejections but **does not execute the underlying
 business operation**. Identity provisioning, payment execution, security
 configuration changes and production deployment handlers must consume only
 approved requests and independently revalidate the request hash, actor
