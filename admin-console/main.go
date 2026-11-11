@@ -166,6 +166,9 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/overview", a.handleOverview)
 	mux.HandleFunc("POST /api/staff/invite", a.handleInvite)
 	mux.HandleFunc("POST /api/admin/step-up", a.handleStepUp)
+	mux.HandleFunc("GET /api/admin/staff", a.handleStaffList)
+	mux.HandleFunc("PUT /api/admin/staff/{id}/role", a.handleStaffRoleChange)
+	mux.HandleFunc("DELETE /api/admin/staff/{id}", a.handleStaffRevoke)
 	mux.HandleFunc("PUT /api/admin/staff/{id}/permissions", a.handleSetStaffPermission)
 	mux.HandleFunc("POST /api/admin/sensitive-actions", a.handleSensitiveActionRequest)
 	mux.HandleFunc("GET /api/admin/sensitive-actions", a.handleSensitiveActionQueue)
@@ -321,7 +324,7 @@ func (a *app) currentUser(w http.ResponseWriter, r *http.Request) (session, auth
 		return session{}, authUser{}, false
 	}
 	if a.database == nil { return session{}, authUser{}, false }
-	err = a.database.QueryRow(ctx, `SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1`, user.ID).Scan(&user.StaffRole)
+	err = a.database.QueryRow(ctx, `SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL`, user.ID).Scan(&user.StaffRole)
 	if errors.Is(err, pgx.ErrNoRows) {
 		user.StaffRole = ""
 	} else if err != nil {
@@ -455,7 +458,7 @@ func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	defer func(){_ = tx.Rollback(context.Background())}()
 	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,created_by_appwrite_user_id)
 		VALUES($1,$2,$3) ON CONFLICT(appwrite_user_id) DO UPDATE
-		SET role=EXCLUDED.role,created_by_appwrite_user_id=EXCLUDED.created_by_appwrite_user_id,updated_at=now()`,
+		SET role=EXCLUDED.role,created_by_appwrite_user_id=EXCLUDED.created_by_appwrite_user_id,updated_at=now(),access_revoked_at=NULL`,
 		invited.ID,input.Role,actor.ID);err!=nil {
 		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
 		writeJSON(w,503,map[string]string{"error":"Could not assign the staff role"});return
@@ -468,11 +471,11 @@ func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	_,recoveryErr:=a.appwriteRequest(ctx,http.MethodPost,"/account/recovery","",map[string]string{"email":input.Email,"url":a.publicURL+"/reset-password"},nil)
 	if recoveryErr!=nil {
 		log.Printf("staff invitation recovery email failed actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
-		writeJSON(w,201,map[string]any{"ok":true,"message":"Staff account and role were created. The recipient can use password recovery to set their password."})
+		writeJSON(w,201,map[string]any{"ok":true,"user_id":invited.ID,"role":input.Role,"message":"Staff account and role were created. The recipient can use password recovery to set their password."})
 		return
 	}
 	log.Printf("staff invite created actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
-	writeJSON(w,201,map[string]any{"ok":true,"message":"Invitation sent. The recipient must set a password before accessing the operations workspace."})
+	writeJSON(w,201,map[string]any{"ok":true,"user_id":invited.ID,"role":input.Role,"message":"Invitation sent. The recipient must set a password before accessing the operations workspace."})
 }
 
 type promResponse struct {
