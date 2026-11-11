@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -32,6 +33,7 @@ type app struct {
 	appwriteEndpoint string
 	appwriteProject  string
 	appwriteAPIKey   string
+	serviceAuthKey   []byte
 	database         *pgxpool.Pool
 	publicURL        string
 	publicOrigin     string
@@ -97,6 +99,12 @@ func newApp() (*app, error) {
 	}
 	endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT")), "/")
 	project := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
+	rawServiceKey:=strings.TrimSpace(os.Getenv("ADMIN_SERVICE_AUTH_KEY"))
+	var serviceAuthKey []byte
+	if rawServiceKey!="" {
+		serviceAuthKey,err=hex.DecodeString(rawServiceKey)
+		if err!=nil || len(serviceAuthKey)!=32 { return nil,errors.New("ADMIN_SERVICE_AUTH_KEY must be 64 hexadecimal characters (32 random bytes)") }
+	}
 	parsedEndpoint, err := url.Parse(endpoint)
 	if err != nil || parsedEndpoint.Host == "" || parsedEndpoint.User != nil ||
 		(parsedEndpoint.Scheme != "https" && !(parsedEndpoint.Scheme == "http" && (parsedEndpoint.Hostname() == "localhost" || parsedEndpoint.Hostname() == "127.0.0.1"))) {
