@@ -78,10 +78,6 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage is not configured on this server", id))
-		return
-	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
 		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
@@ -383,8 +379,8 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
 		return
 	}
-	var visibility, assetStatus, storageNamespace string
-	if err := s.db.QueryRow(r.Context(), `select visibility, status, storage_namespace from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus, &storageNamespace); err != nil {
+	var visibility, assetStatus string
+	if err := s.db.QueryRow(r.Context(), `select visibility, status from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus); err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
 	}
@@ -392,18 +388,13 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
 	}
-	var signedURL string
-	if storageNamespace != "legacy-media" {
-		if s.virtualStorage == nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This media object requires the virtual storage provider", id))
-			return
-		}
-		signedURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
-	} else {
-		signedURL, err = s.media.PresignPrivateDownload(userID, body.Key, 5*time.Minute, time.Now())
+	if s.cdnIssuer == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CDN_MEDIA_AUTH_NOT_CONFIGURED", "Private media delivery is unavailable until Backend-to-CDN authorization is configured", id))
+		return
 	}
+	signedURL, err := s.cdnIssuer.Issue(r.Context(), body.Key, userID, "private", 5*time.Minute, time.Now())
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_ACCESS_DENIED", "This private media object is not available to this account", id))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_URL_FAILED", "Could not issue an authorized private media URL", id))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"url": signedURL, "expires_in_seconds": 300}, "error": nil, "request_id": id})
@@ -418,8 +409,8 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media storage or metadata database is unavailable", id))
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
 		return
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
@@ -456,13 +447,13 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		if visibility == "public" {
 			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
 		} else if visibility == "private" {
-			if storageNamespace != "legacy-media" {
-				mediaURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
-			} else {
-				mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
+			if s.cdnIssuer == nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("CDN_MEDIA_AUTH_NOT_CONFIGURED", "Private media delivery is unavailable until Backend-to-CDN authorization is configured", id))
+				return
 			}
+			mediaURL, err = s.cdnIssuer.Issue(r.Context(), key, userID, "private", 5*time.Minute, time.Now())
 			if err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_URL_FAILED", "Could not create private media URL", id))
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_URL_FAILED", "Could not create authorized private media URL", id))
 				return
 			}
 		} else {
