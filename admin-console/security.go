@@ -201,7 +201,8 @@ func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
 type staffRoleInput struct { Role string `json:"role"` }
 
 func (a *app) handleStaffList(w http.ResponseWriter,r *http.Request) {
-	if _,_,ok:=a.requireStaff(w,r,"owner"); !ok { return }
+	s,_,ok:=a.requireStaff(w,r,"owner"); if !ok { return }
+	if !a.requireRecentStepUp(w,s) { return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
 	rows,err:=a.database.Query(ctx,"SELECT appwrite_user_id,role,created_at,updated_at,access_revoked_at FROM testagram_auth.staff_roles ORDER BY created_at DESC LIMIT 500")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load staff directory"}); return }
