@@ -24,7 +24,8 @@ type Capacity struct {
 
 func (c Capacity) Validate() error {
 	if c.LimitBytes <= 0 || c.UsedBytes < 0 || c.ReservedBytes < 0 ||
-		c.SafetyReserveBytes < 0 || c.UsedBytes > math.MaxInt64-c.ReservedBytes {
+		c.SafetyReserveBytes < 0 || c.UsedBytes > c.LimitBytes ||
+		c.UsedBytes > math.MaxInt64-c.ReservedBytes {
 		return errors.New("invalid profile storage capacity")
 	}
 	if c.SafetyReserveBytes >= c.LimitBytes {
