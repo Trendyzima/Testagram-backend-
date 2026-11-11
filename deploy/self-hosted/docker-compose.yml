@@ -139,7 +139,7 @@ services:
       MEDIA_MODERATION_TOKEN: ${MEDIA_MODERATION_TOKEN:-}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
-      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/testagram-public-media}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
       VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-false}
     depends_on:
       postgres:
