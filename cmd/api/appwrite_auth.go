@@ -104,6 +104,12 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if err != nil {
 		return "", status, err
 	}
+	// Email verification is a server-side authorization gate. A valid Appwrite
+	// session alone must not unlock Testagram product APIs while the address is
+	// still unverified; the client-side gate is only a usability measure.
+	if !account.EmailVerification {
+		return "", http.StatusForbidden, errors.New("email verification is required before accessing Testagram")
+	}
 	if s.db == nil {
 		return "", http.StatusServiceUnavailable, errors.New("identity database is unavailable")
 	}
