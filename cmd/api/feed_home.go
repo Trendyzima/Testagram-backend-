@@ -67,6 +67,34 @@ func decodeHomeFeedCursor(value string) (*homeFeedCursor, error) {
 	return &cursor, nil
 }
 
+
+func orderHomeFeedByRanking(posts []homeFeedPost, ranked []algorithmclient.RankedItem) ([]homeFeedPost, bool) {
+	if len(posts) == 0 || len(ranked) != len(posts) {
+		return posts, false
+	}
+	byID := make(map[string]homeFeedPost, len(posts))
+	for _, post := range posts {
+		if post.ID == "" {
+			return posts, false
+		}
+		if _, duplicate := byID[post.ID]; duplicate {
+			return posts, false
+		}
+		byID[post.ID] = post
+	}
+	ordered := make([]homeFeedPost, 0, len(posts))
+	for _, item := range ranked {
+		post, ok := byID[item.ID]
+		if !ok {
+			return posts, false
+		}
+		post.RankingScore = item.Score
+		post.RankingReasons = item.Reasons
+		ordered = append(ordered, post)
+	}
+	return ordered, true
+}
+
 func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	requestID := requestID(r)
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -195,27 +223,14 @@ LIMIT $4`
 		})
 		cancel()
 		if rankErr == nil {
-			byID := make(map[string]homeFeedPost, len(posts))
-			for _, post := range posts {
-				byID[post.ID] = post
+			if ordered, complete := orderHomeFeedByRanking(posts, ranked.Items); complete {
+				posts = ordered
+				rankingMode = "algorithm"
+			} else {
+				// A partial/empty ranker response must never drop authorized posts
+				// while the cursor advances past the complete chronological window.
+				s.algorithmFailures.Add(1)
 			}
-			ordered := make([]homeFeedPost, 0, len(ranked.Items))
-			used := make(map[string]struct{}, len(ranked.Items))
-			for _, item := range ranked.Items {
-				post, ok := byID[item.ID]
-				if !ok {
-					continue
-				} // never hydrate or trust an ID outside this authorized candidate page
-				if _, duplicate := used[item.ID]; duplicate {
-					continue
-				}
-				used[item.ID] = struct{}{}
-				post.RankingScore = item.Score
-				post.RankingReasons = item.Reasons
-				ordered = append(ordered, post)
-			}
-			posts = ordered
-			rankingMode = "algorithm"
 		} else {
 			s.algorithmFailures.Add(1)
 		}
