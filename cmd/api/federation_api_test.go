@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -40,5 +42,28 @@ func TestFederationHandlePattern(t *testing.T) {
 		if localAccountUsernamePattern.MatchString(handle) {
 			t.Errorf("invalid handle %q was accepted", handle)
 		}
+	}
+}
+
+func TestFederationBackendReadCredentialIsDirectional(t *testing.T) {
+	backendReadToken := strings.Repeat("b", 40)
+	service := &service{federationInternalToken: backendReadToken}
+
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/federation/readyz", nil)
+	request.Header.Set("X-Testagram-API-Version", "1")
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("i", 40))
+	response := httptest.NewRecorder()
+	service.federationInternalReady(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("ingress token status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/internal/v1/federation/readyz", nil)
+	request.Header.Set("X-Testagram-API-Version", "1")
+	request.Header.Set("Authorization", "Bearer "+backendReadToken)
+	response = httptest.NewRecorder()
+	service.federationInternalReady(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Backend read token status = %d, want %d (authenticated request reaches DB readiness)", response.Code, http.StatusServiceUnavailable)
 	}
 }
