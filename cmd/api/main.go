@@ -64,6 +64,7 @@ type service struct {
 	federationInternalToken   string
 	upstream                  *http.Client
 	media                     *media.Signer
+	cdnIssuer                 *media.CDNIssuer
 	virtualStorage            *virtualstorage.Manager
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
@@ -983,6 +984,21 @@ func main() {
 		}
 		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
+	var cdnIssuer *media.CDNIssuer
+	cdnMediaBase := strings.TrimSpace(os.Getenv("CDN_MEDIA_BASE_URL"))
+	cdnIssuerSecret := strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_SIGNING_SECRET"))
+	if cdnMediaBase != "" || cdnIssuerSecret != "" {
+		if cdnMediaBase == "" || cdnIssuerSecret == "" {
+			log.Fatal("CDN_MEDIA_BASE_URL and CLOUDFLARE_MEDIA_SIGNING_SECRET must be configured together")
+		}
+		cdnIssuer, err = media.NewCDNIssuer(cdnMediaBase, cdnIssuerSecret, &http.Client{Timeout: 4 * time.Second})
+		if err != nil {
+			log.Fatalf("configure Backend-to-CDN media authorization: %v", err)
+		}
+		log.Printf("Backend-to-CDN viewer-scoped media authorization enabled")
+	} else if mediaSigner != nil {
+		log.Printf("private media delivery is fail-closed: Backend-to-CDN authorization is not configured")
+	}
 	var virtualStorageManager *virtualstorage.Manager
 	if strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true") {
 		if mediaSigner == nil {
@@ -1068,7 +1084,7 @@ func main() {
 	} else {
 		log.Printf("native social post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
 	}
-	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationBackendToken, replicationReceiver: replicationReceiver}
+	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, cdnIssuer: cdnIssuer, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationBackendToken, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
