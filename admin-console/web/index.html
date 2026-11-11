@@ -82,6 +82,30 @@
             <form id="invite-form" class="form compact"><label for="invite-email">Teammate email</label><input id="invite-email" name="email" type="email" required maxlength="320" placeholder="colleague@example.com"><label for="invite-role">Staff role</label><select id="invite-role" name="role"><option value="engineer">Engineer</option><option value="operations">Operations</option><option value="administrator">Administrator</option><option value="support">Support</option><option value="moderator">Moderator</option></select><button class="button button-primary full" type="submit">Send secure invitation</button><p class="field-help">Owner role cannot be granted from this form. Invitations require the server-side Auth admin key.</p></form>
           </section>
         </div>
+        <div class="content-grid">
+          <section id="stepup-panel" class="panel">
+            <div class="panel-heading"><div><div class="eyebrow">PRIVILEGED ACTIONS</div><h2>Confirm your identity</h2></div><span class="panel-symbol">⌁</span></div>
+            <p class="field-help">Re-enter your Appwrite password to unlock sensitive actions for five minutes. This is password re-authentication, not a substitute for MFA.</p>
+            <form id="stepup-form" class="form compact"><label for="stepup-password">Current password</label><input id="stepup-password" type="password" autocomplete="current-password" required maxlength="1024"><button class="button button-primary full" type="submit">Re-authenticate</button></form>
+            <p id="stepup-state" class="field-help" aria-live="polite">Sensitive controls remain locked until re-authentication.</p>
+          </section>
+          <section id="permission-panel" class="panel hidden">
+            <div class="panel-heading"><div><div class="eyebrow">MASTER CONTROLS</div><h2>Assign a permission</h2></div><span class="panel-symbol">♙</span></div>
+            <form id="permission-form" class="form compact">
+              <label for="permission-user">Staff Appwrite user ID</label><input id="permission-user" required maxlength="36" placeholder="Exact Appwrite user ID">
+              <label for="permission-key">Permission</label><select id="permission-key">
+                <option value="identity.review">Identity review and approval</option><option value="finance.read">Financial reports</option><option value="finance.initiate">Initiate financial operations</option><option value="finance.approve">Approve financial operations</option><option value="security.manage">Security policy and incident controls</option><option value="deployment.request">Request production deployment</option><option value="deployment.approve">Approve production deployment</option><option value="moderation.manage">Content moderation</option><option value="advertising.manage">Advertising</option><option value="marketplace.manage">Marketplace</option><option value="tv.manage">TV catalogue and publishing</option><option value="engineering.read">Engineering diagnostics</option><option value="operations.manage">Operations</option><option value="audit.read">Audit history</option>
+              </select>
+              <label for="permission-granted">Access decision</label><select id="permission-granted"><option value="true">Grant permission</option><option value="false">Explicitly deny permission</option></select>
+              <label for="permission-reason">Reason for change</label><input id="permission-reason" required minlength="12" maxlength="500" placeholder="Why is this access needed?">
+              <button class="button button-primary full" type="submit">Save permission</button>
+            </form>
+          </section>
+        </div>
+        <section id="approval-panel" class="panel hidden">
+          <div class="panel-heading"><div><div class="eyebrow">DUAL-CONTROL WORKFLOW</div><h2>Pending sensitive actions</h2></div><button id="approval-refresh" class="button button-secondary" type="button">↻ Refresh</button></div>
+          <div id="approval-list" class="approval-list"><p class="field-help">Approval queue has not been loaded.</p></div>
+        </section>
         <div class="disclaimer"><span>ⓘ</span><p>These metrics are operational signals, not a production-readiness certificate. A missing metric may mean the target is down, not scraped, or the metric is not yet instrumented. Confirm alerts and restore drills independently.</p></div>
       </section>
     </main>
