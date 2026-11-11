@@ -128,12 +128,13 @@ func TestRegisterIdentityVerifiedAccountCreatesAppwriteUserAndProfile(t *testing
 		Data struct {
 			UserID        string `json:"user_id"`
 			EmailVerified bool   `json:"email_verified"`
+			EmailVerificationRequired bool `json:"email_verification_required"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.OK || response.Data.UserID != "new_user_1" || !response.Data.EmailVerified {
+	if !response.OK || response.Data.UserID != "new_user_1" || response.Data.EmailVerified || !response.Data.EmailVerificationRequired {
 		t.Fatalf("unexpected registration response: %+v", response)
 	}
 }
