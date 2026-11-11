@@ -155,6 +155,17 @@ func (p *S3Provider) PresignGet(ctx context.Context, bucket, key string, ttl tim
 // CopyFrom streams a bounded object between two S3-compatible providers without
 // buffering the media in memory. It hashes the source stream and independently
 // reads back and hashes the destination; ETags are never treated as checksums.
+// CopyFromProvider adapts the generic replica contract to this S3 provider.
+// Only another S3Provider is accepted so the source request can preserve its
+// own signing credentials and redirect policy.
+func (p *S3Provider) CopyFromProvider(ctx context.Context, source Provider, sourceBucket, sourceKey, destinationBucket, destinationKey string, expectedBytes int64, contentType, expectedSHA256 string) error {
+	sourceS3, ok := source.(*S3Provider)
+	if !ok {
+		return errors.New("S3 replica copy requires an S3-compatible source provider")
+	}
+	return p.CopyFrom(ctx, sourceS3, sourceBucket, sourceKey, destinationBucket, destinationKey, expectedBytes, contentType, expectedSHA256)
+}
+
 func (p *S3Provider) CopyFrom(ctx context.Context, source *S3Provider, sourceBucket, sourceKey, destinationBucket, destinationKey string, expectedBytes int64, contentType, expectedSHA256 string) error {
 	if source == nil || expectedBytes < 1 || strings.TrimSpace(contentType) == "" || len(expectedSHA256) != 64 {
 		return errors.New("invalid object replication request")
