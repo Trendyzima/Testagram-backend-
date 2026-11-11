@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestCDNIssuerSignsBackendAssertionAndValidatesScopedResponse(t *testing.T) 
 		if !hmac.Equal(signature, mac.Sum(nil)) {
 			t.Fatal("Backend assertion signature did not verify")
 		}
-		token := "1773144300.user-123.private." + strings.Repeat("a", 64)
+		token := strconv.FormatInt(assertion.ExpiresAt, 10) + ".user-123.private." + strings.Repeat("a", 64)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(cdnMediaURLResponse{
 			URL: "https://media.test/v1/" + key + "?token=" + token,
@@ -55,11 +56,12 @@ func TestCDNIssuerSignsBackendAssertionAndValidatesScopedResponse(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The CDN's URL expiry must be exactly the Backend assertion expiry.
-	// Use the response fixture expiry from this fixed test clock.
-	url, err := issuer.Issue(context.Background(), key, "user-123", "private", 5*time.Minute, now)
-	if err == nil {
-		t.Fatalf("expected fixture expiry mismatch to be rejected, got %s", url)
+	issuedURL, err := issuer.Issue(context.Background(), key, "user-123", "private", 5*time.Minute, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(issuedURL, "https://media.test/v1/"+key+"?token=") {
+		t.Fatalf("unexpected scoped CDN URL: %s", issuedURL)
 	}
 }
 
