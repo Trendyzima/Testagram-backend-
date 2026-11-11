@@ -433,7 +433,8 @@ func randomAppwriteUserID() (string,error) {
 }
 
 func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
-	_,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+	s,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+	if !a.requireRecentStepUp(w,s){return}
 	var input inviteInput
 	if !decodeBody(w,r,&input){return}
 	input.Email=strings.TrimSpace(input.Email)
