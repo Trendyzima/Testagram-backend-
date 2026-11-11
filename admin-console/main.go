@@ -166,6 +166,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/overview", a.handleOverview)
 	mux.HandleFunc("POST /api/staff/invite", a.handleInvite)
 	mux.HandleFunc("POST /api/admin/step-up", a.handleStepUp)
+	mux.HandleFunc("PUT /api/admin/staff/{id}/permissions", a.handleSetStaffPermission)
 	mux.HandleFunc("POST /api/admin/sensitive-actions", a.handleSensitiveActionRequest)
 	mux.HandleFunc("GET /api/admin/sensitive-actions", a.handleSensitiveActionQueue)
 	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/approve", a.handleSensitiveActionDecision)
@@ -180,7 +181,7 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("Cache-Control", "no-store")
-		if r.Method == http.MethodPost && !a.sameOrigin(r) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !a.sameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error":"Request origin is not allowed"})
 			return
 		}
