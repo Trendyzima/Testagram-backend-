@@ -75,9 +75,11 @@ function renderDashboard(user) {
   byId("welcome").textContent = "Signed in as " + (user.email || "an approved staff member") + ". Service metrics refresh on demand.";
   byId("invite-panel").classList.toggle("hidden", user.role !== "owner");
   byId("permission-panel").classList.toggle("hidden", user.role !== "owner");
+  byId("staff-directory-panel").classList.toggle("hidden", user.role !== "owner");
   byId("approval-panel").classList.toggle("hidden", user.role !== "owner" && user.role !== "administrator");
   refreshOverview();
   if (user.role === "owner" || user.role === "administrator") loadApprovalQueue();
+  if (user.role === "owner") loadStaffDirectory();
 }
 async function loadSession() {
   try {
@@ -198,7 +200,7 @@ byId("invite-form").addEventListener("submit", async (event) => {
   const form = event.currentTarget; busy(form, true);
   try {
     const result = await api("/api/staff/invite", { email: byId("invite-email").value, role: byId("invite-role").value });
-    notice(result.message || "Invitation sent.", "success");
+    notice((result.message || "Invitation sent.") + (result.user_id ? " Staff ID: " + result.user_id : ""), "success");
     byId("invite-email").value = "";
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
@@ -311,3 +313,74 @@ async function loadApprovalQueue() {
   }
 }
 byId("approval-refresh").addEventListener("click", loadApprovalQueue);
+
+
+async function loadStaffDirectory() {
+  const list = byId("staff-list");
+  if (!list) return;
+  list.replaceChildren();
+  try {
+    const data = await api("/api/admin/staff");
+    for (const staff of (data.items || [])) {
+      const card = document.createElement("article");
+      card.className = "approval-item";
+      const heading = document.createElement("b");
+      heading.textContent = staff.user_id + " · " + staff.role;
+      const detail = document.createElement("p");
+      detail.textContent = staff.revoked_at ? "Access revoked " + new Date(staff.revoked_at).toLocaleString() : "Active staff access · updated " + new Date(staff.updated_at).toLocaleString();
+      card.append(heading, detail);
+      if (staff.role !== "owner" && !staff.revoked_at) {
+        const form = document.createElement("form");
+        form.className = "form compact";
+        const select = document.createElement("select");
+        for (const role of ["administrator", "engineer", "operations", "support", "moderator"]) {
+          const option = document.createElement("option");
+          option.value = role;
+          option.textContent = role;
+          option.selected = role === staff.role;
+          select.appendChild(option);
+        }
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.className = "button button-secondary";
+        save.textContent = "Change role";
+        form.append(select, save);
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          save.disabled = true;
+          try {
+            await api("/api/admin/staff/" + encodeURIComponent(staff.user_id) + "/role", { role: select.value }, "PUT");
+            notice("Staff role updated.", "success");
+            await loadStaffDirectory();
+          } catch (error) { notice(error.message, "error"); save.disabled = false; }
+        });
+        const revoke = document.createElement("button");
+        revoke.type = "button";
+        revoke.className = "button button-quiet";
+        revoke.textContent = "Revoke access";
+        revoke.addEventListener("click", async () => {
+          revoke.disabled = true;
+          try {
+            await api("/api/admin/staff/" + encodeURIComponent(staff.user_id), undefined, "DELETE");
+            notice("Staff access revoked. The account can no longer enter the staff console.", "success");
+            await loadStaffDirectory();
+          } catch (error) { notice(error.message, "error"); revoke.disabled = false; }
+        });
+        card.append(form, revoke);
+      }
+      list.appendChild(card);
+    }
+    if (!(data.items || []).length) {
+      const empty = document.createElement("p");
+      empty.className = "field-help";
+      empty.textContent = "No staff accounts have been invited yet.";
+      list.appendChild(empty);
+    }
+  } catch (error) {
+    const failed = document.createElement("p");
+    failed.className = "field-help";
+    failed.textContent = error.message;
+    list.appendChild(failed);
+  }
+}
+byId("staff-refresh").addEventListener("click", loadStaffDirectory);
