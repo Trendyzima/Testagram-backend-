@@ -5,7 +5,7 @@ package profilestorage
 import (
 	"errors"
 	"math"
-	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -61,10 +61,10 @@ func (p Policy) ChooseTier(appwriteUsed, appwriteReserved, uploadBytes int64) (T
 func ParsePolicy(capacity, reserve string) (Policy, error) {
 	p := DefaultPolicy()
 	if strings.TrimSpace(capacity) != "" {
-		if _, err := fmt.Sscan(capacity, &p.AppwriteCapacityBytes); err != nil { return Policy{}, errors.New("invalid Appwrite capacity bytes") }
+		if value, err := strconv.ParseInt(strings.TrimSpace(capacity), 10, 64); err != nil { return Policy{}, errors.New("invalid Appwrite capacity bytes") } else { p.AppwriteCapacityBytes = value }
 	}
 	if strings.TrimSpace(reserve) != "" {
-		if _, err := fmt.Sscan(reserve, &p.SafetyReserveBytes); err != nil { return Policy{}, errors.New("invalid Appwrite safety reserve bytes") }
+		if value, err := strconv.ParseInt(strings.TrimSpace(reserve), 10, 64); err != nil { return Policy{}, errors.New("invalid Appwrite safety reserve bytes") } else { p.SafetyReserveBytes = value }
 	}
 	if _, err := p.AppwriteLimit(); err != nil { return Policy{}, err }
 	return p, nil
