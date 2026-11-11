@@ -178,13 +178,27 @@ jobs:
             migrations/20261109_iptv_social.sql \
             migrations/20261109_post_views.sql \
             migrations/20261110_native_media_post_links.sql \
-            migrations/20261110_federation_outbox.sql; do
+            migrations/20261110_federation_outbox.sql \
+            migrations/20261111_social_post_idempotency.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify media attachment, poll voting and private history constraints
         run: |
           set -euo pipefail
           docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $post_idempotency_schema$
+          BEGIN
+            IF to_regclass('testagram_local.post_create_idempotency') IS NULL THEN
+              RAISE EXCEPTION 'Native social post idempotency schema migration missing';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_indexes
+              WHERE schemaname='testagram_local'
+                AND indexname='post_create_idempotency_pkey'
+            ) THEN
+              RAISE EXCEPTION 'Native social post idempotency uniqueness constraint missing';
+            END IF;
+          END $post_idempotency_schema$;
           DO $communication_schema$
           BEGIN
             IF to_regclass('testagram_local.conversations') IS NULL
