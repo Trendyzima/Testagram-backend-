@@ -173,7 +173,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/sensitive-actions", a.handleSensitiveActionRequest)
 	mux.HandleFunc("GET /api/admin/sensitive-actions", a.handleSensitiveActionQueue)
 	mux.HandleFunc("GET /api/admin/audit", a.handleAdminAudit)
-	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/approve", a.handleSensitiveActionDecision)
+	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/decision", a.handleSensitiveActionDecision)
 	return a.securityHeaders(mux)
 }
 
