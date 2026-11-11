@@ -16,9 +16,9 @@ const (
 )
 
 type Capacity struct {
-	LimitBytes        int64
-	UsedBytes         int64
-	ReservedBytes     int64
+	LimitBytes         int64
+	UsedBytes          int64
+	ReservedBytes      int64
 	SafetyReserveBytes int64
 }
 
