@@ -61,7 +61,7 @@ the bootstrap action in the operator's deployment/change log.
 Apply `migrations/20261111_admin_security_controls.sql` after the staff-role
 migration. PostgreSQL is the source of truth for role permissions and per-user
 overrides. The owner is the only built-in principal with unrestricted access.
-An owner can grant or explicitly deny a single permission to a staff account
+An owner can grant or explicitly deny a single permission to a staff account, change non-owner roles, and revoke staff access
 through the protected API; a per-user override takes precedence over its role.
 
 Initial role grants are deliberately narrow:
@@ -81,6 +81,9 @@ written to the security audit ledger.
 ### Protected endpoints
 
 - `POST /api/admin/step-up` — re-authenticate the current Appwrite account.
+- `GET /api/admin/staff` — owner-only staff directory, including revoked access.
+- `PUT /api/admin/staff/{id}/role` — owner-only role changes, with recent step-up.
+- `DELETE /api/admin/staff/{id}` — owner-only staff access revocation; existing audit references are retained.
 - `PUT /api/admin/staff/{id}/permissions` — owner-only, recent step-up required;
   grant or deny one permission with a reason.
 - `POST /api/admin/sensitive-actions` — request one of
