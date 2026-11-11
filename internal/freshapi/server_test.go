@@ -68,9 +68,9 @@ func testServerWithState(t *testing.T) (*Server, *httptest.Server, *mockAppwrite
 			}
 			var input map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil { t.Errorf("decode Appwrite user: %v", err) }
-			if input["emailVerification"] != true || input["email"] != "new@example.com" { t.Errorf("unexpected Appwrite account payload: %#v", input) }
+			if input["emailVerification"] != false || input["email"] != "new@example.com" { t.Errorf("unexpected Appwrite account payload: %#v", input) }
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","status":true,"emailVerification":true}`))
+			_, _ = w.Write([]byte(`{"$id":"new_user_1","email":"new@example.com","status":true,"emailVerification":false}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/users":
 			if r.Header.Get("X-Appwrite-Key") != "appwrite-test-server-key" {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)

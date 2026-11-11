@@ -106,7 +106,7 @@ func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.
 		"email": approval.Email,
 		"password": input.Password,
 		"name": displayName,
-		"emailVerification": true,
+		"emailVerification": false,
 	})
 	createReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, strings.TrimRight(s.endpoint, "/")+"/users", bytes.NewReader(userBody))
 	if err != nil {
@@ -137,9 +137,9 @@ func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.
 		EmailVerification bool   `json:"emailVerification"`
 	}
 	if err := json.NewDecoder(io.LimitReader(createResp.Body, 64<<10)).Decode(&created); err != nil ||
-		!validUserID(created.ID) || !strings.EqualFold(created.Email, approval.Email) || !created.EmailVerification {
+		!validUserID(created.ID) || !strings.EqualFold(created.Email, approval.Email) || created.EmailVerification {
 		s.deleteAppwriteUser(created.ID)
-		writeError(w, http.StatusServiceUnavailable, "Appwrite did not confirm the verified account")
+		writeError(w, http.StatusServiceUnavailable, "Appwrite did not confirm an unverified account")
 		return
 	}
 
@@ -175,7 +175,7 @@ func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ok": true,
-		"data": map[string]any{"user_id": created.ID, "email": approval.Email, "email_verified": true},
+		"data": map[string]any{"user_id": created.ID, "email": approval.Email, "email_verified": false, "email_verification_required": true},
 		"error": nil,
 	})
 }
