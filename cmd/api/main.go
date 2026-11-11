@@ -65,6 +65,8 @@ type service struct {
 	upstream                  *http.Client
 	media                     *media.Signer
 	virtualStorage            *virtualstorage.Manager
+	mediaReplicator            *virtualstorage.Replicator
+	mediaReplicationRequired   bool
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
 }
@@ -984,7 +986,11 @@ func main() {
 		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
 	var virtualStorageManager *virtualstorage.Manager
-	if strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true") {
+	var primaryVirtualStorageProvider *virtualstorage.S3Provider
+	var mediaReplicator *virtualstorage.Replicator
+	mediaReplicationRequired := strings.EqualFold(env("MEDIA_REPLICATION_REQUIRED", "false"), "true")
+	virtualStorageEnabled := strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true")
+	if virtualStorageEnabled {
 		if mediaSigner == nil {
 			log.Fatal("VIRTUAL_STORAGE_ENABLED requires the S3-compatible media credentials and endpoint")
 		}
@@ -998,6 +1004,7 @@ func main() {
 		if providerErr != nil {
 			log.Fatalf("configure virtual storage provider: %v", providerErr)
 		}
+		primaryVirtualStorageProvider = provider
 		allowedTypes := map[string]struct{}{
 			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "image/gif": {}, "image/avif": {},
 			"video/mp4": {}, "video/webm": {},
@@ -1010,6 +1017,28 @@ func main() {
 			log.Fatalf("configure virtual storage namespaces: %v", err)
 		}
 		log.Printf("virtual storage policy manager enabled; new uploads use tenant-scoped object keys")
+	}
+	if mediaReplicationRequired {
+		if !virtualStorageEnabled || primaryVirtualStorageProvider == nil || virtualStorageManager == nil {
+			log.Fatal("MEDIA_REPLICATION_REQUIRED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
+		}
+		replicaTargets, replicaErr := mediaReplicaTargetsFromEnv()
+		if replicaErr != nil {
+			log.Fatalf("configure media replica providers: %v", replicaErr)
+		}
+		mediaReplicator, err = virtualstorage.NewReplicator(
+			"instabox-vps",
+			primaryVirtualStorageProvider,
+			map[string]string{
+				"media-private": env("MEDIA_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media")),
+				"media-public": env("MEDIA_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media")),
+			},
+			replicaTargets,
+		)
+		if err != nil {
+			log.Fatalf("configure three-provider media replication: %v", err)
+		}
+		log.Printf("three-provider media replication enabled: Instabox VPS + Cloudflare R2 + Backblaze B2")
 	}
 	var replicationStore *replication.Store
 	var replicationReceiver http.Handler
@@ -1068,7 +1097,7 @@ func main() {
 	} else {
 		log.Printf("native social post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
 	}
-	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationBackendToken, replicationReceiver: replicationReceiver}
+	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationBackendToken, replicationReceiver: replicationReceiver, mediaReplicator: mediaReplicator, mediaReplicationRequired: mediaReplicationRequired}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
