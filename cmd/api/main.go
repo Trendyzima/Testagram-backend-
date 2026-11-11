@@ -24,6 +24,7 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
@@ -50,6 +51,7 @@ type upstreamMetric struct {
 
 type service struct {
 	db                        *pgxpool.Pool
+	moderation                freshapi.ContentModeration
 	metricsMu                 sync.Mutex
 	routeMetrics              map[string]*requestMetric
 	capabilityMetrics         map[string]*requestMetric
@@ -497,6 +499,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/social/follows/{target_user_id}", s.socialUnfollow)
 	mux.HandleFunc("POST /api/social/blocks", s.socialBlock)
 	mux.HandleFunc("DELETE /api/social/blocks/{target_user_id}", s.socialUnblock)
+	mux.HandleFunc("POST /api/social/posts", s.socialPostCreate)
 	mux.HandleFunc("GET /api/social/posts/{post_id}", s.socialPostRead)
 	mux.HandleFunc("POST /api/social/posts/{post_id}/view", s.socialPostView)
 	mux.HandleFunc("GET /api/threads", s.threadsList)
@@ -652,7 +655,7 @@ func (s *service) cors(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, x-request-id, accept")
+	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key, x-request-id, accept")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if origin == "" {
 		return true // non-browser clients do not use CORS
@@ -1047,7 +1050,20 @@ func main() {
 	if federationInternalToken != "" && len(federationInternalToken) < 32 {
 		log.Fatal("FEDERATION_INTERNAL_TOKEN must contain at least 32 characters")
 	}
-	svc := &service{db: db, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationInternalToken, replicationReceiver: replicationReceiver}
+	moderation := freshapi.ContentModeration(nil)
+	moderationKey := strings.TrimSpace(os.Getenv("ONSPACE_AI_API_KEY"))
+	if moderationKey != "" {
+		moderationBase := env("ONSPACE_AI_BASE_URL", "https://ai.onspace.ai/v1")
+		configured, moderationErr := freshapi.NewHTTPModerationService(moderationBase, moderationKey, nil)
+		if moderationErr != nil {
+			log.Fatalf("configure social post moderation: %v", moderationErr)
+		}
+		moderation = configured
+		log.Printf("native social post moderation enabled")
+	} else {
+		log.Printf("native social post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
+	}
+	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationInternalToken, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,

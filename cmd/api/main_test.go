@@ -397,8 +397,8 @@ func TestMediaUploadGatewayPreflightAllowsConfiguredOrigin(t *testing.T) {
 		t.Fatalf("Access-Control-Allow-Methods = %q, want PUT and OPTIONS", got)
 	}
 	allowedHeaders := strings.ToLower(w.Header().Get("Access-Control-Allow-Headers"))
-	if !strings.Contains(allowedHeaders, "authorization") || !strings.Contains(allowedHeaders, "content-type") {
-		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization and content-type", allowedHeaders)
+	if !strings.Contains(allowedHeaders, "authorization") || !strings.Contains(allowedHeaders, "content-type") || !strings.Contains(allowedHeaders, "idempotency-key") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want authorization, content-type and idempotency-key", allowedHeaders)
 	}
 }
 
