@@ -288,18 +288,17 @@ async function loadApprovalQueue() {
         button.type = "submit";
         button.className = "button button-primary";
         button.textContent = "Approve";
-        form.append(reason, button);
+        const reject = document.createElement("button");
+        reject.type = "button";
+        reject.className = "button button-quiet";
+        reject.textContent = "Reject";
+        form.append(reason, button, reject);
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
-          button.disabled = true;
-          try {
-            const result = await api("/api/admin/sensitive-actions/" + encodeURIComponent(item.id) + "/approve", { reason: reason.value.trim() });
-            notice("Approval recorded. Current state: " + result.status + " (" + result.approval_count + "/" + result.required_approvals + ").", "success");
-            await loadApprovalQueue();
-          } catch (error) {
-            notice(error.message, "error");
-            button.disabled = false;
-          }
+          await decideSensitiveAction(item.id, "approved", reason, button, reject);
+        });
+        reject.addEventListener("click", async () => {
+          await decideSensitiveAction(item.id, "rejected", reason, button, reject);
         });
         card.appendChild(form);
       } else if (currentUser && currentUser.user_id === item.requested_by) {
@@ -450,3 +449,26 @@ async function loadAuditHistory() {
   }
 }
 byId("audit-refresh").addEventListener("click", loadAuditHistory);
+
+async function decideSensitiveAction(id, decision, reason, approveButton, rejectButton) {
+  if (reason.value.trim().length < 8) {
+    notice("Enter a decision reason of at least eight characters.", "error");
+    reason.focus();
+    return;
+  }
+  approveButton.disabled = true;
+  rejectButton.disabled = true;
+  try {
+    const result = await api("/api/admin/sensitive-actions/" + encodeURIComponent(id) + "/approve", {
+      decision,
+      reason: reason.value.trim()
+    });
+    notice("Decision recorded: " + result.status + ". The underlying action has not been executed.", "success");
+    await loadApprovalQueue();
+    await loadAuditHistory();
+  } catch (error) {
+    notice(error.message, "error");
+    approveButton.disabled = false;
+    rejectButton.disabled = false;
+  }
+}
