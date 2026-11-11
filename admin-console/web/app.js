@@ -459,7 +459,7 @@ async function decideSensitiveAction(id, decision, reason, approveButton, reject
   approveButton.disabled = true;
   rejectButton.disabled = true;
   try {
-    const result = await api("/api/admin/sensitive-actions/" + encodeURIComponent(id) + "/approve", {
+    const result = await api("/api/admin/sensitive-actions/" + encodeURIComponent(id) + "/decision", {
       decision,
       reason: reason.value.trim()
     });
