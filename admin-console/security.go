@@ -351,15 +351,17 @@ type internalAuthorizationInput struct {
 	Permission string `json:"permission"`
 }
 
+func serviceCredentialMatches(provided string, expected []byte) bool {
+	if len(expected)!=32 || len(provided)!=64 { return false }
+	decoded,err:=hex.DecodeString(provided)
+	return err==nil && subtle.ConstantTimeCompare(decoded,expected)==1
+}
+
 func (a *app) handleInternalAuthorize(w http.ResponseWriter,r *http.Request) {
 	if r.Method!=http.MethodPost { writeJSON(w,http.StatusMethodNotAllowed,map[string]string{"error":"Method not allowed"}); return }
 	if len(a.serviceAuthKey)!=32 { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Internal authorization is not configured"}); return }
 	provided:=r.Header.Get("X-Testagram-Admin-Service-Key")
-	if len(provided)!=64 {
-		writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Invalid service credentials"}); return
-	}
-	decoded,err:=hex.DecodeString(provided)
-	if err!=nil || subtle.ConstantTimeCompare(decoded,a.serviceAuthKey)!=1 {
+	if !serviceCredentialMatches(provided,a.serviceAuthKey) {
 		writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Invalid service credentials"}); return
 	}
 	var input internalAuthorizationInput
