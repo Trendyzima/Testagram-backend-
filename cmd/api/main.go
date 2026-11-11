@@ -1046,9 +1046,14 @@ func main() {
 			log.Printf("durable replication relay enabled")
 		}
 	}
-	federationInternalToken := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_TOKEN"))
-	if federationInternalToken != "" && len(federationInternalToken) < 32 {
-		log.Fatal("FEDERATION_INTERNAL_TOKEN must contain at least 32 characters")
+	federationBackendToken := strings.TrimSpace(os.Getenv("FEDERATION_BACKEND_INTERNAL_TOKEN"))
+	if federationBackendToken == "" {
+		// Backward compatibility for existing deployments; configure a distinct
+		// FEDERATION_BACKEND_INTERNAL_TOKEN before rotating the shared legacy token.
+		federationBackendToken = strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_TOKEN"))
+	}
+	if federationBackendToken != "" && len(federationBackendToken) < 32 {
+		log.Fatal("FEDERATION_BACKEND_INTERNAL_TOKEN must contain at least 32 characters")
 	}
 	moderation := freshapi.ContentModeration(nil)
 	moderationKey := strings.TrimSpace(os.Getenv("ONSPACE_AI_API_KEY"))
@@ -1063,7 +1068,7 @@ func main() {
 	} else {
 		log.Printf("native social post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
 	}
-	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationInternalToken, replicationReceiver: replicationReceiver}
+	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationBackendToken, replicationReceiver: replicationReceiver}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
