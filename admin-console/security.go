@@ -262,3 +262,32 @@ func (a *app) handleStaffRevoke(w http.ResponseWriter,r *http.Request) {
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely revoke staff access"}); return }
 	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"access_revoked":true})
 }
+
+
+func (a *app) handleAdminAudit(w http.ResponseWriter,r *http.Request) {
+	if _,_,ok:=a.requirePermission(w,r,"audit.read"); !ok { return }
+	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
+	rows,err:=a.database.Query(ctx,`SELECT id,actor_appwrite_user_id,action,target_reference,request_id::text,metadata,created_at
+		FROM testagram_auth.admin_security_audit ORDER BY created_at DESC LIMIT 200`)
+	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the security audit ledger"}); return }
+	defer rows.Close()
+	type auditEntry struct {
+		ID int64 `json:"id"`
+		Actor string `json:"actor"`
+		Action string `json:"action"`
+		Target string `json:"target"`
+		RequestID *string `json:"request_id"`
+		Metadata json.RawMessage `json:"metadata"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	entries:=make([]auditEntry,0)
+	for rows.Next() {
+		var entry auditEntry
+		if err:=rows.Scan(&entry.ID,&entry.Actor,&entry.Action,&entry.Target,&entry.RequestID,&entry.Metadata,&entry.CreatedAt); err!=nil {
+			writeJSON(w,503,map[string]string{"error":"Could not read the security audit ledger"}); return
+		}
+		entries=append(entries,entry)
+	}
+	if err:=rows.Err(); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the security audit ledger"}); return }
+	writeJSON(w,200,map[string]any{"items":entries})
+}
