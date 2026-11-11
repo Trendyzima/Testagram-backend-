@@ -54,3 +54,63 @@ the bootstrap action in the operator's deployment/change log.
 - Verify role changes are visible only after the server-side PostgreSQL update.
 - Back up PostgreSQL and `ADMIN_SESSION_KEY`; do not back up browser tokens
   or place Appwrite API keys in client configuration.
+
+
+## Granular permissions and sensitive-action controls
+
+Apply `migrations/20261111_admin_security_controls.sql` after the staff-role
+migration. PostgreSQL is the source of truth for role permissions and per-user
+overrides. The owner is the only built-in principal with unrestricted access.
+An owner can grant or explicitly deny a single permission to a staff account, change non-owner roles, and revoke staff access
+through the protected API; a per-user override takes precedence over its role.
+
+Initial role grants are deliberately narrow:
+- administrator: identity review, moderation, advertising, marketplace, TV,
+  engineering read, operations and audit read;
+- engineer: engineering read and production deployment requests;
+- operations: engineering read, operations and deployment requests;
+- support: moderation;
+- moderator: moderation.
+
+Sensitive workflows are recorded in PostgreSQL and require two distinct
+authorised approvers. The requester cannot approve their own request. Requests
+expire after 24 hours. Password re-authentication creates a five-minute
+step-up window in the encrypted staff session. Every request and approval is
+written to the security audit ledger.
+
+### Protected endpoints
+
+- `POST /api/admin/step-up` — re-authenticate the current Appwrite account.
+- `GET /api/admin/staff` — owner-only staff directory, including revoked access.
+- `PUT /api/admin/staff/{id}/role` — owner-only role changes, with recent step-up.
+- `DELETE /api/admin/staff/{id}` — owner-only staff access revocation; existing audit references are retained.
+- `PUT /api/admin/staff/{id}/permissions` — owner-only, recent step-up required;
+  grant or deny one permission with a reason.
+- `POST /api/admin/sensitive-actions` — request one of
+  `identity.approve`, `finance.execute`, `security.change` or
+  `deployment.production`; requires the corresponding initiate permission
+  and recent step-up.
+- `GET /api/admin/sensitive-actions` — view the pending approval queue; requires
+  `audit.read`.
+- `POST /api/admin/sensitive-actions/{id}/decision` — approve or reject a pending request; requires the action-specific approval permission, a reason and recent step-up.
+- `GET /api/admin/audit` — read the latest 200 security events; requires `audit.read`.
+
+All state-changing HTTP methods require the exact configured Origin. Password
+step-up attempts, sensitive-action requests and decisions have PostgreSQL-backed
+per-staff rate limits. Sensitive request payloads are size-limited, restricted to
+JSON objects, canonicalised and SHA-256 fingerprinted.
+The approval ledger records approvals and rejections but **does not execute the underlying
+business operation**. Identity provisioning, payment execution, security
+configuration changes and production deployment handlers must consume only
+approved requests and independently revalidate the request hash, actor
+permissions, target state and idempotency before performing the operation.
+
+### Production rollout gates
+
+This milestone provides password re-authentication and dual control. It does
+not yet establish phishing-resistant MFA, hardware-key enforcement, or
+business-service execution adapters. Do not enable production financial,
+identity, security or deployment actions until those adapters are integrated,
+MFA policy is enforced, the permission grant flow is reviewed, and end-to-end
+tests are passing. The VPS operator must apply the new migration before
+deploying this console revision.

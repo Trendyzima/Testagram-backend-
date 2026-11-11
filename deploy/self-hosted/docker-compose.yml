@@ -163,6 +163,7 @@ services:
       ADMIN_ADDR: ":8090"
       ADMIN_PUBLIC_URL: ${ADMIN_PUBLIC_URL:-https://ops.testagram.site}
       ADMIN_SESSION_KEY: ${ADMIN_SESSION_KEY:?Set ADMIN_SESSION_KEY to 64 hex characters in .env}
+      ADMIN_SERVICE_AUTH_KEY: ${ADMIN_SERVICE_AUTH_KEY:-}
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-https://cloud.appwrite.io/v1}
@@ -188,7 +189,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [edge, monitoring]
+    networks: [edge, monitoring, platform]
 
   media-cache:
     image: nginx:1.28-alpine

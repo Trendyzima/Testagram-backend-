@@ -32,6 +32,7 @@ type app struct {
 	appwriteEndpoint string
 	appwriteProject  string
 	appwriteAPIKey   string
+	serviceAuthKey   []byte
 	database         *pgxpool.Pool
 	publicURL        string
 	publicOrigin     string
@@ -44,8 +45,9 @@ type app struct {
 }
 
 type session struct {
-	Secret    string `json:"secret"`
-	ExpiresAt int64  `json:"expires_at"`
+	Secret      string `json:"secret"`
+	ExpiresAt   int64  `json:"expires_at"`
+	StepUpUntil int64  `json:"step_up_until,omitempty"`
 }
 
 type authUser struct {
@@ -96,6 +98,12 @@ func newApp() (*app, error) {
 	}
 	endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT")), "/")
 	project := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
+	rawServiceKey:=strings.TrimSpace(os.Getenv("ADMIN_SERVICE_AUTH_KEY"))
+	var serviceAuthKey []byte
+	if rawServiceKey!="" {
+		serviceAuthKey,err=hex.DecodeString(rawServiceKey)
+		if err!=nil || len(serviceAuthKey)!=32 { return nil,errors.New("ADMIN_SERVICE_AUTH_KEY must be 64 hexadecimal characters (32 random bytes)") }
+	}
 	parsedEndpoint, err := url.Parse(endpoint)
 	if err != nil || parsedEndpoint.Host == "" || parsedEndpoint.User != nil ||
 		(parsedEndpoint.Scheme != "https" && !(parsedEndpoint.Scheme == "http" && (parsedEndpoint.Hostname() == "localhost" || parsedEndpoint.Hostname() == "127.0.0.1"))) {
@@ -136,6 +144,7 @@ func newApp() (*app, error) {
 		appwriteEndpoint: strings.TrimRight(parsedEndpoint.String(), "/"),
 		appwriteProject: project,
 		appwriteAPIKey: strings.TrimSpace(os.Getenv("APPWRITE_API_KEY")),
+		serviceAuthKey: serviceAuthKey,
 		database: db,
 		publicURL: publicURL,
 		publicOrigin: parsed.Scheme + "://" + parsed.Host,
@@ -164,6 +173,16 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/sign-out", a.handleSignOut)
 	mux.HandleFunc("GET /api/overview", a.handleOverview)
 	mux.HandleFunc("POST /api/staff/invite", a.handleInvite)
+	mux.HandleFunc("POST /api/admin/step-up", a.handleStepUp)
+	mux.HandleFunc("GET /api/admin/staff", a.handleStaffList)
+	mux.HandleFunc("PUT /api/admin/staff/{id}/role", a.handleStaffRoleChange)
+	mux.HandleFunc("DELETE /api/admin/staff/{id}", a.handleStaffRevoke)
+	mux.HandleFunc("PUT /api/admin/staff/{id}/permissions", a.handleSetStaffPermission)
+	mux.HandleFunc("POST /api/admin/sensitive-actions", a.handleSensitiveActionRequest)
+	mux.HandleFunc("GET /api/admin/sensitive-actions", a.handleSensitiveActionQueue)
+	mux.HandleFunc("GET /api/admin/audit", a.handleAdminAudit)
+	mux.HandleFunc("POST /internal/admin/authorize", a.handleInternalAuthorize)
+	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/decision", a.handleSensitiveActionDecision)
 	return a.securityHeaders(mux)
 }
 
@@ -175,7 +194,7 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("Cache-Control", "no-store")
-		if r.Method == http.MethodPost && !a.sameOrigin(r) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && r.URL.Path != "/internal/admin/authorize" && !a.sameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error":"Request origin is not allowed"})
 			return
 		}
@@ -315,7 +334,7 @@ func (a *app) currentUser(w http.ResponseWriter, r *http.Request) (session, auth
 		return session{}, authUser{}, false
 	}
 	if a.database == nil { return session{}, authUser{}, false }
-	err = a.database.QueryRow(ctx, `SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1`, user.ID).Scan(&user.StaffRole)
+	err = a.database.QueryRow(ctx, `SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL`, user.ID).Scan(&user.StaffRole)
 	if errors.Is(err, pgx.ErrNoRows) {
 		user.StaffRole = ""
 	} else if err != nil {
@@ -424,7 +443,8 @@ func randomAppwriteUserID() (string,error) {
 }
 
 func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
-	_,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+	s,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+	if !a.requireRecentStepUp(w,s){return}
 	var input inviteInput
 	if !decodeBody(w,r,&input){return}
 	input.Email=strings.TrimSpace(input.Email)
@@ -449,24 +469,28 @@ func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
 	defer func(){_ = tx.Rollback(context.Background())}()
 	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,created_by_appwrite_user_id)
 		VALUES($1,$2,$3) ON CONFLICT(appwrite_user_id) DO UPDATE
-		SET role=EXCLUDED.role,created_by_appwrite_user_id=EXCLUDED.created_by_appwrite_user_id,updated_at=now()`,
+		SET role=EXCLUDED.role,created_by_appwrite_user_id=EXCLUDED.created_by_appwrite_user_id,updated_at=now(),access_revoked_at=NULL`,
 		invited.ID,input.Role,actor.ID);err!=nil {
 		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
 		writeJSON(w,503,map[string]string{"error":"Could not assign the staff role"});return
 	}
 	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_role_audit(actor_appwrite_user_id,target_appwrite_user_id,action,role)
 		VALUES($1,$2,'invited',$3)`,actor.ID,invited.ID,input.Role);err!=nil {
+		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
 		writeJSON(w,503,map[string]string{"error":"Could not audit the staff invitation"});return
 	}
-	if err=tx.Commit(ctx);err!=nil { writeJSON(w,503,map[string]string{"error":"Could not commit the staff invitation"});return }
+	if err=tx.Commit(ctx);err!=nil {
+		log.Printf("staff invitation commit outcome requires reconciliation actor=%s target_user=%s",actor.ID,invited.ID)
+		writeJSON(w,503,map[string]string{"error":"Could not confirm the staff invitation commit. Check the staff directory before retrying."});return
+	}
 	_,recoveryErr:=a.appwriteRequest(ctx,http.MethodPost,"/account/recovery","",map[string]string{"email":input.Email,"url":a.publicURL+"/reset-password"},nil)
 	if recoveryErr!=nil {
 		log.Printf("staff invitation recovery email failed actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
-		writeJSON(w,201,map[string]any{"ok":true,"message":"Staff account and role were created. The recipient can use password recovery to set their password."})
+		writeJSON(w,201,map[string]any{"ok":true,"user_id":invited.ID,"role":input.Role,"message":"Staff account and role were created. The recipient can use password recovery to set their password."})
 		return
 	}
 	log.Printf("staff invite created actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
-	writeJSON(w,201,map[string]any{"ok":true,"message":"Invitation sent. The recipient must set a password before accessing the operations workspace."})
+	writeJSON(w,201,map[string]any{"ok":true,"user_id":invited.ID,"role":input.Role,"message":"Invitation sent. The recipient must set a password before accessing the operations workspace."})
 }
 
 type promResponse struct {
