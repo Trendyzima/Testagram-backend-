@@ -1,5 +1,11 @@
 BEGIN;
 
+ALTER TABLE testagram_auth.staff_roles
+  ADD COLUMN IF NOT EXISTS access_revoked_at timestamptz;
+
+CREATE INDEX IF NOT EXISTS staff_roles_active_role_idx
+  ON testagram_auth.staff_roles(role) WHERE access_revoked_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS testagram_auth.admin_permissions (
   permission_key text PRIMARY KEY,
   description text NOT NULL,
