@@ -19,6 +19,7 @@ import (
 type stepUpInput struct { Password string `json:"password"` }
 
 func (a *app) consumeAdminRateLimit(ctx context.Context, actorID, operation string, limit int, window time.Duration) (bool, error) {
+	ctx,cancel:=context.WithTimeout(ctx,2*time.Second); defer cancel()
 	digest:=sha256.Sum256([]byte(actorID+"\x00"+operation))
 	key:=hex.EncodeToString(digest[:])
 	var count int
