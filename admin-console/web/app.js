@@ -225,6 +225,7 @@ byId("stepup-form").addEventListener("submit", async (event) => {
     const result = await api("/api/admin/step-up", { password: byId("stepup-password").value });
     byId("stepup-password").value = "";
     byId("stepup-state").textContent = "Re-authenticated. Sensitive actions are unlocked until " + new Date(result.step_up_expires_at * 1000).toLocaleTimeString() + ".";
+    if (currentUser && currentUser.role === "owner") loadStaffDirectory();
     notice("Identity confirmed. The step-up window expires in five minutes.", "success");
   } catch (error) {
     byId("stepup-state").textContent = "Re-authentication was not completed.";
