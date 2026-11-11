@@ -3,7 +3,8 @@ package virtualstorage
 import (
 	"context"
 	"errors"
-	"fmt"
+	"strings"
+	"time"
 	"testing"
 )
 
@@ -130,5 +131,4 @@ func TestReplicatorRejectsInvalidProviderTopology(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(),"duplicate") {
 		t.Fatalf("expected duplicate provider validation, got %v",err)
 	}
-	_ = fmt.Sprint(err)
 }
