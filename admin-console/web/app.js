@@ -76,9 +76,12 @@ function renderDashboard(user) {
   byId("invite-panel").classList.toggle("hidden", user.role !== "owner");
   byId("permission-panel").classList.toggle("hidden", user.role !== "owner");
   byId("staff-directory-panel").classList.toggle("hidden", user.role !== "owner");
-  byId("approval-panel").classList.toggle("hidden", user.role !== "owner" && user.role !== "administrator");
+  byId("approval-panel").classList.remove("hidden");
+  byId("sensitive-request-panel").classList.remove("hidden");
+  byId("audit-panel").classList.remove("hidden");
   refreshOverview();
-  if (user.role === "owner" || user.role === "administrator") loadApprovalQueue();
+  loadApprovalQueue();
+  loadAuditHistory();
   if (user.role === "owner") loadStaffDirectory();
 }
 async function loadSession() {
@@ -385,3 +388,65 @@ async function loadStaffDirectory() {
   }
 }
 byId("staff-refresh").addEventListener("click", loadStaffDirectory);
+
+
+byId("sensitive-request-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const rawPayload = byId("sensitive-payload").value.trim();
+  let payload = {};
+  try {
+    if (rawPayload) payload = JSON.parse(rawPayload);
+    if (payload === null || Array.isArray(payload) || typeof payload !== "object") throw new Error("Payload must be a JSON object.");
+  } catch (error) {
+    notice("Check the structured payload: " + error.message, "error");
+    return;
+  }
+  busy(form, true);
+  try {
+    const result = await api("/api/admin/sensitive-actions", {
+      action_type: byId("sensitive-action-type").value,
+      target_reference: byId("sensitive-target").value.trim(),
+      reason: byId("sensitive-reason").value.trim(),
+      payload
+    });
+    notice("Request recorded as " + result.id + ". Two authorised people must approve it; nothing has executed.", "success");
+    form.reset();
+    await loadApprovalQueue();
+    await loadAuditHistory();
+  } catch (error) { notice(error.message, "error"); }
+  finally { busy(form, false); }
+});
+
+async function loadAuditHistory() {
+  const list = byId("audit-list");
+  if (!list) return;
+  list.replaceChildren();
+  try {
+    const data = await api("/api/admin/audit");
+    for (const entry of (data.items || [])) {
+      const card = document.createElement("article");
+      card.className = "approval-item";
+      const heading = document.createElement("b");
+      heading.textContent = entry.action + " · " + entry.target;
+      const detail = document.createElement("p");
+      detail.textContent = "Actor " + entry.actor + " · " + new Date(entry.created_at).toLocaleString();
+      const metadata = document.createElement("small");
+      metadata.textContent = JSON.stringify(entry.metadata || {});
+      card.append(heading, detail, metadata);
+      list.appendChild(card);
+    }
+    if (!(data.items || []).length) {
+      const empty = document.createElement("p");
+      empty.className = "field-help";
+      empty.textContent = "No security audit events have been recorded.";
+      list.appendChild(empty);
+    }
+  } catch (error) {
+    const denied = document.createElement("p");
+    denied.className = "field-help";
+    denied.textContent = error.message;
+    list.appendChild(denied);
+  }
+}
+byId("audit-refresh").addEventListener("click", loadAuditHistory);
