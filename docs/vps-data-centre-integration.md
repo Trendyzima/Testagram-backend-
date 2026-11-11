@@ -60,3 +60,4 @@ Before production enablement:
 Supabase, PostgREST, Redis/Valkey and Upstash are not part of the retained
 runtime. Do not restore those dependencies as shortcuts for cross-repository
 integration.
+\n\n## Infrastructure target\n\nSee [Instabox VPS + Cloudflare R2 + Backblaze integration](instabox-cloudflare-b2-integration.md) for the canonical VPS PostgreSQL placement, three-copy media durability target, custom CDN origin policy and analytics ownership.\n
