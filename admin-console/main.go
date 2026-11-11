@@ -145,6 +145,7 @@ func newApp() (*app, error) {
 		appwriteEndpoint: strings.TrimRight(parsedEndpoint.String(), "/"),
 		appwriteProject: project,
 		appwriteAPIKey: strings.TrimSpace(os.Getenv("APPWRITE_API_KEY")),
+		serviceAuthKey: serviceAuthKey,
 		database: db,
 		publicURL: publicURL,
 		publicOrigin: parsed.Scheme + "://" + parsed.Host,
@@ -181,6 +182,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/sensitive-actions", a.handleSensitiveActionRequest)
 	mux.HandleFunc("GET /api/admin/sensitive-actions", a.handleSensitiveActionQueue)
 	mux.HandleFunc("GET /api/admin/audit", a.handleAdminAudit)
+	mux.HandleFunc("POST /internal/admin/authorize", a.handleInternalAuthorize)
 	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/decision", a.handleSensitiveActionDecision)
 	return a.securityHeaders(mux)
 }
@@ -193,7 +195,7 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !a.sameOrigin(r) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && r.URL.Path != "/internal/admin/authorize" && !a.sameOrigin(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error":"Request origin is not allowed"})
 			return
 		}
