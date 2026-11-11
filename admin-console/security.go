@@ -142,7 +142,19 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter,r *http.Reques
 	writeJSON(w,200,map[string]any{"ok":true,"status":state,"approval_count":count,"required_approvals":2,"message":"Decision recorded. The underlying action is not executed by this approval ledger."})
 }
 func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) {
-	if _,_,ok:=a.requirePermission(w,r,"audit.read"); !ok { return }
+	_,user,ok:=a.requireStaff(w,r); if !ok { return }
+	canAudit,err:=a.hasPermission(user,"audit.read")
+	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
+	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve"}
+	canReview:=canAudit
+	if !canReview {
+		for _,permission:=range approvalPermissions {
+			allowed,permissionErr:=a.hasPermission(user,permission)
+			if permissionErr!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
+			if allowed { canReview=true; break }
+		}
+	}
+	if !canReview { writeJSON(w,403,map[string]string{"error":"You do not have permission to review sensitive actions"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
 	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_appwrite_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the approval queue"}); return }
@@ -160,7 +172,18 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 		ApprovalCount int `json:"approval_count"`
 	}
 	items:=make([]item,0)
-	for rows.Next() { var v item; if err:=rows.Scan(&v.ID,&v.ActionType,&v.RequestedBy,&v.TargetReference,&v.Reason,&v.Status,&v.RequiredApprovals,&v.ExpiresAt,&v.CreatedAt,&v.ApprovalCount); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the approval queue"}); return }; items=append(items,v) }
+	for rows.Next() {
+		var v item
+		if err:=rows.Scan(&v.ID,&v.ActionType,&v.RequestedBy,&v.TargetReference,&v.Reason,&v.Status,&v.RequiredApprovals,&v.ExpiresAt,&v.CreatedAt,&v.ApprovalCount); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the approval queue"}); return }
+		if !canAudit {
+			permission,permissionErr:=approvalPermissionForAction(v.ActionType)
+			if permissionErr!=nil { continue }
+			allowed,permissionErr:=a.hasPermission(user,permission)
+			if permissionErr!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
+			if !allowed { continue }
+		}
+		items=append(items,v)
+	}
 	if err:=rows.Err(); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the approval queue"}); return }
 	writeJSON(w,200,map[string]any{"items":items})
 }
