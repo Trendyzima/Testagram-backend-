@@ -558,7 +558,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	var intentExpires time.Time
 	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider, coalesce(checksum_sha256, '')
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
-		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider)
+		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider, &intentChecksum)
 	if err != nil || intentOwner != userID ||
 		(time.Now().After(intentExpires) && intentStatus != "completed") ||
 		(storageNamespace == "legacy-media" && intentStatus != "issued" && intentStatus != "uploaded" && intentStatus != "completed") ||
