@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http"
+	"fmt"
+	"strings"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -83,4 +85,15 @@ func TestNormalizeSensitiveDecision(t *testing.T) {
 			t.Errorf("normalizeSensitiveDecision(%q) = %q, %v; want %q, error=%v", test.input, got, err, test.want, test.wantErr)
 		}
 	}
+}
+
+func TestServiceCredentialMatches(t *testing.T) {
+	key:=make([]byte,32)
+	for i:=range key { key[i]=byte(i+1) }
+	encoded:=fmt.Sprintf("%x",key)
+	if !serviceCredentialMatches(encoded,key) { t.Fatal("correct 32-byte service key was rejected") }
+	if serviceCredentialMatches(encoded+"00",key) { t.Fatal("wrong-length service key was accepted") }
+	if serviceCredentialMatches(strings.Repeat("0",64),key) { t.Fatal("incorrect service key was accepted") }
+	if serviceCredentialMatches(encoded,nil) { t.Fatal("missing configured service key was accepted") }
+	if serviceCredentialMatches(strings.Repeat("z",64),key) { t.Fatal("non-hex service key was accepted") }
 }
