@@ -24,8 +24,8 @@ import (
 const (
 	githubOIDCIssuer   = "https://token.actions.githubusercontent.com"
 	githubOIDCAudience = "testagram-tv-health"
-	tvHealthRepository = "Trendyzima/XClone-9b4dz1-9b4dz1-8936-20260809tr"
-	tvHealthWorkflow   = "TV Channel Health Monitor"
+	tvHealthRepository = "Trendyzima/testagram-flutter-client-"
+	tvHealthWorkflow   = "Testagram TV Health Monitor"
 	maxTVHealthBody    = 1 << 20
 	maxTVHealthBatch   = 100
 )
