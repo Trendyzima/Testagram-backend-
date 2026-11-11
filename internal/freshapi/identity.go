@@ -139,7 +139,7 @@ func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.
 	if err := json.NewDecoder(io.LimitReader(createResp.Body, 64<<10)).Decode(&created); err != nil ||
 		!validUserID(created.ID) || !strings.EqualFold(created.Email, approval.Email) || created.EmailVerification {
 		s.deleteAppwriteUser(created.ID)
-		writeError(w, http.StatusServiceUnavailable, "Appwrite did not confirm the verified account")
+		writeError(w, http.StatusServiceUnavailable, "Appwrite did not confirm an unverified account")
 		return
 	}
 
