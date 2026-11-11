@@ -227,6 +227,8 @@ jobs:
           ALERTMANAGER_WEBHOOK_URL=
           MEDIA_USER_QUOTA_BYTES=2147483648
           MEDIA_MODERATION_TOKEN=
+          ONSPACE_AI_API_KEY=
+          ONSPACE_AI_BASE_URL=https://ai.onspace.ai/v1
           EOF
             chmod 600 "$BASE_ENV"
           fi
