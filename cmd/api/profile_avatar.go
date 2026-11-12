@@ -108,7 +108,7 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_AVATAR_UPLOAD", "Upload a JPEG, PNG or WebP image no larger than 2 MiB", id))
 		return
 	}
-	file, header, err := r.FormFile("avatar")
+	file, _, err := r.FormFile("avatar")
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_AVATAR_UPLOAD", "The avatar image is required", id))
 		return
@@ -131,10 +131,7 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	checksum := sha256.Sum256(data)
 	checksumHex := hex.EncodeToString(checksum[:])
-	filename := path.Base(strings.ReplaceAll(header.Filename, "\\", "/"))
-	if filename == "." || filename == "/" || len(filename) > 255 {
-		filename = "avatar"
-	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
 	defer cancel()
 
@@ -182,6 +179,12 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, errorBody("AVATAR_STORAGE_FAILED", "Instabox could not store the avatar", id))
 		return
 	}
+	objectStored := true
+	defer func() {
+		if objectStored {
+			queueAvatarCleanup(context.Background(), s, userID, key)
+		}
+	}()
 
 	tx, err = s.db.Begin(ctx)
 	if err != nil {
@@ -223,6 +226,7 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_PROFILE_UPDATE_FAILED", "Could not commit the profile avatar update", id))
 		return
 	}
+	objectStored = false
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "data": map[string]any{
 			"avatar_key": key, "avatar_storage_provider": "instabox-vps", "avatar_url": profileAvatarURL(userID),
