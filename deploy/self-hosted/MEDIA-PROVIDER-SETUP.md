@@ -49,6 +49,12 @@ The Instabox VPS/MinIO primary is configured independently:
 
 The standard API's replication startup checks require a working primary provider, both R2 and B2 credentials, both bucket mappings per provider, and the replica-ledger/outbox migrations.
 
+## Additional production gates discovered during source review
+
+- The primary S3 endpoint must reach the intended MinIO origin. Verify the effective `MEDIA_S3_ENDPOINT` / `MINIO_PUBLIC_ENDPOINT`, DNS and reverse-proxy route together; a CDN Worker hostname is not a MinIO origin.
+- The virtual-storage manager rejects an oversized declared upload and checks the provider-observed size after upload. However, the current S3 `PresignPut` signs content type and expiry, not a provider-enforced content-length range. A client may therefore transfer an oversized object before completion rejects it. This protects the ready-asset state but does not cap temporary bandwidth/storage consumption. Treat provider-side upload-size enforcement as a separate pre-launch hardening item; do not claim the signed PUT itself enforces `MaxObjectBytes`.
+- A successful provider smoke test proves only credentials and basic object operations. It does not prove that the Backend's signed upload path, private-media authorization, CDN origin routing, replication worker, outage recovery or restore path works end to end.
+
 ## Backblaze application key scope
 
 Create a dedicated non-master application key for Testagram. Restrict it to the two B2 bucket IDs used by the standard API (multi-bucket application keys are supported by Backblaze's current API). Grant only the file capabilities needed by the application: `readFiles`, `writeFiles` and `listFiles` where inventory/list operations are used. The current S3 worker deletes by object name; Backblaze documents `writeFiles` for that operation, while `deleteFiles` is needed for deleting a specific version. Never grant key-management capabilities such as `writeKeys`.
