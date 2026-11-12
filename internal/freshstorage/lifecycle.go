@@ -465,7 +465,7 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 	// The Worker reads R2 directly. Issue a CDN assertion only after the exact
 	// R2 object passes a full SHA-256 read-back, not merely a HEAD/size check.
 	r2Ready := verifyReplica(ctx, s.r2, s.r2Bucket, record)
-	if r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
+	if r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
 		return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
 	}
 
@@ -479,14 +479,14 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 		}
 		r2Ready = verifyReplica(ctx, s.r2, s.r2Bucket, record)
 		b2Ready = verifyReplica(ctx, s.b2, s.b2Bucket, record)
-		if r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
+		if r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
 			return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
 		}
 	}
 
 	// A healthy B2 copy can repair a missing or corrupt R2 origin. Do not issue
 	// a Worker token until the repaired R2 object passes the same full check.
-	if b2Ready && !r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
+	if b2Ready && !r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
 		if repairErr := s.RepairObject(ctx, objectID); repairErr == nil && verifyReplica(ctx, s.r2, s.r2Bucket, record) {
 			return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
 		}
