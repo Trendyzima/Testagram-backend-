@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
-
-	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
 var hashtagNamePattern = regexp.MustCompile("^[\\p{L}\\p{N}_]{1,64}$")
@@ -137,17 +137,103 @@ LIMIT $5`, nullableUUID(viewerID), pattern, before, beforeID, limit+1)
 	if hasMore && len(posts) > 0 {
 		nextCursor = encodeHomeFeedCursor(next)
 	}
+	isFollowing := false
+	if viewerID != "" {
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM testagram_local.hashtag_follows WHERE user_id=$1::uuid AND tag=$2
+		)`, viewerID, tag).Scan(&isFollowing); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("HASHTAG_FOLLOW_STATE_FAILED", "Hashtag follow state could not be loaded", requestID))
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":true,
-		"data":map[string]any{"tag":tag,"posts":posts,"has_more":hasMore,"next_cursor":nextCursor},
-		"error":nil,"request_id":requestID,
+		"ok": true,
+		"data": map[string]any{"tag": tag, "posts": posts, "has_more": hasMore, "next_cursor": nextCursor, "is_following": isFollowing},
+		"error": nil, "request_id": requestID,
+	})
+}
+
+
+// socialHashtagFollow adds a private viewer-interest signal for Explore ranking.
+func (s *service) socialHashtagFollow(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	tag, _, valid := normalizeHashtag(r.PathValue("tag"))
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_HASHTAG", "Hashtag must contain 1-64 letters, numbers or underscores", requestID))
+		return
+	}
+	if !s.socialWriteAllowed(w, r, userID, requestID, "hashtag_follow", 60) {
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `
+INSERT INTO testagram_local.hashtag_follows(user_id,tag)
+VALUES($1::uuid,$2)
+ON CONFLICT(user_id,tag) DO NOTHING`, userID, tag); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("HASHTAG_FOLLOW_FAILED", "Could not follow this hashtag", requestID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "data": map[string]any{"tag": tag, "is_following": true},
+		"error": nil, "request_id": requestID,
+	})
+}
+
+func (s *service) socialHashtagUnfollow(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	tag, _, valid := normalizeHashtag(r.PathValue("tag"))
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_HASHTAG", "Hashtag must contain 1-64 letters, numbers or underscores", requestID))
+		return
+	}
+	if !s.socialWriteAllowed(w, r, userID, requestID, "hashtag_unfollow", 60) {
+		return
+	}
+	if _, err := s.db.Exec(r.Context(), `
+DELETE FROM testagram_local.hashtag_follows WHERE user_id=$1::uuid AND tag=$2`, userID, tag); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("HASHTAG_UNFOLLOW_FAILED", "Could not unfollow this hashtag", requestID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "data": map[string]any{"tag": tag, "is_following": false},
+		"error": nil, "request_id": requestID,
+	})
+}
+
+func (s *service) socialHashtagFollowState(w http.ResponseWriter, r *http.Request) {
+	userID, requestID, ok := s.socialOptionalReadAuth(w, r)
+	if !ok {
+		return
+	}
+	tag, _, valid := normalizeHashtag(r.PathValue("tag"))
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_HASHTAG", "Hashtag must contain 1-64 letters, numbers or underscores", requestID))
+		return
+	}
+	isFollowing := false
+	if userID != "" {
+		if err := s.db.QueryRow(r.Context(), `
+SELECT EXISTS(SELECT 1 FROM testagram_local.hashtag_follows WHERE user_id=$1::uuid AND tag=$2)`,
+			userID, tag).Scan(&isFollowing); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("HASHTAG_FOLLOW_STATE_FAILED", "Hashtag follow state could not be loaded", requestID))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "data": map[string]any{"tag": tag, "is_following": isFollowing},
+		"error": nil, "request_id": requestID,
 	})
 }
 
 // socialTrendingHashtags ranks public hashtags by distinct-post volume over
 // the last seven days. This is a safe baseline until Algorithm owns topic ranking.
 func (s *service) socialTrendingHashtags(w http.ResponseWriter, r *http.Request) {
-	_, requestID, ok := s.socialOptionalReadAuth(w, r)
+	viewerID, requestID, ok := s.socialOptionalReadAuth(w, r)
 	if !ok {
 		return
 	}
@@ -167,10 +253,14 @@ func (s *service) socialTrendingHashtags(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(ctx, `
-SELECT lower(parts[1]) AS tag,count(DISTINCT p.id)::bigint AS posts_count,max(p.created_at) AS last_used_at
+SELECT lower(parts[1]) AS tag,count(DISTINCT p.id)::bigint AS posts_count,
+       max(p.created_at) AS last_used_at,
+       COALESCE(bool_or(hf.user_id IS NOT NULL),false) AS is_following
 FROM testagram_local.posts p
 JOIN testagram_local.accounts a ON a.user_id=p.author_id
 CROSS JOIN LATERAL regexp_matches(p.text,'#([[:alnum:]_]{1,64})','g') AS extracted(parts)
+LEFT JOIN testagram_local.hashtag_follows hf
+  ON hf.user_id=$1::uuid AND hf.tag=lower(parts[1])
 WHERE p.deleted_at IS NULL
   AND p.visibility='public'
   AND a.account_status='active'
@@ -178,7 +268,7 @@ WHERE p.deleted_at IS NULL
   AND p.created_at >= now()-interval '7 days'
 GROUP BY lower(parts[1])
 ORDER BY count(DISTINCT p.id) DESC,max(p.created_at) DESC,lower(parts[1])
-LIMIT 200`)
+LIMIT 200`, nullableUUID(viewerID))
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be loaded", requestID))
 		return
@@ -186,22 +276,27 @@ LIMIT 200`)
 	defer rows.Close()
 	topicCandidates := make([]algorithmclient.TopicCandidate, 0, 200)
 	fallbackItems := make([]map[string]any, 0, limit)
+	topicFollowState := make(map[string]bool, 200)
 	for rows.Next() {
 		var tag string
 		var count int64
 		var lastUsed time.Time
-		if err := rows.Scan(&tag, &count, &lastUsed); err != nil {
+		var isFollowing bool
+		if err := rows.Scan(&tag, &count, &lastUsed, &isFollowing); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be decoded", requestID))
 			return
 		}
-		// No user-topic affinity graph is wired yet; keep affinity neutral until
-		// Backend owns a verified topic-follow/interest signal.
+		affinity := 0.0
+		if isFollowing {
+			affinity = 1
+		}
 		topicCandidates = append(topicCandidates, algorithmclient.TopicCandidate{
-			Tag: tag, PostsCount: count, LastUsedAt: lastUsed, InterestAffinity: 0,
+			Tag: tag, PostsCount: count, LastUsedAt: lastUsed, InterestAffinity: affinity,
 		})
+		topicFollowState[tag] = isFollowing
 		if len(fallbackItems) < limit {
 			fallbackItems = append(fallbackItems, map[string]any{
-				"tag": tag, "posts_count": count, "last_used_at": lastUsed.UTC().Format(time.RFC3339Nano),
+				"tag": tag, "posts_count": count, "last_used_at": lastUsed.UTC().Format(time.RFC3339Nano), "is_following": isFollowing,
 			})
 		}
 	}
@@ -220,7 +315,7 @@ LIMIT 200`)
 			items = make([]map[string]any, 0, len(ranked.Items))
 			for _, topic := range ranked.Items {
 				items = append(items, map[string]any{
-					"tag": topic.Tag, "posts_count": topic.PostsCount, "score": topic.Score, "reasons": topic.Reasons,
+					"tag": topic.Tag, "posts_count": topic.PostsCount, "score": topic.Score, "reasons": topic.Reasons, "is_following": topicFollowState[topic.Tag],
 				})
 			}
 			rankingMode = "algorithm_topic_ranker_v1"
