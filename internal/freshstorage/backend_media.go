@@ -13,28 +13,13 @@ import (
 	"time"
 )
 
-var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})package freshstorage
-
-import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"regexp"
-	"strings"
-	"time"
-)
-
-)
+var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
 
 type MediaDelivery struct {
-	URL               string `json:"url"`
-	Authorization     string `json:"authorization,omitempty"`
-	ExpiresInSeconds  int64  `json:"expires_in_seconds"`
-	Visibility        string `json:"visibility"`
+	URL              string `json:"url"`
+	Authorization    string `json:"authorization,omitempty"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	Visibility       string `json:"visibility"`
 }
 
 type BackendMediaClient struct {
@@ -93,7 +78,7 @@ func (c *BackendMediaClient) Issue(ctx context.Context, ownerID, key string) (Me
 	}, &result); err != nil {
 		return MediaDelivery{}, err
 	}
-	if !strings.HasPrefix(result.URL, "https://") || !strings.HasPrefix(result.Authorization, "Bearer ") ||
+	if !strings.HasPrefix(result.URL, "https://") || !strings.HasPrefix(result.Authorization, "Bearer v1.") ||
 		result.ExpiresInSeconds < 1 || result.ExpiresInSeconds > 300 || result.Visibility != "private" {
 		return MediaDelivery{}, errors.New("Backend returned an invalid private media authorization")
 	}
