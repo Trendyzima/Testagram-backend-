@@ -15,11 +15,48 @@ const maxFreshMediaBridgeBody = 16 << 10
 
 var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
 var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-var freshMediaSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var freshMediaSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}package main
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const maxFreshMediaBridgeBody = 16 << 10
+
+var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
+var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+)
+var freshMediaBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]package main
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const maxFreshMediaBridgeBody = 16 << 10
+
+var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
+var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+)
 
 type freshMediaBridgeRequest struct {
 	OwnerID     string `json:"owner_id"`
 	Key         string `json:"key"`
+	R2Bucket    string `json:"r2_bucket"`
+	B2Bucket    string `json:"b2_bucket"`
 	Visibility  string `json:"visibility"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
@@ -44,6 +81,8 @@ func decodeFreshMediaBridgeRequest(w http.ResponseWriter, r *http.Request, out *
 	}
 	out.OwnerID = strings.TrimSpace(out.OwnerID)
 	out.Key = strings.TrimSpace(out.Key)
+	out.R2Bucket = strings.TrimSpace(out.R2Bucket)
+	out.B2Bucket = strings.TrimSpace(out.B2Bucket)
 	out.Visibility = strings.TrimSpace(out.Visibility)
 	out.ContentType = strings.ToLower(strings.TrimSpace(out.ContentType))
 	out.SHA256 = strings.ToLower(strings.TrimSpace(out.SHA256))
@@ -55,7 +94,7 @@ func validFreshMediaBridgeRequest(in freshMediaBridgeRequest) bool {
 	if !freshMediaOwnerPattern.MatchString(in.ViewerID) || !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
 		return false
 	}
-	if in.Visibility != "private" || in.SizeBytes < 1 || in.SizeBytes > 500<<20 || !freshMediaSHA256Pattern.MatchString(in.SHA256) {
+	if in.Visibility != "private" || in.SizeBytes < 1 || in.SizeBytes > 500<<20 || !freshMediaSHA256Pattern.MatchString(in.SHA256) || !freshMediaBucketPattern.MatchString(in.R2Bucket) || !freshMediaBucketPattern.MatchString(in.B2Bucket) {
 		return false
 	}
 	switch in.ContentType {
@@ -111,6 +150,18 @@ func (s *service) registerFreshMediaAsset(w http.ResponseWriter, r *http.Request
 		checksum != in.SHA256 || size != in.SizeBytes {
 		http.Error(w, "media ledger conflict", http.StatusConflict)
 		return
+	}
+	for _, placement := range []struct{ provider, bucket string }{{"cloudflare-r2", in.R2Bucket}, {"backblaze-b2", in.B2Bucket}} {
+		_, err = s.db.Exec(r.Context(), `
+			INSERT INTO testagram_media.storage_replicas
+			  (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at,last_error_code,attempts,updated_at)
+			VALUES ($1,$2,$3,$4,$5,'verified',now(),'',$6,now())
+			ON CONFLICT (object_key,provider) DO UPDATE SET
+			  bucket=EXCLUDED.bucket,object_size_bytes=EXCLUDED.object_size_bytes,
+			  checksum_sha256=EXCLUDED.checksum_sha256,state='verified',verified_at=now(),
+			  last_error_code='',attempts=testagram_media.storage_replicas.attempts+1,updated_at=now()
+		`, in.Key, placement.provider, placement.bucket, in.SizeBytes, in.SHA256, 1)
+		if err != nil { http.Error(w, "replica ledger write failed", http.StatusServiceUnavailable); return }
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": in.Key, "status": "ready"})
 }
