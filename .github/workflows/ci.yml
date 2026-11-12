@@ -205,6 +205,24 @@ jobs:
               RAISE EXCEPTION 'Canonical media completion does not enqueue replication';
             END IF;
           END $media_replication_schema$;
+          INSERT INTO testagram_media.assets
+            (object_key,owner_id,visibility,content_type,size_bytes,status,storage_namespace,storage_provider,checksum_sha256)
+          VALUES
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'ready','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+          DO $media_replication_enqueue$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_media.media_replication_outbox
+              WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                AND owner_id='ci-media-owner' AND storage_namespace='media-private'
+                AND checksum_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                AND status='pending'
+            ) THEN
+              RAISE EXCEPTION 'Verified virtual-storage media insert did not enqueue a durable replication job';
+            END IF;
+          END $media_replication_enqueue$;
+          DELETE FROM testagram_media.assets
+          WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
           SQL
       - name: Verify media attachment, poll voting and private history constraints
         run: |
