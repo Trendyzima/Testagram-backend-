@@ -113,6 +113,13 @@ func TestListFiltersUnexpectedProviderTenantKeys(t *testing.T) {
 	}
 }
 
+func TestDownloadURLMethodCanIssueHEADGrant(t *testing.T) {
+	p := &fakeProvider{}
+	m := testManager(t, p)
+	got, err := m.DownloadURLMethod(context.Background(), "owner", "owner", "post-media", "post/image.jpg", http.MethodHead)
+	if err != nil || got != "https://storage.example/signed-head" || p.method != http.MethodHead { t.Fatalf("HEAD download URL = %q method=%q err=%v", got, p.method, err) }
+}
+
 func TestPrivateDownloadAndDeleteAreTenantScoped(t *testing.T) {
 	p := &fakeProvider{}
 	m := testManager(t, p)
