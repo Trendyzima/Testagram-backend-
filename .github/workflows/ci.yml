@@ -561,7 +561,6 @@ jobs:
         run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
 
   replication-media-schema-integration:
-  replication-media-schema-integration:
     name: Replication media outbox PostgreSQL integration
     runs-on: ubuntu-latest
     steps:
