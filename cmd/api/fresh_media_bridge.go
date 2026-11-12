@@ -13,10 +13,10 @@ import (
 
 const maxFreshMediaBridgeBody = 16 << 10
 
-var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
-var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-var freshMediaSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
-var freshMediaBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
+var freshMediaObjectKeyPattern = regexp.MustCompile("^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$")
+var freshMediaOwnerPattern = regexp.MustCompile("^[A-Za-z0-9._-]{1,128}$")
+var freshMediaSHA256Pattern = regexp.MustCompile("^[a-f0-9]{64}$")
+var freshMediaBucketPattern = regexp.MustCompile("^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 
 type freshMediaBridgeRequest struct {
 	OwnerID     string `json:"owner_id"`
@@ -60,7 +60,10 @@ func validFreshMediaBridgeRequest(in freshMediaBridgeRequest) bool {
 	if !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
 		return false
 	}
-	if in.Visibility != "private" || in.SizeBytes < 1 || in.SizeBytes > 500<<20 || !freshMediaSHA256Pattern.MatchString(in.SHA256) || !freshMediaBucketPattern.MatchString(in.R2Bucket) || !freshMediaBucketPattern.MatchString(in.B2Bucket) {
+	if in.Visibility != "private" || in.SizeBytes < 1 || in.SizeBytes > 500<<20 ||
+		!freshMediaSHA256Pattern.MatchString(in.SHA256) ||
+		!freshMediaBucketPattern.MatchString(in.R2Bucket) ||
+		!freshMediaBucketPattern.MatchString(in.B2Bucket) {
 		return false
 	}
 	switch in.ContentType {
@@ -72,9 +75,6 @@ func validFreshMediaBridgeRequest(in freshMediaBridgeRequest) bool {
 	}
 }
 
-// registerFreshMediaAsset mirrors an already verified Appwrite/B2/R2 media
-// object into the Backend's canonical authorization ledger. The Fresh API has
-// already HEAD-checked and SHA-256-verified both cloud copies before calling it.
 func (s *service) registerFreshMediaAsset(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeFreshMediaBridge(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -117,7 +117,9 @@ func (s *service) registerFreshMediaAsset(w http.ResponseWriter, r *http.Request
 		http.Error(w, "media ledger conflict", http.StatusConflict)
 		return
 	}
-	for _, placement := range []struct{ provider, bucket string }{{"cloudflare-r2", in.R2Bucket}, {"backblaze-b2", in.B2Bucket}} {
+	for _, placement := range []struct{ provider, bucket string }{
+		{"cloudflare-r2", in.R2Bucket}, {"backblaze-b2", in.B2Bucket},
+	} {
 		_, err = s.db.Exec(r.Context(), `
 			INSERT INTO testagram_media.storage_replicas
 			  (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at,last_error_code,attempts,updated_at)
@@ -127,7 +129,10 @@ func (s *service) registerFreshMediaAsset(w http.ResponseWriter, r *http.Request
 			  checksum_sha256=EXCLUDED.checksum_sha256,state='verified',verified_at=now(),
 			  last_error_code='',attempts=testagram_media.storage_replicas.attempts+1,updated_at=now()
 		`, in.Key, placement.provider, placement.bucket, in.SizeBytes, in.SHA256, 1)
-		if err != nil { http.Error(w, "replica ledger write failed", http.StatusServiceUnavailable); return }
+		if err != nil {
+			http.Error(w, "replica ledger write failed", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": in.Key, "status": "ready"})
 }
@@ -142,9 +147,8 @@ func (s *service) revokeFreshMediaAsset(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var in struct {
-		ViewerID string `json:"viewer_id"`
-		OwnerID  string `json:"owner_id"`
-		Key      string `json:"key"`
+		OwnerID string `json:"owner_id"`
+		Key     string `json:"key"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFreshMediaBridgeBody)
 	decoder := json.NewDecoder(r.Body)
@@ -153,7 +157,6 @@ func (s *service) revokeFreshMediaAsset(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid media revocation", http.StatusBadRequest)
 		return
 	}
-	in.ViewerID = strings.TrimSpace(in.ViewerID)
 	in.OwnerID = strings.TrimSpace(in.OwnerID)
 	in.Key = strings.TrimSpace(in.Key)
 	match := freshMediaObjectKeyPattern.FindStringSubmatch(in.Key)
@@ -207,7 +210,8 @@ func (s *service) freshMediaCDNDownloadURL(w http.ResponseWriter, r *http.Reques
 	in.OwnerID = strings.TrimSpace(in.OwnerID)
 	in.Key = strings.TrimSpace(in.Key)
 	match := freshMediaObjectKeyPattern.FindStringSubmatch(in.Key)
-	if !freshMediaOwnerPattern.MatchString(in.ViewerID) || !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
+	if !freshMediaOwnerPattern.MatchString(in.ViewerID) || !freshMediaOwnerPattern.MatchString(in.OwnerID) ||
+		len(match) != 3 || match[1] != in.OwnerID {
 		http.Error(w, "invalid media authorization request", http.StatusBadRequest)
 		return
 	}
