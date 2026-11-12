@@ -64,13 +64,13 @@ func buildFederationCreateActivity(baseURL, postID, handle, displayName, content
 	}
 	activityID := baseURL + "/activities/" + postID
 	activity := map[string]any{
-		"@context": "https://www.w3.org/ns/activitystreams",
-		"id":       activityID,
-		"type":     "Create",
-		"actor":    actorURI,
+		"@context":  "https://www.w3.org/ns/activitystreams",
+		"id":        activityID,
+		"type":      "Create",
+		"actor":     actorURI,
 		"published": createdAt.UTC().Format(time.RFC3339Nano),
-		"to":       []string{activityStreamsPublic},
-		"object":   note,
+		"to":        []string{activityStreamsPublic},
+		"object":    note,
 	}
 	payload, err := json.Marshal(activity)
 	if err != nil {
