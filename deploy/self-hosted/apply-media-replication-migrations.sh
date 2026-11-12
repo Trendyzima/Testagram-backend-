@@ -33,6 +33,8 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/027_media_replication_outbox.sql'
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/028_fresh_media_owner_keys.sql'
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_media.media_replication_outbox'\'') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='\''media_replication_enqueue_after_asset_write'\'' AND NOT tgisinternal)"' \
   | grep -qx t
 
