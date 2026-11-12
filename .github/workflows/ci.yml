@@ -221,6 +221,18 @@ jobs:
               RAISE EXCEPTION 'Verified virtual-storage media insert did not enqueue a durable replication job';
             END IF;
           END $media_replication_enqueue$;
+          UPDATE testagram_media.assets SET status='deleted'
+          WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+          DO $media_replication_delete$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_media.media_replication_outbox
+              WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                AND operation='delete' AND status='pending'
+            ) THEN
+              RAISE EXCEPTION 'Media deletion did not enqueue replica cleanup';
+            END IF;
+          END $media_replication_delete$;
           DELETE FROM testagram_media.assets
           WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
           SQL
