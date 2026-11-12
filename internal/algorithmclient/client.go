@@ -213,6 +213,7 @@ func (c *Client) RankTopics(ctx context.Context, input TopicRequest) (TopicsResp
 	if input.Limit < 1 || input.Limit > 50 {
 		return TopicsResponse{}, errors.New("algorithm topic result limit must be between 1 and 50")
 	}
+	input.Candidates = append([]TopicCandidate(nil), input.Candidates...)
 	allowed := make(map[string]int64, len(input.Candidates))
 	for i := range input.Candidates {
 		candidate := &input.Candidates[i]
