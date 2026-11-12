@@ -58,7 +58,9 @@ services:
         sync: false
       - key: CLOUDFLARE_MEDIA_BASE_URL
         value: https://media.testagram.site
-      - key: CLOUDFLARE_MEDIA_SIGNING_SECRET
+      - key: FRESH_MEDIA_BACKEND_URL
+        sync: false
+      - key: FRESH_MEDIA_INTERNAL_TOKEN
         sync: false
       - key: FRESH_FEDERATION_INTERNAL_TOKEN
         sync: false
