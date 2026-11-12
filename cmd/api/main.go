@@ -71,7 +71,7 @@ type service struct {
 	cdnMediaBaseURL           string
 	cdnOriginAuthToken        string
 	virtualStorage            *virtualstorage.Manager
-	mediaReplicator            *virtualstorage.Replicator
+	mediaReplicator           *virtualstorage.Replicator
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
 }
@@ -1062,7 +1062,9 @@ func main() {
 			log.Fatal("MEDIA_REPLICATION_ENABLED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
 		}
 		mediaReplicator, err = configureMediaReplicator(primaryVirtualStorageProvider)
-		if err != nil { log.Fatalf("configure durable media replication: %v", err) }
+		if err != nil {
+			log.Fatalf("configure durable media replication: %v", err)
+		}
 		var mediaReplicationSchemaReady bool
 		err = db.QueryRow(context.Background(), `SELECT
 			to_regclass('testagram_media.media_replication_outbox') IS NOT NULL
@@ -1151,7 +1153,9 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
-	if mediaReplicator != nil { go runMediaReplicationWorker(signalCtx, db, mediaReplicator) }
+	if mediaReplicator != nil {
+		go runMediaReplicationWorker(signalCtx, db, mediaReplicator)
+	}
 	if federationWorker != nil {
 		go federationWorker.Run(signalCtx)
 	}
