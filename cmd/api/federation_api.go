@@ -19,9 +19,10 @@ type federationPreferenceRequest struct {
 }
 
 type federationRemoteFollowRequest struct {
-	LocalUserID    string `json:"local_user_id"`
-	RemoteActorURI string `json:"remote_actor_uri"`
-	ActivityID     string `json:"activity_id"`
+	LocalUserID       string `json:"local_user_id"`
+	RemoteActorURI    string `json:"remote_actor_uri"`
+	ActivityID        string `json:"activity_id"`
+	FollowActivityID  string `json:"follow_activity_id,omitempty"`
 }
 
 type federationActorProfile struct {
@@ -233,8 +234,9 @@ func (s *service) federationRemoteUnfollow(w http.ResponseWriter, r *http.Reques
 	var input federationRemoteFollowRequest
 	if err := decodeMediaJSON(w, r, &input); err != nil ||
 		!socialUUIDPattern.MatchString(strings.ToLower(strings.TrimSpace(input.LocalUserID))) ||
-		!validFederationRemoteURI(input.RemoteActorURI) || !validFederationRemoteURI(input.ActivityID) {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REMOTE_UNFOLLOW", "A valid local user ID, verified remote actor URI and HTTPS Undo activity ID are required", requestID(r)))
+		!validFederationRemoteURI(input.RemoteActorURI) || !validFederationRemoteURI(input.ActivityID) ||
+		!validFederationRemoteURI(input.FollowActivityID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REMOTE_UNFOLLOW", "A valid local user ID, verified remote actor URI, HTTPS Undo activity ID and original Follow activity ID are required", requestID(r)))
 		return
 	}
 	input.LocalUserID = strings.ToLower(strings.TrimSpace(input.LocalUserID))
@@ -248,8 +250,9 @@ func (s *service) federationRemoteUnfollow(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 	tag, err := s.db.Exec(ctx, `UPDATE testagram_local.remote_follows
 		SET status='removed',last_activity_id=$3,updated_at=now()
-		WHERE local_user_id=$1::uuid AND remote_actor_uri=$2`,
-		input.LocalUserID, input.RemoteActorURI, input.ActivityID)
+		WHERE local_user_id=$1::uuid AND remote_actor_uri=$2
+		  AND follow_activity_id=$4 AND status='accepted'`,
+		input.LocalUserID, input.RemoteActorURI, input.ActivityID, input.FollowActivityID)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("REMOTE_UNFOLLOW_FAILED", "Canonical remote follow state could not be updated", requestID(r)))
 		return
