@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: testagram-backend-fresh
+    name: testagram-backend
     runtime: docker
     plan: free
     region: frankfurt
