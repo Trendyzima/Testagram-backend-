@@ -55,7 +55,7 @@ func NewS3Provider(cfg S3Config) (*S3Provider, error) {
 	u, err := url.Parse(strings.TrimSpace(cfg.Endpoint))
 	if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLocalS3Host(u.Hostname()))) ||
 		u.User != nil || u.RawQuery != "" || u.Fragment != "" || (strings.TrimRight(u.Path, "/") != "" && strings.TrimRight(u.Path, "/") != "/v1/s3") {
-		return nil, errors.New("S3 endpoint must be an absolute HTTP(S) origin without credentials, path, query, or fragment")
+		return nil, errors.New("S3 endpoint must be an HTTPS origin or the Appwrite /v1/s3 endpoint, without credentials, query, or fragment")
 	}
 	if strings.TrimSpace(cfg.AccessKey) == "" || strings.TrimSpace(cfg.SecretKey) == "" {
 		return nil, errors.New("S3 access and secret keys are required")
