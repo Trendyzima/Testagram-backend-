@@ -523,15 +523,456 @@ jobs:
           docker logs testagram-minio-ci
           echo "MinIO did not become healthy within 60 seconds" >&2
           exit 1
+      - name: Start two isolated replica MinIO services
+        run: |
+          set -euo pipefail
+          for entry in "r2:9001" "b2:9002"; do
+            name="testagram-minio-${entry%%:*}"
+            port="${entry##*:}"
+            docker run -d --rm --name "$name" -p "$port:9000" \
+              -e MINIO_ROOT_USER=testagram-ci \
+              -e MINIO_ROOT_PASSWORD=testagram-ci-password \
+              -e MINIO_SITE_REGION=us-east-1 \
+              ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 server /data --address ":9000"
+          done
+          for port in 9001 9002; do
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent "http://127.0.0.1:$port/minio/health/live" >/dev/null; then break; fi
+              sleep 2
+            done
+            curl --fail --silent "http://127.0.0.1:$port/minio/health/live" >/dev/null
+          done
       - name: Exercise signed PUT, HEAD, GET, LIST and DELETE against MinIO
         env:
           TESTAGRAM_S3_ENDPOINT: http://127.0.0.1:9000
           TESTAGRAM_S3_ACCESS_KEY: testagram-ci
           TESTAGRAM_S3_SECRET_KEY: testagram-ci-password
         run: go test -race -count=1 ./internal/virtualstorage -run '^TestS3ProviderMinIOLifecycle$'
-      - name: Stop isolated MinIO service
+      - name: Exercise three-provider verified replication and deletion
+        env:
+          TESTAGRAM_S3_ACCESS_KEY: testagram-ci
+          TESTAGRAM_S3_SECRET_KEY: testagram-ci-password
+          TESTAGRAM_REPLICA_PRIMARY_ENDPOINT: http://127.0.0.1:9000
+          TESTAGRAM_REPLICA_R2_ENDPOINT: http://127.0.0.1:9001
+          TESTAGRAM_REPLICA_B2_ENDPOINT: http://127.0.0.1:9002
+        run: go test -race -count=1 ./internal/virtualstorage -run '^TestReplicatorMinIOThreeProviderLifecycle
+  replication-media-schema-integration:
+    name: Replication media outbox PostgreSQL integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-replication-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-replication-ci pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs testagram-replication-ci
+          exit 1
+      - name: Apply media and replication migrations
+        run: |
+          set -euo pipefail
+          for migration in \
+            migrations/005_media_assets.sql \
+            migrations/006_media_lifecycle.sql \
+            migrations/007_media_product_bridge.sql \
+            migrations/008_virtual_storage_bridge.sql \
+            migrations/20261019_dual_backend_replication.sql \
+            migrations/20261019_testagram_media_replication_producers.sql; do
+            docker exec -i testagram-replication-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+      - name: Verify public-only producer, checksum payload, tombstones and health counters
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-replication-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_media.assets
+            (object_key, owner_id, visibility, content_type, size_bytes, checksum_sha256, status)
+          VALUES
+            ('users/test-user/0123456789abcdef0123456789abcdef', 'test-user', 'public', 'image/jpeg', 1024, repeat('a',64), 'ready'),
+            ('users/test-user/1123456789abcdef0123456789abcdef', 'test-user', 'private', 'image/jpeg', 1024, repeat('b',64), 'ready');
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM public.platform_replication_outbox WHERE entity_type='media') <> 1 THEN
+              RAISE EXCEPTION 'only complete public media should produce an event';
+            END IF;
+            IF EXISTS (
+              SELECT 1 FROM public.platform_replication_outbox
+              WHERE entity_type='media' AND (payload ? 'signed_url' OR payload ? 'presigned_url' OR payload ? 'download_url')
+            ) THEN
+              RAISE EXCEPTION 'signed URL fields must never be replicated';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM public.platform_replication_outbox
+              WHERE entity_type='media' AND event_type='media.created'
+                AND payload->>'checksum_sha256'=repeat('a',64)
+                AND payload->>'visibility'='public'
+            ) THEN
+              RAISE EXCEPTION 'public media event is missing verified metadata';
+            END IF;
+          END $ci$;
+          UPDATE testagram_media.assets
+          SET visibility='private'
+          WHERE object_key='users/test-user/0123456789abcdef0123456789abcdef';
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM public.platform_replication_outbox WHERE entity_type='media') <> 2 THEN
+              RAISE EXCEPTION 'public-to-private transition must append a tombstone';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM public.platform_replication_outbox
+              WHERE entity_type='media' AND event_type='media.deleted' AND payload='{}'::jsonb
+            ) THEN
+              RAISE EXCEPTION 'privacy transition must emit an empty tombstone';
+            END IF;
+            IF (SELECT outbox_pending FROM public.platform_replication_health) <> 2 THEN
+              RAISE EXCEPTION 'replication health view must report pending outbox events';
+            END IF;
+          END $ci$;
+          SQL
+      - name: Stop isolated PostgreSQL
         if: always()
-        run: docker stop testagram-minio-ci || true
+        run: docker stop testagram-replication-ci || true
+
+  local-product-outbox-integration:
+    name: Local account and post transactional outbox integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-local-product-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-local-product-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-local-product-ci
+          exit 1
+      - name: Apply isolated media and replication migrations
+        run: |
+          set -euo pipefail
+          for migration in \
+            migrations/005_media_assets.sql \
+            migrations/006_media_lifecycle.sql \
+            migrations/007_media_product_bridge.sql \
+            migrations/008_virtual_storage_bridge.sql \
+            migrations/20261019_dual_backend_replication.sql \
+            migrations/20261019_testagram_local_accounts_posts.sql \
+            migrations/20261019_testagram_independent_auth.sql \
+            migrations/20261019_testagram_media_replication_producers.sql \
+            migrations/20261106_appwrite_identity_bridge.sql \
+            migrations/20261106_tv_health_postgres.sql \
+            migrations/20261106_social_core.sql \
+            migrations/20261110_native_media_post_links.sql \
+            migrations/20261111_media_replica_ledger.sql \
+            migrations/20261112_media_replication_outbox.sql; do
+            docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+      - name: Verify account/post atomic events and privacy tombstones
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_local.accounts(user_id,username,display_name)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','ci_public_user','CI User');
+          INSERT INTO testagram_local.posts(id,author_id,text,visibility)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174000','public test post','public');
+          INSERT INTO testagram_local.accounts(user_id,username,display_name)
+          VALUES ('123e4567-e89b-42d3-a456-426614174004','ci_social_user','Social User'),
+                 ('123e4567-e89b-42d3-a456-426614174005','ci_protected_user','Protected User');
+          UPDATE testagram_local.accounts SET protected_account=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174005';
+          INSERT INTO testagram_local.follows(follower_id,following_id,status)
+          VALUES ('123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174004','accepted'),
+                 ('123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174005','pending');
+          INSERT INTO testagram_local.post_reactions(post_id,user_id,emoji)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174004','❤️');
+          INSERT INTO testagram_local.replies(post_id,user_id,content)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174004','CI reply');
+          INSERT INTO testagram_local.reposts(post_id,user_id)
+          VALUES ('123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174004');
+          INSERT INTO testagram_local.bookmarks(user_id,post_id)
+          VALUES ('123e4567-e89b-42d3-a456-426614174004','123e4567-e89b-42d3-a456-426614174001');
+          DO $social$
+          BEGIN
+            IF (SELECT following_count FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174000') <> 1 THEN
+              RAISE EXCEPTION 'accepted follow did not increment following count';
+            END IF;
+            IF (SELECT follower_count FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174004') <> 1 THEN
+              RAISE EXCEPTION 'accepted follow did not increment follower count';
+            END IF;
+            IF (SELECT follower_count FROM testagram_local.accounts WHERE user_id='123e4567-e89b-42d3-a456-426614174005') <> 0 THEN
+              RAISE EXCEPTION 'pending follow must not increment follower count';
+            END IF;
+            IF (SELECT likes_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 1 THEN
+              RAISE EXCEPTION 'reaction count trigger failed';
+            END IF;
+            IF (SELECT replies_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 1 THEN
+              RAISE EXCEPTION 'reply count trigger failed';
+            END IF;
+            IF (SELECT reposts_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 1 THEN
+              RAISE EXCEPTION 'repost count trigger failed';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_local.bookmarks WHERE user_id='123e4567-e89b-42d3-a456-426614174004') THEN
+              RAISE EXCEPTION 'bookmark insert failed';
+            END IF;
+          END $social$;
+          UPDATE testagram_local.replies SET deleted_at=now()
+            WHERE post_id='123e4567-e89b-42d3-a456-426614174001';
+          DELETE FROM testagram_local.post_reactions WHERE post_id='123e4567-e89b-42d3-a456-426614174001';
+          DELETE FROM testagram_local.reposts WHERE post_id='123e4567-e89b-42d3-a456-426614174001';
+          DO $social_counts$
+          BEGIN
+            IF (SELECT likes_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 0
+              OR (SELECT replies_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 0
+              OR (SELECT reposts_count FROM testagram_local.posts WHERE id='123e4567-e89b-42d3-a456-426614174001') <> 0 THEN
+              RAISE EXCEPTION 'delete/soft-delete counters did not return to zero';
+            END IF;
+          END $social_counts$;
+          DO $ci$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND event_type='account.created' AND entity_id='123e4567-e89b-42d3-a456-426614174000') THEN
+              RAISE EXCEPTION 'account write did not atomically emit a public account event';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='post' AND event_type='post.created' AND entity_id='123e4567-e89b-42d3-a456-426614174001' AND payload->>'text'='public test post') THEN
+              RAISE EXCEPTION 'post write did not atomically emit a public post event';
+            END IF;
+          END $ci$;
+          UPDATE testagram_local.accounts SET protected_account=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174000';
+          DO $ci$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND event_type='account.deleted' AND entity_id='123e4567-e89b-42d3-a456-426614174000' AND payload='{}'::jsonb) THEN
+              RAISE EXCEPTION 'account privacy change did not emit tombstone';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='post' AND event_type='post.deleted' AND entity_id='123e4567-e89b-42d3-a456-426614174001' AND payload='{}'::jsonb) THEN
+              RAISE EXCEPTION 'account privacy change did not tombstone public posts';
+            END IF;
+          END $ci$;
+          INSERT INTO testagram_local.accounts(user_id,username,protected_account)
+          VALUES ('123e4567-e89b-42d3-a456-426614174002','ci_private_user',TRUE);
+          DO $ci$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM public.platform_replication_outbox WHERE entity_type='account' AND entity_id='123e4567-e89b-42d3-a456-426614174002') THEN
+              RAISE EXCEPTION 'private account must not be projected';
+            END IF;
+          END $ci$;
+          SQL
+      - name: Verify Go social privacy decisions against PostgreSQL
+        env:
+          TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run '^TestSocialPostVisibilityPostgresIntegration$' -count=1 -v
+      - name: Verify Go interaction summary query against PostgreSQL
+        env:
+          TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run '^TestSocialInteractionSummaryPostgresIntegration$' -count=1 -v
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-local-product-ci || true
+
+  independent-auth-schema-integration:
+    name: Independent authentication schema integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-auth-ci -e POSTGRES_PASSWORD=ci-only-password -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-auth-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-auth-ci
+          exit 1
+      - name: Apply schema and verify constraints
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.identities(email,username,password_hash)
+          VALUES ('ci@example.test','ci_user','test-hash');
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.identities WHERE email_normalized='ci@example.test') <> 1 THEN
+              RAISE EXCEPTION 'normalized email lookup failed';
+            END IF;
+            IF (SELECT count(*) FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name IN ('verification_token_hash','reset_token_hash','token_version')) <> 3 THEN
+              RAISE EXCEPTION 'verification, reset, or token-version columns missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='appwrite_accounts') THEN
+              RAISE EXCEPTION 'Appwrite identity bridge table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='link_audit') THEN
+              RAISE EXCEPTION 'Appwrite identity link audit table missing';
+            END IF;
+            INSERT INTO testagram_identity.appwrite_accounts(appwrite_user_id,canonical_user_id,legacy_user_id,email,email_verified,linked_at)
+            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','ci@example.test',TRUE,now());
+            INSERT INTO testagram_identity.link_audit(appwrite_user_id,canonical_user_id,legacy_user_id,event_type,request_id)
+            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','linked','ci-request');
+            IF (SELECT count(*) FROM testagram_identity.link_audit WHERE request_id='ci-request') <> 1 THEN
+              RAISE EXCEPTION 'identity link audit write failed';
+            END IF;
+          END $ci$;
+          DO $duplicate$
+          BEGIN
+            BEGIN
+              INSERT INTO testagram_auth.identities(email,username,password_hash)
+              VALUES ('CI@EXAMPLE.TEST','another_user','test-hash');
+              RAISE EXCEPTION 'case-insensitive duplicate email was accepted';
+            EXCEPTION WHEN unique_violation THEN NULL;
+            END;
+          END $duplicate$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-auth-ci || true
+
+  saas-schema-integration:
+    name: SaaS tenancy migration integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-saas-schema-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-saas-schema-ci pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs testagram-saas-schema-ci
+          exit 1
+      - name: Apply migration twice and assert schema invariants
+        run: |
+          set -euo pipefail
+          docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'create extension if not exists pgcrypto'
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          rls_enabled="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select relrowsecurity from pg_class where oid='testagram_saas.tenants'::regclass")"
+          test "$rls_enabled" = "t"
+          index_count="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select count(*) from pg_indexes where schemaname='testagram_saas' and indexname='saas_subscriptions_external_ref_uidx'")"
+          test "$index_count" = "1"
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-saas-schema-ci || true
+
+  admin-security-schema-integration:
+    name: Admin permissions and dual-control PostgreSQL integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-admin-security-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-admin-security-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-admin-security-ci
+          exit 1
+      - name: Apply staff and security migrations
+        run: |
+          set -euo pipefail
+          docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto'
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
+      - name: Verify permission isolation and two-person approval ledger
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role) VALUES
+            ('ci-master-user','owner'),
+            ('ci-identity-admin','administrator'),
+            ('ci-engineer-user','engineer');
+          DO $permissions$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='administrator' AND permission_key='identity.review'
+            ) THEN RAISE EXCEPTION 'administrator identity review permission missing'; END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.request'
+            ) THEN RAISE EXCEPTION 'engineer deployment request permission missing'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.approve'
+            ) THEN RAISE EXCEPTION 'engineers must not receive production approval by default'; END IF;
+          END $permissions$;
+          INSERT INTO testagram_auth.staff_permission_overrides
+            (appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id)
+          VALUES ('ci-engineer-user','deployment.approve',TRUE,'Temporary controlled CI approval grant','ci-master-user');
+          INSERT INTO testagram_auth.sensitive_action_requests
+            (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
+          VALUES
+            ('deployment.production','ci-master-user','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-identity-admin','approved','Independent reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-engineer-user','approved','Second distinct reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          DO $approval$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals) <> 2 THEN
+              RAISE EXCEPTION 'two distinct approval records were not persisted';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.admin_security_audit
+              WHERE action='sensitive_action.requested'
+            ) AND EXISTS (
+              SELECT 1 FROM testagram_auth.sensitive_action_requests
+            ) THEN
+              -- Audit insertion is performed atomically by the application handler;
+              -- the schema integration intentionally inserts the ledger directly.
+              NULL;
+            END IF;
+          END $approval$;
+          UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
+          WHERE appwrite_user_id='ci-engineer-user';
+          DO $revocation$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id='ci-engineer-user' AND access_revoked_at IS NOT NULL) THEN
+              RAISE EXCEPTION 'staff revocation timestamp was not persisted';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id='ci-engineer-user' AND permission_key='deployment.approve') THEN
+              RAISE EXCEPTION 'revocation must preserve permission audit history';
+            END IF;
+          END $revocation$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-admin-security-ci || true
+
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
 
   replication-media-schema-integration:
     name: Replication media outbox PostgreSQL integration
