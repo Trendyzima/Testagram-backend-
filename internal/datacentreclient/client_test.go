@@ -45,6 +45,9 @@ func TestClientCallsPrivateMediaLifecycleWithBearerAndVersionHeaders(t *testing.
 		_, _ = w.Write([]byte(`{"status":"protected","content_type":"image/jpeg","size_bytes":2048,"sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`))
 	})
 	mux.HandleFunc("POST /internal/v1/media/download-url", func(w http.ResponseWriter, r *http.Request) {
+		var input downloadRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil { t.Fatal(err) }
+		if input.Method != http.MethodGet && input.Method != http.MethodHead { t.Fatalf("unexpected delivery method: %q", input.Method) }
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"url":"https://r2.example/object","provider":"cloudflare_r2"}`))
 	})
@@ -77,6 +80,8 @@ func TestClientCallsPrivateMediaLifecycleWithBearerAndVersionHeaders(t *testing.
 	if err != nil || download.Provider != "cloudflare_r2" {
 		t.Fatalf("DownloadURL = %+v, %v", download, err)
 	}
+	head, err := client.HeadURL(ctx, "user-456", "user-123", "media-public", "users/user-123/0123456789abcdef0123456789abcdef")
+	if err != nil || head.Provider != "cloudflare_r2" { t.Fatalf("HeadURL = %+v, %v", head, err) }
 	deleted, err := client.Delete(ctx, "user-123", "user-123", "media-public", "users/user-123/0123456789abcdef0123456789abcdef")
 	if err != nil || deleted != "delete_pending" {
 		t.Fatalf("Delete = %q, %v", deleted, err)
