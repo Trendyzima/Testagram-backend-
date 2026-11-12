@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,6 +24,30 @@ func normalizeFederationPublicBaseURL(raw string) (string, error) {
 		return "", errors.New("FEDERATION_PUBLIC_BASE_URL must be an HTTPS origin without path, query or fragment")
 	}
 	return raw, nil
+}
+
+var federationHashtagPattern = regexp.MustCompile("(^|[^\\p{L}\\p{N}_])#([\\p{L}\\p{N}_]{1,64})")
+
+func buildFederationHashtagTags(content string) []map[string]string {
+	matches := federationHashtagPattern.FindAllStringSubmatch(content, -1)
+	seen := make(map[string]struct{}, len(matches))
+	tags := make([]map[string]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		normalized := strings.ToLower(match[2])
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		tags = append(tags, map[string]string{
+			"type": "Hashtag",
+			"href": "https://testagram.site/hashtag/" + url.PathEscape(normalized),
+			"name": "#" + match[2],
+		})
+	}
+	return tags
 }
 
 func buildFederationNote(baseURL, postID, handle, content string, createdAt time.Time) (map[string]any, string, error) {
@@ -48,6 +73,9 @@ func buildFederationNote(baseURL, postID, handle, content string, createdAt time
 		"published":   createdAt.UTC().Format(time.RFC3339Nano),
 		"to":          []string{activityStreamsPublic},
 		"cc":          []string{actorURI + "/followers"},
+	}
+	if tags := buildFederationHashtagTags(content); len(tags) > 0 {
+		note["tag"] = tags
 	}
 	return note, actorURI, nil
 }
