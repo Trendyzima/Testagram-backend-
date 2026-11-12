@@ -313,7 +313,7 @@ jobs:
           TESTAGRAM_NETWORK=testagram-platform
           TESTAGRAM_EGRESS_NETWORK=testagram-egress
           TESTAGRAM_ALGORITHM_IMAGE=ghcr.io/trendyzima/testagram-feed:sha-ca585b7fe40cb423d1c5d2f32eb8930ee9558949
-          TESTAGRAM_FEDERATION_IMAGE=ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
+          TESTAGRAM_FEDERATION_IMAGE=ghcr.io/trendyzima/testagram-federation:sha-4c94a813107bc6d5f70fc3186d8377cb275d7475
           ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
           FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
           FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
