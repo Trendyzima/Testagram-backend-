@@ -782,7 +782,10 @@ func TestValidObjectKeySupportsOwnerBoundFreshMediaKeys(t *testing.T) {
 	if !validObjectKey("users/user_123.test/0123456789abcdef0123456789abcdef") {
 		t.Fatal("valid Appwrite owner-bound object key rejected")
 	}
-	if validObjectKey("users/other/0123456789abcdef0123456789abcdef") && freshMediaObjectKeyPattern.MatchString("users/user_123.test/0123456789abcdef0123456789abcdef") == false {
-		t.Fatal("unexpected owner-bound object key validation mismatch")
+	if validObjectKey("users/user_123.test/not-a-digest") {
+		t.Fatal("malformed owner-bound object key accepted")
+	}
+	if !validObjectKey("v1/0123456789abcdef0123456789abcdef") {
+		t.Fatal("legacy v1 object key compatibility was lost")
 	}
 }
