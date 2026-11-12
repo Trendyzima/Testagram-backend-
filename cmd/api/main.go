@@ -480,6 +480,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationInternalReady)
 	mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActorByHandle)
 	mux.HandleFunc("GET /internal/v1/federation/actors/by-id/{user_id}", s.federationActorByID)
+	mux.HandleFunc("POST /internal/v1/federation/remote-follows", s.federationRemoteFollow)
+	mux.HandleFunc("POST /internal/v1/federation/remote-follows/undo", s.federationRemoteUnfollow)
 	mux.HandleFunc("OPTIONS /api/feed/home", s.mediaPreflight)
 	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/feed/public", s.mediaPreflight)
