@@ -436,6 +436,20 @@ func verifyReplica(ctx context.Context, provider *virtualstorage.S3Provider, buc
 
 // DownloadURL returns a short-lived private delivery URL only after Appwrite confirms ownership
 // and the media object and its required delivery origin pass integrity checks.
+func (s *Service) issueCDNAuthorization(ctx context.Context, viewerID, ownerID, key string) (MediaDelivery, error) {
+	if s.backendMedia == nil || s.cdnBaseURL == "" {
+		return MediaDelivery{}, errors.New("Fresh CDN assertion bridge is not configured")
+	}
+	delivery, err := s.backendMedia.Issue(ctx, viewerID, ownerID, key)
+	if err != nil { return MediaDelivery{}, err }
+	expectedURL := strings.TrimRight(s.cdnBaseURL, "/") + "/v1/" + key
+	if delivery.URL != expectedURL || !strings.HasPrefix(delivery.Authorization, "Bearer v1.") ||
+		delivery.ExpiresInSeconds < 1 || delivery.ExpiresInSeconds > 300 || delivery.Visibility != "private" {
+		return MediaDelivery{}, errors.New("Backend CDN authorization does not match the configured origin and object")
+	}
+	return delivery, nil
+}
+
 func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (string, error) {
 	delivery, err := s.DownloadAuthorization(ctx, ownerID, objectID)
 	if err != nil { return "", err }
@@ -466,7 +480,7 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 	// R2 object passes a full SHA-256 read-back, not merely a HEAD/size check.
 	r2Ready := verifyReplica(ctx, s.r2, s.r2Bucket, record)
 	if r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
-		return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
+		return s.issueCDNAuthorization(ctx, viewerID, ownerID, key)
 	}
 
 	b2Ready := verifyReplica(ctx, s.b2, s.b2Bucket, record)
