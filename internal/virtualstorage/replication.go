@@ -155,6 +155,41 @@ func (r *Replicator) Replicate(ctx context.Context, tenantID, namespace, objectK
 	return results, nil
 }
 
+// Delete removes a tenant-scoped object from the primary and every replica.
+// Missing objects are treated as already deleted; any other provider error keeps
+// the durable delete job retryable.
+func (r *Replicator) Delete(ctx context.Context, tenantID, namespace, objectKey string) error {
+	if r == nil || r.primary == nil || len(r.targets) != 2 {
+		return errors.New("three-provider media replication is not configured")
+	}
+	namespace = strings.TrimSpace(namespace)
+	key := strings.TrimSpace(objectKey)
+	if r.primaryBuckets[namespace] == "" || !tenantIDPattern.MatchString(tenantID) || !validKey(key) {
+		return errors.New("invalid media deletion identity")
+	}
+	scopedKey := tenantPrefix(tenantID) + key
+	type destination struct {
+		name string
+		provider Provider
+		bucket string
+	}
+	destinations := []destination{{name:r.primaryName,provider:r.primary,bucket:r.primaryBuckets[namespace]}}
+	for _, target := range r.targets {
+		destinations = append(destinations,destination{name:target.name,provider:target.provider,bucket:target.buckets[namespace]})
+	}
+	var failures []string
+	for _, target := range destinations {
+		err := target.provider.Delete(ctx,target.bucket,scopedKey)
+		if err != nil && !errors.Is(err,ErrNotFound) {
+			failures = append(failures,fmt.Sprintf("%s: %v",target.name,err))
+		}
+	}
+	if len(failures)>0 {
+		return fmt.Errorf("media replica deletion incomplete: %s",strings.Join(failures,"; "))
+	}
+	return nil
+}
+
 func hexDecodeSHA256(value string) ([]byte, error) {
 	if len(value) != 64 {
 		return nil, errors.New("expected SHA-256 must be 64 hexadecimal characters")
