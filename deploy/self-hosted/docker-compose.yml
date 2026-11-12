@@ -33,6 +33,7 @@ services:
       - ../../migrations/20261110_federation_outbox.sql:/docker-entrypoint-initdb.d/022_federation_outbox.sql:ro
       - ../../migrations/20261111_profile_storage_capacity.sql:/docker-entrypoint-initdb.d/023_profile_storage_capacity.sql:ro
       - ../../migrations/20261112_federation_remote_follows.sql:/docker-entrypoint-initdb.d/024_federation_remote_follows.sql:ro
+      - ../../migrations/20261112_instabox_avatar_storage.sql:/docker-entrypoint-initdb.d/025_instabox_avatar_storage.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -143,7 +144,7 @@ services:
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
-      VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-false}
+      VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-true}
       MPESA_ENV: ${MPESA_ENV:-sandbox}
       MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
       MPESA_PASSKEY: ${MPESA_PASSKEY:-}
