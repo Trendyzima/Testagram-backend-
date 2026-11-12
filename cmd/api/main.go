@@ -175,6 +175,8 @@ func (w *statusRecorder) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *statusRecorder) Write(p []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
@@ -538,6 +540,21 @@ func (s *service) routes() http.Handler {
 		s.requests.Add(1)
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		if r.Method == http.MethodPut && r.URL.Path == "/api/media/upload" {
+			// Large media bodies are bounded by the upload intent and streamed to
+			// storage. Extend only this route's socket deadlines; ordinary API
+			// requests retain the server's short global read/write timeouts.
+			deadline := time.Now().Add(15 * time.Minute)
+			controller := http.NewResponseController(recorder)
+			if err := controller.SetReadDeadline(deadline); err != nil {
+				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload read deadline unavailable"})
+				return
+			}
+			if err := controller.SetWriteDeadline(deadline); err != nil {
+				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload write deadline unavailable"})
+				return
+			}
+		}
 		mux.ServeHTTP(recorder, r)
 		s.recordRequest(normalizedMethod(r.Method), normalizedRoute(r.URL.Path), recorder.status, time.Since(started))
 	})
@@ -1170,7 +1187,7 @@ func main() {
 	var mediaIntentFactory *media.IntentFactory
 	if dataCentreMedia != nil {
 		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{
-			MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 10 * time.Minute,
+			MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 30 * time.Minute,
 		})
 		if err != nil {
 			log.Fatalf("configure media upload intent policy: %v", err)
