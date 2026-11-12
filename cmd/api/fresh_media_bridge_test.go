@@ -11,6 +11,8 @@ func TestFreshMediaBridgeRejectsOwnerAndMetadataMismatch(t *testing.T) {
 		OwnerID:"user_123.test",
 		Key:"users/user_123.test/0123456789abcdef0123456789abcdef",
 		Visibility:"private",
+		R2Bucket:"testagram-media",
+		B2Bucket:"testagram-b2-media",
 		ContentType:"image/webp",
 		SizeBytes:50_000,
 		SHA256:strings.Repeat("a",64),
