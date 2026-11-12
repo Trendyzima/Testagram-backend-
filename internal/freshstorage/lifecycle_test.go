@@ -777,3 +777,12 @@ func TestReleaseExpiredReservationRequiresExpiryClaimAndReleasesBothQuotas(t *te
 		t.Fatalf("quota release incomplete: decrements=%d committed=%v", decrements, committed)
 	}
 }
+
+func TestValidObjectKeySupportsOwnerBoundFreshMediaKeys(t *testing.T) {
+	if !validObjectKey("users/user_123.test/0123456789abcdef0123456789abcdef") {
+		t.Fatal("valid Appwrite owner-bound object key rejected")
+	}
+	if validObjectKey("users/other/0123456789abcdef0123456789abcdef") && freshMediaObjectKeyPattern.MatchString("users/user_123.test/0123456789abcdef0123456789abcdef") == false {
+		t.Fatal("unexpected owner-bound object key validation mismatch")
+	}
+}
