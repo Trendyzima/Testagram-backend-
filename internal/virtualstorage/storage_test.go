@@ -3,12 +3,13 @@ package virtualstorage
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 )
 
 type fakeProvider struct {
-	bucket, key, contentType string
+	bucket, key, contentType, method string
 	size                     int64
 	deleted                  bool
 	headInfo                 ObjectInfo
@@ -21,9 +22,10 @@ func (f *fakeProvider) PresignPut(_ context.Context, bucket, key, contentType st
 	return "https://storage.example/signed-put", nil
 }
 func (f *fakeProvider) PresignGet(_ context.Context, bucket, key string, _ time.Duration) (string, error) {
-	f.bucket, f.key = bucket, key
+	f.bucket, f.key, f.method = bucket, key, http.MethodGet
 	return "https://storage.example/signed-get", nil
 }
+func (f *fakeProvider) PresignHead(_ context.Context, bucket, key string, _ time.Duration) (string, error) { f.bucket, f.key, f.method = bucket, key, http.MethodHead; return "https://storage.example/signed-head", nil }
 func (f *fakeProvider) Head(_ context.Context, bucket, key string) (ObjectInfo, error) {
 	f.bucket, f.key = bucket, key
 	if f.headErr != nil {
