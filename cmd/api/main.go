@@ -1063,6 +1063,14 @@ func main() {
 		}
 		mediaReplicator, err = configureMediaReplicator(primaryVirtualStorageProvider)
 		if err != nil { log.Fatalf("configure durable media replication: %v", err) }
+		var mediaReplicationSchemaReady bool
+		err = db.QueryRow(context.Background(), `SELECT
+			to_regclass('testagram_media.media_replication_outbox') IS NOT NULL
+			AND to_regclass('testagram_media.storage_replicas') IS NOT NULL
+		`).Scan(&mediaReplicationSchemaReady)
+		if err != nil || !mediaReplicationSchemaReady {
+			log.Fatal("MEDIA_REPLICATION_ENABLED requires the media replica ledger and outbox migrations to be applied")
+		}
 		log.Printf("durable media replication worker enabled (Instabox VPS + Cloudflare R2 + Backblaze B2)")
 	}
 	var replicationStore *replication.Store
