@@ -451,31 +451,43 @@ func (s *Service) DownloadAuthorization(ctx context.Context, ownerID, objectID s
 		record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
 		return MediaDelivery{}, ErrNotReady
 	}
-	r2Info, r2Err := s.r2.Head(ctx, s.r2Bucket, key)
-	r2Ready := r2Err == nil && r2Info.Size == record.Bytes && strings.EqualFold(r2Info.ContentType, record.ContentType)
+
+	// The Worker reads R2 directly. Issue a CDN assertion only after the exact
+	// R2 object passes a full SHA-256 read-back, not merely a HEAD/size check.
+	r2Ready := verifyReplica(ctx, s.r2, s.r2Bucket, record)
 	if r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
 		return s.backendMedia.Issue(ctx, ownerID, key)
 	}
-	if r2Ready {
-		url, signErr := s.r2.PresignGet(ctx, s.r2Bucket, key, 5*time.Minute)
-		if signErr != nil { return MediaDelivery{}, signErr }
-		return MediaDelivery{URL:url,ExpiresInSeconds:300,Visibility:"private"},nil
-	}
-	b2Info, b2Err := s.b2.Head(ctx, s.b2Bucket, key)
-	if b2Err != nil || b2Info.Size != record.Bytes || !strings.EqualFold(b2Info.ContentType, record.ContentType) {
-		if s.archive == nil { return MediaDelivery{}, fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady) }
+
+	b2Ready := verifyReplica(ctx, s.b2, s.b2Bucket, record)
+	if !b2Ready && !r2Ready {
+		if s.archive == nil {
+			return MediaDelivery{}, fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady)
+		}
 		if restoreErr := s.RestoreArchive(ctx, ownerID, objectID); restoreErr != nil {
 			return MediaDelivery{}, fmt.Errorf("active replicas unavailable and archive restore failed: %w", restoreErr)
 		}
-		// Restoration is not proof that the CDN's R2 origin is ready. Verify it again.
-		r2Info, r2Err = s.r2.Head(ctx, s.r2Bucket, key)
-		if r2Err == nil && r2Info.Size == record.Bytes && strings.EqualFold(r2Info.ContentType, record.ContentType) &&
-			s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
+		r2Ready = verifyReplica(ctx, s.r2, s.r2Bucket, record)
+		b2Ready = verifyReplica(ctx, s.b2, s.b2Bucket, record)
+		if r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
 			return s.backendMedia.Issue(ctx, ownerID, key)
 		}
 	}
-	if b2Err == nil && b2Info.Size == record.Bytes && strings.EqualFold(b2Info.ContentType, record.ContentType) {
+
+	// A healthy B2 copy can repair a missing or corrupt R2 origin. Do not issue
+	// a Worker token until the repaired R2 object passes the same full check.
+	if b2Ready && !r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
+		if repairErr := s.RepairObject(ctx, objectID); repairErr == nil && verifyReplica(ctx, s.r2, s.r2Bucket, record) {
+			return s.backendMedia.Issue(ctx, ownerID, key)
+		}
+	}
+	if b2Ready {
 		url, signErr := s.b2.PresignGet(ctx, s.b2Bucket, key, 5*time.Minute)
+		if signErr != nil { return MediaDelivery{}, signErr }
+		return MediaDelivery{URL:url,ExpiresInSeconds:300,Visibility:"private"},nil
+	}
+	if r2Ready {
+		url, signErr := s.r2.PresignGet(ctx, s.r2Bucket, key, 5*time.Minute)
 		if signErr != nil { return MediaDelivery{}, signErr }
 		return MediaDelivery{URL:url,ExpiresInSeconds:300,Visibility:"private"},nil
 	}
