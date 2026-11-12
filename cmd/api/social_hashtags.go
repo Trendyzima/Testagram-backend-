@@ -194,6 +194,8 @@ LIMIT 200`)
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be decoded", requestID))
 			return
 		}
+		// No user-topic affinity graph is wired yet; keep affinity neutral until
+		// Backend owns a verified topic-follow/interest signal.
 		topicCandidates = append(topicCandidates, algorithmclient.TopicCandidate{
 			Tag: tag, PostsCount: count, LastUsedAt: lastUsed, InterestAffinity: 0,
 		})
