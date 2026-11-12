@@ -38,6 +38,7 @@ type Replicator struct {
 	targets []struct {
 		name string
 		provider copyProvider
+		checksum checksumProvider
 		buckets map[string]string
 	}
 }
@@ -79,6 +80,10 @@ func NewReplicator(primaryName string, primary Provider, primaryBuckets map[stri
 		if !ok {
 			return nil, fmt.Errorf("replica provider %q does not support verified streaming copy", name)
 		}
+		targetChecksum, ok := target.Provider.(checksumProvider)
+		if !ok {
+			return nil, fmt.Errorf("replica provider %q does not support SHA-256 reconciliation", name)
+		}
 		if strings.TrimSpace(target.Buckets["media-private"]) == "" || strings.TrimSpace(target.Buckets["media-public"]) == "" {
 			return nil, fmt.Errorf("replica provider %q requires private and public bucket mappings", name)
 		}
@@ -89,6 +94,7 @@ func NewReplicator(primaryName string, primary Provider, primaryBuckets map[stri
 		}{
 			name: name,
 			provider: copier,
+			checksum: targetChecksum,
 			buckets: map[string]string{
 				"media-private": strings.TrimSpace(target.Buckets["media-private"]),
 				"media-public": strings.TrimSpace(target.Buckets["media-public"]),
@@ -141,8 +147,26 @@ func (r *Replicator) Replicate(ctx context.Context, tenantID, namespace, objectK
 	}}
 	for _, target := range r.targets {
 		bucket := target.buckets[namespace]
-		if err := target.provider.CopyFromProvider(ctx, r.primary, primaryBucket, scopedKey, bucket, scopedKey, size, contentType, expectedSHA256); err != nil {
-			return results, fmt.Errorf("replicate media to %s: %w", target.name, err)
+		copyNeeded := false
+		destinationInfo, headErr := target.provider.Head(ctx, bucket, scopedKey)
+		switch {
+		case errors.Is(headErr, ErrNotFound):
+			copyNeeded = true
+		case headErr != nil:
+			return results, fmt.Errorf("inspect media replica on %s: %w", target.name, headErr)
+		case destinationInfo.Size != size || !strings.EqualFold(destinationInfo.ContentType, contentType):
+			copyNeeded = true
+		default:
+			destinationDigest, digestErr := target.checksum.SHA256(ctx, bucket, scopedKey, size)
+			if digestErr != nil {
+				return results, fmt.Errorf("verify media replica checksum on %s: %w", target.name, digestErr)
+			}
+			copyNeeded = destinationDigest != expectedSHA256
+		}
+		if copyNeeded {
+			if err := target.provider.CopyFromProvider(ctx, r.primary, primaryBucket, scopedKey, bucket, scopedKey, size, contentType, expectedSHA256); err != nil {
+				return results, fmt.Errorf("repair media replica on %s: %w", target.name, err)
+			}
 		}
 		results = append(results, ReplicaResult{
 			Provider: target.name,
