@@ -117,3 +117,6 @@ backward-compatible. The native media-link migration removes the old external
 media ID column; older application versions that require that column cannot be
 rolled back safely after it is applied. Use a forward fix or restore a verified
 pre-migration backup instead.
+
+
+The Backend `FEDERATION_PUBLIC_BASE_URL` must exactly match the Federation service `PUBLIC_BASE_URL`. The Backend uses this origin for ActivityPub actor, activity and public object IDs; a mismatch causes signed activity enqueue authorization to fail closed.
