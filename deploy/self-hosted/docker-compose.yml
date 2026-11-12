@@ -195,7 +195,7 @@ services:
       ADMIN_SERVICE_AUTH_KEY: ${ADMIN_SERVICE_AUTH_KEY:-}
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-https://cloud.appwrite.io/v1}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set APPWRITE_ENDPOINT to the project's regional Appwrite API endpoint}
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-REPLACE_WITH_APPWRITE_PROJECT_ID}
       APPWRITE_API_KEY: ${APPWRITE_API_KEY:-}
       PROMETHEUS_URL: http://prometheus:9090
