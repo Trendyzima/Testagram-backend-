@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9-]{1,128})/([a-f0-9]{32})package freshstorage
+var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})package freshstorage
 
 import (
 	"bytes"
