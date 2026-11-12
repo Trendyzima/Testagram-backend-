@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 )
 
 const maxAvatarImageBytes int64 = 2 << 20
