@@ -53,7 +53,7 @@ func (c *BackendMediaClient) Register(ctx context.Context, r Reservation) error 
 		return nil
 	}
 	body := map[string]any{
-		"owner_id": r.OwnerID, "key": r.ObjectKey, "visibility": "private",
+		"viewer_id": r.OwnerID, "owner_id": r.OwnerID, "key": r.ObjectKey, "visibility": "private",
 		"content_type": r.ContentType, "size_bytes": r.Bytes, "sha256": r.SHA256,
 	}
 	return c.post(ctx, "/internal/media/fresh/register", body, nil)
@@ -64,11 +64,11 @@ func (c *BackendMediaClient) Revoke(ctx context.Context, ownerID, key string) er
 		return nil
 	}
 	return c.post(ctx, "/internal/media/fresh/revoke", map[string]string{
-		"owner_id": strings.TrimSpace(ownerID), "key": strings.TrimSpace(key),
+		"viewer_id": strings.TrimSpace(viewerID), "owner_id": strings.TrimSpace(ownerID), "key": strings.TrimSpace(key),
 	}, nil)
 }
 
-func (c *BackendMediaClient) Issue(ctx context.Context, ownerID, key string) (MediaDelivery, error) {
+func (c *BackendMediaClient) Issue(ctx context.Context, viewerID, ownerID, key string) (MediaDelivery, error) {
 	if c == nil {
 		return MediaDelivery{}, errors.New("Fresh media Backend assertion bridge is not configured")
 	}
