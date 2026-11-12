@@ -18,7 +18,7 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
 test -s "$backup"
 sha256sum "$backup" > "$checksum"
 sha256sum -c "$checksum"
-pg_restore --list "$backup" >/dev/null
+docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine pg_restore --list "/backup/$(basename "$backup")" >/dev/null
 
 echo "Verified pre-migration backup: $backup"
 echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
