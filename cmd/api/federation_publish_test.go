@@ -13,7 +13,7 @@ func TestBuildFederationCreateActivity(t *testing.T) {
 		"https://federation.testagram.site/",
 		"123e4567-e89b-42d3-a456-426614174001",
 		"alice",
-		"<script>alert(1)</script>\nHello Fediverse",
+		"<script>alert(1)</script>\nHello Fediverse #Testagram #Fediverse #testagram",
 		createdAt,
 	)
 	if err != nil {
