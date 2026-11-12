@@ -62,6 +62,8 @@ type service struct {
 	algorithmRequests         atomic.Uint64
 	algorithmFailures         atomic.Uint64
 	federationInternalToken   string
+	federationOutbox          *federationoutbox.Store
+	federationPublicBaseURL   string
 	upstream                  *http.Client
 	media                     *media.Signer
 	virtualStorage            *virtualstorage.Manager
@@ -480,6 +482,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationInternalReady)
 	mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActorByHandle)
 	mux.HandleFunc("GET /internal/v1/federation/actors/by-id/{user_id}", s.federationActorByID)
+	mux.HandleFunc("GET /internal/v1/federation/objects/{post_id}", s.federationObject)
 	mux.HandleFunc("POST /internal/v1/federation/remote-follows", s.federationRemoteFollow)
 	mux.HandleFunc("POST /internal/v1/federation/remote-follows/undo", s.federationRemoteUnfollow)
 	mux.HandleFunc("OPTIONS /api/feed/home", s.mediaPreflight)
@@ -941,6 +944,7 @@ func main() {
 		}
 	}
 	var federationWorker *federationoutbox.Worker
+	var federationOutboxStore *federationoutbox.Store
 	federationURL := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_URL"))
 	federationToken := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_TOKEN"))
 	if federationURL != "" || federationToken != "" {
@@ -955,6 +959,7 @@ func main() {
 		if storeErr != nil {
 			log.Fatalf("configure transactional Federation outbox: %v", storeErr)
 		}
+		federationOutboxStore = outboxStore
 		federationWorker, err = federationoutbox.NewWorker(outboxStore, publisher, nil)
 		if err != nil {
 			log.Fatalf("configure Federation outbox worker: %v", err)
@@ -1067,7 +1072,16 @@ func main() {
 	} else {
 		log.Printf("native social post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
 	}
-	svc := &service{db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second}, media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm, federationInternalToken: federationBackendToken, replicationReceiver: replicationReceiver}
+	federationPublicBaseURL, federationURLerr := normalizeFederationPublicBaseURL(env("FEDERATION_PUBLIC_BASE_URL", "https://federation.testagram.site"))
+	if federationURLerr != nil {
+		log.Fatalf("configure public Federation origin: %v", federationURLerr)
+	}
+	svc := &service{
+		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
+		media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm,
+		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
+		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
+	}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
