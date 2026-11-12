@@ -531,3 +531,23 @@ func TestNormalizedRouteDoesNotExposeRetiredIdentityLink(t *testing.T) {
 		t.Fatalf("media route normalized to %q, want /api/media/list", got)
 	}
 }
+
+func TestCurrentUserProfileRouteIsRegisteredAndUsesCanonicalSessionIdentity(t *testing.T) {
+	s := &service{}
+	handler := s.routes()
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/me/profile", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("current profile route without database status = %d, want %d; body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
+	}
+	if got := normalizedRoute("/api/me/profile"); got != "/api/me/profile" {
+		t.Fatalf("current profile route metric label = %q", got)
+	}
+
+	preflight := httptest.NewRecorder()
+	handler.ServeHTTP(preflight, httptest.NewRequest(http.MethodOptions, "/api/me/profile", nil))
+	if preflight.Code != http.StatusNoContent {
+		t.Fatalf("current profile preflight status = %d, want %d", preflight.Code, http.StatusNoContent)
+	}
+}
