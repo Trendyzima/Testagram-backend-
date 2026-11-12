@@ -195,6 +195,7 @@ func (s *service) federationRemoteFollow(w http.ResponseWriter, r *http.Request)
 	input.LocalUserID = strings.ToLower(strings.TrimSpace(input.LocalUserID))
 	input.RemoteActorURI = strings.TrimSpace(input.RemoteActorURI)
 	input.ActivityID = strings.TrimSpace(input.ActivityID)
+	input.FollowActivityID = strings.TrimSpace(input.FollowActivityID)
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_DATABASE_UNAVAILABLE", "Canonical social graph storage is unavailable", requestID(r)))
 		return
