@@ -421,7 +421,7 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
   }
   signedURL,err=s.virtualStorage.DownloadURL(r.Context(),claims.Subject,ownerID,storageNamespace,key)
  } else if s.media!=nil {
-  signedURL,err=s.media.PresignPrivateDownload(claims.Subject,key,time.Minute,time.Now())
+  signedURL,err=s.media.PresignPrivateDownload(ownerID,key,time.Minute,time.Now())
  } else {
   err=errors.New("media signer unavailable")
  }
