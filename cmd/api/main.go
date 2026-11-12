@@ -472,6 +472,8 @@ func (s *service) routes() http.Handler {
 		mux.HandleFunc("OPTIONS /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 		mux.HandleFunc("POST /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 	}
+	mux.HandleFunc("OPTIONS /api/me/profile", s.mediaPreflight)
+	mux.HandleFunc("GET /api/me/profile", s.socialMyProfileRead)
 	mux.HandleFunc("OPTIONS /api/me/federation", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/federation", s.federationPreference)
 	mux.HandleFunc("PUT /api/me/federation", s.federationPreference)
@@ -630,7 +632,7 @@ func normalizedRoute(path string) string {
 	}
 	switch path {
 	case "/healthz", "/readyz", "/metrics", "/api/capability",
-		"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password",
+		"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/me/profile",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
 		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
 		"/api/media/list", "/internal/media/quarantine", "/internal/replication/events":
