@@ -403,6 +403,8 @@ jobs:
           VPS_INTERNAL_TOKEN: ci-only-vps-token-not-for-production
           VPS_NODE_BOOTSTRAP_TOKEN: ci-only-node-token-not-for-production
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
+          FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
+          FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
         run: |
           export ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           export ADMIN_PUBLIC_URL=https://ops.example.invalid
