@@ -204,6 +204,15 @@ func (s *service) revokeFreshMediaAsset(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "media ledger update failed", http.StatusServiceUnavailable)
 		return
 	}
+	_, err = s.db.Exec(r.Context(), `
+		UPDATE testagram_media.storage_replicas
+		SET state='deleted', verified_at=NULL, last_error_code='fresh_media_revoked', updated_at=now()
+		WHERE object_key=$1 AND provider IN ('cloudflare-r2','backblaze-b2')
+	`, in.Key)
+	if err != nil {
+		http.Error(w, "media replica ledger update failed", http.StatusServiceUnavailable)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": in.Key, "status": "deleted"})
 }
 
