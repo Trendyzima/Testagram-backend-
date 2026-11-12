@@ -15,42 +15,8 @@ const maxFreshMediaBridgeBody = 16 << 10
 
 var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
 var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-var freshMediaSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}package main
-
-import (
-	"crypto/subtle"
-	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
-	"regexp"
-	"strings"
-	"time"
-)
-
-const maxFreshMediaBridgeBody = 16 << 10
-
-var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
-var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-)
-var freshMediaBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]package main
-
-import (
-	"crypto/subtle"
-	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
-	"regexp"
-	"strings"
-	"time"
-)
-
-const maxFreshMediaBridgeBody = 16 << 10
-
-var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
-var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-)
+var freshMediaSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var freshMediaBucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
 
 type freshMediaBridgeRequest struct {
 	OwnerID     string `json:"owner_id"`
@@ -91,7 +57,7 @@ func decodeFreshMediaBridgeRequest(w http.ResponseWriter, r *http.Request, out *
 
 func validFreshMediaBridgeRequest(in freshMediaBridgeRequest) bool {
 	match := freshMediaObjectKeyPattern.FindStringSubmatch(in.Key)
-	if !freshMediaOwnerPattern.MatchString(in.ViewerID) || !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
+	if !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
 		return false
 	}
 	if in.Visibility != "private" || in.SizeBytes < 1 || in.SizeBytes > 500<<20 || !freshMediaSHA256Pattern.MatchString(in.SHA256) || !freshMediaBucketPattern.MatchString(in.R2Bucket) || !freshMediaBucketPattern.MatchString(in.B2Bucket) {
