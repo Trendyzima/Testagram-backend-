@@ -1,67 +1,57 @@
-# Verified Appwrite account linking
+# Legacy identity reconciliation (offline only)
 
-This is a deliberately narrow bridge for existing Testagram users. It is not a
-global authentication cutover and does not migrate profile or social data.
+## Current authentication architecture
 
-## Proof requirements
+Appwrite is the interactive identity provider. The Backend verifies Appwrite
+sessions and uses the canonical account UUID stored in the independent
+PostgreSQL database. There is no live Supabase identity-link endpoint.
 
-The browser must hold both a current Appwrite session and a current legacy
-Supabase access token from the existing signed-in session. The frontend sends
-the Appwrite JWT as the Authorization bearer and the legacy token as the
-X-Testagram-Legacy-Authorization bearer to POST /api/identity/link. The linking
-method does not persist either token.
+The historical `POST /api/identity/link` flow is retired. The Backend does not
+accept a legacy Supabase access token, does not call Supabase Auth to resolve
+users, and does not link accounts by matching email addresses. Do not build a
+client against that retired route.
 
-The Go API independently verifies both tokens with their respective identity
-providers. It requires a verified Appwrite email and a valid legacy Supabase
-user UUID. Email equality is intentionally not used as proof of ownership.
+## Existing-account migration policy
 
-## Data safety rules
+Accounts and related data that have not yet been reconciled must be migrated
+through a controlled offline process. The process must:
 
-- The legacy UUID must already exist in testagram_local.accounts.
-- The canonical account UUID must remain exactly the legacy UUID.
-- The mapping is unique by Appwrite user ID, canonical user ID and legacy user
-  ID. Existing conflicting mappings return HTTP 409.
-- Repeating the same valid link is idempotent.
-- Unknown/unmigrated accounts are rejected; this endpoint never creates a
-  profile, imports data, or silently maps by email.
-- The database transaction serializes account linking and commits the mapping
-  atomically. Attempts are rate-limited per verified Appwrite identity.
-- Successful links and idempotent relinks are written to an audit table in the
-  same transaction as the mapping.
-- This endpoint does not change TESTAGRAM_AUTH_PROVIDER, the frontend
-  AuthProvider, existing sessions, or any production account.
+1. Back up the source and destination databases and verify that the backups can
+   be restored before making changes.
+2. Establish an explicit, auditable mapping between the legacy account and the
+   canonical Testagram account. Email equality alone is not proof of identity.
+3. Preserve the canonical user UUID where the migration plan requires it and
+   detect collisions before writing.
+4. Reconcile dependent records independently: profiles, posts, replies,
+   follows, blocks, messages, media ownership, wallet records, recovery data,
+   and federation actor references must not be assumed migrated because the
+   account row exists.
+5. Run row-count, uniqueness, referential-integrity and sampled content
+   verification, then produce a signed migration report.
+6. Keep the original data read-only until acceptance and rollback windows have
+   expired.
 
-## Prerequisites
+No automated account linking or destructive legacy-data cleanup is authorized
+by this document.
 
-Apply the independent-auth migration
-20261019_testagram_independent_auth.sql, local account migration
-20261019_testagram_local_accounts_posts.sql, Appwrite identity bridge
-20261106_appwrite_identity_bridge.sql, and audit migration
-20261106_appwrite_identity_link_audit.sql to the independent PostgreSQL database
-through the reviewed deployment migration process. Configure server-only
-APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, SUPABASE_URL, and
-SUPABASE_PUBLISHABLE_KEY.
+## Runtime configuration
 
-Do not expose server credentials in VITE_* variables. The frontend requires
-VITE_TESTAGRAM_API_URL to point to the independent Go API origin.
+The Backend requires its Appwrite endpoint/project and canonical database
+connection. It does not require `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`,
+or `SUPABASE_SERVICE_ROLE_KEY` for identity verification. Never place provider
+secrets in Flutter/browser configuration or commit real credentials.
 
 ## Existing self-hosted database warning
 
-The numbered SQL mounts in the self-hosted Compose file are PostgreSQL
-first-initialization scripts. PostgreSQL does not rerun them when the persistent
-data volume already contains a database. Existing installations must apply the
-new additive migration through the documented, backup-first migration
-procedure; changing the Compose file alone does not upgrade an existing volume.
-Do not delete the volume to force initialization.
+Numbered SQL mounts in self-hosted Compose files are PostgreSQL
+first-initialization scripts. PostgreSQL does not rerun them when a persistent
+data volume already contains a database. Existing installations must apply
+reviewed additive migrations through the backup-first deployment procedure.
+Changing the Compose file alone does not upgrade an existing volume. Do not
+delete the volume to force initialization.
 
-## Deliberate limitations
+## Release rule
 
-This first bridge only links an account whose canonical row has already been
-migrated with the same UUID. Accounts without a canonical row must go through a
-separate, audited data migration/reconciliation process first. Account linking
-is not proof that posts, follows, messages, media ownership, recovery workflows,
-or federation actor keys have all been migrated.
-
-Do not remove the legacy Supabase session or switch the global app session
-until a separate migration release verifies all required data domains and
-provides a tested rollback.
+The identity migration is complete only after the user mapping and every
+required dependent data domain have been reconciled and independently verified.
+Until then, keep legacy data intact and retain a tested rollback path.
