@@ -33,6 +33,12 @@ func TestS3ProviderPresignsScopedOperations(t *testing.T) {
 		t.Fatalf("unexpected signed PUT URL: %s", put)
 	}
 	get, err := p.PresignGet(context.Background(), "private-media", "tenants/u1/a.jpg", time.Minute)
+	if err != nil { t.Fatal(err) }
+	head, err := p.PresignHead(context.Background(), "private-media", "tenants/u1/a.jpg", time.Minute)
+	if err != nil { t.Fatal(err) }
+	hu, err := url.Parse(head)
+	if err != nil { t.Fatal(err) }
+	if hu.Query().Get("X-Amz-Signature") == "" || hu.Query().Get("X-Amz-Signature") == u.Query().Get("X-Amz-Signature") { t.Fatalf("HEAD grant is not method-specific: %s", head) }
 	if err != nil {
 		t.Fatal(err)
 	}
