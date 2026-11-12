@@ -16,6 +16,7 @@ type replicaTestObject struct {
 type replicaTestStore struct {
 	objects map[string]replicaTestObject
 	failCopy bool
+	copyCalls int
 }
 
 func newReplicaTestStore() *replicaTestStore {
@@ -49,6 +50,7 @@ func (s *replicaTestStore) SHA256(_ context.Context, bucket, key string, _ int64
 }
 func (s *replicaTestStore) CopyFromProvider(_ context.Context, source Provider, sourceBucket, sourceKey, destinationBucket, destinationKey string, expectedBytes int64, contentType, expectedSHA256 string) error {
 	if s.failCopy { return errors.New("simulated provider outage") }
+	s.copyCalls++
 	src, ok := source.(*replicaTestStore)
 	if !ok { return errors.New("unexpected source type") }
 	obj, ok := src.objects[replicaTestKey(sourceBucket, sourceKey)]
@@ -157,5 +159,34 @@ func TestReplicatorDeletesPrimaryAndEveryReplica(t *testing.T) {
 		if _,ok:=entry.store.objects[replicaTestKey(entry.bucket,scoped)];ok {
 			t.Fatalf("object remains in %s after replica deletion",entry.bucket)
 		}
+	}
+}
+
+func TestReplicatorReconcilesOnlyMissingOrDriftedCopies(t *testing.T) {
+	primary:=newReplicaTestStore()
+	r2:=newReplicaTestStore()
+	b2:=newReplicaTestStore()
+	const digest="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	key:="users/user-1/photo.webp"
+	scoped:=tenantPrefix("user-1")+key
+	for _,entry:=range []struct{store *replicaTestStore;bucket string;hash string}{{primary,"vps-private",digest},{r2,"r2-private",digest},{b2,"b2-private","dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}} {
+		entry.store.objects[replicaTestKey(entry.bucket,scoped)]=replicaTestObject{
+			info:ObjectInfo{Key:scoped,Size:321,ContentType:"image/webp"},hash:entry.hash,
+		}
+	}
+	replicator,err:=NewReplicator("instabox-vps",primary,
+		map[string]string{"media-private":"vps-private","media-public":"vps-public"},
+		[]ReplicaTarget{
+			{Name:"cloudflare-r2",Provider:r2,Buckets:map[string]string{"media-private":"r2-private","media-public":"r2-public"}},
+			{Name:"backblaze-b2",Provider:b2,Buckets:map[string]string{"media-private":"b2-private","media-public":"b2-public"}},
+		})
+	if err!=nil { t.Fatal(err) }
+	results,err:=replicator.Replicate(context.Background(),"user-1","media-private",key,321,"image/webp",digest)
+	if err!=nil { t.Fatal(err) }
+	if len(results)!=3 { t.Fatalf("verified placements=%d, want 3",len(results)) }
+	if r2.copyCalls!=0 { t.Fatalf("healthy R2 object was recopied %d times",r2.copyCalls) }
+	if b2.copyCalls!=1 { t.Fatalf("drifted B2 object repair copies=%d, want 1",b2.copyCalls) }
+	if got:=b2.objects[replicaTestKey("b2-private",scoped)].hash;got!=digest {
+		t.Fatalf("B2 checksum after repair=%s, want %s",got,digest)
 	}
 }
