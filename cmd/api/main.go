@@ -1018,7 +1018,9 @@ func main() {
 	cdnMediaBaseURL := strings.TrimRight(env("CDN_MEDIA_BASE_URL", ""), "/")
 	cdnOriginAuthToken := env("CDN_ORIGIN_AUTH_TOKEN", "")
 	freshMediaInternalToken := env("FRESH_MEDIA_INTERNAL_TOKEN", "")
-	if freshMediaInternalToken != "" && len(freshMediaInternalToken) < 32 { log.Fatal("FRESH_MEDIA_INTERNAL_TOKEN must contain at least 32 bytes") }
+	if freshMediaInternalToken != "" && len(freshMediaInternalToken) < 32 {
+		log.Fatal("FRESH_MEDIA_INTERNAL_TOKEN must contain at least 32 bytes")
+	}
 	if cdnAssertionSecret != "" {
 		cdnMediaAssertions, err = mediaassertion.New([]byte(cdnAssertionSecret), 0)
 		if err != nil {
