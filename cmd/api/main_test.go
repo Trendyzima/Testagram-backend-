@@ -821,3 +821,31 @@ func TestPublicHomeFeedRejectsInvalidLimit(t *testing.T) {
 		t.Fatalf("public feed invalid limit status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
 }
+
+type deadlineTestWriter struct {
+	*httptest.ResponseRecorder
+	readDeadline  time.Time
+	writeDeadline time.Time
+}
+
+func (w *deadlineTestWriter) SetReadDeadline(deadline time.Time) error {
+	w.readDeadline = deadline
+	return nil
+}
+func (w *deadlineTestWriter) SetWriteDeadline(deadline time.Time) error {
+	w.writeDeadline = deadline
+	return nil
+}
+
+func TestMediaUploadRouteExtendsOnlyItsSocketDeadlines(t *testing.T) {
+	s := &service{}
+	w := &deadlineTestWriter{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequest(http.MethodPut, "/api/media/upload", strings.NewReader(""))
+	s.routes().ServeHTTP(w, r)
+	if w.readDeadline.IsZero() || w.writeDeadline.IsZero() {
+		t.Fatal("media upload route did not set route-specific socket deadlines")
+	}
+	if time.Until(w.readDeadline) < 20*time.Minute || time.Until(w.writeDeadline) < 20*time.Minute {
+		t.Fatal("media upload route did not extend deadlines for large bounded uploads")
+	}
+}
