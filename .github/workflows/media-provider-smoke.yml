@@ -76,8 +76,22 @@ jobs:
               actual="$(sha256sum "$stage/readback" | awk '{print $1}')"
               [[ "$actual" == "$expected" ]]
               cmp -s "$stage/source" "$stage/readback"
+
+              # DeleteObject hides the current object. Versioned buckets may retain
+              # older versions according to their retention policy.
+              AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
+                aws --endpoint-url "$endpoint" --region "$region" s3api delete-object \
+                  --bucket "$bucket" --key "$key" >/dev/null
+              if AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
+                aws --endpoint-url "$endpoint" --region "$region" s3api head-object \
+                  --bucket "$bucket" --key "$key" >/dev/null 2>&1; then
+                echo "::error::Smoke-test object is still visible after deletion"
+                exit 1
+              fi
+              trap - EXIT
+              rm -rf "$stage"
             )
-            echo "$provider bucket access, write, read-back, size and SHA-256 verified: $bucket"
+            echo "$provider bucket access, write, read-back, SHA-256 and logical deletion verified: $bucket"
           }
 
           probe_provider() {
