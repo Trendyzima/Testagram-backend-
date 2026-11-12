@@ -1,36 +1,50 @@
-# Appwrite-first profile image storage with Instabox overflow
+# Profile metadata and media-object storage contract
 
-## Desired behavior
+## Responsibility split
 
-Profile pictures and avatars use Appwrite Storage first. When the Appwrite profile bucket reaches its configured safe threshold, new uploads automatically go to the private Instabox VPS object store. Existing images remain at their original tier and are served through the Backend/CDN abstraction; the app must not assume all profile images are in Appwrite.
+Appwrite is used for application metadata and account/document services. It is **not** a binary media store, media origin, overflow bucket or CDN origin. Do not use Appwrite Storage, Appwrite's S3-compatible endpoint, Appwrite file APIs, or an Appwrite file quota as part of avatar, image, video or document byte placement.
 
-## Capacity policy
+Media bytes are stored in the object-storage system:
+- Instabox VPS object storage is the current primary write origin for the Backend's virtual-storage media path.
+- Cloudflare R2 and Backblaze B2 are independent replicas, copied and read-back verified by the durable Backend replication worker.
+- The Testagram Go CDN is the viewer-facing delivery layer. It resolves authorized origins and must not expose bucket credentials or bypass Backend media authorization.
 
-The 2 GB value is an operator-configured project/bucket budget, not a hard-coded guarantee that every Appwrite plan or project exposes exactly that quota. Configure `APPWRITE_PROFILE_STORAGE_LIMIT_BYTES` from the actual Appwrite console/plan. Default the overflow threshold to 85% of that configured limit, preserving 15% headroom for outstanding uploads, metadata/usage drift and operational safety. The selector counts both verified used bytes and active reservations. The capacity ledger is reconciled against Appwrite Storage on a schedule and after upload/delete events. If reconciliation is stale or Appwrite usage cannot be established, fail safe to Instabox for new profile uploads; do not keep writing blindly to Appwrite.
+Appwrite/Backend records may store only metadata and references: opaque object ID/key, owner, visibility, MIME type, byte count, checksum, storage namespace/provider, lifecycle state, and timestamps. They must never contain the media bytes, base64 file payloads, signed upload URLs, or provider credentials.
 
-## Upload flow
+## Avatar upload and read lifecycle
 
-1. Authenticated Flutter client asks Backend for a profile-image upload intent. The client never chooses a provider or supplies a storage tier.
-2. Backend validates the Appwrite session and canonical Testagram owner UUID; checks image MIME, decoded image dimensions, byte limit, and quota.
-3. Backend atomically reserves capacity and selects Appwrite or Instabox VPS using the capacity policy.
-4. Appwrite tier: Backend uploads to a private Appwrite bucket with server-only API credentials and records Appwrite file ID. Instabox tier: Backend issues a short-lived, tenant-scoped upload capability for private VPS object storage.
-5. Backend verifies stored bytes, SHA-256, dimensions and MIME before marking the image ready and updating profile metadata.
-6. Backend returns an opaque media reference/URL served through Testagram's own CDN. No Appwrite API key or VPS S3 credential reaches Flutter.
+1. Flutter sends the avatar to the authenticated Backend profile-media endpoint. The client does not select a provider or physical bucket.
+2. Backend validates the caller identity, owner UUID, image signature/MIME, maximum 2 MiB size, and per-user quota.
+3. Backend allocates a tenant-scoped opaque object key and records an upload intent in PostgreSQL.
+4. Backend writes the binary object to the configured private Instabox VPS object origin and verifies provider-observed size, content type and SHA-256.
+5. Backend commits the asset metadata and profile's opaque avatar reference. The transactional outbox schedules R2 and B2 replicas.
+6. The replication worker streams the bytes to Cloudflare R2 and Backblaze B2, independently reads each copy back, and verifies SHA-256 before recording the replica placement.
+7. Profile reads return a CDN URL or opaque media reference. The Go CDN enforces Backend-issued viewer authorization and selects only verified, policy-eligible origins.
+8. Replacement/deletion updates metadata transactionally and queues object deletion/replica cleanup. Never delete the previous avatar before the replacement metadata transaction succeeds.
 
-## Reads, deletion and migration
+## Storage and delivery invariants
 
-Profile records store a storage tier plus opaque object reference. CDN/Backend resolves the correct private origin; public profile images may be cacheable only after publication policy is applied. Private/account-only images require viewer authorization and must not be shared-cacheable. Delete and replace operations tombstone the old object and decrement quota only after provider deletion succeeds. A background reconciler paginates Appwrite files, compares actual bytes with the ledger, detects orphan files and repairs drift. Existing Appwrite images are not bulk-copied merely because the threshold is crossed.
+- Appwrite is metadata-only. No Appwrite Storage bucket is required for Testagram media.
+- The binary media path is Instabox VPS + Cloudflare R2 + Backblaze B2; each provider has independent credentials and private/public bucket mappings.
+- The VPS is the current primary in the Backend replication worker. R2 and B2 are replicas, not assumed interchangeable merely because credentials exist.
+- Public/private object namespaces and bucket policies remain separate at every provider.
+- Private media requires a Backend authorization assertion bound to object key, action/scope, expiry and intended audience. A caller-controlled `private=1` query parameter is never authorization.
+- Never mark a media object three-copy protected or replica-available until both independent copies have passed read-back SHA-256 verification.
+- CDN origin selection may use a replica only when its placement ledger says verified and its checksum/size match the canonical asset.
+- Signed URLs, provider credentials and API keys are server-side only. No B2/R2/VPS secret belongs in Flutter configuration or Appwrite documents.
 
-## Separation from general media
+## Quota and capacity
 
-This is the Appwrite profile-image tier only. Posts, video, stories and other durable media use the separate Instabox VPS + Cloudflare R2 + Backblaze B2 replication policy. Appwrite overflow does not replace or bypass that media durability policy.
+The 2 GiB per-user profile-media quota is a Testagram application quota recorded in the canonical Backend metadata ledger; it is not an Appwrite Storage quota. Reservations count against the quota before object upload. Expired intents and deletion jobs must release reserved/used bytes only after their lifecycle transition is verified.
 
-## Configuration and gates
+## Current implementation status
 
-- Configure the actual Appwrite endpoint, project, bucket ID, server-only API key, and verified storage limit through deployment secrets.
-- Configure the Instabox private S3-compatible endpoint and least-privilege profile bucket credentials.
-- Enable a reconciler with a maximum usage-staleness window and alerts at 70%, 80%, 85% and 95%.
-- Test concurrent reservations at the threshold, Appwrite quota exhaustion, provider outage, retry/idempotency, checksum mismatch, delete/replace and CDN reads from both tiers.
-- Do not enable production routing until Appwrite bucket ACLs, VPS private networking, object lifecycle and restore tests pass.
+The Backend profile-avatar handler currently writes bytes to the private Instabox VPS origin, verifies size/type and SHA-256, stores the avatar reference in Backend metadata, and queues deletion of the replaced VPS object. The durable replication worker is designed to copy ready media to R2 and B2 with checksum read-back verification.
 
-The current commit introduces the tier-selection policy and PostgreSQL ledger only. The Appwrite upload adapter, scheduled usage reconciliation, profile endpoint integration, and CDN dual-origin resolver are still implementation gates; this is not yet an active automatic failover.
+The following are still release gates, not assumed complete:
+- Verify the avatar upload creates the expected transactional replication outbox event and that both R2 and B2 replicas reach `verified`.
+- Gate CDN delivery/readiness on the correct placement policy; asynchronous enqueue alone does not prove three-copy availability.
+- Complete Backend-issued CDN assertion integration for profile avatar URLs and verify public/private cache behavior.
+- Exercise B2, R2 and VPS outage/recovery against real provider origins, including checksum mismatch, retry, delete and restore.
+- Confirm all live provider endpoints, regions, bucket names, CORS and least-privilege credentials through deployment secret stores; do not commit secrets.
+- Appwrite stores the profile/account metadata and opaque object reference only. No Appwrite file-upload or automatic Appwrite-to-VPS overflow path is part of this design.
