@@ -386,6 +386,32 @@ jobs:
             overlay_status=compose_validation_failed
           fi
 
+          case "$overlay_status" in
+            core_services_running|all_data_centre_services_running|core_running_appwrite_project_id_missing)
+              ;;
+            *)
+              echo "::error::Data Centre deployment did not reach an accepted core-services state: $overlay_status"
+              exit 1
+              ;;
+          esac
+
+          verify_running_image() {
+            local service="$1" expected="$2" container actual
+            container="$(sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q "$service")"
+            if [[ -z "$container" ]]; then
+              echo "::error::Data Centre service $service has no running container"
+              return 1
+            fi
+            actual="$(sudo docker inspect --format '{{.Config.Image}}' "$container")"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::Data Centre service $service runs $actual, expected $expected"
+              return 1
+            fi
+            echo "Verified $service image: $actual"
+          }
+          verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
+          verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
+
           echo "Data Centre overlay status: $overlay_status"
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
           sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
