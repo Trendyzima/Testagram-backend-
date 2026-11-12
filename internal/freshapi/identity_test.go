@@ -136,8 +136,8 @@ func TestRegisterIdentityVerifiedAccountRejectsInvalidApprovalBeforeAppwriteCall
 	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("invalid approval status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registration should remain disabled until durable review pipeline exists: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -162,6 +162,6 @@ func TestRegisterIdentityVerifiedAccountRejectsDuplicateFingerprint(t *testing.T
 	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict { t.Fatalf("duplicate fingerprint status=%d body=%s", rec.Code, rec.Body.String()) }
-	if state.createdAppwriteUsers != 0 { t.Fatalf("duplicate identity created %d Appwrite users", state.createdAppwriteUsers) }
+	if rec.Code != http.StatusServiceUnavailable { t.Fatalf("registration should remain disabled until durable review pipeline exists: status=%d body=%s", rec.Code, rec.Body.String()) }
+	if state.createdAppwriteUsers != 0 { t.Fatalf("disabled registration created %d Appwrite users", state.createdAppwriteUsers) }
 }
