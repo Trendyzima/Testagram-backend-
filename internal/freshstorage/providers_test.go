@@ -11,7 +11,7 @@ import (
 
 func clear(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_REGION", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_BUCKET", "ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY", "ARCHIVE_S3_BUCKET", "CLOUDFLARE_MEDIA_BASE_URL", "CLOUDFLARE_MEDIA_SIGNING_SECRET", "FRESH_MEDIA_PRIMARY_PROVIDER"} {
+	for _, k := range []string{"B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "CLOUDFLARE_R2_ENDPOINT", "CLOUDFLARE_R2_REGION", "CLOUDFLARE_R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_BUCKET", "ARCHIVE_S3_ENDPOINT", "ARCHIVE_S3_REGION", "ARCHIVE_S3_ACCESS_KEY_ID", "ARCHIVE_S3_SECRET_ACCESS_KEY", "ARCHIVE_S3_BUCKET", "CLOUDFLARE_MEDIA_BASE_URL", "FRESH_MEDIA_PRIMARY_PROVIDER", "FRESH_MEDIA_BACKEND_URL", "FRESH_MEDIA_INTERNAL_TOKEN"} {
 		old, ok := os.LookupEnv(k)
 		_ = os.Unsetenv(k)
 		t.Cleanup(func() {
@@ -91,28 +91,30 @@ func TestTargetPoolIs150GBDecimal(t *testing.T) {
 	}
 }
 
-func TestFromEnvValidatesPrivateCloudflareMediaSigningPair(t *testing.T) {
-	t.Setenv("B2_S3_ENDPOINT", "")
-	t.Setenv("B2_S3_ACCESS_KEY_ID", "")
-	t.Setenv("B2_S3_SECRET_ACCESS_KEY", "")
-	t.Setenv("B2_S3_BUCKET", "")
-	t.Setenv("CLOUDFLARE_R2_ENDPOINT", "")
-	t.Setenv("CLOUDFLARE_R2_ACCESS_KEY_ID", "")
-	t.Setenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "")
-	t.Setenv("CLOUDFLARE_R2_BUCKET", "")
+func TestFromEnvRequiresBackendAssertionBridgeForCloudflareCDN(t *testing.T) {
+	clear(t)
 	t.Setenv("CLOUDFLARE_MEDIA_BASE_URL", "https://media.testagram.example")
-	t.Setenv("CLOUDFLARE_MEDIA_SIGNING_SECRET", "")
 	if _, err := FromEnv(); err == nil {
-		t.Fatal("incomplete Cloudflare URL/signing-secret pair was accepted")
+		t.Fatal("Cloudflare CDN configured without Backend assertion bridge")
 	}
-	t.Setenv("CLOUDFLARE_MEDIA_SIGNING_SECRET", strings.Repeat("x", 32))
-	if _, err := FromEnv(); err != nil {
-		t.Fatalf("valid private CDN configuration rejected: %v", err)
+	t.Setenv("FRESH_MEDIA_BACKEND_URL", "https://api.testagram.example")
+	t.Setenv("FRESH_MEDIA_INTERNAL_TOKEN", strings.Repeat("x", 32))
+	p, err := FromEnv()
+	if err != nil { t.Fatalf("valid Backend assertion bridge rejected: %v", err) }
+	if p.BackendAPIBaseURL != "https://api.testagram.example" || p.BackendInternalToken == "" {
+		t.Fatalf("Backend bridge configuration missing: %+v", p)
 	}
-	t.Setenv("CLOUDFLARE_MEDIA_BASE_URL", "http://media.testagram.example")
-	if _, err := FromEnv(); err == nil {
-		t.Fatal("insecure Cloudflare media origin was accepted")
-	}
+	t.Setenv("FRESH_MEDIA_BACKEND_URL", "http://api.testagram.example")
+	if _, err := FromEnv(); err == nil { t.Fatal("remote HTTP Backend bridge URL accepted") }
+}
+
+func TestFromEnvRequiresBackendBridgeURLAndTokenTogether(t *testing.T) {
+	clear(t)
+	t.Setenv("FRESH_MEDIA_BACKEND_URL", "https://api.testagram.example")
+	if _, err := FromEnv(); err == nil { t.Fatal("Backend URL without internal token accepted") }
+	t.Setenv("FRESH_MEDIA_BACKEND_URL", "")
+	t.Setenv("FRESH_MEDIA_INTERNAL_TOKEN", strings.Repeat("x",32))
+	if _, err := FromEnv(); err == nil { t.Fatal("internal token without Backend URL accepted") }
 }
 
 func TestArchiveProviderRequiresCompleteIndependentConfiguration(t *testing.T) {
