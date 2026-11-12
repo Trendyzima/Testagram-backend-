@@ -57,9 +57,9 @@ The standard replication code uses S3-compatible object-name operations. Test th
 
 ## Manual credential smoke test
 
-The workflow \`.github/workflows/media-provider-smoke.yml\` is a manual, non-production-data test. It writes a uniquely named small test object to each configured B2 and R2 bucket, checks object size, reads it back, compares SHA-256 and verifies that the object is no longer visible after deletion. It never prints credential values.
+The workflow \`.github/workflows/media-provider-smoke.yml\` is a manual live-bucket credential test. It writes a uniquely named small test object to each configured B2 and R2 bucket, checks object size, reads it back, compares SHA-256 and verifies that the object is no longer visible after deletion. It never prints credential values.
 
-Before running it, configure the secrets and variables above in the **Backend** repository. The test requires write/read/delete-by-name access to all four buckets. B2 buckets configured to keep all versions may retain the prior object version after the delete marker hides it; the test object is small and uses a unique CI prefix.
+Before running it, configure the secrets and variables above in the **Backend** repository. The test writes to the configured live bucket pair, so run it deliberately and during a quiet period. It requires write/read/delete-by-name access to all four buckets. B2 buckets configured to keep all versions may retain the prior object version after the delete marker hides it; the test object is small and uses a unique CI prefix.
 
 Run it from GitHub Actions → **Media provider credential smoke test** → **Run workflow**. Do not treat a successful credential smoke test as proof that the full application replication lifecycle, failover or restore has passed.
 
