@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -82,7 +83,7 @@ func (s *service) enqueueFederationCreateTx(ctx context.Context, tx pgx.Tx, user
 	if err := tx.QueryRow(ctx, `SELECT username,federation_enabled,
 		discoverable_by_username,protected_account,account_status
 		FROM testagram_local.accounts WHERE user_id=$1::uuid`, userID).
-		Scan(&handle, &displayName, &enabled, &discoverable, &protected, &accountStatus); err != nil {
+		Scan(&handle, &enabled, &discoverable, &protected, &accountStatus); err != nil {
 		return errors.New("canonical federation account eligibility lookup failed: " + err.Error())
 	}
 	if !enabled || !discoverable || protected || accountStatus != "active" {
@@ -125,7 +126,7 @@ func (s *service) federationObject(w http.ResponseWriter, r *http.Request) {
 		WHERE p.id=$1::uuid AND p.visibility='public' AND p.deleted_at IS NULL
 		  AND a.account_status='active' AND a.discoverable_by_username=TRUE
 		  AND a.protected_account=FALSE AND a.federation_enabled=TRUE`, postID).
-		Scan(&handle, &displayName, &content, &createdAt)
+		Scan(&handle, &content, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusNotFound, errorBody("FEDERATION_OBJECT_NOT_FOUND", "The public federated object is unavailable", requestID(r)))
 		return
