@@ -16,3 +16,15 @@ func TestIssuerVerifyForKey(t *testing.T) {
 	if claims.Subject != "alice" || claims.Key != key { t.Fatalf("unexpected claims: %+v", claims) }
 	if _, err := i.VerifyForKey(token, "users/alice/ffffffffffffffffffffffffffffffff", time.Now()); err == nil { t.Fatal("assertion accepted for a different object") }
 }
+
+func TestIssueVerifySupportsAppwriteOwnerIDs(t *testing.T) {
+	secret := []byte(strings.Repeat("a", 32))
+	issuer, err := New(secret, time.Minute)
+	if err != nil { t.Fatal(err) }
+	key := "users/user_123.test/0123456789abcdef0123456789abcdef"
+	token, _, err := issuer.Issue(key, "user_123.test", time.Now())
+	if err != nil { t.Fatal(err) }
+	if _, err := Verify(secret, token, key, "user_123.test", time.Now()); err != nil {
+		t.Fatalf("Appwrite owner ID assertion rejected: %v", err)
+	}
+}
