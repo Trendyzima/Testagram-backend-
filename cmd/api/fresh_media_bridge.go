@@ -166,8 +166,9 @@ func (s *service) freshMediaCDNDownloadURL(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var in struct {
-		OwnerID string `json:"owner_id"`
-		Key     string `json:"key"`
+		ViewerID string `json:"viewer_id"`
+		OwnerID  string `json:"owner_id"`
+		Key      string `json:"key"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFreshMediaBridgeBody)
 	decoder := json.NewDecoder(r.Body)
@@ -176,10 +177,11 @@ func (s *service) freshMediaCDNDownloadURL(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid media authorization request", http.StatusBadRequest)
 		return
 	}
+	in.ViewerID = strings.TrimSpace(in.ViewerID)
 	in.OwnerID = strings.TrimSpace(in.OwnerID)
 	in.Key = strings.TrimSpace(in.Key)
 	match := freshMediaObjectKeyPattern.FindStringSubmatch(in.Key)
-	if !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
+	if !freshMediaOwnerPattern.MatchString(in.ViewerID) || !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
 		http.Error(w, "invalid media authorization request", http.StatusBadRequest)
 		return
 	}
