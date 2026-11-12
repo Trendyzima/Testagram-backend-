@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const activityStreamsPublic = "https://www.w3.org/ns/activitystreams#Public"
@@ -144,4 +143,3 @@ func (s *service) federationObject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, note)
 }
 
-var _ = pgxpool.ErrClosed
