@@ -151,10 +151,6 @@ func (s *service) federationPreference(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if r.Method == http.MethodPut && s.federationOutbox == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PUBLISHER_UNAVAILABLE", "Federation cannot be enabled until the transactional publisher is configured", requestIDValue))
-		return
-	}
 	if r.Method == http.MethodGet {
 		var enabled bool
 		if err := s.db.QueryRow(r.Context(), "SELECT federation_enabled FROM testagram_local.accounts WHERE user_id=$1", userID).Scan(&enabled); err != nil {
@@ -178,6 +174,10 @@ func (s *service) federationPreference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if *input.Enabled {
+		if s.federationOutbox == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PUBLISHER_UNAVAILABLE", "Federation cannot be enabled until the transactional publisher is configured", requestIDValue))
+			return
+		}
 		var discoverable, protected bool
 		if err := s.db.QueryRow(r.Context(), "SELECT discoverable_by_username,protected_account FROM testagram_local.accounts WHERE user_id=$1", userID).Scan(&discoverable, &protected); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PREFERENCE_READ_FAILED", "Account privacy settings could not be verified", requestIDValue))
