@@ -1027,7 +1027,7 @@ func main() {
 	var virtualStorageManager *virtualstorage.Manager
 	var primaryVirtualStorageProvider *virtualstorage.S3Provider
 	var mediaReplicator *virtualstorage.Replicator
-	mediaReplicationRequired := strings.EqualFold(env("MEDIA_REPLICATION_REQUIRED", "false"), "true")
+	mediaReplicationEnabled := strings.EqualFold(env("MEDIA_REPLICATION_ENABLED", "false"), "true")
 	virtualStorageEnabled := strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true")
 	if virtualStorageEnabled {
 		if mediaSigner == nil {
@@ -1057,9 +1057,9 @@ func main() {
 		}
 		log.Printf("virtual storage policy manager enabled; new uploads use tenant-scoped object keys")
 	}
-	if mediaReplicationRequired {
+	if mediaReplicationEnabled {
 		if !virtualStorageEnabled || primaryVirtualStorageProvider == nil || virtualStorageManager == nil {
-			log.Fatal("MEDIA_REPLICATION_REQUIRED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
+			log.Fatal("MEDIA_REPLICATION_ENABLED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
 		}
 		mediaReplicator, err = configureMediaReplicator(primaryVirtualStorageProvider)
 		if err != nil { log.Fatalf("configure durable media replication: %v", err) }
