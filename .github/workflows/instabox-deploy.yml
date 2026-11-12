@@ -175,6 +175,7 @@ jobs:
             VPS_NODE_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)"
             ALGORITHM_INTERNAL_TOKEN="$(openssl rand -hex 32)"
             FEDERATION_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            FEDERATION_BACKEND_INTERNAL_TOKEN="$(openssl rand -hex 32)"
             ADMIN_SESSION_KEY="$(openssl rand -hex 32)"
             GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
             cat > "$BASE_ENV" <<EOF
@@ -202,6 +203,7 @@ jobs:
           ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
           FEDERATION_INTERNAL_URL=http://federation:8081
           FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
+          FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
           APPWRITE_API_KEY=
           MEDIA_S3_ENDPOINT=
           MEDIA_S3_SIGNING_HOST=
@@ -245,6 +247,16 @@ jobs:
           # shellcheck disable=SC1090
           source "$BASE_ENV"
           set +a
+          # Older persistent .env files predate the dedicated Federation-to-Backend
+          # credential. Generate it once and persist it; never reuse the ingress token.
+          if [[ -z "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ]]; then
+            FEDERATION_BACKEND_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            if grep -q '^FEDERATION_BACKEND_INTERNAL_TOKEN=' "$BASE_ENV"; then
+              sed -i "s|^FEDERATION_BACKEND_INTERNAL_TOKEN=.*|FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN|" "$BASE_ENV"
+            else
+              printf '\\nFEDERATION_BACKEND_INTERNAL_TOKEN=%s\\n' "$FEDERATION_BACKEND_INTERNAL_TOKEN" >> "$BASE_ENV"
+            fi
+          fi
 
           echo "Starting PostgreSQL, MinIO and the native Go API..."
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
@@ -285,6 +297,7 @@ jobs:
           TESTAGRAM_FEDERATION_IMAGE=ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
           ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
           FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
+          FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
           FEDERATION_DATABASE_NAME=testagram_federation
           FEDERATION_DATABASE_URL=$FEDERATION_DATABASE_URL
           FEDERATION_PUBLIC_BASE_URL=https://federation.testagram.site
@@ -306,6 +319,13 @@ jobs:
           fi
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
             sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$DC_ENV"
+          fi
+          # Keep the Federation container and Backend API on the same dedicated
+          # secret even when the machine already has a persistent DC .env file.
+          if grep -q '^FEDERATION_BACKEND_INTERNAL_TOKEN=' "$DC_ENV"; then
+            sed -i "s|^FEDERATION_BACKEND_INTERNAL_TOKEN=.*|FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN|" "$DC_ENV"
+          else
+            printf '\\nFEDERATION_BACKEND_INTERNAL_TOKEN=%s\\n' "$FEDERATION_BACKEND_INTERNAL_TOKEN" >> "$DC_ENV"
           fi
           set -a
           # shellcheck disable=SC1090
