@@ -376,7 +376,7 @@ type recordingAuthorizedMediaSigner struct { ownerIDs []string }
 func (m *recordingAuthorizedMediaSigner) DownloadURL(ctx context.Context, ownerID, objectID string) (string,error) {
 	return "https://media.example/"+objectID,nil
 }
-func (m *recordingAuthorizedMediaSigner) DownloadAuthorization(_ context.Context, ownerID, objectID string) (freshstorage.MediaDelivery,error) {
+func (m *recordingAuthorizedMediaSigner) DownloadAuthorizationForViewer(_ context.Context, viewerID, ownerID, objectID string) (freshstorage.MediaDelivery,error) {
 	m.ownerIDs=append(m.ownerIDs,viewerID+":"+ownerID)
 	return freshstorage.MediaDelivery{
 		URL:"https://media.testagram.site/v1/users/"+ownerID+"/0123456789abcdef0123456789abcdef",
