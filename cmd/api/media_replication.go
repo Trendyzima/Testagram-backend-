@@ -27,6 +27,17 @@ type mediaReplicationJob struct {
 	Attempts    int
 }
 
+func mediaReplicaRegion(prefix, defaultRegion string) (string, error) {
+	region := strings.TrimSpace(os.Getenv(prefix + "_REGION"))
+	if region == "" {
+		if defaultRegion == "" {
+			return "", fmt.Errorf("%s_REGION must be set to the exact provider region", prefix)
+		}
+		region = defaultRegion
+	}
+	return region, nil
+}
+
 func newMediaReplicaProvider(prefix, defaultRegion string) (*virtualstorage.S3Provider, error) {
 	endpoint := strings.TrimSpace(os.Getenv(prefix + "_ENDPOINT"))
 	accessKey := strings.TrimSpace(os.Getenv(prefix + "_ACCESS_KEY_ID"))
@@ -34,10 +45,8 @@ func newMediaReplicaProvider(prefix, defaultRegion string) (*virtualstorage.S3Pr
 	if endpoint == "" || accessKey == "" || secretKey == "" {
 		return nil, fmt.Errorf("%s endpoint, access key and secret key are required", prefix)
 	}
-	region := strings.TrimSpace(os.Getenv(prefix + "_REGION"))
-	if region == "" {
-		region = defaultRegion
-	}
+	region, err := mediaReplicaRegion(prefix, defaultRegion)
+	if err != nil { return nil, err }
 	provider, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{
 		Endpoint: endpoint,
 		Region: region,
@@ -66,7 +75,7 @@ func configureMediaReplicator(primary *virtualstorage.S3Provider) (*virtualstora
 	if err != nil {
 		return nil, err
 	}
-	b2, err := newMediaReplicaProvider("B2_S3", "us-east-005")
+	b2, err := newMediaReplicaProvider("B2_S3", "")
 	if err != nil {
 		return nil, err
 	}
