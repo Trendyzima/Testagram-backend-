@@ -111,7 +111,7 @@ func claimMediaReplicationJobs(ctx context.Context, db *pgxpool.Pool, limit int)
 func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job mediaReplicationJob, results []virtualstorage.ReplicaResult) error {
 	tx,err:=db.Begin(ctx);if err!=nil{return err};defer func(){_ = tx.Rollback(context.Background())}()
 	if job.Operation == "delete" {
-		if _,err=tx.Exec(ctx,`DELETE FROM testagram_media.storage_replicas WHERE object_key=$1`,job.ObjectKey);err!=nil{return err}
+		if _,err=tx.Exec(ctx,`UPDATE testagram_media.storage_replicas SET state='deleted',verified_at=NULL,last_error_code='',updated_at=now() WHERE object_key=$1`,job.ObjectKey);err!=nil{return err}
 	} else {
 	for _,result:=range results {
 		_,err=tx.Exec(ctx,`
