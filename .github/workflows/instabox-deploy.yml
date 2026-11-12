@@ -174,7 +174,9 @@ jobs:
             VPS_INTERNAL_TOKEN="$(openssl rand -hex 32)"
             VPS_NODE_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)"
             ALGORITHM_INTERNAL_TOKEN="$(openssl rand -hex 32)"
-            FEDERATION_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            FEDERATION_INGRESS_TOKEN="$(openssl rand -hex 32)"
+            FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
+            FEDERATION_BACKEND_INTERNAL_TOKEN="$(openssl rand -hex 32)"
             ADMIN_SESSION_KEY="$(openssl rand -hex 32)"
             GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
             cat > "$BASE_ENV" <<EOF
@@ -201,7 +203,9 @@ jobs:
           ALGORITHM_URL=http://algorithm:8092
           ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
           FEDERATION_INTERNAL_URL=http://federation:8081
+          FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
           FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
+          FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
           APPWRITE_API_KEY=
           MEDIA_S3_ENDPOINT=
           MEDIA_S3_SIGNING_HOST=
@@ -233,6 +237,33 @@ jobs:
             chmod 600 "$BASE_ENV"
           fi
 
+          # Keep the two Federation directions independently keyed, including on existing VPS installs.
+          read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
+          write_env_value() {
+            local key="$1" value="$2"
+            if grep -q "^${key}=" "$BASE_ENV"; then
+              sed -i "s|^${key}=.*|${key}=${value}|" "$BASE_ENV"
+            else
+              printf '%s=%s\n' "$key" "$value" >> "$BASE_ENV"
+            fi
+          }
+          ensure_random_secret() {
+            local key="$1" value
+            value="$(read_env_value "$key")"
+            if [[ ! "$value" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
+              value="$(openssl rand -hex 32)"
+              write_env_value "$key" "$value"
+            fi
+            printf -v "$key" '%s' "$value"
+          }
+          ensure_random_secret FEDERATION_INGRESS_TOKEN
+          ensure_random_secret FEDERATION_BACKEND_INTERNAL_TOKEN
+          if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; then
+            FEDERATION_BACKEND_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            write_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+          fi
+          FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
+          write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
             if grep -q '^APPWRITE_PROJECT_ID=' "$BASE_ENV"; then
               sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$BASE_ENV"
@@ -285,6 +316,8 @@ jobs:
           TESTAGRAM_FEDERATION_IMAGE=ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
           ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
           FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
+          FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
+          FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
           FEDERATION_DATABASE_NAME=testagram_federation
           FEDERATION_DATABASE_URL=$FEDERATION_DATABASE_URL
           FEDERATION_PUBLIC_BASE_URL=https://federation.testagram.site
@@ -304,6 +337,18 @@ jobs:
           EOF
             chmod 600 "$DC_ENV"
           fi
+          # Sync both independently generated credentials to the Data Centre overlay even when its .env already exists.
+          write_dc_env_value() {
+            local key="$1" value="$2"
+            if grep -q "^${key}=" "$DC_ENV"; then
+              sed -i "s|^${key}=.*|${key}=${value}|" "$DC_ENV"
+            else
+              printf '%s=%s\n' "$key" "$value" >> "$DC_ENV"
+            fi
+          }
+          write_dc_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
+          write_dc_env_value FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+          write_dc_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
             sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$DC_ENV"
           fi
