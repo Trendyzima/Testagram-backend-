@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var hashtagNamePattern = regexp.MustCompile("^[\\\\pL\\\\pN_]{1,64}$")
+var hashtagNamePattern = regexp.MustCompile("^[\\p{L}\\p{N}_]{1,64}$")
 
 func normalizeHashtag(value string) (string, string, bool) {
 	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "#"))
@@ -55,10 +55,6 @@ func (s *service) socialHashtagRead(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	var viewer any
-	if viewerID != "" {
-		viewer = viewerID
-	}
 	var before any
 	var beforeID any
 	if cursor != nil {
