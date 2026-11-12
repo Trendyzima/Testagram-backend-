@@ -1123,11 +1123,11 @@ func validSHA256(value string) bool {
 }
 
 func validObjectKey(value string) bool {
-	if !strings.HasPrefix(value, "v1/") || len(value) != 35 {
-		return false
+	if strings.HasPrefix(value, "v1/") && len(value) == 35 {
+		_, err := hex.DecodeString(strings.TrimPrefix(value, "v1/"))
+		return err == nil
 	}
-	_, err := hex.DecodeString(strings.TrimPrefix(value, "v1/"))
-	return err == nil
+	return freshMediaObjectKeyPattern.MatchString(value)
 }
 
 func validDocID(v string) bool {
