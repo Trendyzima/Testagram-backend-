@@ -544,7 +544,7 @@ func (s *service) routes() http.Handler {
 			// Large media bodies are bounded by the upload intent and streamed to
 			// storage. Extend only this route's socket deadlines; ordinary API
 			// requests retain the server's short global read/write timeouts.
-			deadline := time.Now().Add(15 * time.Minute)
+			deadline := time.Now().Add(25 * time.Minute)
 			controller := http.NewResponseController(recorder)
 			if err := controller.SetReadDeadline(deadline); err != nil {
 				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload read deadline unavailable"})
