@@ -4,7 +4,8 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS testagram_media.media_replication_outbox (
   id BIGSERIAL PRIMARY KEY,
-  object_key TEXT NOT NULL REFERENCES testagram_media.assets(object_key) ON DELETE CASCADE,
+  object_key TEXT NOT NULL,
+  operation TEXT NOT NULL DEFAULT 'replicate' CHECK (operation IN ('replicate','delete')),
   owner_id TEXT NOT NULL,
   storage_namespace TEXT NOT NULL CHECK (storage_namespace IN ('media-private','media-public')),
   content_type TEXT NOT NULL,
@@ -44,35 +45,74 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, testagram_media
 AS $$
+DECLARE
+  object_key_value TEXT;
+  owner_id_value TEXT;
+  namespace_value TEXT;
+  type_value TEXT;
+  size_value BIGINT;
+  checksum_value TEXT;
+  operation_value TEXT;
 BEGIN
-  IF NEW.status = 'ready'
-     AND NEW.storage_namespace IN ('media-private','media-public')
-     AND NEW.storage_provider IS NOT NULL
-     AND NEW.checksum_sha256 ~ '^[0-9a-f]{64}$'
-     AND NEW.size_bytes > 0 THEN
-    INSERT INTO testagram_media.media_replication_outbox
-      (object_key, owner_id, storage_namespace, content_type, size_bytes, checksum_sha256)
-    VALUES
-      (NEW.object_key, NEW.owner_id, NEW.storage_namespace, NEW.content_type,
-       NEW.size_bytes, lower(NEW.checksum_sha256))
-    ON CONFLICT (object_key) DO UPDATE SET
-      owner_id = EXCLUDED.owner_id,
-      storage_namespace = EXCLUDED.storage_namespace,
-      content_type = EXCLUDED.content_type,
-      size_bytes = EXCLUDED.size_bytes,
-      checksum_sha256 = EXCLUDED.checksum_sha256,
-      status = 'pending',
-      attempts = 0,
-      available_at = now(),
-      lease_until = NULL,
-      lease_token = NULL,
-      completed_at = NULL,
-      failed_at = NULL,
-      last_error_code = '',
-      updated_at = now()
-    WHERE testagram_media.media_replication_outbox.checksum_sha256 <> EXCLUDED.checksum_sha256
-       OR testagram_media.media_replication_outbox.status = 'dead_letter';
+  IF TG_OP = 'DELETE' THEN
+    object_key_value := OLD.object_key;
+    owner_id_value := OLD.owner_id;
+    namespace_value := OLD.storage_namespace;
+    type_value := OLD.content_type;
+    size_value := OLD.size_bytes;
+    checksum_value := OLD.checksum_sha256;
+    operation_value := 'delete';
+  ELSE
+    object_key_value := NEW.object_key;
+    owner_id_value := NEW.owner_id;
+    namespace_value := NEW.storage_namespace;
+    type_value := NEW.content_type;
+    size_value := NEW.size_bytes;
+    checksum_value := NEW.checksum_sha256;
+    IF NEW.status = 'ready'
+       AND NEW.storage_namespace IN ('media-private','media-public')
+       AND NEW.storage_provider IS NOT NULL
+       AND NEW.checksum_sha256 ~ '^[0-9a-f]{64}$'
+       AND NEW.size_bytes > 0 THEN
+      operation_value := 'replicate';
+    ELSIF TG_OP = 'UPDATE' AND OLD.status = 'ready'
+       AND NEW.status IN ('deleted','quarantined') THEN
+      operation_value := 'delete';
+    ELSE
+      RETURN NEW;
+    END IF;
   END IF;
+
+  IF namespace_value NOT IN ('media-private','media-public') THEN
+    IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+  END IF;
+
+  INSERT INTO testagram_media.media_replication_outbox
+    (object_key,operation,owner_id,storage_namespace,content_type,size_bytes,checksum_sha256)
+  VALUES
+    (object_key_value,operation_value,owner_id_value,namespace_value,type_value,
+     GREATEST(size_value,1),COALESCE(NULLIF(lower(checksum_value),''),repeat('0',64)))
+  ON CONFLICT (object_key) DO UPDATE SET
+    operation=EXCLUDED.operation,
+    owner_id=EXCLUDED.owner_id,
+    storage_namespace=EXCLUDED.storage_namespace,
+    content_type=EXCLUDED.content_type,
+    size_bytes=EXCLUDED.size_bytes,
+    checksum_sha256=EXCLUDED.checksum_sha256,
+    status='pending',
+    attempts=0,
+    available_at=now(),
+    lease_until=NULL,
+    lease_token=NULL,
+    completed_at=NULL,
+    failed_at=NULL,
+    last_error_code='',
+    updated_at=now()
+  WHERE testagram_media.media_replication_outbox.operation IS DISTINCT FROM EXCLUDED.operation
+     OR testagram_media.media_replication_outbox.checksum_sha256 IS DISTINCT FROM EXCLUDED.checksum_sha256
+     OR testagram_media.media_replication_outbox.status='dead_letter';
+
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END;
 $$;
@@ -81,6 +121,11 @@ DROP TRIGGER IF EXISTS media_replication_enqueue_after_asset_write ON testagram_
 CREATE TRIGGER media_replication_enqueue_after_asset_write
 AFTER INSERT OR UPDATE OF status, storage_namespace, storage_provider, content_type, size_bytes, checksum_sha256
 ON testagram_media.assets
+FOR EACH ROW EXECUTE FUNCTION testagram_media.enqueue_object_replication();
+
+DROP TRIGGER IF EXISTS media_replication_enqueue_after_asset_delete ON testagram_media.assets;
+CREATE TRIGGER media_replication_enqueue_after_asset_delete
+AFTER DELETE ON testagram_media.assets
 FOR EACH ROW EXECUTE FUNCTION testagram_media.enqueue_object_replication();
 
 REVOKE ALL ON FUNCTION testagram_media.enqueue_object_replication() FROM PUBLIC;
