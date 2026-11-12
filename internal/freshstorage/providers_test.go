@@ -64,6 +64,7 @@ func TestR2CanBeSelectedAsPrimaryWithBothProviders(t *testing.T) {
 	clear(t)
 	for key, value := range map[string]string{
 		"B2_S3_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",
+		"B2_S3_REGION": "us-east-005",
 		"B2_S3_ACCESS_KEY_ID": "b2-key",
 		"B2_S3_SECRET_ACCESS_KEY": "b2-secret",
 		"B2_S3_BUCKET": "testagram-b2",
@@ -77,6 +78,17 @@ func TestR2CanBeSelectedAsPrimaryWithBothProviders(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if err := p.ReadyForMedia(); err != nil { t.Fatal(err) }
 	if p.PrimaryProvider != "r2" { t.Fatalf("primary provider=%q, want r2", p.PrimaryProvider) }
+}
+
+func TestBackblazeMissingRegionFailsClosed(t *testing.T) {
+	clear(t)
+	t.Setenv("B2_S3_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
+	t.Setenv("B2_S3_ACCESS_KEY_ID", "test-key")
+	t.Setenv("B2_S3_SECRET_ACCESS_KEY", strings.Repeat("s", 40))
+	t.Setenv("B2_S3_BUCKET", "testagram-private-media")
+	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "B2_S3_REGION") {
+		t.Fatalf("missing B2 region must fail closed, err=%v", err)
+	}
 }
 
 func TestInvalidPrimaryProviderFailsClosed(t *testing.T) {
@@ -135,13 +147,13 @@ func TestArchiveProviderRequiresCompleteIndependentConfiguration(t *testing.T) {
 	}
 }
 
-func TestBackblazeDefaultRegionMatchesUsEast005Endpoint(t *testing.T) {
+func TestBackblazeRequiresExplicitRegionAndSignsWithBucketRegion(t *testing.T) {
 	clear(t)
 	t.Setenv("B2_S3_ENDPOINT", "https://s3.us-east-005.backblazeb2.com")
 	t.Setenv("B2_S3_ACCESS_KEY_ID", "test-b2-key-id")
 	t.Setenv("B2_S3_SECRET_ACCESS_KEY", strings.Repeat("s", 40))
 	t.Setenv("B2_S3_BUCKET", "testagram-private-media")
-	t.Setenv("B2_S3_REGION", "")
+	t.Setenv("B2_S3_REGION", "us-east-005")
 	p, err := FromEnv()
 	if err != nil {
 		t.Fatalf("configure B2: %v", err)

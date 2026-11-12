@@ -28,7 +28,7 @@ type ProviderSet struct {
 func FromEnv() (ProviderSet, error) {
 	var out ProviderSet
 	var err error
-	out.B2, out.B2Bucket, err = providerFromEnv("B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "us-east-005")
+	out.B2, out.B2Bucket, err = providerFromEnv("B2_S3_ENDPOINT", "B2_S3_REGION", "B2_S3_ACCESS_KEY_ID", "B2_S3_SECRET_ACCESS_KEY", "B2_S3_BUCKET", "")
 	if err != nil {
 		return ProviderSet{}, fmt.Errorf("Backblaze B2: %w", err)
 	}
@@ -89,6 +89,9 @@ func providerFromEnv(endpointName, regionName, keyName, secretName, bucketName, 
 	}
 	region := strings.TrimSpace(os.Getenv(regionName))
 	if region == "" {
+		if defaultRegion == "" {
+			return nil, "", fmt.Errorf("%s must be set to the exact region from the provider endpoint", regionName)
+		}
 		region = defaultRegion
 	}
 	provider, err := virtualstorage.NewS3Provider(virtualstorage.S3Config{Endpoint: values[0], Region: region, AccessKey: values[1], SecretKey: values[2]})
