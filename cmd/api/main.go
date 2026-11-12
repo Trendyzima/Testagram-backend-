@@ -1146,21 +1146,24 @@ func main() {
 			log.Printf("private Testagram feed ranking integration enabled")
 		}
 	}
+	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
 	var dataCentreMedia *datacentreclient.Client
 	dataCentreURL := strings.TrimSpace(os.Getenv("DATA_CENTRE_MEDIA_API_URL"))
 	dataCentreToken := strings.TrimSpace(os.Getenv("FRESH_DATA_CENTRE_INTERNAL_TOKEN"))
-	if dataCentreURL != "" || dataCentreToken != "" {
+	if freshMediaEnabled {
+		if dataCentreURL == "" || dataCentreToken == "" {
+			log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN; Backend must not receive B2/R2 credentials")
+		}
 		dataCentreMedia, err = datacentreclient.New(dataCentreURL, dataCentreToken, &http.Client{Timeout: 10 * time.Second})
 		if err != nil {
 			log.Fatalf("configure private Data Centre media client: %v", err)
 		}
-		if dataCentreMedia != nil {
-			log.Printf("private Data Centre media lifecycle integration enabled")
+		if dataCentreMedia == nil {
+			log.Fatal("FRESH_MEDIA_ENABLED requires a configured Data Centre media service")
 		}
-	}
-	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
-	if freshMediaEnabled && dataCentreMedia == nil {
-		log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN; Backend must not receive B2/R2 credentials")
+		log.Printf("private Data Centre media lifecycle integration enabled")
+	} else {
+		log.Printf("fresh media lifecycle disabled by FRESH_MEDIA_ENABLED=false")
 	}
 	var mediaIntentFactory *media.IntentFactory
 	if dataCentreMedia != nil {
