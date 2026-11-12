@@ -8,7 +8,7 @@ services:
     dockerfilePath: ./Dockerfile.fresh
     dockerContext: .
     healthCheckPath: /healthz
-    autoDeploy: false
+    autoDeploy: true
     envVars:
       - key: FRESH_API_ADDR
         value: ""
@@ -17,9 +17,9 @@ services:
       - key: APPWRITE_ENDPOINT
         value: https://fra.cloud.appwrite.io/v1
       - key: APPWRITE_PROJECT_ID
-        value: 6af01d97002875d6d7bd
-      - key: APPWRITE_DATABASE_ID
         value: 6af01f05003503d9d603
+      - key: APPWRITE_DATABASE_ID
+        value: testagram-db
       - key: APPWRITE_SERVER_API_KEY
         sync: false
       - key: IDENTITY_PREAUTH_SECRET
@@ -35,13 +35,13 @@ services:
       - key: FRESH_MEDIA_ENABLED
         value: "false"
       - key: FRESH_MEDIA_PRIMARY_PROVIDER
-        value: r2
+        value: b2
       - key: B2_S3_ENDPOINT
         value: https://s3.us-east-005.backblazeb2.com
       - key: B2_S3_REGION
         value: us-east-005
       - key: B2_S3_BUCKET
-        sync: false
+        value: audiostrendy
       - key: B2_S3_ACCESS_KEY_ID
         sync: false
       - key: B2_S3_SECRET_ACCESS_KEY
