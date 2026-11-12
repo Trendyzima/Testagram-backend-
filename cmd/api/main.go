@@ -576,6 +576,11 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/media/attach", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/attach", s.mediaAttach)
 	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
+	if s.freshMediaInternalToken != "" {
+		mux.HandleFunc("POST /internal/media/fresh/register", s.registerFreshMediaAsset)
+		mux.HandleFunc("POST /internal/media/fresh/revoke", s.revokeFreshMediaAsset)
+		mux.HandleFunc("POST /internal/media/fresh/cdn-download-url", s.freshMediaCDNDownloadURL)
+	}
 	mux.HandleFunc("POST /internal/tv/health", s.tvHealthBatch)
 	mux.HandleFunc("GET /api/tv/health", s.tvHealthRead)
 	mux.HandleFunc("GET /api/replication/public/{origin}/{entity_type}/{entity_id}", s.publicReplicationProjection)
