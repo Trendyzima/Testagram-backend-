@@ -1048,12 +1048,7 @@ func main() {
 			log.Printf("durable replication relay enabled")
 		}
 	}
-	federationBackendToken := strings.TrimSpace(os.Getenv("FEDERATION_BACKEND_INTERNAL_TOKEN"))
-	if federationBackendToken == "" {
-		// Backward compatibility for existing deployments; configure a distinct
-		// FEDERATION_BACKEND_INTERNAL_TOKEN before rotating the shared legacy token.
-		federationBackendToken = strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_TOKEN"))
-	}
+	federationBackendToken := federationBackendTokenFromEnv()
 	if federationBackendToken != "" && len(federationBackendToken) < 32 {
 		log.Fatal("FEDERATION_BACKEND_INTERNAL_TOKEN must contain at least 32 characters")
 	}
