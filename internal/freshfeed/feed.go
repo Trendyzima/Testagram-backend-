@@ -29,7 +29,7 @@ type MediaSigner interface {
 	DownloadURL(context.Context, string, string) (string, error)
 }
 type MediaAuthorizationSigner interface {
-	DownloadAuthorization(context.Context, string, string) (freshstorage.MediaDelivery, error)
+	DownloadAuthorizationForViewer(context.Context, string, string, string) (freshstorage.MediaDelivery, error)
 }
 type Service struct {
 	store         Store
@@ -261,7 +261,7 @@ func (s *Service) Home(ctx context.Context, viewerID string, limit int, cursor s
 	if len(candidates) == 0 {
 		return Result{Posts: []map[string]any{}, NextCursor: encodeCursor(lastScanned), HasMore: hasMore, RankingMode: mode}, nil
 	}
-	posts, err := s.renderPosts(ctx, candidates)
+	posts, err := s.renderPosts(ctx, viewerID, candidates)
 	if err != nil {
 		return Result{}, err
 	}
@@ -419,7 +419,7 @@ func (s *Service) reauthorize(ctx context.Context, viewerID string, candidates [
 	return authorized, nil
 }
 
-func (s *Service) renderPosts(ctx context.Context, candidates []candidatePost) ([]map[string]any, error) {
+func (s *Service) renderPosts(ctx context.Context, viewerID string, candidates []candidatePost) ([]map[string]any, error) {
 	authorIDs := make([]string, 0, len(candidates))
 	postIDs := make([]string, 0, len(candidates))
 	seen := map[string]struct{}{}
@@ -452,7 +452,7 @@ func (s *Service) renderPosts(ctx context.Context, candidates []candidatePost) (
 				if ownerID == "" { ownerID = c.authorID }
 				objectID := stringField(attachment, "object_id")
 				if signer, ok := s.media.(MediaAuthorizationSigner); ok {
-					if delivery, e := signer.DownloadAuthorization(ctx, ownerID, objectID); e == nil && delivery.URL != "" {
+					if delivery, e := signer.DownloadAuthorizationForViewer(ctx, viewerID, ownerID, objectID); e == nil && delivery.URL != "" {
 						urls = append(urls, delivery.URL)
 						if strings.HasPrefix(delivery.Authorization, "Bearer ") {
 							mediaAuthHeaders[delivery.URL] = delivery.Authorization
