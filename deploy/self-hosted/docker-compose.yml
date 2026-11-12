@@ -34,6 +34,8 @@ services:
       - ../../migrations/20261111_profile_storage_capacity.sql:/docker-entrypoint-initdb.d/023_profile_storage_capacity.sql:ro
       - ../../migrations/20261112_federation_remote_follows.sql:/docker-entrypoint-initdb.d/024_federation_remote_follows.sql:ro
       - ../../migrations/20261112_instabox_avatar_storage.sql:/docker-entrypoint-initdb.d/025_instabox_avatar_storage.sql:ro
+      - ../../migrations/20261111_media_replica_ledger.sql:/docker-entrypoint-initdb.d/026_media_replica_ledger.sql:ro
+      - ../../migrations/20261112_media_replication_outbox.sql:/docker-entrypoint-initdb.d/027_media_replication_outbox.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -148,6 +150,19 @@ services:
       CDN_MEDIA_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
       CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:-}
       VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-true}
+      MEDIA_REPLICATION_ENABLED: ${MEDIA_REPLICATION_ENABLED:-false}
+      CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT:-}
+      CLOUDFLARE_R2_REGION: ${CLOUDFLARE_R2_REGION:-auto}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
+      CLOUDFLARE_R2_PRIVATE_BUCKET: ${CLOUDFLARE_R2_PRIVATE_BUCKET:-}
+      CLOUDFLARE_R2_PUBLIC_BUCKET: ${CLOUDFLARE_R2_PUBLIC_BUCKET:-}
+      B2_S3_ENDPOINT: ${B2_S3_ENDPOINT:-}
+      B2_S3_REGION: ${B2_S3_REGION:-us-east-005}
+      B2_S3_ACCESS_KEY_ID: ${B2_S3_ACCESS_KEY_ID:-}
+      B2_S3_SECRET_ACCESS_KEY: ${B2_S3_SECRET_ACCESS_KEY:-}
+      B2_S3_PRIVATE_BUCKET: ${B2_S3_PRIVATE_BUCKET:-}
+      B2_S3_PUBLIC_BUCKET: ${B2_S3_PUBLIC_BUCKET:-}
       MPESA_ENV: ${MPESA_ENV:-sandbox}
       MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
       MPESA_PASSKEY: ${MPESA_PASSKEY:-}

@@ -181,9 +181,61 @@ jobs:
             migrations/20261110_federation_outbox.sql \
             migrations/20261111_social_post_idempotency.sql \
             migrations/20261112_instabox_avatar_storage.sql \
-            migrations/20261112_federation_remote_follows.sql; do
+            migrations/20261112_federation_remote_follows.sql \
+            migrations/20261111_media_replica_ledger.sql \
+            migrations/20261112_media_replication_outbox.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
+      - name: Verify durable media replication queue schema
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $media_replication_schema$
+          BEGIN
+            IF to_regclass('testagram_media.storage_replicas') IS NULL
+               OR to_regclass('testagram_media.media_replication_outbox') IS NULL
+               OR to_regclass('testagram_media.media_replication_health') IS NULL THEN
+              RAISE EXCEPTION 'Durable media replication schema is incomplete';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_trigger
+              WHERE tgname='media_replication_enqueue_after_asset_write'
+                AND NOT tgisinternal
+            ) THEN
+              RAISE EXCEPTION 'Canonical media completion does not enqueue replication';
+            END IF;
+          END $media_replication_schema$;
+          INSERT INTO testagram_media.assets
+            (object_key,owner_id,visibility,content_type,size_bytes,status,storage_namespace,storage_provider,checksum_sha256)
+          VALUES
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'ready','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+          DO $media_replication_enqueue$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_media.media_replication_outbox
+              WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                AND owner_id='ci-media-owner' AND storage_namespace='media-private'
+                AND checksum_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                AND status='pending'
+            ) THEN
+              RAISE EXCEPTION 'Verified virtual-storage media insert did not enqueue a durable replication job';
+            END IF;
+          END $media_replication_enqueue$;
+          UPDATE testagram_media.assets SET status='deleted'
+          WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+          DO $media_replication_delete$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_media.media_replication_outbox
+              WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                AND operation='delete' AND status='pending'
+            ) THEN
+              RAISE EXCEPTION 'Media deletion did not enqueue replica cleanup';
+            END IF;
+          END $media_replication_delete$;
+          DELETE FROM testagram_media.assets
+          WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+          SQL
       - name: Verify media attachment, poll voting and private history constraints
         run: |
           set -euo pipefail
@@ -439,6 +491,7 @@ jobs:
           docker run --rm -v "$PWD/deploy/self-hosted/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$PWD/deploy/self-hosted/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
           docker run --rm -v "$PWD/deploy/self-hosted/prometheus-alerts.yml:/etc/prometheus/alerts.yml:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 check rules /etc/prometheus/alerts.yml
           sh -n deploy/self-hosted/alertmanager/generate-config.sh
+          bash -n deploy/self-hosted/apply-media-replication-migrations.sh
           docker run --rm -e ALERTMANAGER_WEBHOOK_URL=https://hooks.example.invalid/test -v "$PWD/deploy/self-hosted/alertmanager/generate-config.sh:/etc/alertmanager/generate-config.sh:ro" --entrypoint /bin/sh prom/alertmanager:v0.28.1 -ec 'sh /etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml && /bin/amtool check-config /tmp/alertmanager.yml'
           docker run --rm -e ALERTMANAGER_WEBHOOK_URL= -v "$PWD/deploy/self-hosted/alertmanager/generate-config.sh:/etc/alertmanager/generate-config.sh:ro" --entrypoint /bin/sh prom/alertmanager:v0.28.1 -ec 'sh /etc/alertmanager/generate-config.sh > /tmp/alertmanager.yml && /bin/amtool check-config /tmp/alertmanager.yml'
 
@@ -470,15 +523,42 @@ jobs:
           docker logs testagram-minio-ci
           echo "MinIO did not become healthy within 60 seconds" >&2
           exit 1
+      - name: Start two isolated replica MinIO services
+        run: |
+          set -euo pipefail
+          for entry in "r2:9001" "b2:9002"; do
+            name="testagram-minio-${entry%%:*}"
+            port="${entry##*:}"
+            docker run -d --rm --name "$name" -p "$port:9000" \
+              -e MINIO_ROOT_USER=testagram-ci \
+              -e MINIO_ROOT_PASSWORD=testagram-ci-password \
+              -e MINIO_SITE_REGION=us-east-1 \
+              ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 server /data --address ":9000"
+          done
+          for port in 9001 9002; do
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent "http://127.0.0.1:$port/minio/health/live" >/dev/null; then break; fi
+              sleep 2
+            done
+            curl --fail --silent "http://127.0.0.1:$port/minio/health/live" >/dev/null
+          done
       - name: Exercise signed PUT, HEAD, GET, LIST and DELETE against MinIO
         env:
           TESTAGRAM_S3_ENDPOINT: http://127.0.0.1:9000
           TESTAGRAM_S3_ACCESS_KEY: testagram-ci
           TESTAGRAM_S3_SECRET_KEY: testagram-ci-password
         run: go test -race -count=1 ./internal/virtualstorage -run '^TestS3ProviderMinIOLifecycle$'
-      - name: Stop isolated MinIO service
+      - name: Exercise three-provider verified replication and deletion
+        env:
+          TESTAGRAM_S3_ACCESS_KEY: testagram-ci
+          TESTAGRAM_S3_SECRET_KEY: testagram-ci-password
+          TESTAGRAM_REPLICA_PRIMARY_ENDPOINT: http://127.0.0.1:9000
+          TESTAGRAM_REPLICA_R2_ENDPOINT: http://127.0.0.1:9001
+          TESTAGRAM_REPLICA_B2_ENDPOINT: http://127.0.0.1:9002
+        run: go test -race -count=1 ./internal/virtualstorage -run "TestReplicatorMinIOThreeProviderLifecycle"
+      - name: Stop isolated MinIO services
         if: always()
-        run: docker stop testagram-minio-ci || true
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
 
   replication-media-schema-integration:
     name: Replication media outbox PostgreSQL integration
@@ -597,7 +677,9 @@ jobs:
             migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
             migrations/20261106_social_core.sql \
-            migrations/20261110_native_media_post_links.sql; do
+            migrations/20261110_native_media_post_links.sql \
+            migrations/20261111_media_replica_ledger.sql \
+            migrations/20261112_media_replication_outbox.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
@@ -891,3 +973,8 @@ jobs:
       - name: Stop isolated PostgreSQL
         if: always()
         run: docker stop testagram-admin-security-ci || true
+
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
