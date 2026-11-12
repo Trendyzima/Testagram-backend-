@@ -454,7 +454,10 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 	if err != nil { return MediaDelivery{}, err }
 	record, err := s.store.GetMediaRecord(ctx, objectID)
 	if err != nil { return MediaDelivery{}, err }
-	if record.OwnerID != ownerID || record.Status != "ready" || record.LifecycleState == "purging" ||
+	now := time.Now().UTC()
+	if record.OwnerID != ownerID || record.Status != "ready" ||
+		(record.LifecycleState != "" && record.LifecycleState != "active") ||
+		!record.DeletedAt.IsZero() || (!record.StoryExpiry.IsZero() && !record.StoryExpiry.After(now)) ||
 		record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
 		return MediaDelivery{}, ErrNotReady
 	}
