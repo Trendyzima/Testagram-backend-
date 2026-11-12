@@ -36,6 +36,7 @@ services:
       - ../../migrations/20261112_instabox_avatar_storage.sql:/docker-entrypoint-initdb.d/025_instabox_avatar_storage.sql:ro
       - ../../migrations/20261111_media_replica_ledger.sql:/docker-entrypoint-initdb.d/026_media_replica_ledger.sql:ro
       - ../../migrations/20261112_media_replication_outbox.sql:/docker-entrypoint-initdb.d/027_media_replication_outbox.sql:ro
+      - ../../migrations/20261112_fresh_media_owner_keys.sql:/docker-entrypoint-initdb.d/028_fresh_media_owner_keys.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
