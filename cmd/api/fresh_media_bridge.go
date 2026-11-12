@@ -13,8 +13,8 @@ import (
 
 const maxFreshMediaBridgeBody = 16 << 10
 
-var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9-]{1,128})/([a-f0-9]{32})$`)
-var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
+var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`)
+var freshMediaOwnerPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 var freshMediaSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 type freshMediaBridgeRequest struct {
