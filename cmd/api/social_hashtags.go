@@ -18,8 +18,8 @@ func normalizeHashtag(value string) (string, string, bool) {
 		return "", "", false
 	}
 	tag := strings.ToLower(value)
-	pattern := " (^|[^[:alnum:]_])#" + regexp.QuoteMeta(tag) + "([^[:alnum:]_]|$)"
-	return tag, strings.TrimSpace(pattern), true
+	pattern := "(^|[^[:alnum:]_])#" + regexp.QuoteMeta(tag) + "([^[:alnum:]_]|$)"
+	return tag, pattern, true
 }
 
 // socialHashtagRead returns a privacy-filtered timeline for one normalized tag.

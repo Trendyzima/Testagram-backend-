@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -14,6 +15,20 @@ func TestNormalizeHashtag(t *testing.T) {
 	}
 	if !strings.Contains(pattern, "#kenya2026") {
 		t.Fatalf("pattern does not identify the normalized tag: %q", pattern)
+	}
+	matcher, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("invalid hashtag pattern %q: %v", pattern, err)
+	}
+	for _, content := range []string{"#kenya2026", "hello #kenya2026 world", "(#kenya2026)", "x #kenya2026!"} {
+		if !matcher.MatchString(content) {
+			t.Errorf("hashtag pattern did not match %q", content)
+		}
+	}
+	for _, content := range []string{"kenya2026", "#kenya20260", "word#kenya2026"} {
+		if matcher.MatchString(content) {
+			t.Errorf("hashtag pattern unexpectedly matched %q", content)
+		}
 	}
 	for _, invalid := range []string{"", "#", "bad tag", "tag/name", "tag!", strings.Repeat("a", 65)} {
 		if _, _, valid := normalizeHashtag(invalid); valid {
