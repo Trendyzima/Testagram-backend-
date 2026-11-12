@@ -115,7 +115,7 @@ func New(baseURL, token string, client *http.Client) (*Client, error) {
 
 func isPrivateServiceHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" || strings.HasSuffix(host, ".internal") || host == "control-plane" {
+	if host == "localhost" || strings.HasSuffix(host, ".internal") || host == "control-plane" || host == "media" {
 		return true
 	}
 	ip := net.ParseIP(host)
