@@ -180,6 +180,7 @@ jobs:
             migrations/20261110_native_media_post_links.sql \
             migrations/20261110_federation_outbox.sql \
             migrations/20261111_social_post_idempotency.sql \
+            migrations/20261112_instabox_avatar_storage.sql \
             migrations/20261112_federation_remote_follows.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
