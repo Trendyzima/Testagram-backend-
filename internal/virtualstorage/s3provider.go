@@ -35,6 +35,7 @@ type S3Config struct {
 // Large uploads/downloads go directly between clients and object storage.
 type S3Provider struct {
 	endpoint                                  *url.URL
+	endpointPathPrefix                        string
 	signingHost, accessKey, secretKey, region string
 	client                                    *http.Client
 }
@@ -53,7 +54,7 @@ func isLocalS3Host(host string) bool {
 func NewS3Provider(cfg S3Config) (*S3Provider, error) {
 	u, err := url.Parse(strings.TrimSpace(cfg.Endpoint))
 	if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLocalS3Host(u.Hostname()))) ||
-		u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" || (strings.TrimRight(u.Path, "/") != "" && strings.TrimRight(u.Path, "/") != "/v1/s3") {
 		return nil, errors.New("S3 endpoint must be an absolute HTTP(S) origin without credentials, path, query, or fragment")
 	}
 	if strings.TrimSpace(cfg.AccessKey) == "" || strings.TrimSpace(cfg.SecretKey) == "" {
@@ -75,7 +76,10 @@ func NewS3Provider(cfg S3Config) (*S3Provider, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 8 * time.Second}
 	}
-	return &S3Provider{endpoint: u, signingHost: cfg.SigningHost, accessKey: cfg.AccessKey, secretKey: cfg.SecretKey, region: cfg.Region, client: client}, nil
+	prefix := strings.TrimRight(u.Path, "/")
+	u.Path = ""
+	u.RawPath = ""
+	return &S3Provider{endpoint: u, endpointPathPrefix: prefix, signingHost: cfg.SigningHost, accessKey: cfg.AccessKey, secretKey: cfg.SecretKey, region: cfg.Region, client: client}, nil
 }
 
 // do disables redirects so signed query credentials are never forwarded to a
@@ -360,7 +364,7 @@ func (p *S3Provider) presign(ctx context.Context, method, bucket, key string, ex
 	date, amzDate := now.Format("20060102"), now.Format("20060102T150405Z")
 	scope := date + "/" + p.region + "/s3/aws4_request"
 	u := *p.endpoint
-	objectPath := "/" + bucket
+	objectPath := p.endpointPathPrefix + "/" + bucket
 	if key != "" {
 		objectPath += "/" + key
 	}
