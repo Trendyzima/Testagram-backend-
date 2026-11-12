@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type federationPreferenceRequest struct {
@@ -221,7 +222,11 @@ func (s *service) federationRemoteFollow(w http.ResponseWriter, r *http.Request)
 		status='accepted',updated_at=now()`,
 		input.LocalUserID, input.RemoteActorURI, input.ActivityID)
 	if err != nil {
-		writeJSON(w, http.StatusConflict, errorBody("REMOTE_FOLLOW_CONFLICT", "The remote follow could not be recorded idempotently", requestID(r)))
+		if federationUniqueConflict(err) {
+			writeJSON(w, http.StatusConflict, errorBody("REMOTE_FOLLOW_CONFLICT", "The remote follow activity ID is already bound to another relationship", requestID(r)))
+			return
+		}
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REMOTE_FOLLOW_WRITE_FAILED", "Canonical remote follow state could not be persisted", requestID(r)))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]string{"status": "accepted"}, "error": nil, "request_id": requestID(r)})
@@ -254,10 +259,19 @@ func (s *service) federationRemoteUnfollow(w http.ResponseWriter, r *http.Reques
 		  AND follow_activity_id=$4 AND status='accepted'`,
 		input.LocalUserID, input.RemoteActorURI, input.ActivityID, input.FollowActivityID)
 	if err != nil {
+		if federationUniqueConflict(err) {
+			writeJSON(w, http.StatusConflict, errorBody("REMOTE_UNFOLLOW_CONFLICT", "The Undo activity ID is already bound to another relationship", requestID(r)))
+			return
+		}
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("REMOTE_UNFOLLOW_FAILED", "Canonical remote follow state could not be updated", requestID(r)))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"removed": tag.RowsAffected() > 0}, "error": nil, "request_id": requestID(r)})
+}
+
+func federationUniqueConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func validFederationRemoteURI(raw string) bool {
