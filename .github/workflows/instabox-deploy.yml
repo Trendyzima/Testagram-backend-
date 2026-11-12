@@ -250,7 +250,7 @@ jobs:
           ensure_random_secret() {
             local key="$1" value
             value="$(read_env_value "$key")"
-            if [[ ${#value} -lt 32 || "$value" == REPLACE* ]]; then
+            if [[ ! "$value" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
               value="$(openssl rand -hex 32)"
               write_env_value "$key" "$value"
             fi
