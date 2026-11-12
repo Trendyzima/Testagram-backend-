@@ -64,7 +64,7 @@ func (c *BackendMediaClient) Revoke(ctx context.Context, ownerID, key string) er
 		return nil
 	}
 	return c.post(ctx, "/internal/media/fresh/revoke", map[string]string{
-		"viewer_id": strings.TrimSpace(viewerID), "owner_id": strings.TrimSpace(ownerID), "key": strings.TrimSpace(key),
+		"owner_id": strings.TrimSpace(ownerID), "key": strings.TrimSpace(key),
 	}, nil)
 }
 
@@ -74,7 +74,7 @@ func (c *BackendMediaClient) Issue(ctx context.Context, viewerID, ownerID, key s
 	}
 	var result MediaDelivery
 	if err := c.post(ctx, "/internal/media/fresh/cdn-download-url", map[string]string{
-		"owner_id": strings.TrimSpace(ownerID), "key": strings.TrimSpace(key),
+		"viewer_id": strings.TrimSpace(viewerID), "owner_id": strings.TrimSpace(ownerID), "key": strings.TrimSpace(key),
 	}, &result); err != nil {
 		return MediaDelivery{}, err
 	}
