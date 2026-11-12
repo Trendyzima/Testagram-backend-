@@ -32,7 +32,18 @@ type Item struct {
 type Store struct { db *pgxpool.Pool }
 
 func NewStore(db *pgxpool.Pool) (*Store, error) {
-	if db == nil { return nil, errors.New("Federation outbox requires PostgreSQL pool") }
+	if db == nil {
+		return nil, errors.New("Federation outbox requires PostgreSQL pool")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var exists bool
+	if err := db.QueryRow(ctx, "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL").Scan(&exists); err != nil {
+		return nil, fmt.Errorf("verify Federation outbox migration: %w", err)
+	}
+	if !exists {
+		return nil, errors.New("Federation outbox migration is not applied")
+	}
 	return &Store{db: db}, nil
 }
 

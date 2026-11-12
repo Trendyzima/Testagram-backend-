@@ -187,6 +187,12 @@ func (s *service) socialPostCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_CREATE_FAILED", "Post retry record could not be saved", requestID))
 		return
 	}
+	if input.Visibility == "public" {
+		if err := s.enqueueFederationCreateTx(r.Context(), tx, userID, postID, input.Content, createdAt); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_OUTBOX_UNAVAILABLE", "The public post could not be durably queued for opted-in federation", requestID))
+			return
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_CREATE_FAILED", "Post could not be committed", requestID))
 		return

@@ -55,9 +55,12 @@ fi
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/022_federation_outbox.sql'
 
-result="$(docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-  sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT to_regclass('\''testagram_local.federation_outbox'\'') IS NOT NULL"')"
-[[ "$result" == "t" ]] || { echo "Federation outbox verification failed." >&2; exit 1; }
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/024_federation_remote_follows.sql'
 
-echo "Federation outbox migration applied and verified."
+result="$(docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT to_regclass('\''testagram_local.federation_outbox'\'') IS NOT NULL AND to_regclass('\''testagram_local.remote_follows'\'') IS NOT NULL"')"
+[[ "$result" == "t" ]] || { echo "Federation schema verification failed." >&2; exit 1; }
+
+echo "Federation outbox and Backend-owned remote-follow migrations applied and verified."
 echo "Retain the backup until the Backend and Federation workers pass production smoke tests."

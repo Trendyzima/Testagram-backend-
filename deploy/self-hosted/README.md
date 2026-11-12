@@ -61,17 +61,15 @@ a second reverse proxy; Caddy remains the only public edge.
 
 The Backend PostgreSQL container applies Backend-owned migrations on first
 initialization. Existing PostgreSQL volumes do not rerun Docker init scripts.
-For an already-initialized database, apply the new Federation outbox migration
-through the backup-verified operator script before enabling Federation publishing:
+For an already-initialized database, apply the Federation outbox and Backend-owned remote-follow migrations
+through the backup-verified operator script before enabling any Federation workers:
 
 ```sh
 ./apply-federation-outbox-migration.sh
 ```
 
 The script waits for PostgreSQL, creates and validates a custom-format backup,
-requires an explicit confirmation phrase, applies migration 022, and verifies
-the outbox table. Retain the backup until the Backend and Federation runtime
-smoke tests pass. The Data Centre migration runner tracks its own applied files
+requires an explicit confirmation phrase, applies migrations 022 and 024, and verifies both the outbox and canonical remote-follow tables. Migration 024 makes Backend the canonical authority for remote Follow/Undo state; Federation's follower rows remain only a delivery-routing cache. Retain the backup until Backend and Federation runtime smoke tests pass. The Data Centre migration runner tracks its own applied files
 and checksums in the same database. Never edit an already-applied migration;
 add a new forward-only migration instead.
 
@@ -119,3 +117,6 @@ backward-compatible. The native media-link migration removes the old external
 media ID column; older application versions that require that column cannot be
 rolled back safely after it is applied. Use a forward fix or restore a verified
 pre-migration backup instead.
+
+
+The Backend `FEDERATION_PUBLIC_BASE_URL` must exactly match the Federation service `PUBLIC_BASE_URL`. The Backend uses this origin for ActivityPub actor, activity and public object IDs; a mismatch causes signed activity enqueue authorization to fail closed.
