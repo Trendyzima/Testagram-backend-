@@ -69,6 +69,7 @@ type service struct {
 	media                     *media.Signer
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
+	cdnOriginAuthToken        string
 	virtualStorage            *virtualstorage.Manager
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
@@ -579,6 +580,8 @@ func (s *service) routes() http.Handler {
 	if s.replicationReceiver != nil {
 		mux.Handle("POST /internal/replication/events", s.replicationReceiver)
 	}
+	mux.HandleFunc("GET /v1/{key...}", s.mediaCDNOrigin)
+	mux.HandleFunc("HEAD /v1/{key...}", s.mediaCDNOrigin)
 	mux.HandleFunc("OPTIONS /api/media/cdn-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/cdn-download-url", s.mediaCDNDownloadURL)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
@@ -1007,10 +1010,12 @@ func main() {
 	var cdnMediaAssertions *mediaassertion.Issuer
 	cdnAssertionSecret := env("CDN_MEDIA_ASSERTION_SECRET", "")
 	cdnMediaBaseURL := strings.TrimRight(env("CDN_MEDIA_BASE_URL", ""), "/")
+	cdnOriginAuthToken := env("CDN_ORIGIN_AUTH_TOKEN", "")
 	if cdnAssertionSecret != "" {
 		cdnMediaAssertions, err = mediaassertion.New([]byte(cdnAssertionSecret), 0)
 		if err != nil { log.Fatalf("configure CDN media assertions: %v", err) }
 		if !strings.HasPrefix(cdnMediaBaseURL, "https://") { log.Fatal("CDN_MEDIA_BASE_URL must be an HTTPS URL when CDN_MEDIA_ASSERTION_SECRET is configured") }
+		if len(cdnOriginAuthToken) < 32 { log.Fatal("CDN_ORIGIN_AUTH_TOKEN must contain at least 32 bytes when CDN media assertions are configured") }
 		log.Printf("viewer-bound CDN media assertions enabled")
 	}
 	var virtualStorageManager *virtualstorage.Manager
@@ -1100,7 +1105,7 @@ func main() {
 	svc := &service{
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
 		media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm,
-		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL,
+		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
