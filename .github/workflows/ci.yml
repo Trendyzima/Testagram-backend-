@@ -428,6 +428,10 @@ jobs:
               raise SystemExit("Deployment must explicitly pull the pinned Algorithm and Federation images")
           if '--force-recreate algorithm federation-api' not in deploy:
               raise SystemExit("Deployment must recreate services after updating immutable image pins")
+          if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy:
+              raise SystemExit("Deployment must verify the exact running Algorithm and Federation image tags")
+          if '::error::Data Centre deployment did not reach an accepted core-services state' not in deploy:
+              raise SystemExit("Deployment must fail when Data Centre image rollout does not reach an accepted state")
           PY
           docker build -f admin-console/Dockerfile -t testagram-admin-console-ci .
           docker build -f deploy/self-hosted/minio-tools/Dockerfile -t testagram-minio-tools-ci deploy/self-hosted/minio-tools
