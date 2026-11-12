@@ -19,7 +19,6 @@ type MediaReplica struct {
 	Bytes                                              int64
 }
 type RetentionLifecycleStore interface {
-	RevokeCanonicalMedia(context.Context, MediaRecord) error
 	GetMediaRecord(context.Context, string) (MediaRecord, error)
 	BeginMediaPurge(context.Context, MediaRecord) error
 	ExpireDueStoriesAndCheckReferences(context.Context, string, time.Time) (bool, error)
@@ -137,7 +136,9 @@ func purgeReplicasAndRelease(ctx context.Context, store RetentionLifecycleStore,
 	if err := store.BeginMediaPurge(ctx, media); err != nil {
 		return fmt.Errorf("freeze media lifecycle before replica deletion: %w", err)
 	}
-	if err := store.RevokeCanonicalMedia(ctx, media); err != nil { return fmt.Errorf("revoke Backend CDN authorization before replica deletion: %w", err) }
+	if revoker, ok := store.(interface { RevokeCanonicalMedia(context.Context, MediaRecord) error }); ok {
+		if err := revoker.RevokeCanonicalMedia(ctx, media); err != nil { return fmt.Errorf("revoke Backend CDN authorization before replica deletion: %w", err) }
+	}
 	replicas, err := store.ListMediaReplicas(ctx, media.ObjectID)
 	if err != nil {
 		return err
