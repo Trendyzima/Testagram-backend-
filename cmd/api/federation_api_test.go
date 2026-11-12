@@ -81,3 +81,15 @@ func TestFederationBackendTokenDoesNotFallbackToIngressCredential(t *testing.T) 
 		t.Fatalf("dedicated reverse-direction token = %q, want configured token", got)
 	}
 }
+
+func TestFederationPreferenceRejectsProtectedAndUndiscoverableAccounts(t *testing.T) {
+	if code, _ := federationPreferenceConflict(true, true); code != "FEDERATION_REQUIRES_PUBLIC_ACCOUNT" {
+		t.Fatalf("protected account conflict = %q", code)
+	}
+	if code, _ := federationPreferenceConflict(false, false); code != "FEDERATION_REQUIRES_DISCOVERABLE_ACCOUNT" {
+		t.Fatalf("undiscoverable account conflict = %q", code)
+	}
+	if code, _ := federationPreferenceConflict(true, false); code != "" {
+		t.Fatalf("eligible public account unexpectedly blocked with %q", code)
+	}
+}
