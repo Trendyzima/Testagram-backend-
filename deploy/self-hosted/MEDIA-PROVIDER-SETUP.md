@@ -51,7 +51,7 @@ The standard API's replication startup checks require a working primary provider
 
 ## Backblaze application key scope
 
-Create a dedicated non-master application key for Testagram. Restrict it to the two B2 bucket IDs used by the standard API (multi-bucket application keys are supported by Backblaze's current API). Grant only the file capabilities needed by the application: read, write and list; retain delete capability only if the selected B2 API operation requires version-specific deletion. Never grant key-management capabilities such as `writeKeys`.
+Create a dedicated non-master application key for Testagram. Restrict it to the two B2 bucket IDs used by the standard API (multi-bucket application keys are supported by Backblaze's current API). Grant only the file capabilities needed by the application: `readFiles`, `writeFiles` and `listFiles` where inventory/list operations are used. The current S3 worker deletes by object name; Backblaze documents `writeFiles` for that operation, while `deleteFiles` is needed for deleting a specific version. Never grant key-management capabilities such as `writeKeys`.
 
 The standard replication code uses S3-compatible object-name operations. Test the exact permission set against the actual bucket pair before enabling the worker. Do not use the master application key.
 
@@ -61,7 +61,7 @@ The workflow `.github/workflows/media-provider-smoke.yml` is a manual live-bucke
 
 Before running it, configure the secrets and variables above in the **Backend** repository. The test writes to the configured live bucket pair, so run it deliberately and during a quiet period. It requires write/read/delete-by-name access to all four buckets. B2 buckets configured to keep all versions may retain the prior object version after the delete marker hides it; the test object is small and uses a unique CI prefix.
 
-Run it from GitHub Actions → **Media provider credential smoke test** → **Run workflow**. Do not treat a successful credential smoke test as proof that the full application replication lifecycle, failover or restore has passed.
+After this PR is merged, run it from GitHub Actions → **Media provider credential smoke test** → **Run workflow**. Do not treat a successful credential smoke test as proof that the full application replication lifecycle, failover or restore has passed.
 
 ## Safe activation order
 
