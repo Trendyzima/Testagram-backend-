@@ -85,6 +85,18 @@ FOR EACH ROW EXECUTE FUNCTION testagram_media.enqueue_object_replication();
 
 REVOKE ALL ON FUNCTION testagram_media.enqueue_object_replication() FROM PUBLIC;
 
+CREATE OR REPLACE VIEW testagram_media.media_replication_health AS
+SELECT
+  count(*) FILTER (WHERE status='pending') AS pending,
+  count(*) FILTER (WHERE status='processing') AS processing,
+  count(*) FILTER (WHERE status='dead_letter') AS dead_letter,
+  COALESCE(EXTRACT(EPOCH FROM (now()-min(created_at) FILTER (WHERE status IN ('pending','processing')))),0)::BIGINT AS oldest_pending_seconds,
+  (SELECT count(*) FROM testagram_media.storage_replicas WHERE state='verified') AS verified_placements,
+  (SELECT count(DISTINCT object_key) FROM testagram_media.storage_replicas WHERE state='verified') AS objects_with_verified_placements
+FROM testagram_media.media_replication_outbox;
+
+REVOKE ALL ON testagram_media.media_replication_health FROM PUBLIC;
+
 COMMENT ON TABLE testagram_media.media_replication_outbox IS
   'Transactional durable queue for verified object copies to independent media providers. Private metadata stays server-side; no signed URLs or credentials are stored.';
 
