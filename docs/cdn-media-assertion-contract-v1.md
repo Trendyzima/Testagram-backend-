@@ -3,14 +3,14 @@
 Backend is the sole authority for media ownership, visibility, moderation state and viewer authorization. A storage presigned URL is not a CDN authorization assertion.
 
 ## Private media capability
-- Backend issues only after authenticating the viewer and reading a canonical `testagram_media.assets` row.
-- The row must match the exact object key, `owner_id = viewer`, `visibility = private`, and `status = ready`.
+- Backend issues only after authenticating the viewer, performing the relevant post/media visibility decision, and reading a canonical `testagram_media.assets` row. The Fresh API bridge may request an assertion only with its service token and only after its Appwrite visibility policy has authorized the viewer.
+- The row must match the exact object key and its canonical `owner_id`; it must be `visibility = private` and `status = ready`. Backend performs the viewer/post visibility check before issuing a token. For owner-only requests, viewer and owner are identical; for an authorized feed viewer, they are distinct.
 - Assertion format: `v1.<base64url-json>.<base64url-hmac-sha256>`.
-- Claims: `v`, `iss=testagram-backend`, `aud=testagram-cdn`, `sub` (viewer ID), `key` (canonical object key), `visibility=private`, `iat`, `exp`, and random `jti`.
+- Claims: `v`, `iss=testagram-backend`, `aud=testagram-cdn`, `sub` (authorized viewer ID), `owner` (canonical media owner ID), `key` (exact canonical object key), `visibility=private`, `iat`, `exp`, and random `jti`. Legacy owner-only assertions may omit `owner`; validators interpret the subject as the owner only for those legacy tokens.
 - HMAC-SHA256 uses a dedicated `CDN_MEDIA_ASSERTION_SECRET` of at least 32 random bytes. It is not an Appwrite key, storage credential, federation token, or CDN origin service token.
 - Maximum lifetime is five minutes; default lifetime is two minutes. Validators reject future-issued, expired, wrong-audience, wrong-viewer, wrong-key, non-private, malformed and overlong claims.
 - Client sends `Authorization: Bearer <assertion>` on the media request. Never put assertions in query strings, analytics, referrers or logs.
-- An assertion is bound to one object and one viewer; it cannot be replayed for a different key or viewer.
+- The edge verifies that the key's owner segment matches `owner`, while `sub` records the viewer whose visibility decision authorized issuance. The token is still a short-lived bearer capability; do not expose it to another viewer.
 
 ## Public media
 Public objects do not receive private assertions. They are eligible only when Backend metadata says `visibility=public` and `status=ready`. Public delivery must use a distinct public namespace or an authoritative origin response with explicit `X-Testagram-Visibility: public`. Never infer public visibility from a missing token or missing secret.
