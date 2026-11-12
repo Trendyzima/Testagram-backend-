@@ -79,7 +79,7 @@ func queueAvatarCleanup(ctx context.Context, s *service, userID, key string) {
 	if s == nil || s.db == nil || key == "" {
 		return
 	}
-	_, _ = s.db.Exec(ctx, "update testagram_media.upload_intents set status='cleanup_pending',expires_at=now(),updated_at=now() where object_key=$1 and owner_id=$2 and status in ('issued','uploading','uploaded','cleanup_pending')", key, userID)
+	_, _ = s.db.Exec(ctx, "update testagram_media.upload_intents set status='cleanup_pending',expires_at=now(),updated_at=now() where object_key=$1 and owner_id=$2 and status in ('issued','cleanup_pending')", key, userID)
 	_, _ = s.db.Exec(ctx, `insert into testagram_media.storage_deletion_jobs
 		(object_key,owner_id,visibility,storage_namespace,storage_provider,reason,status)
 		values ($1,$2,'private','media-private','instabox-vps','expired_upload','pending') on conflict do nothing`, key, userID)
@@ -156,7 +156,7 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 	var usedBytes int64
 	if err := tx.QueryRow(ctx, `select
 		coalesce((select sum(size_bytes) from testagram_media.assets where owner_id=$1 and status in ('ready','deletion_pending')),0) +
-		coalesce((select sum(max_bytes) from testagram_media.upload_intents where owner_id=$1 and status in ('issued','uploading','uploaded') and expires_at>now()),0)`, userID).Scan(&usedBytes); err != nil {
+		coalesce((select sum(max_bytes) from testagram_media.upload_intents where owner_id=$1 and status in ('issued','cleanup_pending') and expires_at>now()),0)`, userID).Scan(&usedBytes); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_QUOTA_CHECK_FAILED", "Could not calculate profile storage usage", id))
 		return
 	}
@@ -165,9 +165,9 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = tx.Exec(ctx, `insert into testagram_media.upload_intents
-		(object_key, owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider)
-		values ($1,$2,'private',$3,$4,$5,now()+interval '10 minutes','issued','media-private','instabox-vps')`,
-		key, userID, contentType, filename, int64(len(data)))
+		(object_key, owner_id, visibility, content_type, max_bytes, expires_at, status, storage_namespace, storage_provider)
+		values ($1,$2,'private',$3,$4,now()+interval '10 minutes','issued','media-private','instabox-vps')`,
+		key, userID, contentType, int64(len(data)))
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_RESERVATION_FAILED", "Could not record the avatar upload reservation", id))
 		return
@@ -197,9 +197,9 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = tx.Exec(ctx, `insert into testagram_media.assets
-		(object_key,owner_id,visibility,content_type,original_name,size_bytes,etag,status,storage_namespace,storage_provider,checksum_sha256)
-		values ($1,$2,'private',$3,$4,$5,'','ready','media-private','instabox-vps',$6)`,
-		key, userID, contentType, filename, int64(len(data)), checksumHex)
+		(object_key,owner_id,visibility,content_type,size_bytes,etag,status,storage_namespace,storage_provider,checksum_sha256)
+		values ($1,$2,'private',$3,$4,'','ready','media-private','instabox-vps',$5)`,
+		key, userID, contentType, int64(len(data)), checksumHex)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_METADATA_FAILED", "Could not record the stored avatar", id))
 		return
