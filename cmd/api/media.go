@@ -404,10 +404,12 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
   http.Error(w,"media authorization denied",http.StatusForbidden)
   return
  }
+ mediaOwner:=claims.Owner
+ if mediaOwner=="" { mediaOwner=claims.Subject }
  var ownerID,visibility,assetStatus,storageNamespace string
  err=s.db.QueryRow(r.Context(),"select owner_id, visibility, status, storage_namespace from testagram_media.assets where object_key=$1",key).
   Scan(&ownerID,&visibility,&assetStatus,&storageNamespace)
- if err!=nil || ownerID!=claims.Subject || visibility!="private" || assetStatus!="ready" {
+ if err!=nil || ownerID!=mediaOwner || visibility!="private" || assetStatus!="ready" {
   http.Error(w,"media authorization denied",http.StatusNotFound)
   return
  }
@@ -417,9 +419,9 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
    http.Error(w,"media storage unavailable",http.StatusServiceUnavailable)
    return
   }
-  signedURL,err=s.virtualStorage.DownloadURL(r.Context(),ownerID,claims.Subject,storageNamespace,key)
+  signedURL,err=s.virtualStorage.DownloadURL(r.Context(),claims.Subject,ownerID,storageNamespace,key)
  } else if s.media!=nil {
-  signedURL,err=s.media.PresignPrivateDownload(ownerID,key,time.Minute,time.Now())
+  signedURL,err=s.media.PresignPrivateDownload(claims.Subject,key,time.Minute,time.Now())
  } else {
   err=errors.New("media signer unavailable")
  }
