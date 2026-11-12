@@ -230,3 +230,27 @@ func TestPresignObjectPutSignsKnownOwnerScopedKey(t *testing.T) {
 		t.Fatal("cross-owner PUT URL must be rejected")
 	}
 }
+
+
+func TestMediaSignerSignsPublicAndPrivateHEADMethods(t *testing.T) {
+	signer := testSigner(t, "https://media.example.test")
+	key := "users/user-123/0123456789abcdef0123456789abcdef"
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct{name string; sign func() (string,error); wantPath string}{
+		{"public GET", func()(string,error){return signer.PresignPublicDownload("user-123",key,5*time.Minute,now)}, "/public-media/"+key},
+		{"public HEAD", func()(string,error){return signer.PresignPublicHead("user-123",key,5*time.Minute,now)}, "/public-media/"+key},
+		{"private GET", func()(string,error){return signer.PresignPrivateDownload("user-123",key,5*time.Minute,now)}, "/private-media/"+key},
+		{"private HEAD", func()(string,error){return signer.PresignPrivateHead("user-123",key,5*time.Minute,now)}, "/private-media/"+key},
+	} {
+		t.Run(tc.name,func(t *testing.T){
+			raw,err:=tc.sign();if err!=nil{t.Fatal(err)}
+			u,err:=url.Parse(raw);if err!=nil{t.Fatal(err)}
+			if u.Path!=tc.wantPath||len(u.Query().Get("X-Amz-Signature"))!=64{t.Fatalf("invalid signed URL: %s",raw)}
+		})
+	}
+	get,_:=signer.PresignPublicDownload("user-123",key,5*time.Minute,now)
+	head,_:=signer.PresignPublicHead("user-123",key,5*time.Minute,now)
+	gu,_:=url.Parse(get);hu,_:=url.Parse(head)
+	if gu.Query().Get("X-Amz-Signature")==hu.Query().Get("X-Amz-Signature"){t.Fatal("GET and HEAD signatures must differ")}
+	if _,err:=signer.PresignPublicHead("user-456",key,5*time.Minute,now);err==nil{t.Fatal("cross-owner public HEAD grant accepted")}
+}
