@@ -476,6 +476,7 @@ func (s *service) routes() http.Handler {
 	}
 	mux.HandleFunc("OPTIONS /api/me/profile", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/profile", s.socialMyProfileRead)
+	mux.HandleFunc("PUT /api/me/profile", s.socialMyProfileUpdate)
 	mux.HandleFunc("OPTIONS /api/me/federation", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/federation", s.federationPreference)
 	mux.HandleFunc("PUT /api/me/federation", s.federationPreference)
