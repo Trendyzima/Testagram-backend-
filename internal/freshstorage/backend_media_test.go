@@ -69,3 +69,19 @@ func TestNewBackendMediaClientRequiresHTTPSAndStrongToken(t *testing.T) {
 		t.Fatalf("localhost development URL rejected: %v",err)
 	}
 }
+
+func TestIssueCDNAuthorizationRejectsUnexpectedOriginOrObject(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	key := "users/alice/0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"url":"https://attacker.example/v1/users/alice/0123456789abcdef0123456789abcdef","authorization":"Bearer v1.payload.signature","expires_in_seconds":120,"visibility":"private"}`))
+	}))
+	defer server.Close()
+	client, err := NewBackendMediaClient(server.URL, token, server.Client())
+	if err != nil { t.Fatal(err) }
+	service := &Service{backendMedia: client, cdnBaseURL: "https://media.testagram.site"}
+	if _, err := service.issueCDNAuthorization(context.Background(), "viewer", "alice", key); err == nil {
+		t.Fatal("authorization for an unexpected CDN origin was accepted")
+	}
+}
