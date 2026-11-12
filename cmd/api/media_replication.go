@@ -133,7 +133,18 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 	return tx.Commit(ctx)
 }
 
-func retryMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job mediaReplicationJob, code string) error {
+// enqueueMediaReplicaReconciliation periodically rechecks every placement.
+// Replicate() performs HEAD + SHA-256 on each destination and copies only missing
+// or drifted objects, so a healthy object is not re-uploaded on every scan.
+func enqueueMediaReplicaReconciliation(ctx context.Context, db *pgxpool.Pool) error {
+	_,err:=db.Exec(ctx,`
+		INSERT INTO testagram_media.media_replication_outbox
+		  (object_key,operation,owner_id,storage_namespace,content_type,size_bytes,checksum_sha256,status)
+		SELECT a.object_key,'replicate',a.owner_id,a.storage_namespace,a.content_type,a.size_bytes,lower(a.checksum_sha256),'pending'
+		FROM testagram_media.assets a
+		WHERE a.status='ready'
+		  AND a.storage_namespace IN ('media-private','media-public')
+		  AND a.checksum_sha256 ~ '^[0-9a-f]{64}
 	if code=="" { code="replication_failed" }
 	_,err:=db.Exec(ctx,`
 		UPDATE testagram_media.media_replication_outbox
@@ -144,6 +155,91 @@ func retryMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job mediaRe
 		WHERE id=$1 AND status='processing' AND lease_token=$2::uuid
 	`,job.ID,job.LeaseToken,code)
 	return err
+}
+
+func mediaReplicationErrorCode(err error) string {
+	switch {
+	case errors.Is(err,virtualstorage.ErrChecksumMismatch): return "primary_checksum_mismatch"
+	case errors.Is(err,virtualstorage.ErrObjectMismatch): return "primary_object_mismatch"
+	case errors.Is(err,virtualstorage.ErrNotFound): return "primary_object_missing"
+	default: return "replica_provider_unavailable"
+	}
+}
+
+func runMediaReplicationWorker(ctx context.Context, db *pgxpool.Pool, replicator *virtualstorage.Replicator) {
+	if db==nil || replicator==nil { return }
+	ticker:=time.NewTicker(3*time.Second);defer ticker.Stop()
+	lastReconcile:=time.Time{}
+	for {
+		select { case <-ctx.Done(): return; case <-ticker.C: }
+		if lastReconcile.IsZero() || time.Since(lastReconcile)>=15*time.Minute {
+			reconcileCtx,reconcileCancel:=context.WithTimeout(ctx,30*time.Second)
+			if err:=enqueueMediaReplicaReconciliation(reconcileCtx,db);err!=nil {
+				log.Printf("media replica reconciliation enqueue failed")
+			}
+			reconcileCancel()
+			lastReconcile=time.Now()
+		}
+		claimCtx,cancel:=context.WithTimeout(ctx,10*time.Second)
+		jobs,err:=claimMediaReplicationJobs(claimCtx,db,10);cancel()
+		if err!=nil { log.Printf("media replication claim failed: %v",err);continue }
+		for _,job:=range jobs {
+			workCtx,workCancel:=context.WithTimeout(ctx,90*time.Second)
+			var results []virtualstorage.ReplicaResult
+			var copyErr error
+			if job.Operation == "delete" { copyErr=replicator.Delete(workCtx,job.OwnerID,job.Namespace,job.ObjectKey) } else { results,copyErr=replicator.Replicate(workCtx,job.OwnerID,job.Namespace,job.ObjectKey,job.SizeBytes,job.ContentType,job.Checksum) }
+			if copyErr==nil {
+				copyErr=completeMediaReplicationJob(workCtx,db,job,results)
+			}
+			if copyErr!=nil {
+				code:=mediaReplicationErrorCode(copyErr)
+				if err:=retryMediaReplicationJob(workCtx,db,job,code);err!=nil && !errors.Is(err,pgx.ErrTxClosed) {
+					log.Printf("media replication retry state failed job=%d: %v",job.ID,err)
+				}
+				log.Printf("media replication attempt failed job=%d attempt=%d code=%s",job.ID,job.Attempts,code)
+			}
+			workCancel()
+		}
+	}
+}
+
+		  AND (
+		    EXISTS (
+		      SELECT 1 FROM (VALUES ('instabox-vps'),('cloudflare-r2'),('backblaze-b2')) AS required(provider)
+		      LEFT JOIN testagram_media.storage_replicas r
+		        ON r.object_key=a.object_key AND r.provider=required.provider
+		      WHERE r.object_key IS NULL OR r.state<>'verified' OR r.verified_at IS NULL
+		         OR r.verified_at < now()-interval '24 hours'
+		    )
+		  )
+		ON CONFLICT (object_key) DO UPDATE SET
+		  status='pending',attempts=0,available_at=now(),lease_until=NULL,lease_token=NULL,
+		  completed_at=NULL,failed_at=NULL,last_error_code='',updated_at=now()
+		WHERE testagram_media.media_replication_outbox.operation='replicate'
+		  AND testagram_media.media_replication_outbox.status IN ('complete','dead_letter')
+	`)
+	return err
+}
+
+func retryMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job mediaReplicationJob, code string) error {
+	if code=="" { code="replication_failed" }
+	tx,err:=db.Begin(ctx);if err!=nil{return err};defer func(){_ = tx.Rollback(context.Background())}()
+	tag,err:=tx.Exec(ctx,`
+		UPDATE testagram_media.media_replication_outbox
+		SET status=CASE WHEN attempts>=20 THEN 'dead_letter' ELSE 'pending' END,
+		    available_at=now()+LEAST(3600,(5*power(2,LEAST(attempts,10)))::integer)*interval '1 second',
+		    failed_at=CASE WHEN attempts>=20 THEN now() ELSE NULL END,
+		    lease_until=NULL,lease_token=NULL,last_error_code=$3,updated_at=now()
+		WHERE id=$1 AND status='processing' AND lease_token=$2::uuid
+	`,job.ID,job.LeaseToken,code)
+	if err!=nil{return err}
+	if tag.RowsAffected()!=1{return errors.New("media replication lease was lost before retry")}
+	placementState:="degraded"
+	if job.Operation=="delete" { placementState="deleting" }
+	if _,err=tx.Exec(ctx,`UPDATE testagram_media.storage_replicas
+		SET state=$2,last_error_code=$3,updated_at=now()
+		WHERE object_key=$1 AND state IN ('verified','degraded','deleting')`,job.ObjectKey,placementState,code);err!=nil{return err}
+	return tx.Commit(ctx)
 }
 
 func mediaReplicationErrorCode(err error) string {
