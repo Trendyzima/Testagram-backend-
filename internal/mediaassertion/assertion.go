@@ -15,7 +15,7 @@ import (
 )
 
 const (issuer="testagram-backend"; audience="testagram-cdn"; version="v1"; DefaultTTL=2*time.Minute; maxTTL=5*time.Minute)
-var (userPattern=regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`); keyPattern=regexp.MustCompile(`^users/([A-Za-z0-9-]{1,128})/([a-f0-9]{32})$`))
+var (userPattern=regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`); keyPattern=regexp.MustCompile(`^users/([A-Za-z0-9._-]{1,128})/([a-f0-9]{32})$`))
 type Claims struct { Version string `json:"v"`; Issuer string `json:"iss"`; Audience string `json:"aud"`; Subject string `json:"sub"`; Key string `json:"key"`; Visibility string `json:"visibility"`; IssuedAt int64 `json:"iat"`; ExpiresAt int64 `json:"exp"`; JTI string `json:"jti"` }
 type Issuer struct { secret []byte; ttl time.Duration }
 func New(secret []byte, ttl time.Duration) (*Issuer,error) { if len(secret)<32{return nil,errors.New("CDN assertion secret must contain at least 32 bytes")};if ttl==0{ttl=DefaultTTL};if ttl<15*time.Second||ttl>maxTTL{return nil,errors.New("CDN assertion TTL must be between 15 seconds and 5 minutes")};return &Issuer{secret:append([]byte(nil),secret...),ttl:ttl},nil }
