@@ -2,13 +2,14 @@
 
 The native Go application API and PostgreSQL data plane for Testagram.
 
-## Five-repository ownership
+## Six-runtime-repository ownership + API contract control plane
 
 - [Flutter client](https://github.com/Trendyzima/testagram-flutter-client-): native Android/web UI; Appwrite session acquisition; all product data through this API.
 - **Testagram Backend (this repository):** Appwrite JWT verification, authorization, canonical PostgreSQL data, social APIs, media lifecycle and service orchestration.
 - [Data Centre](https://github.com/Trendyzima/Testagram-data-centre-): storage nodes, video processing, notifications, platform infrastructure and operations.
 - [The Algorithm](https://github.com/Trendyzima/the-algorithm): feed ranking over Backend-authorized candidate sets.
 - [Federated Content](https://github.com/Trendyzima/federated-content): signed inbox/outbox, federation policy and remote delivery.
+- **Testagram API (`testagram-api`):** OpenAPI contracts, private service schemas, event definitions, SDKs, immutable source pins and cross-repository compatibility CI. This is a contract control plane, not a runtime service or product-data authority.
 
 ## Runtime boundaries
 
