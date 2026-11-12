@@ -50,7 +50,7 @@ DROP TRIGGER IF EXISTS testagram_local_hashtag_follow_count ON testagram_local.h
 CREATE TRIGGER testagram_local_hashtag_follow_count AFTER INSERT OR DELETE ON testagram_local.hashtag_follows FOR EACH ROW EXECUTE FUNCTION testagram_local.adjust_hashtag_follower_count();
 CREATE OR REPLACE FUNCTION testagram_local.index_post_hashtags()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,testagram_local
-AS $
+AS $$
 DECLARE match_row TEXT[];
 BEGIN
  DELETE FROM testagram_local.post_hashtags WHERE post_id=NEW.id;
@@ -63,7 +63,7 @@ BEGIN
  END LOOP;
  RETURN NEW;
 END;
-$;
+$$;
 DROP TRIGGER IF EXISTS testagram_local_posts_hashtag_index ON testagram_local.posts;
 CREATE TRIGGER testagram_local_posts_hashtag_index AFTER INSERT OR UPDATE OF text,deleted_at ON testagram_local.posts
 FOR EACH ROW EXECUTE FUNCTION testagram_local.index_post_hashtags();
