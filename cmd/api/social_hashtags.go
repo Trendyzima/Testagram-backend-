@@ -147,8 +147,8 @@ LIMIT $5`, nullableUUID(viewerID), pattern, before, beforeID, limit+1)
 // socialTrendingHashtags ranks public hashtags by distinct-post volume over
 // the last seven days. This is a safe baseline until Algorithm owns topic ranking.
 func (s *service) socialTrendingHashtags(w http.ResponseWriter, r *http.Request) {
-	requestID := requestID(r)
-	if _, requestID, ok = s.socialOptionalReadAuth(w, r); !ok {
+	_, requestID, ok := s.socialOptionalReadAuth(w, r)
+	if !ok {
 		return
 	}
 	if s.db == nil {
