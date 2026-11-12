@@ -18,6 +18,7 @@ import (
 type mediaReplicationJob struct {
 	ID int64
 	ObjectKey string
+	Operation string
 	OwnerID string
 	Namespace string
 	ContentType string
@@ -93,7 +94,7 @@ func claimMediaReplicationJobs(ctx context.Context, db *pgxpool.Pool, limit int)
 		SET status='processing', attempts=q.attempts+1,
 		    lease_until=now()+interval '2 minutes', lease_token=gen_random_uuid(), updated_at=now()
 		FROM picked WHERE q.id=picked.id
-		RETURNING q.id,q.object_key,q.owner_id,q.storage_namespace,q.content_type,
+		RETURNING q.id,q.object_key,q.operation,q.owner_id,q.storage_namespace,q.content_type,
 		          q.size_bytes,q.checksum_sha256,q.lease_token::text,q.attempts
 	`, limit)
 	if err != nil { return nil, fmt.Errorf("claim media replication jobs: %w",err) }
@@ -101,7 +102,7 @@ func claimMediaReplicationJobs(ctx context.Context, db *pgxpool.Pool, limit int)
 	jobs:=make([]mediaReplicationJob,0,limit)
 	for rows.Next() {
 		var j mediaReplicationJob
-		if err:=rows.Scan(&j.ID,&j.ObjectKey,&j.OwnerID,&j.Namespace,&j.ContentType,&j.SizeBytes,&j.Checksum,&j.LeaseToken,&j.Attempts);err!=nil{return nil,err}
+		if err:=rows.Scan(&j.ID,&j.ObjectKey,&j.Operation,&j.OwnerID,&j.Namespace,&j.ContentType,&j.SizeBytes,&j.Checksum,&j.LeaseToken,&j.Attempts);err!=nil{return nil,err}
 		jobs=append(jobs,j)
 	}
 	return jobs,rows.Err()
@@ -109,6 +110,9 @@ func claimMediaReplicationJobs(ctx context.Context, db *pgxpool.Pool, limit int)
 
 func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job mediaReplicationJob, results []virtualstorage.ReplicaResult) error {
 	tx,err:=db.Begin(ctx);if err!=nil{return err};defer func(){_ = tx.Rollback(context.Background())}()
+	if job.Operation == "delete" {
+		if _,err=tx.Exec(ctx,`DELETE FROM testagram_media.storage_replicas WHERE object_key=$1`,job.ObjectKey);err!=nil{return err}
+	} else {
 	for _,result:=range results {
 		_,err=tx.Exec(ctx,`
 			INSERT INTO testagram_media.storage_replicas
@@ -120,6 +124,7 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 			  last_error_code='',attempts=testagram_media.storage_replicas.attempts+1,updated_at=now()
 		`,job.ObjectKey,result.Provider,result.Bucket,result.Size,result.SHA256,job.Attempts)
 		if err!=nil{return fmt.Errorf("write verified replica placement: %w",err)}
+	}
 	}
 	tag,err:=tx.Exec(ctx,`UPDATE testagram_media.media_replication_outbox
 		SET status='complete',completed_at=now(),lease_until=NULL,lease_token=NULL,last_error_code='',updated_at=now()
@@ -160,7 +165,9 @@ func runMediaReplicationWorker(ctx context.Context, db *pgxpool.Pool, replicator
 		if err!=nil { log.Printf("media replication claim failed: %v",err);continue }
 		for _,job:=range jobs {
 			workCtx,workCancel:=context.WithTimeout(ctx,90*time.Second)
-			results,copyErr:=replicator.Replicate(workCtx,job.OwnerID,job.Namespace,job.ObjectKey,job.SizeBytes,job.ContentType,job.Checksum)
+			var results []virtualstorage.ReplicaResult
+			var copyErr error
+			if job.Operation == "delete" { copyErr=replicator.Delete(workCtx,job.OwnerID,job.Namespace,job.ObjectKey) } else { results,copyErr=replicator.Replicate(workCtx,job.OwnerID,job.Namespace,job.ObjectKey,job.SizeBytes,job.ContentType,job.Checksum) }
 			if copyErr==nil {
 				copyErr=completeMediaReplicationJob(workCtx,db,job,results)
 			}
