@@ -432,9 +432,7 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
   http.Error(w,"media origin unavailable",http.StatusBadGateway)
   return
  }
- for _,name:=range []string{"Range","If-Range","If-None-Match","If-Modified-Since"} {
-  if value:=strings.TrimSpace(r.Header.Get(name));value!="" { upstreamReq.Header.Set(name,value) }
- }
+ copyCDNOriginRequestHeaders(r,upstreamReq)
  client:=&http.Client{Transport:s.upstream.Transport,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}
  resp,err:=client.Do(upstreamReq)
  if err!=nil {
@@ -466,13 +464,25 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
    return
   }
  }
+ writeCDNOriginResponse(w,r,resp,key)
+}
+
+func copyCDNOriginRequestHeaders(source,destination *http.Request) {
+ for _,name:=range []string{"Range","If-Range","If-None-Match","If-Modified-Since"} {
+  if value:=strings.TrimSpace(source.Header.Get(name));value!="" { destination.Header.Set(name,value) }
+ }
+}
+
+func writeCDNOriginResponse(w http.ResponseWriter,r *http.Request,resp *http.Response,objectKey string) {
  for _,name:=range []string{"Content-Type","Content-Length","Content-Range","Accept-Ranges","ETag","Last-Modified"} {
   if value:=resp.Header.Get(name);value!="" { w.Header().Set(name,value) }
  }
+ w.Header().Set("Cache-Control","private, no-store")
+ w.Header().Set("X-Testagram-Visibility","private")
  w.WriteHeader(resp.StatusCode)
  if r.Method==http.MethodHead || resp.StatusCode==http.StatusNotModified { return }
  if n,copyErr:=io.Copy(w,resp.Body);copyErr!=nil {
-  log.Printf("CDN media stream interrupted after %d bytes for %s: %v",n,key,copyErr)
+  log.Printf("CDN media stream interrupted after %d bytes for %s: %v",n,objectKey,copyErr)
  }
 }
 
