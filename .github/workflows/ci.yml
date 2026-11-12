@@ -555,7 +555,12 @@ jobs:
           TESTAGRAM_REPLICA_PRIMARY_ENDPOINT: http://127.0.0.1:9000
           TESTAGRAM_REPLICA_R2_ENDPOINT: http://127.0.0.1:9001
           TESTAGRAM_REPLICA_B2_ENDPOINT: http://127.0.0.1:9002
-        run: go test -race -count=1 ./internal/virtualstorage -run '^TestReplicatorMinIOThreeProviderLifecycle
+        run: go test -race -count=1 ./internal/virtualstorage -run "TestReplicatorMinIOThreeProviderLifecycle"
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
+  replication-media-schema-integration:
   replication-media-schema-integration:
     name: Replication media outbox PostgreSQL integration
     runs-on: ubuntu-latest
