@@ -384,7 +384,10 @@ WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 			mediaURL := ""
 			if asset.Visibility == "public" {
 				mediaURL = publicMediaURLForStorage(asset.ObjectKey, asset.OwnerID, asset.StorageNamespace)
-			} else if s.cdnMediaAssertions != nil && s.cdnMediaBaseURL != "" && asset.R2Verified {
+			} else if s.cdnMediaAssertions != nil && s.cdnMediaBaseURL != "" {
+				if !asset.R2Verified {
+					return errors.New("private media CDN origin is not verified; refusing direct-storage fallback")
+				}
 				assertion, _, issueErr := s.cdnMediaAssertions.IssueForViewer(asset.ObjectKey, asset.OwnerID, viewerID, time.Now())
 				if issueErr != nil { return issueErr }
 				mediaURL = s.cdnMediaBaseURL + "/v1/" + asset.ObjectKey
