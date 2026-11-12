@@ -109,6 +109,7 @@ func TestValidFederationRemoteURI(t *testing.T) {
 		"https://user:pass@remote.example/users/alice",
 		"https://remote.example/users/alice?token=secret",
 		"https://remote.example/users/alice#fragment",
+		" https://remote.example/users/alice",
 		"https://",
 		"",
 	}
