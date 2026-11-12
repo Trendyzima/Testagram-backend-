@@ -140,11 +140,10 @@ if s.dataCentreMedia != nil {
 	}
 	storageNamespace, storageProvider := "legacy-media", "default"
 	if s.dataCentreMedia != nil {
+		// The Data Centre grant is created exactly once by mediaUploadGateway,
+		// after the Backend has atomically claimed the intent and bounded-spooled
+		// the request body. Creating it here would issue an unused duplicate grant.
 		storageNamespace, storageProvider = intent.Bucket, "data-centre"
-		if _, err = s.dataCentreMedia.CreateUploadURL(r.Context(), userID, storageNamespace, intent.Key, body.ContentType, body.SizeBytes); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("DATA_CENTRE_UPLOAD_URL_FAILED", "Could not register a Data Centre media upload", id))
-			return
-		}
 	} else if s.virtualStorage != nil {
 		storageNamespace = "media-private"
 		if body.Visibility == "public" {
