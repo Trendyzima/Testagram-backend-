@@ -53,7 +53,7 @@ func TestBackendMediaClientRejectsRedirectAndInvalidDelivery(t *testing.T) {
 	defer bad.Close()
 	client,err=NewBackendMediaClient(bad.URL,token,bad.Client())
 	if err!=nil{t.Fatal(err)}
-	if _,err=client.Issue(context.Background(),"alice","users/alice/0123456789abcdef0123456789abcdef");err==nil{
+	if _,err=client.Issue(context.Background(),"alice","alice","users/alice/0123456789abcdef0123456789abcdef");err==nil{
 		t.Fatal("invalid or overlong media authorization accepted")
 	}
 }
