@@ -122,10 +122,8 @@ services:
       FEDERATION_INTERNAL_URL: ${FEDERATION_INTERNAL_URL:-http://federation-api:8081}
       FEDERATION_PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://federation.testagram.site}
       FEDERATION_INTERNAL_TOKEN: ${FEDERATION_INGRESS_TOKEN:-${FEDERATION_INTERNAL_TOKEN:-}}
-      # The Federation service uses this dedicated credential when calling the
-      # Backend's private actor/object/follow endpoints. Keep the legacy shared
-      # token as a migration fallback for existing self-hosted installations.
-      FEDERATION_BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:-${FEDERATION_INTERNAL_TOKEN:-}}
+      # Dedicated Federation-to-Backend credential; never reuse the ingress token.
+      FEDERATION_BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN in .env}
       MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-}
       MEDIA_S3_SIGNING_HOST: ${MEDIA_S3_SIGNING_HOST:-}
       MEDIA_S3_ACCESS_KEY: ${MEDIA_S3_ACCESS_KEY:-}
