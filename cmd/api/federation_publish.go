@@ -120,7 +120,7 @@ func (s *service) federationObject(w http.ResponseWriter, r *http.Request) {
 	err := s.db.QueryRow(ctx, `SELECT a.username,a.display_name,p.text,p.created_at
 		FROM testagram_local.posts p
 		JOIN testagram_local.accounts a ON a.user_id=p.author_id
-		WHERE p.id=$1::uuid AND p.visibility='public' AND p.deleted_at IS NULL
+		WHERE p.id=$1::uuid AND p.visibility='public'
 		  AND a.account_status='active' AND a.discoverable_by_username=TRUE
 		  AND a.protected_account=FALSE AND a.federation_enabled=TRUE`, postID).
 		Scan(&handle, &displayName, &content, &createdAt)
