@@ -126,6 +126,8 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 	if maxObjectBytes < 1 || maxObjectBytes > 500<<20 {
 		return nil, errors.New("maximum object size must be between 1 byte and 500 MiB")
 	}
+	backendMedia, err := NewBackendMediaClient(providers.BackendAPIBaseURL, providers.BackendInternalToken, nil)
+	if err != nil { return nil, err }
 	if providers.MediaCDNBaseURL != "" {
 		if err := validateMediaCDNBaseURL(providers.MediaCDNBaseURL); err != nil { return nil, err }
 		if backendMedia == nil { return nil, errors.New("Cloudflare media CDN requires the Backend v1 assertion bridge") }
@@ -138,8 +140,6 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 			return nil, errors.New("cold archive provider must support verified object replication and have a bucket")
 		}
 	}
-	backendMedia, err := NewBackendMediaClient(providers.BackendAPIBaseURL, providers.BackendInternalToken, nil)
-	if err != nil { return nil, err }
 	primaryProvider := strings.ToLower(strings.TrimSpace(providers.PrimaryProvider))
 	if primaryProvider == "" { primaryProvider = "b2" }
 	if primaryProvider != "b2" && primaryProvider != "r2" { return nil, errors.New("primary media provider must be b2 or r2") }
