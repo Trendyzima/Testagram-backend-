@@ -67,3 +67,17 @@ func TestFederationBackendReadCredentialIsDirectional(t *testing.T) {
 		t.Fatalf("Backend read token status = %d, want %d (authenticated request reaches DB readiness)", response.Code, http.StatusServiceUnavailable)
 	}
 }
+
+func TestFederationBackendTokenDoesNotFallbackToIngressCredential(t *testing.T) {
+	t.Setenv("FEDERATION_BACKEND_INTERNAL_TOKEN", "")
+	t.Setenv("FEDERATION_INTERNAL_TOKEN", strings.Repeat("i", 40))
+	if got := federationBackendTokenFromEnv(); got != "" {
+		t.Fatalf("reverse-direction token fell back to ingress credential: %q", got)
+	}
+
+	want := strings.Repeat("b", 40)
+	t.Setenv("FEDERATION_BACKEND_INTERNAL_TOKEN", want)
+	if got := federationBackendTokenFromEnv(); got != want {
+		t.Fatalf("dedicated reverse-direction token = %q, want configured token", got)
+	}
+}
