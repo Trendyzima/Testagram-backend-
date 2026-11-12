@@ -8,9 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// socialProfileRead returns only an active, discoverable profile that the
-// authenticated viewer is permitted to resolve. Protected-account post
-// visibility remains separate from profile-header visibility.
+// socialProfileRead returns an active, discoverable profile that the
+// authenticated viewer is permitted to resolve.
 func (s *service) socialProfileRead(w http.ResponseWriter, r *http.Request) {
 	viewerID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
@@ -21,7 +20,21 @@ func (s *service) socialProfileRead(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PROFILE_ID", "A valid profile ID is required", requestID))
 		return
 	}
+	s.socialProfileReadFor(w, r, viewerID, targetID, requestID)
+}
 
+// socialMyProfileRead resolves the caller's canonical Testagram UUID from the
+// verified Appwrite session. Clients must not use the Appwrite user ID as a
+// profile ID: the two identifiers are intentionally distinct.
+func (s *service) socialMyProfileRead(w http.ResponseWriter, r *http.Request) {
+	viewerID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	s.socialProfileReadFor(w, r, viewerID, viewerID, requestID)
+}
+
+func (s *service) socialProfileReadFor(w http.ResponseWriter, r *http.Request, viewerID, targetID, requestID string) {
 	// Keep response fields typed and never expose a storage key as a public URL.
 	var id, username, displayName, bio, website, avatarKey, followStatus string
 	var protected, following, followedBy, canViewPosts bool
