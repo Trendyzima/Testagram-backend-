@@ -84,10 +84,14 @@ jobs:
                   --bucket "$bucket" --key "$key" >/dev/null
               if AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
                 aws --endpoint-url "$endpoint" --region "$region" s3api head-object \
-                  --bucket "$bucket" --key "$key" >/dev/null 2>&1; then
+                  --bucket "$bucket" --key "$key" >/dev/null 2>"$stage/head.err"; then
                 echo "::error::Smoke-test object is still visible after deletion"
                 exit 1
               fi
+              grep -Eq '(404|Not Found|NoSuchKey)' "$stage/head.err" || {
+                echo "::error::Post-delete HEAD failed for a reason other than object-not-found"
+                exit 1
+              }
               trap - EXIT
               rm -rf "$stage"
             )
