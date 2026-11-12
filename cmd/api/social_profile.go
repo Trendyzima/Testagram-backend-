@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -36,11 +37,12 @@ func (s *service) socialMyProfileRead(w http.ResponseWriter, r *http.Request) {
 
 func (s *service) socialProfileReadFor(w http.ResponseWriter, r *http.Request, viewerID, targetID, requestID string) {
 	// Keep response fields typed and never expose a storage key as a public URL.
-	var id, username, displayName, bio, website, avatarKey, followStatus string
+	var id, username, displayName, bio, website, avatarKey, coverKey, location, followStatus string
+	var socialLinksJSON []byte
 	var protected, following, followedBy, canViewPosts bool
 	var followers, followingCount int64
 	err := s.db.QueryRow(r.Context(), `
-SELECT a.user_id::text,a.username,a.display_name,a.bio,a.website,a.avatar_key,
+SELECT a.user_id::text,a.username,a.display_name,a.bio,a.website,a.avatar_key,a.cover_key,a.location,a.social_links,
        a.protected_account,a.follower_count,a.following_count,
        COALESCE((SELECT f.status FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=a.user_id),''),
        EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'),
@@ -51,7 +53,7 @@ WHERE a.user_id=$2 AND a.account_status='active'
   AND (a.user_id=$1 OR a.discoverable_by_username OR EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$1 AND f.following_id=a.user_id AND f.status='accepted'))
   AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=a.user_id) OR (b.blocker_id=a.user_id AND b.blocked_id=$1))`,
 		viewerID, targetID).Scan(&id, &username, &displayName, &bio, &website, &avatarKey,
-		&protected, &followers, &followingCount, &followStatus, &following, &followedBy, &canViewPosts)
+		&coverKey, &location, &socialLinksJSON, &protected, &followers, &followingCount, &followStatus, &following, &followedBy, &canViewPosts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusNotFound, errorBody("PROFILE_NOT_FOUND", "The profile is unavailable", requestID))
 		return
@@ -60,10 +62,13 @@ WHERE a.user_id=$2 AND a.account_status='active'
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_UNAVAILABLE", "The profile could not be loaded", requestID))
 		return
 	}
+	socialLinks := map[string]string{}
+	_ = json.Unmarshal(socialLinksJSON, &socialLinks)
 	profile := map[string]any{
 		"id": id, "user_id": id, "username": username, "display_name": displayName,
-		"bio": bio, "website": website, "avatar_key": avatarKey,
-		"avatar_url": publicMediaURL(avatarKey), "protected_account": protected,
+		"bio": bio, "website": website, "location": location, "social_links": socialLinks,
+		"avatar_key": avatarKey, "avatar_url": publicMediaURL(avatarKey),
+		"cover_key": coverKey, "cover_url": publicMediaURL(coverKey), "protected_account": protected,
 		"followers_count": followers, "following_count": followingCount,
 		"follow_status": followStatus, "is_following": following,
 		"is_followed_by": followedBy, "can_view_posts": canViewPosts, "is_self": id == viewerID,
