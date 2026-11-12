@@ -360,6 +360,83 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 }
 
 // mediaCDNDownloadURL issues a short-lived assertion for one ready private asset.
+
+func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Testagram-Visibility", "private")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if s.cdnMediaAssertions == nil || len(s.cdnOriginAuthToken) < 32 || s.db == nil {
+		http.Error(w, "trusted media origin is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	serviceToken := strings.TrimSpace(r.Header.Get("X-Testagram-Origin-Auth"))
+	if subtle.ConstantTimeCompare([]byte(serviceToken), []byte(s.cdnOriginAuthToken)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	viewerHeader := strings.TrimSpace(r.Header.Get("X-Testagram-Viewer-Authorization"))
+	if !strings.HasPrefix(viewerHeader, "Bearer ") || len(viewerHeader) > 8192 {
+		http.Error(w, "viewer assertion required", http.StatusUnauthorized)
+		return
+	}
+	key := r.PathValue("key")
+	claims, err := s.cdnMediaAssertions.VerifyForKey(strings.TrimSpace(strings.TrimPrefix(viewerHeader, "Bearer ")), key, time.Now())
+	if err != nil {
+		http.Error(w, "media authorization denied", http.StatusForbidden)
+		return
+	}
+	var ownerID, visibility, assetStatus, storageNamespace string
+	err = s.db.QueryRow(r.Context(), "select owner_id, visibility, status, storage_namespace from testagram_media.assets where object_key=$1", key).
+		Scan(&ownerID, &visibility, &assetStatus, &storageNamespace)
+	if err != nil || ownerID != claims.Subject || visibility != "private" || assetStatus != "ready" {
+		http.Error(w, "media authorization denied", http.StatusNotFound)
+		return
+	}
+	var signedURL string
+	if storageNamespace != "legacy-media" {
+		if s.virtualStorage == nil {
+			http.Error(w, "media storage unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		signedURL, err = s.virtualStorage.DownloadURL(r.Context(), ownerID, claims.Subject, storageNamespace, key)
+	} else if s.media != nil {
+		signedURL, err = s.media.PresignPrivateDownload(ownerID, key, time.Minute, time.Now())
+	} else {
+		err = errors.New("media signer unavailable")
+	}
+	if err != nil {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, signedURL, nil)
+	if err != nil {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	if value := strings.TrimSpace(r.Header.Get("Range")); value != "" {
+		upstreamReq.Header.Set("Range", value)
+	}
+	client := &http.Client{Transport: s.upstream.Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		http.Error(w, "media object unavailable", http.StatusBadGateway)
+		return
+	}
+	for _, name := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag"} {
+		if value := resp.Header.Get(name); value != "" { w.Header().Set(name, value) }
+	}
+	w.WriteHeader(resp.StatusCode)
+	if r.Method == http.MethodHead { return }
+	if _, err := io.Copy(w, io.LimitReader(resp.Body, (500<<20)+1)); err != nil {
+		log.Printf("CDN media stream interrupted: %v", err)
+	}
+}
+
 func (s *service) mediaCDNDownloadURL(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	w.Header().Set("Cache-Control", "no-store")
