@@ -104,10 +104,10 @@ type Service struct {
 	uploadTTL        time.Duration
 	reservationTTL   time.Duration
 	cdnBaseURL       string
-	cdnSigningSecret string
 	archive          *virtualstorage.S3Provider
 	archiveBucket    string
 	primaryProvider  string
+	backendMedia     *BackendMediaClient
 }
 
 func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Service, error) {
@@ -147,10 +147,12 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 			return nil, errors.New("cold archive provider must support verified object replication and have a bucket")
 		}
 	}
+	backendMedia, err := NewBackendMediaClient(providers.BackendAPIBaseURL, providers.BackendInternalToken, nil)
+	if err != nil { return nil, err }
 	primaryProvider := strings.ToLower(strings.TrimSpace(providers.PrimaryProvider))
 	if primaryProvider == "" { primaryProvider = "b2" }
 	if primaryProvider != "b2" && primaryProvider != "r2" { return nil, errors.New("primary media provider must be b2 or r2") }
-	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, cdnSigningSecret: providers.MediaCDNSigningSecret, archive: archive, archiveBucket: providers.ArchiveBucket, primaryProvider: primaryProvider}, nil
+	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, archive: archive, archiveBucket: providers.ArchiveBucket, primaryProvider: primaryProvider, backendMedia: backendMedia}, nil
 }
 
 type UploadReservation struct {
@@ -238,7 +240,7 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 		return ErrNotOwner
 	}
 	if reservation.Status == "protected" {
-		return nil
+		return s.registerCanonicalMedia(ctx, reservation)
 	}
 	if reservation.Status == "reserved" {
 		if !reservation.ExpiresAt.After(time.Now()) {
@@ -293,6 +295,19 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 	}
 	if err := s.store.CommitProtected(ctx, reservation, s.b2Bucket, s.r2Bucket); err != nil {
 		return fmt.Errorf("both cloud copies verified but Appwrite commit is pending: %w", err)
+	}
+	return s.registerCanonicalMedia(ctx, reservation)
+}
+
+func (s *Service) registerCanonicalMedia(ctx context.Context, reservation Reservation) error {
+	if s.backendMedia == nil || !freshMediaObjectKeyPattern.MatchString(reservation.ObjectKey) {
+		return nil // Legacy objects retain their existing direct-signed URL path.
+	}
+	if !validSHA256(reservation.SHA256) {
+		return errors.New("cannot register Fresh media without a verified SHA-256 checksum")
+	}
+	if err := s.backendMedia.Register(ctx, reservation); err != nil {
+		return fmt.Errorf("Appwrite media is protected but Backend authorization registration is pending: %w", err)
 	}
 	return nil
 }
@@ -428,63 +443,52 @@ func verifyReplica(ctx context.Context, provider *virtualstorage.S3Provider, buc
 // DownloadURL returns a one-hour private media URL only after Appwrite confirms ownership
 // and the media object is marked ready. All new uploads are private by default.
 func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (string, error) {
+	delivery, err := s.DownloadAuthorization(ctx, ownerID, objectID)
+	if err != nil { return "", err }
+	return delivery.URL, nil
+}
+
+// DownloadAuthorization returns a Backend-issued v1 assertion only after the
+// Appwrite ledger confirms ownership/readiness and the R2 delivery copy is present.
+// When R2 is degraded it falls back to a short-lived B2 URL, never to an invalid CDN token.
+func (s *Service) DownloadAuthorization(ctx context.Context, ownerID, objectID string) (MediaDelivery, error) {
 	key, err := s.store.MediaKey(ctx, ownerID, objectID)
-	if err != nil {
-		return "", err
-	}
+	if err != nil { return MediaDelivery{}, err }
 	record, err := s.store.GetMediaRecord(ctx, objectID)
-	if err != nil {
-		return "", err
+	if err != nil { return MediaDelivery{}, err }
+	if record.OwnerID != ownerID || record.Status != "ready" || record.LifecycleState == "purging" ||
+		record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
+		return MediaDelivery{}, ErrNotReady
 	}
-	if record.OwnerID != ownerID || record.Status != "ready" || record.LifecycleState == "purging" || record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
-		return "", ErrNotReady
-	}
-	// Cloudflare R2 is the preferred delivery origin because the private Worker
-	// reads its bucket directly. If R2 is temporarily unavailable or its metadata
-	// is wrong, serve the independently verified B2 primary instead of breaking
-	// every media view. RepairObject will reconcile the degraded R2 replica.
 	r2Info, r2Err := s.r2.Head(ctx, s.r2Bucket, key)
 	r2Ready := r2Err == nil && r2Info.Size == record.Bytes && strings.EqualFold(r2Info.ContentType, record.ContentType)
+	if r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
+		return s.backendMedia.Issue(ctx, ownerID, key)
+	}
 	if r2Ready {
-		if s.cdnBaseURL != "" && s.cdnSigningSecret != "" {
-			return signPrivateMediaURL(s.cdnBaseURL, s.cdnSigningSecret, key, 3600, time.Now().UTC())
-		}
-		return s.r2.PresignGet(ctx, s.r2Bucket, key, time.Hour)
+		url, signErr := s.r2.PresignGet(ctx, s.r2Bucket, key, 5*time.Minute)
+		if signErr != nil { return MediaDelivery{}, signErr }
+		return MediaDelivery{URL:url,ExpiresInSeconds:300,Visibility:"private"},nil
 	}
 	b2Info, b2Err := s.b2.Head(ctx, s.b2Bucket, key)
 	if b2Err != nil || b2Info.Size != record.Bytes || !strings.EqualFold(b2Info.ContentType, record.ContentType) {
-		if s.archive == nil {
-			return "", fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady)
-		}
+		if s.archive == nil { return MediaDelivery{}, fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady) }
 		if restoreErr := s.RestoreArchive(ctx, ownerID, objectID); restoreErr != nil {
-			return "", fmt.Errorf("active replicas unavailable and archive restore failed: %w", restoreErr)
+			return MediaDelivery{}, fmt.Errorf("active replicas unavailable and archive restore failed: %w", restoreErr)
 		}
-		if s.cdnBaseURL != "" && s.cdnSigningSecret != "" {
-			return signPrivateMediaURL(s.cdnBaseURL, s.cdnSigningSecret, key, 3600, time.Now().UTC())
+		// Restoration is not proof that the CDN's R2 origin is ready. Verify it again.
+		r2Info, r2Err = s.r2.Head(ctx, s.r2Bucket, key)
+		if r2Err == nil && r2Info.Size == record.Bytes && strings.EqualFold(r2Info.ContentType, record.ContentType) &&
+			s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
+			return s.backendMedia.Issue(ctx, ownerID, key)
 		}
-		return s.r2.PresignGet(ctx, s.r2Bucket, key, time.Hour)
 	}
-	return s.b2.PresignGet(ctx, s.b2Bucket, key, time.Hour)
-}
-
-func signPrivateMediaURL(baseURL, secret, objectKey string, ttlSeconds int, now time.Time) (string, error) {
-	if validateMediaCDNBaseURL(baseURL) != nil || len(secret) < 32 || !validObjectKey(objectKey) || ttlSeconds < 1 || ttlSeconds > 3600 {
-		return "", errors.New("invalid private CDN URL signing configuration")
+	if b2Err == nil && b2Info.Size == record.Bytes && strings.EqualFold(b2Info.ContentType, record.ContentType) {
+		url, signErr := s.b2.PresignGet(ctx, s.b2Bucket, key, 5*time.Minute)
+		if signErr != nil { return MediaDelivery{}, signErr }
+		return MediaDelivery{URL:url,ExpiresInSeconds:300,Visibility:"private"},nil
 	}
-	expires := now.Unix() + int64(ttlSeconds)
-	message := fmt.Sprintf("GET\n%s\n%d", objectKey, expires)
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(message))
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	u.Path = "/private/" + objectKey
-	query := u.Query()
-	query.Set("e", strconv.FormatInt(expires, 10))
-	query.Set("s", hex.EncodeToString(mac.Sum(nil)))
-	u.RawQuery = query.Encode()
-	return u.String(), nil
+	return MediaDelivery{}, ErrNotReady
 }
 
 func allowedMediaType(value string) bool {
