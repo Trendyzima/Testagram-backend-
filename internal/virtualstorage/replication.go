@@ -90,6 +90,7 @@ func NewReplicator(primaryName string, primary Provider, primaryBuckets map[stri
 		r.targets = append(r.targets, struct {
 			name string
 			provider copyProvider
+			checksum checksumProvider
 			buckets map[string]string
 		}{
 			name: name,
