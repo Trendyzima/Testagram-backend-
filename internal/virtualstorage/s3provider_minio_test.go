@@ -3,6 +3,8 @@ package virtualstorage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -140,4 +142,88 @@ func drainAndClose(t *testing.T, resp *http.Response) {
 	if err := resp.Body.Close(); err != nil {
 		t.Errorf("close response: %v", err)
 	}
+}
+
+
+func TestReplicatorMinIOThreeProviderLifecycle(t *testing.T) {
+	endpoints := []string{
+		strings.TrimSpace(os.Getenv("TESTAGRAM_REPLICA_PRIMARY_ENDPOINT")),
+		strings.TrimSpace(os.Getenv("TESTAGRAM_REPLICA_R2_ENDPOINT")),
+		strings.TrimSpace(os.Getenv("TESTAGRAM_REPLICA_B2_ENDPOINT")),
+	}
+	for _, endpoint := range endpoints {
+		if endpoint == "" {
+			t.Skip("three TESTAGRAM_REPLICA_*_ENDPOINT values are required")
+		}
+	}
+	accessKey := os.Getenv("TESTAGRAM_S3_ACCESS_KEY")
+	secretKey := os.Getenv("TESTAGRAM_S3_SECRET_KEY")
+	if accessKey == "" || secretKey == "" {
+		t.Fatal("MinIO replica integration credentials are required")
+	}
+	providers := make([]*S3Provider, 0, 3)
+	for _, endpoint := range endpoints {
+		provider, err := NewS3Provider(S3Config{
+			Endpoint: endpoint, AccessKey: accessKey, SecretKey: secretKey,
+			Region: "us-east-1", Client: &http.Client{Timeout: 15 * time.Second},
+		})
+		if err != nil { t.Fatal(err) }
+		providers = append(providers, provider)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	buckets := []string{"testagram-replica-primary", "testagram-replica-r2", "testagram-replica-b2"}
+	for i, provider := range providers {
+		createMinIOTestBucket(t, ctx, provider, buckets[i])
+	}
+	key := fmt.Sprintf("users/user-1/replica-%d.bin", time.Now().UnixNano())
+	scopedKey := tenantPrefix("user-1") + key
+	payload := bytes.Repeat([]byte("testagram-three-provider-replication-"), 64*1024)
+	digestBytes := sha256.Sum256(payload)
+	digest := hex.EncodeToString(digestBytes[:])
+
+	putURL, err := providers[0].PresignPut(ctx, buckets[0], scopedKey, "application/octet-stream", int64(len(payload)), 5*time.Minute)
+	if err != nil { t.Fatal(err) }
+	putReq := mustRequest(t, ctx, http.MethodPut, putURL, bytes.NewReader(payload))
+	putReq.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := providers[0].do(putReq)
+	if err != nil { t.Fatal(err) }
+	drainAndClose(t, resp)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 { t.Fatalf("primary upload status=%d", resp.StatusCode) }
+
+	replicator, err := NewReplicator("instabox-vps", providers[0],
+		map[string]string{"media-private":buckets[0],"media-public":buckets[0]},
+		[]ReplicaTarget{
+			{Name:"cloudflare-r2",Provider:providers[1],Buckets:map[string]string{"media-private":buckets[1],"media-public":buckets[1]}},
+			{Name:"backblaze-b2",Provider:providers[2],Buckets:map[string]string{"media-private":buckets[2],"media-public":buckets[2]}},
+		})
+	if err != nil { t.Fatal(err) }
+	results, err := replicator.Replicate(ctx,"user-1","media-private",key,int64(len(payload)),"application/octet-stream",digest)
+	if err != nil { t.Fatalf("replicate to independent providers: %v",err) }
+	if len(results)!=3 { t.Fatalf("replication results=%d, want 3",len(results)) }
+	for i, provider := range providers {
+		info, err := provider.Head(ctx,buckets[i],scopedKey)
+		if err != nil { t.Fatalf("provider %d HEAD: %v",i,err) }
+		if info.Size!=int64(len(payload)) { t.Fatalf("provider %d size=%d",i,info.Size) }
+		got, err := provider.SHA256(ctx,buckets[i],scopedKey,int64(len(payload)))
+		if err != nil || got!=digest { t.Fatalf("provider %d checksum=%q err=%v",i,got,err) }
+	}
+
+	if err:=replicator.Delete(ctx,"user-1","media-private",key);err!=nil { t.Fatalf("delete replicas: %v",err) }
+	for i,provider:=range providers {
+		if _,err:=provider.Head(ctx,buckets[i],scopedKey);!errors.Is(err,ErrNotFound) {
+			t.Fatalf("provider %d HEAD after delete=%v, want ErrNotFound",i,err)
+		}
+	}
+}
+
+func createMinIOTestBucket(t *testing.T, ctx context.Context, provider *S3Provider, bucket string) {
+	t.Helper()
+	createURL, err := provider.presign(ctx,http.MethodPut,bucket,"",url.Values{},nil,time.Minute)
+	if err != nil { t.Fatal(err) }
+	resp, err := provider.do(mustRequest(t,ctx,http.MethodPut,createURL,nil))
+	if err != nil { t.Fatalf("create bucket %s: %v",bucket,err) }
+	drainAndClose(t,resp)
+	if resp.StatusCode<200 || resp.StatusCode>=300 { t.Fatalf("create bucket %s status=%d",bucket,resp.StatusCode) }
 }
