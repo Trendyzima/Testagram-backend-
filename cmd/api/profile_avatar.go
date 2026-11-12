@@ -186,7 +186,6 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 
 	tx, err = s.db.Begin(ctx)
 	if err != nil {
-		queueAvatarCleanup(context.Background(), s, userID, key)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_PROFILE_UPDATE_FAILED", "Avatar stored but profile update could not start", id))
 		return
 	}
@@ -195,7 +194,6 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(ctx, `select coalesce(avatar_key,''),coalesce(avatar_storage_provider,'legacy-media')
 		from testagram_local.accounts where user_id=$1 and account_status='active' for update`, userID).Scan(&oldKey, &oldProvider)
 	if err != nil {
-		queueAvatarCleanup(context.Background(), s, userID, key)
 		writeJSON(w, http.StatusNotFound, errorBody("PROFILE_NOT_FOUND", "Active profile was not found", id))
 		return
 	}
@@ -204,17 +202,14 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		values ($1,$2,'private',$3,$4,$5,'','ready','media-private','instabox-vps',$6)`,
 		key, userID, contentType, filename, int64(len(data)), checksumHex)
 	if err != nil {
-		queueAvatarCleanup(context.Background(), s, userID, key)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_METADATA_FAILED", "Could not record the stored avatar", id))
 		return
 	}
 	if _, err := tx.Exec(ctx, "update testagram_media.upload_intents set status='completed',updated_at=now() where object_key=$1 and owner_id=$2 and status='issued'", key, userID); err != nil {
-		queueAvatarCleanup(context.Background(), s, userID, key)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_METADATA_FAILED", "Could not complete the avatar reservation", id))
 		return
 	}
 	if _, err := tx.Exec(ctx, "update testagram_local.accounts set avatar_key=$2,avatar_storage_provider='instabox-vps' where user_id=$1 and account_status='active'", userID, key); err != nil {
-		queueAvatarCleanup(context.Background(), s, userID, key)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_PROFILE_UPDATE_FAILED", "Could not update the profile avatar", id))
 		return
 	}
@@ -226,7 +221,6 @@ func (s *service) profileAvatarUpload(w http.ResponseWriter, r *http.Request) {
 			values ($1,$2,'private','media-private','instabox-vps','user_delete','pending') on conflict do nothing`, oldKey, userID)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		queueAvatarCleanup(context.Background(), s, userID, key)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AVATAR_PROFILE_UPDATE_FAILED", "Could not commit the profile avatar update", id))
 		return
 	}
