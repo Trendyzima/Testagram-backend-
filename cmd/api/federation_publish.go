@@ -143,8 +143,8 @@ func (s *service) federationObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Vary", "Accept")
-	w.Header().Set("Content-Type", "application/activity+json; charset=utf-8")
-	writeJSON(w, http.StatusOK, note)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "data": note, "error": nil, "request_id": requestID(r),
+	})
 }
 
