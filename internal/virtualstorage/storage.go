@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"path"
 	"regexp"
 	"strings"
@@ -43,6 +44,7 @@ type ObjectInfo struct {
 type Provider interface {
 	PresignPut(ctx context.Context, bucket, key, contentType string, maxBytes int64, ttl time.Duration) (string, error)
 	PresignGet(ctx context.Context, bucket, key string, ttl time.Duration) (string, error)
+	PresignHead(ctx context.Context, bucket, key string, ttl time.Duration) (string, error)
 	Head(ctx context.Context, bucket, key string) (ObjectInfo, error)
 	Delete(ctx context.Context, bucket, key string) error
 	List(ctx context.Context, bucket, prefix, cursor string, limit int) ([]ObjectInfo, string, error)
@@ -140,6 +142,10 @@ func (m *Manager) UploadURL(ctx context.Context, tenantID, namespace, key, conte
 // for the owning tenant. Public namespaces can still be served by a separate CDN;
 // this method always returns a short-lived provider URL.
 func (m *Manager) DownloadURL(ctx context.Context, requesterTenant, ownerTenant, namespace, key string) (string, error) {
+	return m.DownloadURLMethod(ctx, requesterTenant, ownerTenant, namespace, key, http.MethodGet)
+}
+
+func (m *Manager) DownloadURLMethod(ctx context.Context, requesterTenant, ownerTenant, namespace, key, method string) (string, error) {
 	ns, err := m.namespace(namespace)
 	if err != nil {
 		return "", err
@@ -150,7 +156,7 @@ func (m *Manager) DownloadURL(ctx context.Context, requesterTenant, ownerTenant,
 	if !ns.Public && requesterTenant != ownerTenant {
 		return "", ErrForbidden
 	}
-	return m.provider.PresignGet(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key, ns.DownloadTTL)
+	switch method { case http.MethodGet: return m.provider.PresignGet(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key, ns.DownloadTTL); case http.MethodHead: return m.provider.PresignHead(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key, ns.DownloadTTL); default: return "", errors.New("unsupported signed download method") }
 }
 
 // VerifyUpload checks provider-observed metadata before an upload can be marked
