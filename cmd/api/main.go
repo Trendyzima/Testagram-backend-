@@ -544,7 +544,7 @@ func (s *service) routes() http.Handler {
 			// Large media bodies are bounded by the upload intent and streamed to
 			// storage. Extend only this route's socket deadlines; ordinary API
 			// requests retain the server's short global read/write timeouts.
-			deadline := time.Now().Add(25 * time.Minute)
+			deadline := time.Now().Add(40 * time.Minute)
 			controller := http.NewResponseController(recorder)
 			if err := controller.SetReadDeadline(deadline); err != nil {
 				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload read deadline unavailable"})
@@ -1187,7 +1187,7 @@ func main() {
 	var mediaIntentFactory *media.IntentFactory
 	if dataCentreMedia != nil {
 		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{
-			MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 30 * time.Minute,
+			MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 45 * time.Minute,
 		})
 		if err != nil {
 			log.Fatalf("configure media upload intent policy: %v", err)
