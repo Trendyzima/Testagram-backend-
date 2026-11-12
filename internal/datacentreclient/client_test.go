@@ -92,6 +92,15 @@ func TestNewRejectsPublicHTTPAndShortToken(t *testing.T) {
 	}
 }
 
+func TestPrivateDockerMediaServiceHostnameIsAllowed(t *testing.T) {
+	if !isPrivateServiceHost("media") {
+		t.Fatal("private Docker media service hostname must be accepted")
+	}
+	if isPrivateServiceHost("media.example.com") {
+		t.Fatal("public media hostname must not be treated as private")
+	}
+}
+
 func TestClientDoesNotFollowRedirects(t *testing.T) {
 	var followed bool
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
