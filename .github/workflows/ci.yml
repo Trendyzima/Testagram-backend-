@@ -179,7 +179,8 @@ jobs:
             migrations/20261109_post_views.sql \
             migrations/20261110_native_media_post_links.sql \
             migrations/20261110_federation_outbox.sql \
-            migrations/20261111_social_post_idempotency.sql; do
+            migrations/20261111_social_post_idempotency.sql \
+            migrations/20261112_federation_remote_follows.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify media attachment, poll voting and private history constraints
@@ -223,6 +224,15 @@ jobs:
               RAISE EXCEPTION 'Federation outbox claim index missing';
             END IF;
           END $federation_outbox$;
+          DO $remote_follows_schema$
+          BEGIN
+            IF to_regclass('testagram_local.remote_follows') IS NULL THEN
+              RAISE EXCEPTION 'Backend canonical remote-follow migration missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_local' AND indexname='testagram_local_remote_follows_active_idx') THEN
+              RAISE EXCEPTION 'Canonical remote-follow active index missing';
+            END IF;
+          END $remote_follows_schema$;
           INSERT INTO testagram_local.federation_outbox(activity_id,actor_user_id,payload)
           VALUES ('https://testagram.example/activities/ci-outbox',
                   '00000000-0000-4000-8000-000000000001',
@@ -236,6 +246,40 @@ jobs:
           INSERT INTO testagram_local.accounts(user_id)
           VALUES ('00000000-0000-4000-8000-000000000001'),
                  ('00000000-0000-4000-8000-000000000002');
+          INSERT INTO testagram_local.remote_follows
+            (local_user_id,remote_actor_uri,follow_activity_id,last_activity_id,status)
+          VALUES ('00000000-0000-4000-8000-000000000001',
+                  'https://remote.example/users/alice',
+                  'https://remote.example/activities/follow-1',
+                  'https://remote.example/activities/follow-1',
+                  'accepted');
+          UPDATE testagram_local.remote_follows
+            SET status='removed',last_activity_id='https://remote.example/activities/undo-wrong'
+            WHERE local_user_id='00000000-0000-4000-8000-000000000001'
+              AND remote_actor_uri='https://remote.example/users/alice'
+              AND follow_activity_id='https://remote.example/activities/not-the-follow';
+          DO $remote_follow_binding$
+          BEGIN
+            IF (SELECT status FROM testagram_local.remote_follows
+                WHERE local_user_id='00000000-0000-4000-8000-000000000001'
+                  AND remote_actor_uri='https://remote.example/users/alice') <> 'accepted' THEN
+              RAISE EXCEPTION 'Mismatched Undo changed canonical remote-follow state';
+            END IF;
+          END $remote_follow_binding$;
+          UPDATE testagram_local.remote_follows
+            SET status='removed',last_activity_id='https://remote.example/activities/undo-1'
+            WHERE local_user_id='00000000-0000-4000-8000-000000000001'
+              AND remote_actor_uri='https://remote.example/users/alice'
+              AND follow_activity_id='https://remote.example/activities/follow-1'
+              AND status='accepted';
+          DO $remote_follow_undo$
+          BEGIN
+            IF (SELECT status FROM testagram_local.remote_follows
+                WHERE local_user_id='00000000-0000-4000-8000-000000000001'
+                  AND remote_actor_uri='https://remote.example/users/alice') <> 'removed' THEN
+              RAISE EXCEPTION 'Matching Undo did not remove canonical remote follow';
+            END IF;
+          END $remote_follow_undo$;
           INSERT INTO testagram_local.posts(id,author_id)
           VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000001');
           UPDATE testagram_local.posts SET views_count=views_count+1 WHERE id='00000000-0000-4000-8000-000000000003';
