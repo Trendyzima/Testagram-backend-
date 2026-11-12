@@ -476,7 +476,7 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 		r2Ready = verifyReplica(ctx, s.r2, s.r2Bucket, record)
 		b2Ready = verifyReplica(ctx, s.b2, s.b2Bucket, record)
 		if r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
-			return s.backendMedia.Issue(ctx, ownerID, key)
+			return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
 		}
 	}
 
@@ -484,7 +484,7 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 	// a Worker token until the repaired R2 object passes the same full check.
 	if b2Ready && !r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
 		if repairErr := s.RepairObject(ctx, objectID); repairErr == nil && verifyReplica(ctx, s.r2, s.r2Bucket, record) {
-			return s.backendMedia.Issue(ctx, ownerID, key)
+			return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
 		}
 	}
 	if b2Ready {
