@@ -419,7 +419,7 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
    http.Error(w,"media storage unavailable",http.StatusServiceUnavailable)
    return
   }
-  signedURL,err=s.virtualStorage.DownloadURL(r.Context(),claims.Subject,ownerID,storageNamespace,key)
+  signedURL,err=s.virtualStorage.DownloadURL(r.Context(),ownerID,ownerID,storageNamespace,key)
  } else if s.media!=nil {
   signedURL,err=s.media.PresignPrivateDownload(ownerID,key,time.Minute,time.Now())
  } else {
