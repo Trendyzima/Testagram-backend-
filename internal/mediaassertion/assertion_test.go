@@ -28,3 +28,13 @@ func TestIssueVerifySupportsAppwriteOwnerIDs(t *testing.T) {
 		t.Fatalf("Appwrite owner ID assertion rejected: %v", err)
 	}
 }
+
+func TestIssueForViewerSeparatesViewerFromMediaOwner(t *testing.T) {
+	secret:=[]byte(strings.Repeat("v",32))
+	issuer,err:=New(secret,time.Minute);if err!=nil{t.Fatal(err)}
+	key:="users/creator_1/0123456789abcdef0123456789abcdef"
+	token,_,err:=issuer.IssueForViewer(key,"creator_1","viewer_2",time.Now());if err!=nil{t.Fatal(err)}
+	claims,err:=Verify(secret,token,key,"viewer_2",time.Now());if err!=nil{t.Fatal(err)}
+	if claims.Subject!="viewer_2"||claims.Owner!="creator_1"{t.Fatalf("viewer/owner claims mismatch: %+v",claims)}
+	if _,err:=Verify(secret,token,key,"creator_1",time.Now());err==nil{t.Fatal("assertion was accepted for the wrong viewer")}
+}
