@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 )
 
 func TestBackendMediaClientIssuesBackendSignedCDNAuthorization(t *testing.T) {
@@ -70,6 +68,4 @@ func TestNewBackendMediaClientRequiresHTTPSAndStrongToken(t *testing.T) {
 	if _,err:=NewBackendMediaClient("http://localhost:8080","0123456789abcdef0123456789abcdef",nil);err!=nil{
 		t.Fatalf("localhost development URL rejected: %v",err)
 	}
-	_ = strings.TrimSpace
-	_ = time.Second
 }
