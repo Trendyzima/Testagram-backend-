@@ -1012,9 +1012,15 @@ func main() {
 	cdnOriginAuthToken := env("CDN_ORIGIN_AUTH_TOKEN", "")
 	if cdnAssertionSecret != "" {
 		cdnMediaAssertions, err = mediaassertion.New([]byte(cdnAssertionSecret), 0)
-		if err != nil { log.Fatalf("configure CDN media assertions: %v", err) }
-		if !strings.HasPrefix(cdnMediaBaseURL, "https://") { log.Fatal("CDN_MEDIA_BASE_URL must be an HTTPS URL when CDN_MEDIA_ASSERTION_SECRET is configured") }
-		if len(cdnOriginAuthToken) < 32 { log.Fatal("CDN_ORIGIN_AUTH_TOKEN must contain at least 32 bytes when CDN media assertions are configured") }
+		if err != nil {
+			log.Fatalf("configure CDN media assertions: %v", err)
+		}
+		if !strings.HasPrefix(cdnMediaBaseURL, "https://") {
+			log.Fatal("CDN_MEDIA_BASE_URL must be an HTTPS URL when CDN_MEDIA_ASSERTION_SECRET is configured")
+		}
+		if len(cdnOriginAuthToken) < 32 {
+			log.Fatal("CDN_ORIGIN_AUTH_TOKEN must contain at least 32 bytes when CDN media assertions are configured")
+		}
 		log.Printf("viewer-bound CDN media assertions enabled")
 	}
 	var virtualStorageManager *virtualstorage.Manager
