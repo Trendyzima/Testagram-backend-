@@ -20,7 +20,6 @@ type ProviderSet struct {
 	Archive               virtualstorage.Provider
 	ArchiveBucket         string
 	MediaCDNBaseURL       string
-	MediaCDNSigningSecret string
 	PrimaryProvider       string
 	BackendAPIBaseURL     string
 	BackendInternalToken  string
@@ -42,7 +41,6 @@ func FromEnv() (ProviderSet, error) {
 		return ProviderSet{}, fmt.Errorf("archive provider: %w", err)
 	}
 	out.MediaCDNBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_BASE_URL")), "/")
-	out.MediaCDNSigningSecret = strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_SIGNING_SECRET"))
 	out.PrimaryProvider = strings.ToLower(strings.TrimSpace(os.Getenv("FRESH_MEDIA_PRIMARY_PROVIDER")))
 	out.BackendAPIBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("FRESH_MEDIA_BACKEND_URL")), "/")
 	out.BackendInternalToken = strings.TrimSpace(os.Getenv("FRESH_MEDIA_INTERNAL_TOKEN"))
