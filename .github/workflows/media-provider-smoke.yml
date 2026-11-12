@@ -1,0 +1,98 @@
+name: Media provider credential smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: media-provider-smoke
+  cancel-in-progress: false
+
+jobs:
+  verify-object-providers:
+    name: Verify B2 and R2 access, read-back and cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify provider credentials without exposing them
+        shell: bash
+        env:
+          B2_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
+          B2_REGION: ${{ vars.B2_S3_REGION }}
+          B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+          B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
+          B2_PRIVATE_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
+          B2_PUBLIC_BUCKET: ${{ vars.B2_S3_PUBLIC_BUCKET }}
+          R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
+          R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
+          R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          R2_PRIVATE_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
+          R2_PUBLIC_BUCKET: ${{ vars.CLOUDFLARE_R2_PUBLIC_BUCKET }}
+        run: |
+          set -euo pipefail
+          aws --version
+
+          probe_bucket() {
+            local provider="$1" endpoint="$2" region="$3" access="$4" secret="$5" bucket="$6"
+            [[ "$endpoint" == https://* ]] || { echo "::error::$provider endpoint must use HTTPS"; return 1; }
+            [[ -n "$region" && -n "$access" && -n "$secret" && -n "$bucket" ]] || {
+              echo "::error::$provider configuration is incomplete (values are intentionally not printed)"
+              return 1
+            }
+
+            local stage key expected actual
+            stage="$(mktemp -d)"
+            key="ci-smoke/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${provider}-${bucket}"
+            printf 'Testagram object-storage credential smoke test\nrun=%s\nattempt=%s\nprovider=%s\nbucket=%s\n' \
+              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$provider" "$bucket" > "$stage/source"
+            expected="$(sha256sum "$stage/source" | awk '{print $1}')"
+
+            (
+              set -euo pipefail
+              cleanup() {
+                AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
+                  aws --endpoint-url "$endpoint" --region "$region" s3api delete-object \
+                    --bucket "$bucket" --key "$key" >/dev/null 2>&1 || true
+                rm -rf "$stage"
+              }
+              trap cleanup EXIT
+
+              AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
+                aws --endpoint-url "$endpoint" --region "$region" s3api put-object \
+                  --bucket "$bucket" --key "$key" --body "$stage/source" \
+                  --content-type application/octet-stream >/dev/null
+
+              actual="$(AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
+                aws --endpoint-url "$endpoint" --region "$region" s3api head-object \
+                  --bucket "$bucket" --key "$key" --query ContentLength --output text)"
+              [[ "$actual" == "$(wc -c < "$stage/source" | tr -d ' ')" ]]
+
+              AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
+                aws --endpoint-url "$endpoint" --region "$region" s3api get-object \
+                  --bucket "$bucket" --key "$key" "$stage/readback" >/dev/null
+              actual="$(sha256sum "$stage/readback" | awk '{print $1}')"
+              [[ "$actual" == "$expected" ]]
+              cmp -s "$stage/source" "$stage/readback"
+            )
+            echo "$provider bucket access, write, read-back, size and SHA-256 verified: $bucket"
+          }
+
+          probe_provider() {
+            local provider="$1" endpoint="$2" region="$3" access="$4" secret="$5" private_bucket="$6" public_bucket="$7"
+            [[ -n "$private_bucket" && -n "$public_bucket" ]] || {
+              echo "::error::$provider requires separate private and public bucket names"
+              return 1
+            }
+            [[ "$private_bucket" != "$public_bucket" ]] || {
+              echo "::error::$provider private and public buckets must be different"
+              return 1
+            }
+            probe_bucket "$provider" "$endpoint" "$region" "$access" "$secret" "$private_bucket"
+            probe_bucket "$provider" "$endpoint" "$region" "$access" "$secret" "$public_bucket"
+          }
+
+          probe_provider backblaze-b2 "$B2_ENDPOINT" "$B2_REGION" "$B2_ACCESS_KEY_ID" "$B2_SECRET_ACCESS_KEY" "$B2_PRIVATE_BUCKET" "$B2_PUBLIC_BUCKET"
+          probe_provider cloudflare-r2 "$R2_ENDPOINT" "$R2_REGION" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" "$R2_PRIVATE_BUCKET" "$R2_PUBLIC_BUCKET"
