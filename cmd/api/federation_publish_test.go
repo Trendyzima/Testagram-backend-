@@ -47,6 +47,24 @@ func TestBuildFederationCreateActivity(t *testing.T) {
 	if !strings.Contains(content, "&lt;script&gt;") || !strings.Contains(content, "<br />Hello Fediverse") || strings.Contains(content, "<script>") {
 		t.Fatalf("Note content was not safely escaped: %q", content)
 	}
+	rawTags, ok := activity.Object["tag"].([]any)
+	if !ok || len(rawTags) != 2 {
+		t.Fatalf("ActivityPub Note tags = %#v, want two unique Hashtag objects", activity.Object["tag"])
+	}
+	gotTags := map[string]bool{}
+	for _, raw := range rawTags {
+		tag, ok := raw.(map[string]any)
+		if !ok || tag["type"] != "Hashtag" {
+			t.Fatalf("invalid ActivityPub Hashtag object: %#v", raw)
+		}
+		gotTags[tag["name"].(string)] = true
+		if !strings.HasPrefix(tag["href"].(string), "https://testagram.site/hashtag/") {
+			t.Fatalf("hashtag href is not a Testagram topic URL: %#v", tag)
+		}
+	}
+	if !gotTags["#Testagram"] || !gotTags["#Fediverse"] {
+		t.Fatalf("ActivityPub Note omitted expected hashtags: %#v", gotTags)
+	}
 }
 
 func TestNormalizeFederationPublicBaseURLRejectsUnsafeOrigins(t *testing.T) {
