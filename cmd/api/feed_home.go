@@ -33,7 +33,8 @@ type homeFeedPost struct {
 	Content        string         `json:"content"`
 	Visibility     string         `json:"visibility"`
 	MediaIDs       []string       `json:"media_ids"`
-	MediaURLs      []string       `json:"media_urls"`
+	MediaURLs      []string          `json:"media_urls"`
+	MediaAuthHeaders map[string]string `json:"media_auth_headers,omitempty"`
 	IsVideo        bool           `json:"is_video"`
 	IsFollowing    bool           `json:"is_following"`
 	Language       string         `json:"language"`
@@ -323,6 +324,8 @@ type homeFeedMediaAsset struct {
 	Visibility       string
 	ContentType      string
 	StorageNamespace string
+	StorageProvider  string
+	R2Verified       bool
 }
 
 func (s *service) attachHomeFeedMediaURLs(ctx context.Context, viewerID string, posts []homeFeedPost) error {
@@ -346,9 +349,14 @@ func (s *service) attachHomeFeedMediaURLs(ctx context.Context, viewerID string, 
 	mediaCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(mediaCtx, `
-SELECT object_key, owner_id, visibility, content_type, storage_namespace
-FROM testagram_media.assets
-WHERE status='ready' AND object_key = ANY($1::text[])`, ids)
+SELECT a.object_key, a.owner_id, a.visibility, a.content_type, a.storage_namespace,
+       a.storage_provider,
+       EXISTS (
+         SELECT 1 FROM testagram_media.storage_replicas sr
+         WHERE sr.object_key=a.object_key AND sr.provider='cloudflare-r2' AND sr.state='verified'
+       ) AS r2_verified
+FROM testagram_media.assets a
+WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 	if err != nil {
 		return err
 	}
@@ -356,7 +364,7 @@ WHERE status='ready' AND object_key = ANY($1::text[])`, ids)
 	assets := make(map[string]homeFeedMediaAsset, len(ids)*2)
 	for rows.Next() {
 		var asset homeFeedMediaAsset
-		if err := rows.Scan(&asset.ObjectKey, &asset.OwnerID, &asset.Visibility, &asset.ContentType, &asset.StorageNamespace); err != nil {
+		if err := rows.Scan(&asset.ObjectKey, &asset.OwnerID, &asset.Visibility, &asset.ContentType, &asset.StorageNamespace, &asset.StorageProvider, &asset.R2Verified); err != nil {
 			return err
 		}
 		assets[asset.ObjectKey] = asset
@@ -366,11 +374,8 @@ WHERE status='ready' AND object_key = ANY($1::text[])`, ids)
 	}
 	for i := range posts {
 		posts[i].MediaURLs = []string{}
+		posts[i].MediaAuthHeaders = make(map[string]string)
 		posts[i].IsVideo = false
-		// Private/follower posts never expose public media URLs to a non-owner.
-		if posts[i].Visibility != "public" && posts[i].UserID != viewerID {
-			continue
-		}
 		for _, id := range posts[i].MediaIDs {
 			asset, ok := assets[id]
 			if !ok || asset.OwnerID != posts[i].UserID {
@@ -379,16 +384,20 @@ WHERE status='ready' AND object_key = ANY($1::text[])`, ids)
 			mediaURL := ""
 			if asset.Visibility == "public" {
 				mediaURL = publicMediaURLForStorage(asset.ObjectKey, asset.OwnerID, asset.StorageNamespace)
-			} else if posts[i].UserID == viewerID {
-				if asset.StorageNamespace != "legacy-media" && s.virtualStorage != nil {
-					mediaURL, err = s.virtualStorage.DownloadURL(ctx, viewerID, asset.OwnerID, asset.StorageNamespace, asset.ObjectKey)
-				} else if s.media != nil {
-					mediaURL, err = s.media.PresignPrivateDownload(viewerID, asset.ObjectKey, 5*time.Minute, time.Now())
+			} else if s.cdnMediaAssertions != nil && s.cdnMediaBaseURL != "" {
+				if !asset.R2Verified {
+					return errors.New("private media CDN origin is not verified; refusing direct-storage fallback")
 				}
-				if err != nil {
-					return err
-				}
+				assertion, _, issueErr := s.cdnMediaAssertions.IssueForViewer(asset.ObjectKey, asset.OwnerID, viewerID, time.Now())
+				if issueErr != nil { return issueErr }
+				mediaURL = s.cdnMediaBaseURL + "/v1/" + asset.ObjectKey
+				posts[i].MediaAuthHeaders[mediaURL] = "Bearer " + assertion
+			} else if asset.StorageNamespace != "legacy-media" && s.virtualStorage != nil {
+				mediaURL, err = s.virtualStorage.DownloadURL(ctx, viewerID, asset.OwnerID, asset.StorageNamespace, asset.ObjectKey)
+			} else if s.media != nil {
+				mediaURL, err = s.media.PresignPrivateDownload(viewerID, asset.ObjectKey, 5*time.Minute, time.Now())
 			}
+			if err != nil { return err }
 			if mediaURL != "" {
 				posts[i].MediaURLs = append(posts[i].MediaURLs, mediaURL)
 			}

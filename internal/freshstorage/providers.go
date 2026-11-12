@@ -20,8 +20,9 @@ type ProviderSet struct {
 	Archive               virtualstorage.Provider
 	ArchiveBucket         string
 	MediaCDNBaseURL       string
-	MediaCDNSigningSecret string
 	PrimaryProvider       string
+	BackendAPIBaseURL     string
+	BackendInternalToken  string
 }
 
 func FromEnv() (ProviderSet, error) {
@@ -40,20 +41,24 @@ func FromEnv() (ProviderSet, error) {
 		return ProviderSet{}, fmt.Errorf("archive provider: %w", err)
 	}
 	out.MediaCDNBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_BASE_URL")), "/")
-	out.MediaCDNSigningSecret = strings.TrimSpace(os.Getenv("CLOUDFLARE_MEDIA_SIGNING_SECRET"))
 	out.PrimaryProvider = strings.ToLower(strings.TrimSpace(os.Getenv("FRESH_MEDIA_PRIMARY_PROVIDER")))
+	out.BackendAPIBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("FRESH_MEDIA_BACKEND_URL")), "/")
+	out.BackendInternalToken = strings.TrimSpace(os.Getenv("FRESH_MEDIA_INTERNAL_TOKEN"))
+	if (out.BackendAPIBaseURL == "") != (out.BackendInternalToken == "") {
+		return ProviderSet{}, errors.New("FRESH_MEDIA_BACKEND_URL and FRESH_MEDIA_INTERNAL_TOKEN must be configured together")
+	}
+	if out.BackendAPIBaseURL != "" {
+		if err := validateBackendAPIBaseURL(out.BackendAPIBaseURL); err != nil { return ProviderSet{}, err }
+		if len(out.BackendInternalToken) < 32 { return ProviderSet{}, errors.New("Fresh media backend internal token must be at least 32 characters") }
+	}
+	if out.MediaCDNBaseURL != "" && out.BackendAPIBaseURL == "" {
+		return ProviderSet{}, errors.New("Cloudflare media CDN requires the Backend-issued v1 assertion bridge")
+	}
 	if out.PrimaryProvider == "" { out.PrimaryProvider = "b2" }
 	if out.PrimaryProvider != "b2" && out.PrimaryProvider != "r2" { return ProviderSet{}, errors.New("FRESH_MEDIA_PRIMARY_PROVIDER must be b2 or r2") }
-	if (out.MediaCDNBaseURL == "") != (out.MediaCDNSigningSecret == "") {
-		return ProviderSet{}, errors.New("Cloudflare media CDN base URL and signing secret must be configured together")
-	}
 	if out.MediaCDNBaseURL != "" {
-		if err := validateMediaCDNBaseURL(out.MediaCDNBaseURL); err != nil {
-			return ProviderSet{}, err
-		}
-		if len(out.MediaCDNSigningSecret) < 32 {
-			return ProviderSet{}, errors.New("Cloudflare media CDN signing secret must be at least 32 characters")
-		}
+		if err := validateMediaCDNBaseURL(out.MediaCDNBaseURL); err != nil { return ProviderSet{}, err }
+		if out.BackendAPIBaseURL == "" { return ProviderSet{}, errors.New("Cloudflare media CDN requires FRESH_MEDIA_BACKEND_URL and FRESH_MEDIA_INTERNAL_TOKEN") }
 	}
 	return out, nil
 }
@@ -97,6 +102,15 @@ func validateMediaCDNBaseURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("CLOUDFLARE_MEDIA_BASE_URL must be an HTTPS origin without path, query or fragment")
+	}
+	return nil
+}
+
+func validateBackendAPIBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"))) {
+		return errors.New("FRESH_MEDIA_BACKEND_URL must be an HTTPS origin (HTTP only on localhost)")
 	}
 	return nil
 }

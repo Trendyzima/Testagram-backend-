@@ -930,12 +930,17 @@ func (s *Server) downloadMedia(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, err.Error())
 		return
 	}
-	url, err := s.storage.DownloadURL(r.Context(), a.ID, r.PathValue("objectID"))
-	if err != nil {
-		writeStorageError(w, err)
+	if deliveryService, ok := s.storage.(interface {
+		DownloadAuthorization(context.Context, string, string) (freshstorage.MediaDelivery, error)
+	}); ok {
+		delivery, err := deliveryService.DownloadAuthorization(r.Context(), a.ID, r.PathValue("objectID"))
+		if err != nil { writeStorageError(w, err); return }
+		writeJSON(w, http.StatusOK, delivery)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"url": url, "expires_in_seconds": 120, "visibility": "private"})
+	url, err := s.storage.DownloadURL(r.Context(), a.ID, r.PathValue("objectID"))
+	if err != nil { writeStorageError(w, err); return }
+	writeJSON(w, http.StatusOK, map[string]any{"url": url, "expires_in_seconds": 300, "visibility": "private"})
 }
 
 func (s *Server) restoreMedia(w http.ResponseWriter, r *http.Request) {

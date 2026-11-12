@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
 const (
@@ -26,6 +27,9 @@ type Ranker interface {
 }
 type MediaSigner interface {
 	DownloadURL(context.Context, string, string) (string, error)
+}
+type MediaAuthorizationSigner interface {
+	DownloadAuthorizationForViewer(context.Context, string, string, string) (freshstorage.MediaDelivery, error)
 }
 type Service struct {
 	store         Store
@@ -257,7 +261,7 @@ func (s *Service) Home(ctx context.Context, viewerID string, limit int, cursor s
 	if len(candidates) == 0 {
 		return Result{Posts: []map[string]any{}, NextCursor: encodeCursor(lastScanned), HasMore: hasMore, RankingMode: mode}, nil
 	}
-	posts, err := s.renderPosts(ctx, candidates)
+	posts, err := s.renderPosts(ctx, viewerID, candidates)
 	if err != nil {
 		return Result{}, err
 	}
@@ -415,7 +419,7 @@ func (s *Service) reauthorize(ctx context.Context, viewerID string, candidates [
 	return authorized, nil
 }
 
-func (s *Service) renderPosts(ctx context.Context, candidates []candidatePost) ([]map[string]any, error) {
+func (s *Service) renderPosts(ctx context.Context, viewerID string, candidates []candidatePost) ([]map[string]any, error) {
 	authorIDs := make([]string, 0, len(candidates))
 	postIDs := make([]string, 0, len(candidates))
 	seen := map[string]struct{}{}
@@ -440,22 +444,27 @@ func (s *Service) renderPosts(ctx context.Context, candidates []candidatePost) (
 		author := map[string]any{"id": c.authorID, "handle": stringField(profile, "handle"), "display_name": stringField(profile, "display_name"), "bio": stringField(profile, "bio")}
 		attachments := mediaByPost[c.id]
 		urls := make([]string, 0, len(attachments))
+		mediaAuthHeaders := make(map[string]string, len(attachments))
 		isVideo := false
 		for _, attachment := range attachments {
 			if s.media != nil {
 				ownerID := stringField(attachment, "owner_id")
-				if ownerID == "" {
-					ownerID = c.authorID
-				}
-				if signed, e := s.media.DownloadURL(ctx, ownerID, stringField(attachment, "object_id")); e == nil && signed != "" {
-					urls = append(urls, signed)
-					if stringField(attachment, "media_type") == "video" && len(urls) == 1 {
-						isVideo = true
+				if ownerID == "" { ownerID = c.authorID }
+				objectID := stringField(attachment, "object_id")
+				if signer, ok := s.media.(MediaAuthorizationSigner); ok {
+					if delivery, e := signer.DownloadAuthorizationForViewer(ctx, viewerID, ownerID, objectID); e == nil && delivery.URL != "" {
+						urls = append(urls, delivery.URL)
+						if strings.HasPrefix(delivery.Authorization, "Bearer ") {
+							mediaAuthHeaders[delivery.URL] = delivery.Authorization
+						}
 					}
+				} else if signed, e := s.media.DownloadURL(ctx, ownerID, objectID); e == nil && signed != "" {
+					urls = append(urls, signed)
 				}
+				if stringField(attachment, "media_type") == "video" && len(urls) == 1 { isVideo = true }
 			}
 		}
-		out = append(out, map[string]any{"id": c.id, "content": stringField(c.raw, "body"), "created_at": c.created.UTC().Format(time.RFC3339Nano), "author": author, "user_profiles": author, "visibility": stringField(c.raw, "visibility"), "origin": "local", "media_urls": urls, "media_count": len(urls), "attachment_count": len(attachments), "is_video": isVideo, "ranking_score": c.score, "ranking_reasons": c.reasons})
+		out = append(out, map[string]any{"id": c.id, "content": stringField(c.raw, "body"), "created_at": c.created.UTC().Format(time.RFC3339Nano), "author": author, "user_profiles": author, "visibility": stringField(c.raw, "visibility"), "origin": "local", "media_urls": urls, "media_auth_headers": mediaAuthHeaders, "media_count": len(urls), "attachment_count": len(attachments), "is_video": isVideo, "ranking_score": c.score, "ranking_reasons": c.reasons})
 	}
 	return out, nil
 }

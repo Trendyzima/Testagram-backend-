@@ -4,14 +4,12 @@ package freshstorage
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -104,10 +102,10 @@ type Service struct {
 	uploadTTL        time.Duration
 	reservationTTL   time.Duration
 	cdnBaseURL       string
-	cdnSigningSecret string
 	archive          *virtualstorage.S3Provider
 	archiveBucket    string
 	primaryProvider  string
+	backendMedia     *BackendMediaClient
 }
 
 func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Service, error) {
@@ -128,16 +126,11 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 	if maxObjectBytes < 1 || maxObjectBytes > 500<<20 {
 		return nil, errors.New("maximum object size must be between 1 byte and 500 MiB")
 	}
-	if (providers.MediaCDNBaseURL == "") != (providers.MediaCDNSigningSecret == "") {
-		return nil, errors.New("Cloudflare media CDN URL and signing secret must be configured together")
-	}
+	backendMedia, err := NewBackendMediaClient(providers.BackendAPIBaseURL, providers.BackendInternalToken, nil)
+	if err != nil { return nil, err }
 	if providers.MediaCDNBaseURL != "" {
-		if err := validateMediaCDNBaseURL(providers.MediaCDNBaseURL); err != nil {
-			return nil, err
-		}
-		if len(providers.MediaCDNSigningSecret) < 32 {
-			return nil, errors.New("Cloudflare media CDN signing secret must be at least 32 characters")
-		}
+		if err := validateMediaCDNBaseURL(providers.MediaCDNBaseURL); err != nil { return nil, err }
+		if backendMedia == nil { return nil, errors.New("Cloudflare media CDN requires the Backend v1 assertion bridge") }
 	}
 	var archive *virtualstorage.S3Provider
 	if providers.Archive != nil {
@@ -150,7 +143,10 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 	primaryProvider := strings.ToLower(strings.TrimSpace(providers.PrimaryProvider))
 	if primaryProvider == "" { primaryProvider = "b2" }
 	if primaryProvider != "b2" && primaryProvider != "r2" { return nil, errors.New("primary media provider must be b2 or r2") }
-	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, cdnSigningSecret: providers.MediaCDNSigningSecret, archive: archive, archiveBucket: providers.ArchiveBucket, primaryProvider: primaryProvider}, nil
+	if appwriteStore, ok := store.(*AppwriteStore); ok {
+		appwriteStore.backendMedia = backendMedia
+	}
+	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, archive: archive, archiveBucket: providers.ArchiveBucket, primaryProvider: primaryProvider, backendMedia: backendMedia}, nil
 }
 
 type UploadReservation struct {
@@ -238,7 +234,7 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 		return ErrNotOwner
 	}
 	if reservation.Status == "protected" {
-		return nil
+		return s.registerCanonicalMedia(ctx, reservation)
 	}
 	if reservation.Status == "reserved" {
 		if !reservation.ExpiresAt.After(time.Now()) {
@@ -293,6 +289,19 @@ func (s *Service) CompleteUpload(ctx context.Context, ownerID, reservationID str
 	}
 	if err := s.store.CommitProtected(ctx, reservation, s.b2Bucket, s.r2Bucket); err != nil {
 		return fmt.Errorf("both cloud copies verified but Appwrite commit is pending: %w", err)
+	}
+	return s.registerCanonicalMedia(ctx, reservation)
+}
+
+func (s *Service) registerCanonicalMedia(ctx context.Context, reservation Reservation) error {
+	if s.backendMedia == nil || !freshMediaObjectKeyPattern.MatchString(reservation.ObjectKey) {
+		return nil // Legacy objects retain their existing direct-signed URL path.
+	}
+	if !validSHA256(reservation.SHA256) {
+		return errors.New("cannot register Fresh media without a verified SHA-256 checksum")
+	}
+	if err := s.backendMedia.Register(ctx, reservation, s.r2Bucket, s.b2Bucket); err != nil {
+		return fmt.Errorf("Appwrite media is protected but Backend authorization registration is pending: %w", err)
 	}
 	return nil
 }
@@ -425,66 +434,126 @@ func verifyReplica(ctx context.Context, provider *virtualstorage.S3Provider, buc
 	return err == nil && hash == record.SHA256
 }
 
-// DownloadURL returns a one-hour private media URL only after Appwrite confirms ownership
-// and the media object is marked ready. All new uploads are private by default.
-func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (string, error) {
-	key, err := s.store.MediaKey(ctx, ownerID, objectID)
-	if err != nil {
-		return "", err
-	}
-	record, err := s.store.GetMediaRecord(ctx, objectID)
-	if err != nil {
-		return "", err
-	}
-	if record.OwnerID != ownerID || record.Status != "ready" || record.LifecycleState == "purging" || record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
-		return "", ErrNotReady
-	}
-	// Cloudflare R2 is the preferred delivery origin because the private Worker
-	// reads its bucket directly. If R2 is temporarily unavailable or its metadata
-	// is wrong, serve the independently verified B2 primary instead of breaking
-	// every media view. RepairObject will reconcile the degraded R2 replica.
-	r2Info, r2Err := s.r2.Head(ctx, s.r2Bucket, key)
-	r2Ready := r2Err == nil && r2Info.Size == record.Bytes && strings.EqualFold(r2Info.ContentType, record.ContentType)
-	if r2Ready {
-		if s.cdnBaseURL != "" && s.cdnSigningSecret != "" {
-			return signPrivateMediaURL(s.cdnBaseURL, s.cdnSigningSecret, key, 3600, time.Now().UTC())
+// DownloadURL returns a short-lived private delivery URL only after Appwrite confirms ownership
+// and the media object and its required delivery origin pass integrity checks.
+// deliveryReplicaReady uses the durable Appwrite replica ledger plus a cheap
+// origin HEAD on the request path. Full SHA-256 verification happens at upload,
+// repair and reconciliation, not on every feed render of a potentially 500 MiB video.
+func (s *Service) deliveryReplicaReady(ctx context.Context, name string, provider *virtualstorage.S3Provider, bucket string, record MediaRecord) (bool, error) {
+	if ledger, ok := s.store.(interface {
+		ListMediaReplicas(context.Context, string) ([]MediaReplica, error)
+	}); ok {
+		replicas, err := ledger.ListMediaReplicas(ctx, record.ObjectID)
+		if err != nil { return false, err }
+		verified := false
+		for _, replica := range replicas {
+			if replica.Provider == name && replica.State == "verified" &&
+				replica.ObjectID == record.ObjectID && replica.Bucket == bucket &&
+				replica.Key == record.ObjectKey && replica.Bytes == record.Bytes &&
+				replica.SHA256 == record.SHA256 {
+				verified = true
+				break
+			}
 		}
-		return s.r2.PresignGet(ctx, s.r2Bucket, key, time.Hour)
+		if !verified { return false, nil }
+		info, err := provider.Head(ctx, bucket, record.ObjectKey)
+		if err != nil { return false, nil }
+		return info.Size == record.Bytes && strings.EqualFold(info.ContentType, record.ContentType), nil
 	}
-	b2Info, b2Err := s.b2.Head(ctx, s.b2Bucket, key)
-	if b2Err != nil || b2Info.Size != record.Bytes || !strings.EqualFold(b2Info.ContentType, record.ContentType) {
-		if s.archive == nil {
-			return "", fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady)
-		}
-		if restoreErr := s.RestoreArchive(ctx, ownerID, objectID); restoreErr != nil {
-			return "", fmt.Errorf("active replicas unavailable and archive restore failed: %w", restoreErr)
-		}
-		if s.cdnBaseURL != "" && s.cdnSigningSecret != "" {
-			return signPrivateMediaURL(s.cdnBaseURL, s.cdnSigningSecret, key, 3600, time.Now().UTC())
-		}
-		return s.r2.PresignGet(ctx, s.r2Bucket, key, time.Hour)
-	}
-	return s.b2.PresignGet(ctx, s.b2Bucket, key, time.Hour)
+	// Non-Appwrite stores are retained for deterministic tests and local adapters.
+	return verifyReplica(ctx, provider, bucket, record), nil
 }
 
-func signPrivateMediaURL(baseURL, secret, objectKey string, ttlSeconds int, now time.Time) (string, error) {
-	if validateMediaCDNBaseURL(baseURL) != nil || len(secret) < 32 || !validObjectKey(objectKey) || ttlSeconds < 1 || ttlSeconds > 3600 {
-		return "", errors.New("invalid private CDN URL signing configuration")
+func (s *Service) issueCDNAuthorization(ctx context.Context, viewerID, ownerID, key string) (MediaDelivery, error) {
+	if s.backendMedia == nil || s.cdnBaseURL == "" {
+		return MediaDelivery{}, errors.New("Fresh CDN assertion bridge is not configured")
 	}
-	expires := now.Unix() + int64(ttlSeconds)
-	message := fmt.Sprintf("GET\n%s\n%d", objectKey, expires)
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(message))
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
+	delivery, err := s.backendMedia.Issue(ctx, viewerID, ownerID, key)
+	if err != nil { return MediaDelivery{}, err }
+	expectedURL := strings.TrimRight(s.cdnBaseURL, "/") + "/v1/" + key
+	if delivery.URL != expectedURL || !strings.HasPrefix(delivery.Authorization, "Bearer v1.") ||
+		delivery.ExpiresInSeconds < 1 || delivery.ExpiresInSeconds > 300 || delivery.Visibility != "private" {
+		return MediaDelivery{}, errors.New("Backend CDN authorization does not match the configured origin and object")
 	}
-	u.Path = "/private/" + objectKey
-	query := u.Query()
-	query.Set("e", strconv.FormatInt(expires, 10))
-	query.Set("s", hex.EncodeToString(mac.Sum(nil)))
-	u.RawQuery = query.Encode()
-	return u.String(), nil
+	return delivery, nil
+}
+
+func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (string, error) {
+	delivery, err := s.DownloadAuthorization(ctx, ownerID, objectID)
+	if err != nil { return "", err }
+	return delivery.URL, nil
+}
+
+// DownloadAuthorization returns a Backend-issued v1 assertion only after the
+// Appwrite ledger confirms ownership/readiness and the R2 delivery copy is present.
+// When R2 is degraded it falls back to a short-lived B2 URL, never to an invalid CDN token.
+func (s *Service) DownloadAuthorization(ctx context.Context, ownerID, objectID string) (MediaDelivery, error) {
+	return s.DownloadAuthorizationForViewer(ctx, ownerID, ownerID, objectID)
+}
+
+func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, ownerID, objectID string) (MediaDelivery, error) {
+	key, err := s.store.MediaKey(ctx, ownerID, objectID)
+	if err != nil { return MediaDelivery{}, err }
+	record, err := s.store.GetMediaRecord(ctx, objectID)
+	if err != nil { return MediaDelivery{}, err }
+	now := time.Now().UTC()
+	if record.OwnerID != ownerID || record.Status != "ready" ||
+		(record.LifecycleState != "" && record.LifecycleState != "active") ||
+		!record.DeletedAt.IsZero() || (!record.StoryExpiry.IsZero() && !record.StoryExpiry.After(now)) ||
+		record.ObjectKey != key || record.Bytes < 1 || !validSHA256(record.SHA256) {
+		return MediaDelivery{}, ErrNotReady
+	}
+
+	// The Worker reads R2 directly. Issue a CDN assertion only after the exact
+	// R2 object passes a full SHA-256 read-back, not merely a HEAD/size check.
+	r2Ready, err := s.deliveryReplicaReady(ctx, "r2", s.r2, s.r2Bucket, record)
+	if err != nil { return MediaDelivery{}, fmt.Errorf("read R2 replica readiness: %w", err) }
+	if r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
+		return s.issueCDNAuthorization(ctx, viewerID, ownerID, key)
+	}
+
+	b2Ready, err := s.deliveryReplicaReady(ctx, "b2", s.b2, s.b2Bucket, record)
+	if err != nil { return MediaDelivery{}, fmt.Errorf("read B2 replica readiness: %w", err) }
+	if !b2Ready && !r2Ready {
+		if s.archive == nil {
+			return MediaDelivery{}, fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady)
+		}
+		if restoreErr := s.RestoreArchive(ctx, ownerID, objectID); restoreErr != nil {
+			return MediaDelivery{}, fmt.Errorf("active replicas unavailable and archive restore failed: %w", restoreErr)
+		}
+		r2Ready, err = s.deliveryReplicaReady(ctx, "r2", s.r2, s.r2Bucket, record)
+		if err != nil { return MediaDelivery{}, fmt.Errorf("verify restored R2 replica readiness: %w", err) }
+		b2Ready, err = s.deliveryReplicaReady(ctx, "b2", s.b2, s.b2Bucket, record)
+		if err != nil { return MediaDelivery{}, fmt.Errorf("verify restored B2 replica readiness: %w", err) }
+		if r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
+			return s.issueCDNAuthorization(ctx, viewerID, ownerID, key)
+		}
+	}
+
+	// A healthy B2 copy can repair a missing or corrupt R2 origin. Do not issue
+	// a Worker token until the repaired R2 object passes the same full check.
+	if b2Ready && !r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
+		if repairErr := s.RepairObject(ctx, objectID); repairErr == nil && verifyReplica(ctx, s.r2, s.r2Bucket, record) {
+			return s.issueCDNAuthorization(ctx, viewerID, ownerID, key)
+		}
+	}
+	// A new owner-bound Fresh asset configured for CDN delivery must never
+	// fall back to a direct provider URL. If R2 is unhealthy or Backend refuses
+	// the assertion, fail closed; the feed must not bypass the CDN policy.
+	if s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
+		return MediaDelivery{}, fmt.Errorf("Fresh CDN origin is not verified or Backend authorization is unavailable: %w", ErrNotReady)
+	}
+	if b2Ready {
+		url, signErr := s.b2.PresignGet(ctx, s.b2Bucket, key, 5*time.Minute)
+		if signErr != nil { return MediaDelivery{}, signErr }
+		return MediaDelivery{URL:url,ExpiresInSeconds:300,Visibility:"private"},nil
+	}
+	if r2Ready {
+		url, signErr := s.r2.PresignGet(ctx, s.r2Bucket, key, 5*time.Minute)
+		if signErr != nil { return MediaDelivery{}, signErr }
+		return MediaDelivery{URL:url,ExpiresInSeconds:300,Visibility:"private"},nil
+	}
+	return MediaDelivery{}, ErrNotReady
 }
 
 func allowedMediaType(value string) bool {
@@ -517,6 +586,7 @@ func reserveKiB(bytes int64) int64 {
 // Quota documents must be provisioned before the API accepts uploads:
 // storage_quotas/platform and storage_quotas/<Appwrite user ID>.
 type AppwriteStore struct {
+	backendMedia *BackendMediaClient
 	db                  *appwritedb.Client
 	platformLimitKiB    int64
 	defaultUserQuotaKiB int64
@@ -627,7 +697,7 @@ func (s *AppwriteStore) Reserve(ctx context.Context, input ReserveInput, id stri
 	if _, err := rand.Read(objectRandom[:]); err != nil {
 		return Reservation{}, err
 	}
-	objectKey := "v1/" + hex.EncodeToString(objectRandom[:])
+	objectKey := "users/" + input.OwnerID + "/" + hex.EncodeToString(objectRandom[:])
 	tx, err := s.db.CreateTransaction(ctx, 120)
 	if err != nil {
 		return Reservation{}, err
@@ -1126,11 +1196,11 @@ func validSHA256(value string) bool {
 }
 
 func validObjectKey(value string) bool {
-	if !strings.HasPrefix(value, "v1/") || len(value) != 35 {
-		return false
+	if strings.HasPrefix(value, "v1/") && len(value) == 35 {
+		_, err := hex.DecodeString(strings.TrimPrefix(value, "v1/"))
+		return err == nil
 	}
-	_, err := hex.DecodeString(strings.TrimPrefix(value, "v1/"))
-	return err == nil
+	return freshMediaObjectKeyPattern.MatchString(value)
 }
 
 func validDocID(v string) bool {

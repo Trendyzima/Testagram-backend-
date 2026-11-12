@@ -136,6 +136,9 @@ func purgeReplicasAndRelease(ctx context.Context, store RetentionLifecycleStore,
 	if err := store.BeginMediaPurge(ctx, media); err != nil {
 		return fmt.Errorf("freeze media lifecycle before replica deletion: %w", err)
 	}
+	if revoker, ok := store.(interface { RevokeCanonicalMedia(context.Context, MediaRecord) error }); ok {
+		if err := revoker.RevokeCanonicalMedia(ctx, media); err != nil { return fmt.Errorf("revoke Backend CDN authorization before replica deletion: %w", err) }
+	}
 	replicas, err := store.ListMediaReplicas(ctx, media.ObjectID)
 	if err != nil {
 		return err
@@ -177,6 +180,14 @@ func purgeReplicasAndRelease(ctx context.Context, store RetentionLifecycleStore,
 // Appwrite lifecycle ledger implementation. A 100-document cap is deliberate:
 // if a reference or replica scan fills the cap, completeness is unknown and the
 // worker fails closed rather than silently missing a shared copy.
+func (s *AppwriteStore) RevokeCanonicalMedia(ctx context.Context, media MediaRecord) error {
+	if s.backendMedia == nil || !freshMediaObjectKeyPattern.MatchString(media.ObjectKey) { return nil }
+	if err := s.backendMedia.Revoke(ctx, media.OwnerID, media.ObjectKey); err != nil {
+		return fmt.Errorf("revoke canonical Backend media record: %w", err)
+	}
+	return nil
+}
+
 func (s *AppwriteStore) BeginMediaPurge(ctx context.Context, media MediaRecord) error {
 	tx, err := s.db.CreateTransaction(ctx, 120)
 	if err != nil {

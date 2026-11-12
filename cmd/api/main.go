@@ -70,6 +70,7 @@ type service struct {
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
 	cdnOriginAuthToken        string
+	freshMediaInternalToken   string
 	virtualStorage            *virtualstorage.Manager
 	mediaReplicator           *virtualstorage.Replicator
 	algorithm                 *algorithmclient.Client
@@ -575,6 +576,11 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/media/attach", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/attach", s.mediaAttach)
 	mux.HandleFunc("POST /internal/media/quarantine", s.mediaQuarantine)
+	if s.freshMediaInternalToken != "" {
+		mux.HandleFunc("POST /internal/media/fresh/register", s.registerFreshMediaAsset)
+		mux.HandleFunc("POST /internal/media/fresh/revoke", s.revokeFreshMediaAsset)
+		mux.HandleFunc("POST /internal/media/fresh/cdn-download-url", s.freshMediaCDNDownloadURL)
+	}
 	mux.HandleFunc("POST /internal/tv/health", s.tvHealthBatch)
 	mux.HandleFunc("GET /api/tv/health", s.tvHealthRead)
 	mux.HandleFunc("GET /api/replication/public/{origin}/{entity_type}/{entity_id}", s.publicReplicationProjection)
@@ -1011,6 +1017,8 @@ func main() {
 	cdnAssertionSecret := env("CDN_MEDIA_ASSERTION_SECRET", "")
 	cdnMediaBaseURL := strings.TrimRight(env("CDN_MEDIA_BASE_URL", ""), "/")
 	cdnOriginAuthToken := env("CDN_ORIGIN_AUTH_TOKEN", "")
+	freshMediaInternalToken := env("FRESH_MEDIA_INTERNAL_TOKEN", "")
+	if freshMediaInternalToken != "" && len(freshMediaInternalToken) < 32 { log.Fatal("FRESH_MEDIA_INTERNAL_TOKEN must contain at least 32 bytes") }
 	if cdnAssertionSecret != "" {
 		cdnMediaAssertions, err = mediaassertion.New([]byte(cdnAssertionSecret), 0)
 		if err != nil {
@@ -1135,6 +1143,7 @@ func main() {
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
 		media: mediaSigner, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken,
+		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}

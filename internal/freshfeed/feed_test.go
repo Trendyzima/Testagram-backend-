@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/freshstorage"
 )
 
 type emptyStore struct{}
@@ -369,4 +370,35 @@ func TestHomeRechecksBlocksAfterAlgorithmRoundTrip(t *testing.T) {
 			t.Fatal("newly blocked post survived final authorization")
 		}
 	}
+}
+
+type recordingAuthorizedMediaSigner struct { ownerIDs []string }
+func (m *recordingAuthorizedMediaSigner) DownloadURL(ctx context.Context, ownerID, objectID string) (string,error) {
+	return "https://media.example/"+objectID,nil
+}
+func (m *recordingAuthorizedMediaSigner) DownloadAuthorizationForViewer(_ context.Context, viewerID, ownerID, objectID string) (freshstorage.MediaDelivery,error) {
+	m.ownerIDs=append(m.ownerIDs,viewerID+":"+ownerID)
+	return freshstorage.MediaDelivery{
+		URL:"https://media.testagram.site/v1/users/"+ownerID+"/0123456789abcdef0123456789abcdef",
+		Authorization:"Bearer v1.payload.signature",
+		ExpiresInSeconds:120,
+		Visibility:"private",
+	},nil
+}
+
+func TestFeedIncludesBackendAuthorizationHeadersForPrivateMedia(t *testing.T) {
+	store:=newFixtureFeedStore()
+	signer:=&recordingAuthorizedMediaSigner{}
+	service,err:=New(store,nil,signer)
+	if err!=nil{t.Fatal(err)}
+	result,err:=service.Home(context.Background(),"viewer",10,"")
+	if err!=nil{t.Fatal(err)}
+	var post map[string]any
+	for _,candidate:=range result.Posts{if candidate["id"]=="p6"{post=candidate;break}}
+	if post==nil{t.Fatal("expected followed media post")}
+	urls,ok:=post["media_urls"].([]string)
+	if !ok||len(urls)!=1{t.Fatalf("media URLs=%#v",post["media_urls"])}
+	headers,ok:=post["media_auth_headers"].(map[string]string)
+	if !ok||headers[urls[0]]!="Bearer v1.payload.signature"{t.Fatalf("media auth headers=%#v",post["media_auth_headers"])}
+	if len(signer.ownerIDs)!=1||signer.ownerIDs[0]!="viewer:u2"{t.Fatalf("media authorization owner binding=%v",signer.ownerIDs)}
 }

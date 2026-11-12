@@ -856,3 +856,32 @@ func TestAPIContractHeadersReplaceUnsafeRequestID(t *testing.T) {
 		t.Fatalf("unsafe request ID was not replaced: %q", got)
 	}
 }
+
+type fakeAuthorizedMediaService struct { *fakeMediaService }
+func (f *fakeAuthorizedMediaService) DownloadAuthorization(_ context.Context, owner, id string) (freshstorage.MediaDelivery, error) {
+	f.downloadOwner, f.downloadID = owner, id
+	return freshstorage.MediaDelivery{
+		URL:"https://media.testagram.site/v1/users/new_user_1/0123456789abcdef0123456789abcdef",
+		Authorization:"Bearer v1.payload.signature",
+		ExpiresInSeconds:120,
+		Visibility:"private",
+	},nil
+}
+
+func TestFreshMediaDownloadReturnsBackendAuthorizationHeader(t *testing.T) {
+	api,mock:=testServer(t)
+	defer mock.Close()
+	media:=&fakeAuthorizedMediaService{fakeMediaService:&fakeMediaService{}}
+	api.WithStorage(media)
+	req:=httptest.NewRequest(http.MethodGet,"/v1/media/med_123/download",nil)
+	req.Header.Set("Authorization","Bearer valid-session")
+	rec:=httptest.NewRecorder()
+	api.Handler().ServeHTTP(rec,req)
+	if rec.Code!=http.StatusOK { t.Fatalf("download status=%d body=%s",rec.Code,rec.Body.String()) }
+	var got freshstorage.MediaDelivery
+	if err:=json.Unmarshal(rec.Body.Bytes(),&got);err!=nil{t.Fatal(err)}
+	if got.Authorization!="Bearer v1.payload.signature" || got.ExpiresInSeconds!=120 || got.Visibility!="private" {
+		t.Fatalf("Backend CDN authorization was not propagated: %+v",got)
+	}
+	if media.downloadOwner!="new_user_1" || media.downloadID!="med_123" { t.Fatal("download was not scoped to authenticated Appwrite owner") }
+}

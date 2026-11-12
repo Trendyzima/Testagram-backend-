@@ -581,24 +581,6 @@ func TestEnsureUserQuotaCreatesDefaultQuotaOnFirstUpload(t *testing.T) {
 	}
 }
 
-func TestPrivateCDNURLSignatureMatchesWorkerContract(t *testing.T) {
-	now := time.Unix(1794052800, 0).UTC()
-	got, err := signPrivateMediaURL("https://media.testagram.example", "0123456789abcdef0123456789abcdef", "v1/0123456789abcdef0123456789abcdef", 3600, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, err := url.Parse(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if u.Path != "/private/v1/0123456789abcdef0123456789abcdef" || u.Query().Get("e") != strconv.FormatInt(now.Unix()+3600, 10) || len(u.Query().Get("s")) != 64 {
-		t.Fatalf("unexpected signed private CDN URL: %s", got)
-	}
-	if _, err := signPrivateMediaURL("http://media.example", "secret", "v1/0123456789abcdef0123456789abcdef", 3600, now); err == nil {
-		t.Fatal("insecure CDN URL accepted")
-	}
-}
-
 func TestCommitProtectedAtomicallyMovesQuotaAndWritesReplicaLedger(t *testing.T) {
 	var quotaOps, docCreates int
 	var committed bool
@@ -775,5 +757,17 @@ func TestReleaseExpiredReservationRequiresExpiryClaimAndReleasesBothQuotas(t *te
 	}
 	if decrements != 2 || !committed {
 		t.Fatalf("quota release incomplete: decrements=%d committed=%v", decrements, committed)
+	}
+}
+
+func TestValidObjectKeySupportsOwnerBoundFreshMediaKeys(t *testing.T) {
+	if !validObjectKey("users/user_123.test/0123456789abcdef0123456789abcdef") {
+		t.Fatal("valid Appwrite owner-bound object key rejected")
+	}
+	if validObjectKey("users/user_123.test/not-a-digest") {
+		t.Fatal("malformed owner-bound object key accepted")
+	}
+	if !validObjectKey("v1/0123456789abcdef0123456789abcdef") {
+		t.Fatal("legacy v1 object key compatibility was lost")
 	}
 }
