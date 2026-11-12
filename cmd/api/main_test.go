@@ -45,6 +45,21 @@ func TestPublicReplicationProjectionValidatesIdentityAndRequiresDatabase(t *test
 	}
 }
 
+func TestFreshMediaFeatureGateDefaultsClosed(t *testing.T) {
+	t.Setenv("FRESH_MEDIA_ENABLED", "")
+	if freshMediaFeatureEnabled() {
+		t.Fatal("fresh media must default to disabled")
+	}
+	t.Setenv("FRESH_MEDIA_ENABLED", "false")
+	if freshMediaFeatureEnabled() {
+		t.Fatal("fresh media must remain disabled for false")
+	}
+	t.Setenv("FRESH_MEDIA_ENABLED", "true")
+	if !freshMediaFeatureEnabled() {
+		t.Fatal("fresh media should enable only for explicit true")
+	}
+}
+
 func TestReadyzFailsClosedWithoutDatabase(t *testing.T) {
 	s := &service{}
 	r := httptest.NewRequest(http.MethodGet, "/readyz", nil)
