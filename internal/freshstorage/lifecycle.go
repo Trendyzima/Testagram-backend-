@@ -128,16 +128,9 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 	if maxObjectBytes < 1 || maxObjectBytes > 500<<20 {
 		return nil, errors.New("maximum object size must be between 1 byte and 500 MiB")
 	}
-	if (providers.MediaCDNBaseURL == "") != (providers.MediaCDNSigningSecret == "") {
-		return nil, errors.New("Cloudflare media CDN URL and signing secret must be configured together")
-	}
 	if providers.MediaCDNBaseURL != "" {
-		if err := validateMediaCDNBaseURL(providers.MediaCDNBaseURL); err != nil {
-			return nil, err
-		}
-		if len(providers.MediaCDNSigningSecret) < 32 {
-			return nil, errors.New("Cloudflare media CDN signing secret must be at least 32 characters")
-		}
+		if err := validateMediaCDNBaseURL(providers.MediaCDNBaseURL); err != nil { return nil, err }
+		if backendMedia == nil { return nil, errors.New("Cloudflare media CDN requires the Backend v1 assertion bridge") }
 	}
 	var archive *virtualstorage.S3Provider
 	if providers.Archive != nil {
@@ -631,7 +624,7 @@ func (s *AppwriteStore) Reserve(ctx context.Context, input ReserveInput, id stri
 	if _, err := rand.Read(objectRandom[:]); err != nil {
 		return Reservation{}, err
 	}
-	objectKey := "v1/" + hex.EncodeToString(objectRandom[:])
+	objectKey := "users/" + input.OwnerID + "/" + hex.EncodeToString(objectRandom[:])
 	tx, err := s.db.CreateTransaction(ctx, 120)
 	if err != nil {
 		return Reservation{}, err
