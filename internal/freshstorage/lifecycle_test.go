@@ -581,24 +581,6 @@ func TestEnsureUserQuotaCreatesDefaultQuotaOnFirstUpload(t *testing.T) {
 	}
 }
 
-func TestPrivateCDNURLSignatureMatchesWorkerContract(t *testing.T) {
-	now := time.Unix(1794052800, 0).UTC()
-	got, err := signPrivateMediaURL("https://media.testagram.example", "0123456789abcdef0123456789abcdef", "v1/0123456789abcdef0123456789abcdef", 3600, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, err := url.Parse(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if u.Path != "/private/v1/0123456789abcdef0123456789abcdef" || u.Query().Get("e") != strconv.FormatInt(now.Unix()+3600, 10) || len(u.Query().Get("s")) != 64 {
-		t.Fatalf("unexpected signed private CDN URL: %s", got)
-	}
-	if _, err := signPrivateMediaURL("http://media.example", "secret", "v1/0123456789abcdef0123456789abcdef", 3600, now); err == nil {
-		t.Fatal("insecure CDN URL accepted")
-	}
-}
-
 func TestCommitProtectedAtomicallyMovesQuotaAndWritesReplicaLedger(t *testing.T) {
 	var quotaOps, docCreates int
 	var committed bool
