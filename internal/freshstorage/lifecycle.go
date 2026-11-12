@@ -445,6 +445,10 @@ func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (st
 // Appwrite ledger confirms ownership/readiness and the R2 delivery copy is present.
 // When R2 is degraded it falls back to a short-lived B2 URL, never to an invalid CDN token.
 func (s *Service) DownloadAuthorization(ctx context.Context, ownerID, objectID string) (MediaDelivery, error) {
+	return s.DownloadAuthorizationForViewer(ctx, ownerID, ownerID, objectID)
+}
+
+func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, ownerID, objectID string) (MediaDelivery, error) {
 	key, err := s.store.MediaKey(ctx, ownerID, objectID)
 	if err != nil { return MediaDelivery{}, err }
 	record, err := s.store.GetMediaRecord(ctx, objectID)
@@ -458,7 +462,7 @@ func (s *Service) DownloadAuthorization(ctx context.Context, ownerID, objectID s
 	// R2 object passes a full SHA-256 read-back, not merely a HEAD/size check.
 	r2Ready := verifyReplica(ctx, s.r2, s.r2Bucket, record)
 	if r2Ready && s.backendMedia != nil && freshMediaObjectKeyPattern.MatchString(key) {
-		return s.backendMedia.Issue(ctx, ownerID, key)
+		return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
 	}
 
 	b2Ready := verifyReplica(ctx, s.b2, s.b2Bucket, record)
