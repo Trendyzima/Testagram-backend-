@@ -53,7 +53,7 @@ func (c *BackendMediaClient) Register(ctx context.Context, r Reservation) error 
 		return nil
 	}
 	body := map[string]any{
-		"viewer_id": r.OwnerID, "owner_id": r.OwnerID, "key": r.ObjectKey, "visibility": "private",
+		"owner_id": r.OwnerID, "key": r.ObjectKey, "visibility": "private",
 		"content_type": r.ContentType, "size_bytes": r.Bytes, "sha256": r.SHA256,
 	}
 	return c.post(ctx, "/internal/media/fresh/register", body, nil)
