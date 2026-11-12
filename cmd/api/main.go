@@ -71,6 +71,7 @@ type service struct {
 	cdnMediaBaseURL           string
 	cdnOriginAuthToken        string
 	virtualStorage            *virtualstorage.Manager
+	mediaReplicator            *virtualstorage.Replicator
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
 }
@@ -1024,7 +1025,11 @@ func main() {
 		log.Printf("viewer-bound CDN media assertions enabled")
 	}
 	var virtualStorageManager *virtualstorage.Manager
-	if strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true") {
+	var primaryVirtualStorageProvider *virtualstorage.S3Provider
+	var mediaReplicator *virtualstorage.Replicator
+	mediaReplicationRequired := strings.EqualFold(env("MEDIA_REPLICATION_REQUIRED", "false"), "true")
+	virtualStorageEnabled := strings.EqualFold(env("VIRTUAL_STORAGE_ENABLED", "false"), "true")
+	if virtualStorageEnabled {
 		if mediaSigner == nil {
 			log.Fatal("VIRTUAL_STORAGE_ENABLED requires the S3-compatible media credentials and endpoint")
 		}
@@ -1038,6 +1043,7 @@ func main() {
 		if providerErr != nil {
 			log.Fatalf("configure virtual storage provider: %v", providerErr)
 		}
+		primaryVirtualStorageProvider = provider
 		allowedTypes := map[string]struct{}{
 			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "image/gif": {}, "image/avif": {},
 			"video/mp4": {}, "video/webm": {},
@@ -1050,6 +1056,14 @@ func main() {
 			log.Fatalf("configure virtual storage namespaces: %v", err)
 		}
 		log.Printf("virtual storage policy manager enabled; new uploads use tenant-scoped object keys")
+	}
+	if mediaReplicationRequired {
+		if !virtualStorageEnabled || primaryVirtualStorageProvider == nil || virtualStorageManager == nil {
+			log.Fatal("MEDIA_REPLICATION_REQUIRED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
+		}
+		mediaReplicator, err = configureMediaReplicator(primaryVirtualStorageProvider)
+		if err != nil { log.Fatalf("configure durable media replication: %v", err) }
+		log.Printf("durable media replication worker enabled (Instabox VPS + Cloudflare R2 + Backblaze B2)")
 	}
 	var replicationStore *replication.Store
 	var replicationReceiver http.Handler
@@ -1109,7 +1123,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, virtualStorage: virtualStorageManager, algorithm: algorithm,
+		media: mediaSigner, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
@@ -1129,6 +1143,7 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go svc.runMediaJanitor(signalCtx)
+	if mediaReplicator != nil { go runMediaReplicationWorker(signalCtx, db, mediaReplicator) }
 	if federationWorker != nil {
 		go federationWorker.Run(signalCtx)
 	}
