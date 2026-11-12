@@ -580,7 +580,7 @@ func (s *service) routes() http.Handler {
 	if s.replicationReceiver != nil {
 		mux.Handle("POST /internal/replication/events", s.replicationReceiver)
 	}
-	mux.HandleFunc("GET /v1/{key...}", s.mediaCDNOrigin)
+	mux.HandleFunc("GET /internal/cdn/v1/{key...}", s.mediaCDNOrigin)
 	mux.HandleFunc("OPTIONS /api/media/cdn-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/cdn-download-url", s.mediaCDNDownloadURL)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
