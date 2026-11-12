@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -15,6 +16,12 @@ import (
 
 type federationPreferenceRequest struct {
 	Enabled *bool `json:"enabled"`
+}
+
+type federationRemoteFollowRequest struct {
+	LocalUserID    string `json:"local_user_id"`
+	RemoteActorURI string `json:"remote_actor_uri"`
+	ActivityID     string `json:"activity_id"`
 }
 
 type federationActorProfile struct {
@@ -170,6 +177,92 @@ func (s *service) federationPreference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]bool{"enabled": enabled}, "error": nil, "request_id": requestIDValue})
+}
+
+func (s *service) federationRemoteFollow(w http.ResponseWriter, r *http.Request) {
+	if !s.federationInternalAuth(w, r) {
+		return
+	}
+	var input federationRemoteFollowRequest
+	if err := decodeMediaJSON(w, r, &input); err != nil ||
+		!socialUUIDPattern.MatchString(strings.ToLower(strings.TrimSpace(input.LocalUserID))) ||
+		!validFederationRemoteURI(input.RemoteActorURI) || !validFederationRemoteURI(input.ActivityID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REMOTE_FOLLOW", "A valid local user ID, verified remote actor URI and HTTPS activity ID are required", requestID(r)))
+		return
+	}
+	input.LocalUserID = strings.ToLower(strings.TrimSpace(input.LocalUserID))
+	input.RemoteActorURI = strings.TrimSpace(input.RemoteActorURI)
+	input.ActivityID = strings.TrimSpace(input.ActivityID)
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_DATABASE_UNAVAILABLE", "Canonical social graph storage is unavailable", requestID(r)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	var eligible bool
+	err := s.db.QueryRow(ctx, `SELECT account_status='active' AND discoverable_by_username=TRUE
+		AND protected_account=FALSE AND federation_enabled=TRUE
+		FROM testagram_local.accounts WHERE user_id=$1::uuid`, input.LocalUserID).Scan(&eligible)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !eligible) {
+		writeJSON(w, http.StatusForbidden, errorBody("LOCAL_ACTOR_NOT_ELIGIBLE", "Backend no longer authorizes remote follows for this local account", requestID(r)))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_FOLLOW_LOOKUP_FAILED", "Canonical account eligibility could not be verified", requestID(r)))
+		return
+	}
+	_, err = s.db.Exec(ctx, `INSERT INTO testagram_local.remote_follows
+		(local_user_id,remote_actor_uri,follow_activity_id,last_activity_id,status)
+		VALUES($1::uuid,$2,$3,$3,'accepted')
+		ON CONFLICT(local_user_id,remote_actor_uri) DO UPDATE SET
+		follow_activity_id=EXCLUDED.follow_activity_id,
+		last_activity_id=EXCLUDED.last_activity_id,
+		status='accepted',updated_at=now()`,
+		input.LocalUserID, input.RemoteActorURI, input.ActivityID)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, errorBody("REMOTE_FOLLOW_CONFLICT", "The remote follow could not be recorded idempotently", requestID(r)))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]string{"status": "accepted"}, "error": nil, "request_id": requestID(r)})
+}
+
+func (s *service) federationRemoteUnfollow(w http.ResponseWriter, r *http.Request) {
+	if !s.federationInternalAuth(w, r) {
+		return
+	}
+	var input federationRemoteFollowRequest
+	if err := decodeMediaJSON(w, r, &input); err != nil ||
+		!socialUUIDPattern.MatchString(strings.ToLower(strings.TrimSpace(input.LocalUserID))) ||
+		!validFederationRemoteURI(input.RemoteActorURI) || !validFederationRemoteURI(input.ActivityID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REMOTE_UNFOLLOW", "A valid local user ID, verified remote actor URI and HTTPS Undo activity ID are required", requestID(r)))
+		return
+	}
+	input.LocalUserID = strings.ToLower(strings.TrimSpace(input.LocalUserID))
+	input.RemoteActorURI = strings.TrimSpace(input.RemoteActorURI)
+	input.ActivityID = strings.TrimSpace(input.ActivityID)
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_DATABASE_UNAVAILABLE", "Canonical social graph storage is unavailable", requestID(r)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	tag, err := s.db.Exec(ctx, `UPDATE testagram_local.remote_follows
+		SET status='removed',last_activity_id=$3,updated_at=now()
+		WHERE local_user_id=$1::uuid AND remote_actor_uri=$2`,
+		input.LocalUserID, input.RemoteActorURI, input.ActivityID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REMOTE_UNFOLLOW_FAILED", "Canonical remote follow state could not be updated", requestID(r)))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"removed": tag.RowsAffected() > 0}, "error": nil, "request_id": requestID(r)})
+}
+
+func validFederationRemoteURI(raw string) bool {
+	if len(raw) < 12 || len(raw) > 2048 || strings.ContainsAny(raw, "\\r\\n\\t ") {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
 
 func federationPreferenceConflict(discoverable, protected bool) (string, string) {
