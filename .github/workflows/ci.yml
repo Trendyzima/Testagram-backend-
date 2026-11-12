@@ -181,7 +181,9 @@ jobs:
             migrations/20261110_federation_outbox.sql \
             migrations/20261111_social_post_idempotency.sql \
             migrations/20261112_instabox_avatar_storage.sql \
-            migrations/20261112_federation_remote_follows.sql; do
+            migrations/20261112_federation_remote_follows.sql \
+            migrations/20261111_media_replica_ledger.sql \
+            migrations/20261112_media_replication_outbox.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify media attachment, poll voting and private history constraints
@@ -597,7 +599,9 @@ jobs:
             migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
             migrations/20261106_social_core.sql \
-            migrations/20261110_native_media_post_links.sql; do
+            migrations/20261110_native_media_post_links.sql \
+            migrations/20261111_media_replica_ledger.sql \
+            migrations/20261112_media_replication_outbox.sql; do
             docker exec -i testagram-local-product-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify account/post atomic events and privacy tombstones
