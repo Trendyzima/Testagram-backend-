@@ -377,7 +377,7 @@ func (m *recordingAuthorizedMediaSigner) DownloadURL(ctx context.Context, ownerI
 	return "https://media.example/"+objectID,nil
 }
 func (m *recordingAuthorizedMediaSigner) DownloadAuthorization(_ context.Context, ownerID, objectID string) (freshstorage.MediaDelivery,error) {
-	m.ownerIDs=append(m.ownerIDs,ownerID)
+	m.ownerIDs=append(m.ownerIDs,viewerID+":"+ownerID)
 	return freshstorage.MediaDelivery{
 		URL:"https://media.testagram.site/v1/users/"+ownerID+"/0123456789abcdef0123456789abcdef",
 		Authorization:"Bearer v1.payload.signature",
@@ -400,5 +400,5 @@ func TestFeedIncludesBackendAuthorizationHeadersForPrivateMedia(t *testing.T) {
 	if !ok||len(urls)!=1{t.Fatalf("media URLs=%#v",post["media_urls"])}
 	headers,ok:=post["media_auth_headers"].(map[string]string)
 	if !ok||headers[urls[0]]!="Bearer v1.payload.signature"{t.Fatalf("media auth headers=%#v",post["media_auth_headers"])}
-	if len(signer.ownerIDs)!=1||signer.ownerIDs[0]!="u2"{t.Fatalf("media authorization owner binding=%v",signer.ownerIDs)}
+	if len(signer.ownerIDs)!=1||signer.ownerIDs[0]!="viewer:u2"{t.Fatalf("media authorization owner binding=%v",signer.ownerIDs)}
 }
