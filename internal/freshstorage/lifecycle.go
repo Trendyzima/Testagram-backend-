@@ -436,6 +436,34 @@ func verifyReplica(ctx context.Context, provider *virtualstorage.S3Provider, buc
 
 // DownloadURL returns a short-lived private delivery URL only after Appwrite confirms ownership
 // and the media object and its required delivery origin pass integrity checks.
+// deliveryReplicaReady uses the durable Appwrite replica ledger plus a cheap
+// origin HEAD on the request path. Full SHA-256 verification happens at upload,
+// repair and reconciliation, not on every feed render of a potentially 500 MiB video.
+func (s *Service) deliveryReplicaReady(ctx context.Context, name string, provider *virtualstorage.S3Provider, bucket string, record MediaRecord) (bool, error) {
+	if ledger, ok := s.store.(interface {
+		ListMediaReplicas(context.Context, string) ([]MediaReplica, error)
+	}); ok {
+		replicas, err := ledger.ListMediaReplicas(ctx, record.ObjectID)
+		if err != nil { return false, err }
+		verified := false
+		for _, replica := range replicas {
+			if replica.Provider == name && replica.State == "verified" &&
+				replica.ObjectID == record.ObjectID && replica.Bucket == bucket &&
+				replica.Key == record.ObjectKey && replica.Bytes == record.Bytes &&
+				replica.SHA256 == record.SHA256 {
+				verified = true
+				break
+			}
+		}
+		if !verified { return false, nil }
+		info, err := provider.Head(ctx, bucket, record.ObjectKey)
+		if err != nil { return false, nil }
+		return info.Size == record.Bytes && strings.EqualFold(info.ContentType, record.ContentType), nil
+	}
+	// Non-Appwrite stores are retained for deterministic tests and local adapters.
+	return verifyReplica(ctx, provider, bucket, record), nil
+}
+
 func (s *Service) issueCDNAuthorization(ctx context.Context, viewerID, ownerID, key string) (MediaDelivery, error) {
 	if s.backendMedia == nil || s.cdnBaseURL == "" {
 		return MediaDelivery{}, errors.New("Fresh CDN assertion bridge is not configured")
@@ -478,12 +506,14 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 
 	// The Worker reads R2 directly. Issue a CDN assertion only after the exact
 	// R2 object passes a full SHA-256 read-back, not merely a HEAD/size check.
-	r2Ready := verifyReplica(ctx, s.r2, s.r2Bucket, record)
+	r2Ready, err := s.deliveryReplicaReady(ctx, "r2", s.r2, s.r2Bucket, record)
+	if err != nil { return MediaDelivery{}, fmt.Errorf("read R2 replica readiness: %w", err) }
 	if r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
 		return s.issueCDNAuthorization(ctx, viewerID, ownerID, key)
 	}
 
-	b2Ready := verifyReplica(ctx, s.b2, s.b2Bucket, record)
+	b2Ready, err := s.deliveryReplicaReady(ctx, "b2", s.b2, s.b2Bucket, record)
+	if err != nil { return MediaDelivery{}, fmt.Errorf("read B2 replica readiness: %w", err) }
 	if !b2Ready && !r2Ready {
 		if s.archive == nil {
 			return MediaDelivery{}, fmt.Errorf("active B2/R2 replicas unavailable and archive restore is not configured: %w", ErrNotReady)
@@ -491,8 +521,10 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 		if restoreErr := s.RestoreArchive(ctx, ownerID, objectID); restoreErr != nil {
 			return MediaDelivery{}, fmt.Errorf("active replicas unavailable and archive restore failed: %w", restoreErr)
 		}
-		r2Ready = verifyReplica(ctx, s.r2, s.r2Bucket, record)
-		b2Ready = verifyReplica(ctx, s.b2, s.b2Bucket, record)
+		r2Ready, err = s.deliveryReplicaReady(ctx, "r2", s.r2, s.r2Bucket, record)
+		if err != nil { return MediaDelivery{}, fmt.Errorf("verify restored R2 replica readiness: %w", err) }
+		b2Ready, err = s.deliveryReplicaReady(ctx, "b2", s.b2, s.b2Bucket, record)
+		if err != nil { return MediaDelivery{}, fmt.Errorf("verify restored B2 replica readiness: %w", err) }
 		if r2Ready && s.backendMedia != nil && s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
 			return s.issueCDNAuthorization(ctx, viewerID, ownerID, key)
 		}
