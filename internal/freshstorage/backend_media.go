@@ -8,8 +8,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
+)
+
+var freshMediaObjectKeyPattern = regexp.MustCompile(`^users/([A-Za-z0-9-]{1,128})/([a-f0-9]{32})package freshstorage
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+)
+
 )
 
 type MediaDelivery struct {
