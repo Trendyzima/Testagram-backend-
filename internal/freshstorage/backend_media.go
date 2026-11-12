@@ -48,12 +48,12 @@ func NewBackendMediaClient(baseURL, token string, client *http.Client) (*Backend
 	return &BackendMediaClient{baseURL: baseURL, token: token, client: &copyClient}, nil
 }
 
-func (c *BackendMediaClient) Register(ctx context.Context, r Reservation) error {
+func (c *BackendMediaClient) Register(ctx context.Context, r Reservation, r2Bucket, b2Bucket string) error {
 	if c == nil {
 		return nil
 	}
 	body := map[string]any{
-		"owner_id": r.OwnerID, "key": r.ObjectKey, "visibility": "private",
+		"owner_id": r.OwnerID, "key": r.ObjectKey, "visibility": "private", "r2_bucket": r2Bucket, "b2_bucket": b2Bucket,
 		"content_type": r.ContentType, "size_bytes": r.Bytes, "sha256": r.SHA256,
 	}
 	return c.post(ctx, "/internal/media/fresh/register", body, nil)
