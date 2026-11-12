@@ -88,7 +88,7 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 		writeJSON(w,http.StatusOK,map[string]any{"status":state,"checkout_request_id":checkout,"receipt_number":receipt,"amount_kes":amount,"wallet_amount":walletAmount,"currency":strings.TrimSpace(currency),"created_at":created});return true
 	case "testagram.wallet.mpesa.stk_push":
 		phone,ok:=normalizeMpesaPhone(str("phone"));if !ok{fail("INVALID_PHONE","Enter a valid Kenyan Safaricom number",http.StatusBadRequest);return true}
-		walletCurrency:=strings.ToUpper(str("currency"));if walletCurrency==""{walletCurrency="KES"};if walletCurrency!="KES"&&walletCurrency!="USD"{fail("INVALID_CURRENCY","M-Pesa top-ups support KES or USD wallets",http.StatusBadRequest);return true}
+		walletCurrency:=strings.ToUpper(str("currency"));if walletCurrency==""{walletCurrency="KES"};if walletCurrency!="KES"{fail("INVALID_CURRENCY","M-Pesa top-ups support KES only",http.StatusBadRequest);return true}
 		amountRaw:=input["amount_kes"];var amount float64
 		switch v:=amountRaw.(type){case float64:amount=v;case string:amount,_=strconv.ParseFloat(strings.TrimSpace(v),64)}
 		if amount<10||amount>150000||amount!=mathFloor(amount){fail("INVALID_AMOUNT","M-Pesa top-ups must be whole KES amounts between 10 and 150,000",http.StatusBadRequest);return true}
@@ -98,7 +98,6 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 		var walletStatus,currency string
 		if err:=s.db.QueryRow(ctx,"SELECT status,currency FROM testagram_local.wallets WHERE user_id=$1",userID).Scan(&walletStatus,&currency);err!=nil||walletStatus!="active"||strings.TrimSpace(currency)!=walletCurrency{fail("WALLET_UNAVAILABLE","An active wallet in the selected currency is required",http.StatusConflict);return true}
 		walletAmount:=amount;fxRate:=1.0
-		if walletCurrency=="USD"{fxRate,_=strconv.ParseFloat(strings.TrimSpace(os.Getenv("MPESA_USD_KES_RATE")),64);if fxRate<=0{fail("FX_RATE_UNAVAILABLE","M-Pesa USD/KES rate is not configured",http.StatusServiceUnavailable);return true};walletAmount=mathRound2(amount/fxRate)}
 		reference:="TS"+strings.TrimPrefix(newCallRoom(),"testagram-")[:18]
 		var topupID,requestReference,state string;var checkout *string
 		err:=s.db.QueryRow(ctx,`INSERT INTO testagram_local.wallet_topups(user_id,amount_kes,wallet_amount,wallet_currency,fx_rate,phone_e164,idempotency_key,request_reference)

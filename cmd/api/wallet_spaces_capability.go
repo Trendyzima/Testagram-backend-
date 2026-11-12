@@ -51,7 +51,7 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 	var senderCurrency string
 	if err=tx.QueryRow(ctx,"SELECT currency FROM testagram_local.wallets WHERE user_id=$1",sender).Scan(&senderCurrency);err!=nil{return "",false,err}
 	senderCurrency=strings.TrimSpace(senderCurrency)
-	if senderCurrency!="KES"&&senderCurrency!="USD"{return "",false,pgx.ErrNoRows}
+	if senderCurrency!="KES"{return "",false,pgx.ErrNoRows}
 	_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",recipient,senderCurrency)
 	if err!=nil{return "",false,err}
 	rows,err:=tx.Query(ctx,`SELECT w.user_id::text,w.balance::text,w.currency,w.status
@@ -109,12 +109,13 @@ func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Requ
 	fail:=func(code,msg string,status int){writeJSON(w,status,errorBody(code,msg,requestID))}
 	switch name {
 	case "testagram.wallet.balance":
-		requestedCurrency:=strings.ToUpper(str("currency"));if requestedCurrency==""{requestedCurrency="KES"};if requestedCurrency!="KES"&&requestedCurrency!="USD"{fail("INVALID_CURRENCY","Wallet currency must be KES or USD",http.StatusBadRequest);return true};_,err=s.db.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",userID,requestedCurrency)
+		requestedCurrency:=strings.ToUpper(str("currency"));if requestedCurrency==""{requestedCurrency="KES"};if requestedCurrency!="KES"{fail("INVALID_CURRENCY","Testagram Wallet supports KES only at launch",http.StatusBadRequest);return true};_,err=s.db.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",userID,requestedCurrency)
 		if err!=nil{fail("WALLET_READ_FAILED","Could not load wallet",http.StatusServiceUnavailable);return true}
 		var balance,walletCurrency,state string
 		err=s.db.QueryRow(ctx,"SELECT balance::text,currency,status FROM testagram_local.wallets WHERE user_id=$1",userID).Scan(&balance,&walletCurrency,&state)
 		if err!=nil{fail("WALLET_READ_FAILED","Could not load wallet",http.StatusServiceUnavailable);return true}
-		writeJSON(w,http.StatusOK,map[string]any{"id":userID,"user_id":userID,"balance":balance,"currency":strings.TrimSpace(walletCurrency),"status":state});return true
+		if strings.TrimSpace(walletCurrency)!="KES"{fail("WALLET_CURRENCY_UNSUPPORTED","This wallet needs a supported KES migration before it can be used",http.StatusConflict);return true}
+		writeJSON(w,http.StatusOK,map[string]any{"id":userID,"user_id":userID,"balance":balance,"currency":"KES","status":state});return true
 	case "testagram.wallet.transactions.list":
 		limit:=50;if v,ok:=in["limit"].(float64);ok{limit=int(v)};if limit<1||limit>100{fail("INVALID_LIMIT","Limit must be between 1 and 100",http.StatusBadRequest);return true}
 		rows,e:=s.db.Query(ctx,`SELECT t.id::text,t.kind,t.amount::text,t.currency,t.created_at,
