@@ -434,8 +434,8 @@ func verifyReplica(ctx context.Context, provider *virtualstorage.S3Provider, buc
 	return err == nil && hash == record.SHA256
 }
 
-// DownloadURL returns a one-hour private media URL only after Appwrite confirms ownership
-// and the media object is marked ready. All new uploads are private by default.
+// DownloadURL returns a short-lived private delivery URL only after Appwrite confirms ownership
+// and the media object and its required delivery origin pass integrity checks.
 func (s *Service) DownloadURL(ctx context.Context, ownerID, objectID string) (string, error) {
 	delivery, err := s.DownloadAuthorization(ctx, ownerID, objectID)
 	if err != nil { return "", err }
@@ -490,6 +490,12 @@ func (s *Service) DownloadAuthorizationForViewer(ctx context.Context, viewerID, 
 		if repairErr := s.RepairObject(ctx, objectID); repairErr == nil && verifyReplica(ctx, s.r2, s.r2Bucket, record) {
 			return s.backendMedia.Issue(ctx, viewerID, ownerID, key)
 		}
+	}
+	// A new owner-bound Fresh asset configured for CDN delivery must never
+	// fall back to a direct provider URL. If R2 is unhealthy or Backend refuses
+	// the assertion, fail closed; the feed must not bypass the CDN policy.
+	if s.cdnBaseURL != "" && freshMediaObjectKeyPattern.MatchString(key) {
+		return MediaDelivery{}, fmt.Errorf("Fresh CDN origin is not verified or Backend authorization is unavailable: %w", ErrNotReady)
 	}
 	if b2Ready {
 		url, signErr := s.b2.PresignGet(ctx, s.b2Bucket, key, 5*time.Minute)
