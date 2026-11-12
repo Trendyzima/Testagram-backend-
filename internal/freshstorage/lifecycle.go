@@ -299,7 +299,7 @@ func (s *Service) registerCanonicalMedia(ctx context.Context, reservation Reserv
 	if !validSHA256(reservation.SHA256) {
 		return errors.New("cannot register Fresh media without a verified SHA-256 checksum")
 	}
-	if err := s.backendMedia.Register(ctx, reservation); err != nil {
+	if err := s.backendMedia.Register(ctx, reservation, s.r2Bucket, s.b2Bucket); err != nil {
 		return fmt.Errorf("Appwrite media is protected but Backend authorization registration is pending: %w", err)
 	}
 	return nil
