@@ -154,6 +154,12 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 	if err!=nil{writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Top-up record unavailable; retry callback"});return}
 	if state=="settled"{writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Already settled"});return}
 	if cb.ResultCode!=0{
+		// The callback endpoint is public. Verify the failure with Safaricom's
+		// STK query API before allowing an unauthenticated request to fail a
+		// customer's pending top-up.
+		if verifyErr:=verifyMpesaResult(ctx,checkout,cb.ResultCode);verifyErr!=nil{
+			writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Provider failure not yet verified; retry callback"});return
+		}
 		tx,e:=s.db.Begin(ctx);if e==nil{_,e=tx.Exec(ctx,"UPDATE testagram_local.wallet_topups SET status='failed',result_code=$2,result_description=$3,callback_data=$4::jsonb,updated_at=now() WHERE id=$1 AND status='pending'",topupID,cb.ResultCode,cb.ResultDesc,string(rawBody));if e==nil{_,e=tx.Exec(ctx,"UPDATE testagram_local.wallet_transactions SET status='failed',provider_status=$2 WHERE topup_id=$1",topupID,cb.ResultDesc)};if e==nil{e=tx.Commit(ctx)};_ = tx.Rollback(context.Background())}
 		if e!=nil{writeJSON(w,http.StatusInternalServerError,map[string]any{"ResultCode":1,"ResultDesc":"Failed payment update; retry callback"});return}
 		writeJSON(w,http.StatusOK,map[string]any{"ResultCode":0,"ResultDesc":"Accepted"});return
@@ -185,16 +191,46 @@ func (s *service) mpesaCallback(w http.ResponseWriter,r *http.Request) {
 }
 
 
-func verifyMpesaSuccess(ctx context.Context,checkout string) error {
-	base,shortcode,passkey,key,secret,_,err:=mpesaConfiguration();if err!=nil{return err}
-	access,err:=mpesaAccessToken(ctx,base,key,secret);if err!=nil{return err}
-	timestamp:=mpesaTimestamp();password:=base64.StdEncoding.EncodeToString([]byte(shortcode+passkey+timestamp))
-	body,_:=json.Marshal(map[string]string{"BusinessShortCode":shortcode,"Password":password,"Timestamp":timestamp,"CheckoutRequestID":checkout})
-	req,err:=http.NewRequestWithContext(ctx,http.MethodPost,base+"/mpesa/stkpushquery/v1/query",strings.NewReader(string(body)));if err!=nil{return err}
-	req.Header.Set("Authorization","Bearer "+access);req.Header.Set("Content-Type","application/json")
-	client:=&http.Client{Timeout:8*time.Second,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}
-	resp,err:=client.Do(req);if err!=nil{return err};defer resp.Body.Close()
-	raw,err:=io.ReadAll(io.LimitReader(resp.Body,32<<10));if err!=nil{return err}
-	var result map[string]any;if json.Unmarshal(raw,&result)!=nil||resp.StatusCode<200||resp.StatusCode>=300||fmt.Sprint(result["ResponseCode"])!="0"||fmt.Sprint(result["ResultCode"])!="0"{return errors.New("Safaricom did not confirm successful payment")}
+func mpesaResultCodeMatches(result map[string]any, expected int) bool {
+	return fmt.Sprint(result["ResponseCode"]) == "0" &&
+		fmt.Sprint(result["ResultCode"]) == strconv.Itoa(expected)
+}
+
+func verifyMpesaSuccess(ctx context.Context, checkout string) error {
+	return verifyMpesaResult(ctx, checkout, 0)
+}
+
+func verifyMpesaResult(ctx context.Context, checkout string, expectedResultCode int) error {
+	base, shortcode, passkey, key, secret, _, err := mpesaConfiguration()
+	if err != nil { return err }
+	access, err := mpesaAccessToken(ctx, base, key, secret)
+	if err != nil { return err }
+	timestamp := mpesaTimestamp()
+	password := base64.StdEncoding.EncodeToString([]byte(shortcode + passkey + timestamp))
+	body, _ := json.Marshal(map[string]string{
+		"BusinessShortCode": shortcode,
+		"Password": password,
+		"Timestamp": timestamp,
+		"CheckoutRequestID": checkout,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		base+"/mpesa/stkpushquery/v1/query", bytes.NewReader(body))
+	if err != nil { return err }
+	req.Header.Set("Authorization", "Bearer "+access)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{
+		Timeout: 8*time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
+	if err != nil { return err }
+	var result map[string]any
+	if json.Unmarshal(raw, &result) != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 ||
+		!mpesaResultCodeMatches(result, expectedResultCode) {
+		return errors.New("Safaricom result did not match the callback")
+	}
 	return nil
 }
