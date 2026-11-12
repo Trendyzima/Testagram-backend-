@@ -32,7 +32,11 @@ type privateMediaDownloadRequest struct {
 	Key string `json:"key"`
 }
 
-type cdnMediaDownloadRequest struct {\n\tKey string `json:"key"`\n}\n\ntype mediaCompleteRequest struct {
+type cdnMediaDownloadRequest struct {
+	Key string `json:"key"`
+}
+
+type mediaCompleteRequest struct {
 	Key            string `json:"key"`
 	Visibility     string `json:"visibility"`
 	ContentType    string `json:"content_type"`
