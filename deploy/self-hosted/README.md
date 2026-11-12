@@ -73,6 +73,18 @@ requires an explicit confirmation phrase, applies migrations 022 and 024, and ve
 and checksums in the same database. Never edit an already-applied migration;
 add a new forward-only migration instead.
 
+## Testagram Wallet and M-Pesa
+
+The native wallet is KES-only at launch. It supports internal wallet transfers and Safaricom STK Push deposits. A top-up is credited only after the public callback is checked against Safaricom's STK query API and the Backend commits the wallet ledger entry.
+
+For sandbox testing, set the following in the .env file:
+
+- MPESA_ENV=sandbox
+- MPESA_SHORTCODE, MPESA_PASSKEY, MPESA_CONSUMER_KEY and MPESA_CONSUMER_SECRET from the Safaricom Daraja sandbox application.
+- MPESA_CALLBACK_URL=https://<your-api-domain>/api/wallet/mpesa/callback
+
+The callback URL must be public HTTPS and registered with the matching Daraja application. The Compose service passes these values to the API container; never commit real credentials or put them in Flutter configuration. Switch MPESA_ENV=live only after the business shortcode, production credentials, callback registration, end-to-end settlement test and operational alerting have been verified. If credentials are absent or incomplete, the Backend fails closed with MPESA_NOT_CONFIGURED; it does not credit the wallet.
+
 ## Authentication and authorization
 
 - Flutter obtains an Appwrite session and sends its JWT to the Backend.

@@ -144,6 +144,12 @@ services:
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
       VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-false}
+      MPESA_ENV: ${MPESA_ENV:-sandbox}
+      MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
+      MPESA_PASSKEY: ${MPESA_PASSKEY:-}
+      MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
+      MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
+      MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}
     depends_on:
       postgres:
         condition: service_healthy
