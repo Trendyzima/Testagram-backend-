@@ -58,16 +58,9 @@ func FromEnv() (ProviderSet, error) {
 	}
 	if out.PrimaryProvider == "" { out.PrimaryProvider = "b2" }
 	if out.PrimaryProvider != "b2" && out.PrimaryProvider != "r2" { return ProviderSet{}, errors.New("FRESH_MEDIA_PRIMARY_PROVIDER must be b2 or r2") }
-	if (out.MediaCDNBaseURL == "") != (out.MediaCDNSigningSecret == "") {
-		return ProviderSet{}, errors.New("Cloudflare media CDN base URL and signing secret must be configured together")
-	}
 	if out.MediaCDNBaseURL != "" {
-		if err := validateMediaCDNBaseURL(out.MediaCDNBaseURL); err != nil {
-			return ProviderSet{}, err
-		}
-		if len(out.MediaCDNSigningSecret) < 32 {
-			return ProviderSet{}, errors.New("Cloudflare media CDN signing secret must be at least 32 characters")
-		}
+		if err := validateMediaCDNBaseURL(out.MediaCDNBaseURL); err != nil { return ProviderSet{}, err }
+		if out.BackendAPIBaseURL == "" { return ProviderSet{}, errors.New("Cloudflare media CDN requires FRESH_MEDIA_BACKEND_URL and FRESH_MEDIA_INTERNAL_TOKEN") }
 	}
 	return out, nil
 }
