@@ -32,7 +32,7 @@ type privateMediaDownloadRequest struct {
 	Key string `json:"key"`
 }
 
-type mediaCompleteRequest struct {
+type cdnMediaDownloadRequest struct {\n\tKey string `json:"key"`\n}\n\ntype mediaCompleteRequest struct {
 	Key            string `json:"key"`
 	Visibility     string `json:"visibility"`
 	ContentType    string `json:"content_type"`
@@ -353,6 +353,25 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// mediaCDNDownloadURL issues a short-lived assertion for one ready private asset.
+func (s *service) mediaCDNDownloadURL(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.cors(w, r) { writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id)); return }
+	if s.cdnMediaAssertions == nil || s.cdnMediaBaseURL == "" { writeJSON(w, http.StatusServiceUnavailable, errorBody("CDN_MEDIA_NOT_CONFIGURED", "CDN media delivery is not configured", id)); return }
+	if s.db == nil { writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id)); return }
+	userID, status, err := s.authenticatedMediaUser(r)
+	if err != nil { code,message:="AUTH_REQUIRED","A valid authenticated session is required";if status>=500{code,message="AUTH_BACKEND_UNAVAILABLE","Authentication service is temporarily unavailable"};writeJSON(w,status,errorBody(code,message,id));return }
+	var body cdnMediaDownloadRequest
+	if err:=decodeMediaJSON(w,r,&body);err!=nil||strings.TrimSpace(body.Key)==""{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_MEDIA_REQUEST","A valid media key is required",id));return}
+	var visibility,assetStatus string
+	err=s.db.QueryRow(r.Context(),"select visibility, status from testagram_media.assets where object_key=$1 and owner_id=$2",body.Key,userID).Scan(&visibility,&assetStatus)
+	if err!=nil||visibility!="private"||assetStatus!="ready"{writeJSON(w,http.StatusNotFound,errorBody("MEDIA_NOT_FOUND","Private media was not found for this account",id));return}
+	assertion,expiresAt,err:=s.cdnMediaAssertions.Issue(body.Key,userID,time.Now())
+	if err!=nil{writeJSON(w,http.StatusForbidden,errorBody("MEDIA_ACCESS_DENIED","This private media object cannot be authorized",id));return}
+	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"url":s.cdnMediaBaseURL+"/v1/"+body.Key,"authorization":"Bearer "+assertion,"expires_at":expiresAt,"expires_in_seconds":int64(time.Until(expiresAt).Seconds()),"visibility":"private"},"error":nil,"request_id":id})
 }
 
 func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request) {
