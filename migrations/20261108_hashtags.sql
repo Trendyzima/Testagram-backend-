@@ -2,7 +2,7 @@
 BEGIN;
 CREATE TABLE IF NOT EXISTS testagram_local.hashtags (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- tag TEXT NOT NULL UNIQUE CHECK (tag ~ '^[a-z0-9][a-z0-9_-]{0,63}),
+ tag TEXT NOT NULL UNIQUE CHECK (tag ~ '^[a-z0-9][a-z0-9_-]{0,63}
  usage_count BIGINT NOT NULL DEFAULT 0 CHECK (usage_count>=0),
  follower_count BIGINT NOT NULL DEFAULT 0 CHECK (follower_count>=0),
  federated_post_count BIGINT NOT NULL DEFAULT 0 CHECK (federated_post_count>=0),
