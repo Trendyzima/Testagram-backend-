@@ -144,6 +144,7 @@ func NewService(store Store, providers ProviderSet, maxObjectBytes int64) (*Serv
 	if primaryProvider == "" { primaryProvider = "b2" }
 	if primaryProvider != "b2" && primaryProvider != "r2" { return nil, errors.New("primary media provider must be b2 or r2") }
 	return &Service{store: store, b2: b2, r2: r2, b2Bucket: providers.B2Bucket, r2Bucket: providers.R2Bucket, maxObjectBytes: maxObjectBytes, uploadTTL: time.Hour, reservationTTL: 2 * time.Hour, cdnBaseURL: providers.MediaCDNBaseURL, archive: archive, archiveBucket: providers.ArchiveBucket, primaryProvider: primaryProvider, backendMedia: backendMedia}, nil
+	if appwriteStore, ok := store.(*AppwriteStore); ok { appwriteStore.backendMedia = backendMedia }
 }
 
 type UploadReservation struct {
