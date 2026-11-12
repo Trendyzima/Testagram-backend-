@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 const maxAvatarImageBytes int64 = 2 << 20
