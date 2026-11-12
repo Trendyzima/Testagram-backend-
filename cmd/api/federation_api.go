@@ -158,12 +158,8 @@ func (s *service) federationPreference(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PREFERENCE_READ_FAILED", "Account privacy settings could not be verified", requestIDValue))
 			return
 		}
-		if protected {
-			writeJSON(w, http.StatusConflict, errorBody("FEDERATION_REQUIRES_PUBLIC_ACCOUNT", "Protected accounts cannot enable public federation", requestIDValue))
-			return
-		}
-		if !discoverable {
-			writeJSON(w, http.StatusConflict, errorBody("FEDERATION_REQUIRES_DISCOVERABLE_ACCOUNT", "Enable username discovery before enabling federation", requestIDValue))
+		if code, message := federationPreferenceConflict(discoverable, protected); code != "" {
+			writeJSON(w, http.StatusConflict, errorBody(code, message, requestIDValue))
 			return
 		}
 	}
@@ -174,6 +170,16 @@ func (s *service) federationPreference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]bool{"enabled": enabled}, "error": nil, "request_id": requestIDValue})
+}
+
+func federationPreferenceConflict(discoverable, protected bool) (string, string) {
+	if protected {
+		return "FEDERATION_REQUIRES_PUBLIC_ACCOUNT", "Protected accounts cannot enable public federation"
+	}
+	if !discoverable {
+		return "FEDERATION_REQUIRES_DISCOVERABLE_ACCOUNT", "Enable username discovery before enabling federation"
+	}
+	return "", ""
 }
 
 var localAccountUsernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{3,30}$`)
