@@ -183,7 +183,8 @@ jobs:
             migrations/20261112_instabox_avatar_storage.sql \
             migrations/20261112_federation_remote_follows.sql \
             migrations/20261111_media_replica_ledger.sql \
-            migrations/20261112_media_replication_outbox.sql; do
+            migrations/20261112_media_replication_outbox.sql \
+            migrations/20261112_fresh_media_owner_keys.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify durable media replication queue schema
