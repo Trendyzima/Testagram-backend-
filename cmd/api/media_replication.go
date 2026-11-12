@@ -67,6 +67,18 @@ func replicaBucket(prefix, visibility, fallback string) string {
 	return strings.TrimSpace(os.Getenv(fallback))
 }
 
+func validateMediaBucketIsolation(provider string, buckets map[string]string) error {
+	privateBucket := strings.TrimSpace(buckets["media-private"])
+	publicBucket := strings.TrimSpace(buckets["media-public"])
+	if privateBucket == "" || publicBucket == "" {
+		return fmt.Errorf("%s private and public media buckets must both be configured", provider)
+	}
+	if privateBucket == publicBucket {
+		return fmt.Errorf("%s private and public media buckets must be different physical buckets", provider)
+	}
+	return nil
+}
+
 func configureMediaReplicator(primary *virtualstorage.S3Provider) (*virtualstorage.Replicator, error) {
 	if primary == nil {
 		return nil, errors.New("Instabox VPS primary provider is not configured")
@@ -91,9 +103,13 @@ func configureMediaReplicator(primary *virtualstorage.S3Provider) (*virtualstora
 		"media-private": replicaBucket("B2_S3", "private", "B2_S3_BUCKET"),
 		"media-public": replicaBucket("B2_S3", "public", "B2_S3_BUCKET"),
 	}
-	for _, buckets := range []map[string]string{primaryBuckets, r2Buckets, b2Buckets} {
-		if buckets["media-private"] == "" || buckets["media-public"] == "" {
-			return nil, errors.New("private and public buckets must be configured for all three media providers")
+	for provider, buckets := range map[string]map[string]string{
+		"instabox-vps": primaryBuckets,
+		"cloudflare-r2": r2Buckets,
+		"backblaze-b2": b2Buckets,
+	} {
+		if err := validateMediaBucketIsolation(provider, buckets); err != nil {
+			return nil, err
 		}
 	}
 	return virtualstorage.NewReplicator("instabox-vps", primary, primaryBuckets, []virtualstorage.ReplicaTarget{

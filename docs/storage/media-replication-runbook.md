@@ -23,8 +23,9 @@ To enable the worker, configure:
 - `VIRTUAL_STORAGE_ENABLED=true`
 - `MEDIA_REPLICATION_ENABLED=true`
 - The existing `MEDIA_S3_*` primary Instabox VPS endpoint and credentials
-- Independent `CLOUDFLARE_R2_*` endpoint, access key, secret and private/public buckets
-- Independent `B2_S3_*` endpoint, access key, secret and private/public buckets
+- Independent `CLOUDFLARE_R2_*` endpoint, access key, secret, `CLOUDFLARE_R2_PRIVATE_BUCKET` and `CLOUDFLARE_R2_PUBLIC_BUCKET`
+- Independent `B2_S3_*` endpoint, access key, secret, `B2_S3_PRIVATE_BUCKET` and `B2_S3_PUBLIC_BUCKET`
+- Different physical private and public buckets at each provider. The worker refuses configuration that maps both namespaces to one bucket.
 
 The API refuses to start with the worker enabled if the primary provider or either replica provider is incomplete. Do not reuse credentials between providers. Use separate private and public buckets at each provider.
 
