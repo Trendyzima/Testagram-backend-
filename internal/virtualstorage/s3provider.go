@@ -152,6 +152,10 @@ func (p *S3Provider) PresignGet(ctx context.Context, bucket, key string, ttl tim
 	return p.presign(ctx, http.MethodGet, bucket, key, url.Values{}, nil, ttl)
 }
 
+func (p *S3Provider) PresignHead(ctx context.Context, bucket, key string, ttl time.Duration) (string, error) {
+	return p.presign(ctx, http.MethodHead, bucket, key, url.Values{}, nil, ttl)
+}
+
 // CopyFrom streams a bounded object between two S3-compatible providers without
 // buffering the media in memory. It hashes the source stream and independently
 // reads back and hashes the destination; ETags are never treated as checksums.
