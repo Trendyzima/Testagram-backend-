@@ -33,13 +33,13 @@ func TestHashtagEndpointsFailClosedWithoutDatabase(t *testing.T) {
 
 	timeline := httptest.NewRecorder()
 	handler.ServeHTTP(timeline, httptest.NewRequest(http.MethodGet, "/api/hashtags/testagram", nil))
-	if timeline.Code != http.StatusServiceUnavailable || !strings.Contains(timeline.Body.String(), "HASHTAG_STORE_UNAVAILABLE") {
+	if timeline.Code != http.StatusServiceUnavailable || !strings.Contains(timeline.Body.String(), "SOCIAL_DATABASE_UNAVAILABLE") {
 		t.Fatalf("hashtag timeline without DB: status=%d body=%s", timeline.Code, timeline.Body.String())
 	}
 
 	trending := httptest.NewRecorder()
 	handler.ServeHTTP(trending, httptest.NewRequest(http.MethodGet, "/api/hashtags/trending", nil))
-	if trending.Code != http.StatusServiceUnavailable || !strings.Contains(trending.Body.String(), "HASHTAG_STORE_UNAVAILABLE") {
+	if trending.Code != http.StatusServiceUnavailable || !strings.Contains(trending.Body.String(), "SOCIAL_DATABASE_UNAVAILABLE") {
 		t.Fatalf("trending without DB: status=%d body=%s", trending.Code, trending.Body.String())
 	}
 }
