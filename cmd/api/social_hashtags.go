@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -145,8 +147,8 @@ LIMIT $5`, nullableUUID(viewerID), pattern, before, beforeID, limit+1)
 // socialTrendingHashtags ranks public hashtags by distinct-post volume over
 // the last seven days. This is a safe baseline until Algorithm owns topic ranking.
 func (s *service) socialTrendingHashtags(w http.ResponseWriter, r *http.Request) {
-	requestID := requestID(r)
-	if _, _, ok := s.socialOptionalReadAuth(w, r); !ok {
+	_, requestID, ok := s.socialOptionalReadAuth(w, r)
+	if !ok {
 		return
 	}
 	if s.db == nil {
@@ -176,28 +178,61 @@ WHERE p.deleted_at IS NULL
   AND p.created_at >= now()-interval '7 days'
 GROUP BY lower(parts[1])
 ORDER BY count(DISTINCT p.id) DESC,max(p.created_at) DESC,lower(parts[1])
-LIMIT $1`, limit)
+LIMIT 200`)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be loaded", requestID))
 		return
 	}
 	defer rows.Close()
-	items := make([]map[string]any, 0, limit)
+	topicCandidates := make([]algorithmclient.TopicCandidate, 0, 200)
+	fallbackItems := make([]map[string]any, 0, limit)
 	for rows.Next() {
 		var tag string
 		var count int64
 		var lastUsed time.Time
-		if err := rows.Scan(&tag,&count,&lastUsed); err != nil {
+		if err := rows.Scan(&tag, &count, &lastUsed); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be decoded", requestID))
 			return
 		}
-		items = append(items,map[string]any{"tag":tag,"posts_count":count,"last_used_at":lastUsed.UTC().Format(time.RFC3339Nano)})
+		// No user-topic affinity graph is wired yet; keep affinity neutral until
+		// Backend owns a verified topic-follow/interest signal.
+		topicCandidates = append(topicCandidates, algorithmclient.TopicCandidate{
+			Tag: tag, PostsCount: count, LastUsedAt: lastUsed, InterestAffinity: 0,
+		})
+		if len(fallbackItems) < limit {
+			fallbackItems = append(fallbackItems, map[string]any{
+				"tag": tag, "posts_count": count, "last_used_at": lastUsed.UTC().Format(time.RFC3339Nano),
+			})
+		}
 	}
 	if err := rows.Err(); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be loaded", requestID))
 		return
 	}
-	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"items":items,"window":"7d","ranking":"recent_post_volume"},"error":nil,"request_id":requestID})
+	items := fallbackItems
+	rankingMode := "recent_post_volume"
+	if s.algorithm != nil && len(topicCandidates) > 0 {
+		s.algorithmRequests.Add(1)
+		ranked, rankErr := s.algorithm.RankTopics(ctx, algorithmclient.TopicRequest{
+			Now: time.Now().UTC(), Candidates: topicCandidates, Limit: limit,
+		})
+		if rankErr == nil && len(ranked.Items) > 0 {
+			items = make([]map[string]any, 0, len(ranked.Items))
+			for _, topic := range ranked.Items {
+				items = append(items, map[string]any{
+					"tag": topic.Tag, "posts_count": topic.PostsCount, "score": topic.Score, "reasons": topic.Reasons,
+				})
+			}
+			rankingMode = "algorithm_topic_ranker_v1"
+		} else {
+			s.algorithmFailures.Add(1)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{"items": items, "window": "7d", "ranking": rankingMode},
+		"error": nil, "request_id": requestID,
+	})
 }
 
 func nullableUUID(value string) any {

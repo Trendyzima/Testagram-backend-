@@ -128,6 +128,83 @@ func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
 	}
 }
 
+func TestRankTopicsSendsAuthenticatedBoundedContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/topics/rank" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("s", 32) {
+			t.Fatal("missing service authorization")
+		}
+		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
+			t.Fatal("missing versioned API contract headers")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"tag":"testagram","postsCount":12,"score":0.85,"reasons":["recent"]}]}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.RankTopics(context.Background(), TopicRequest{
+		Now: time.Now().UTC(),
+		Limit: 1,
+		Candidates: []TopicCandidate{{
+			Tag: "Testagram", PostsCount: 12, LastUsedAt: time.Now().UTC(), InterestAffinity: 0.4,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Tag != "testagram" || got.Items[0].PostsCount != 12 {
+		t.Fatalf("unexpected topic ranking response: %#v", got)
+	}
+}
+
+func TestRankTopicsRejectsInvalidCandidateAndUntrustedResponse(t *testing.T) {
+	for name, input := range map[string]TopicRequest{
+		"duplicate normalized tags": {
+			Limit: 2,
+			Candidates: []TopicCandidate{
+				{Tag: "Testagram", PostsCount: 1, LastUsedAt: time.Now()},
+				{Tag: "testagram", PostsCount: 2, LastUsedAt: time.Now()},
+			},
+		},
+		"invalid tag": {
+			Limit: 1,
+			Candidates: []TopicCandidate{{Tag: "bad tag", PostsCount: 1, LastUsedAt: time.Now()}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client, err := New("http://127.0.0.1:8092", strings.Repeat("s", 32), time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.RankTopics(context.Background(), input); err == nil {
+				t.Fatal("expected invalid candidate to be rejected")
+			}
+		})
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"tag":"not-supplied","postsCount":1,"score":0.5,"reasons":[]}]}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.RankTopics(context.Background(), TopicRequest{
+		Limit: 1,
+		Candidates: []TopicCandidate{{Tag: "testagram", PostsCount: 1, LastUsedAt: time.Now()}},
+	})
+	if err == nil {
+		t.Fatal("expected unsupplied topic from ranker to be rejected")
+	}
+}
+
 func TestReadyChecksAlgorithmServiceHealth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/readyz" || r.Method != http.MethodGet {

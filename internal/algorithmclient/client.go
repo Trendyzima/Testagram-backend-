@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -55,6 +56,32 @@ type RankedItem struct {
 type Response struct {
 	Items []RankedItem `json:"items"`
 }
+
+type TopicCandidate struct {
+	Tag              string    `json:"tag"`
+	PostsCount       int64     `json:"postsCount"`
+	LastUsedAt       time.Time `json:"lastUsedAt"`
+	InterestAffinity float64   `json:"interestAffinity"`
+}
+
+type TopicRequest struct {
+	Now        time.Time        `json:"now"`
+	Candidates []TopicCandidate `json:"candidates"`
+	Limit      int              `json:"limit"`
+}
+
+type RankedTopic struct {
+	Tag        string   `json:"tag"`
+	PostsCount int64    `json:"postsCount"`
+	Score      float64  `json:"score"`
+	Reasons    []string `json:"reasons"`
+}
+
+type TopicsResponse struct {
+	Items []RankedTopic `json:"items"`
+}
+
+var topicTagPattern = regexp.MustCompile("^[\\p{L}\\p{N}_]{1,64}$")
 
 type Client struct {
 	endpoint string
@@ -167,6 +194,90 @@ func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 		for _, reason := range item.Reasons {
 			if len(reason) == 0 || len(reason) > 64 {
 				return Response{}, errors.New("algorithm service returned an invalid ranking reason")
+			}
+		}
+	}
+	return output, nil
+}
+
+
+// RankTopics orders a bounded set of public hashtag candidates. Backend remains
+// responsible for candidate discovery, visibility, blocks, mutes and final output.
+func (c *Client) RankTopics(ctx context.Context, input TopicRequest) (TopicsResponse, error) {
+	if c == nil {
+		return TopicsResponse{}, errors.New("algorithm client is not configured")
+	}
+	if len(input.Candidates) == 0 || len(input.Candidates) > 200 {
+		return TopicsResponse{}, errors.New("algorithm topic candidate count must be between 1 and 200")
+	}
+	if input.Limit < 1 || input.Limit > 50 {
+		return TopicsResponse{}, errors.New("algorithm topic result limit must be between 1 and 50")
+	}
+	input.Candidates = append([]TopicCandidate(nil), input.Candidates...)
+	allowed := make(map[string]int64, len(input.Candidates))
+	for i := range input.Candidates {
+		candidate := &input.Candidates[i]
+		candidate.Tag = strings.ToLower(strings.TrimSpace(candidate.Tag))
+		if !topicTagPattern.MatchString(candidate.Tag) || candidate.PostsCount < 1 ||
+			candidate.PostsCount > 1_000_000_000 || candidate.LastUsedAt.IsZero() ||
+			math.IsNaN(candidate.InterestAffinity) || math.IsInf(candidate.InterestAffinity, 0) ||
+			candidate.InterestAffinity < 0 || candidate.InterestAffinity > 1 {
+			return TopicsResponse{}, errors.New("algorithm request contains an invalid topic candidate")
+		}
+		if _, duplicate := allowed[candidate.Tag]; duplicate {
+			return TopicsResponse{}, errors.New("algorithm request contains a duplicate topic tag")
+		}
+		allowed[candidate.Tag] = candidate.PostsCount
+	}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return TopicsResponse{}, fmt.Errorf("encode topic ranking request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+"/v1/topics/rank", bytes.NewReader(payload))
+	if err != nil {
+		return TopicsResponse{}, fmt.Errorf("create topic ranking request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Testagram-API-Version", "1")
+	req.Header.Set("X-Request-ID", newRequestID())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return TopicsResponse{}, fmt.Errorf("algorithm topic ranking request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return TopicsResponse{}, fmt.Errorf("algorithm topic ranker returned HTTP %d", resp.StatusCode)
+	}
+	var output TopicsResponse
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 256<<10))
+	if err := decoder.Decode(&output); err != nil {
+		return TopicsResponse{}, fmt.Errorf("decode topic ranking response: %w", err)
+	}
+	if len(output.Items) > input.Limit {
+		return TopicsResponse{}, errors.New("algorithm topic ranker exceeded requested result limit")
+	}
+	seen := make(map[string]struct{}, len(output.Items))
+	for _, item := range output.Items {
+		count, supplied := allowed[item.Tag]
+		if !supplied || item.PostsCount != count || math.IsNaN(item.Score) ||
+			math.IsInf(item.Score, 0) || item.Score < 0 || item.Score > 1 {
+			return TopicsResponse{}, errors.New("algorithm topic ranker returned an invalid or unsupplied topic")
+		}
+		if _, duplicate := seen[item.Tag]; duplicate {
+			return TopicsResponse{}, errors.New("algorithm topic ranker returned a duplicate topic")
+		}
+		seen[item.Tag] = struct{}{}
+		if len(item.Reasons) > 3 {
+			return TopicsResponse{}, errors.New("algorithm topic ranker returned too many reasons")
+		}
+		for _, reason := range item.Reasons {
+			switch reason {
+			case "recent", "high-public-volume", "matches-viewer-interests":
+			default:
+				return TopicsResponse{}, errors.New("algorithm topic ranker returned an unknown reason")
 			}
 		}
 	}
