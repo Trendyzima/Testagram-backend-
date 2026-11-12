@@ -93,3 +93,28 @@ func TestFederationPreferenceRejectsProtectedAndUndiscoverableAccounts(t *testin
 		t.Fatalf("eligible public account unexpectedly blocked with %q", code)
 	}
 }
+
+func TestValidFederationRemoteURI(t *testing.T) {
+	valid := []string{
+		"https://remote.example/users/alice",
+		"https://remote.example/activities/follow-1",
+	}
+	for _, value := range valid {
+		if !validFederationRemoteURI(value) {
+			t.Errorf("valid HTTPS federation URI rejected: %q", value)
+		}
+	}
+	invalid := []string{
+		"http://remote.example/users/alice",
+		"https://user:pass@remote.example/users/alice",
+		"https://remote.example/users/alice?token=secret",
+		"https://remote.example/users/alice#fragment",
+		"https://",
+		"",
+	}
+	for _, value := range invalid {
+		if validFederationRemoteURI(value) {
+			t.Errorf("invalid federation URI accepted: %q", value)
+		}
+	}
+}
