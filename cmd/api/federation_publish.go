@@ -38,6 +38,7 @@ func buildFederationNote(baseURL, postID, handle, displayName, content string, c
 	objectURI := baseURL + "/objects/" + postID
 	safeContent := strings.ReplaceAll(html.EscapeString(content), "\n", "<br />")
 	note := map[string]any{
+		"@context":    "https://www.w3.org/ns/activitystreams",
 		"id":          objectURI,
 		"type":        "Note",
 		"attributedTo": actorURI,
@@ -102,6 +103,10 @@ func (s *service) enqueueFederationCreateTx(ctx context.Context, tx pgx.Tx, user
 
 func (s *service) federationObject(w http.ResponseWriter, r *http.Request) {
 	if !s.federationInternalAuth(w, r) {
+		return
+	}
+	if s.federationOutbox == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PUBLISHER_UNAVAILABLE", "The transactional Federation publisher is not configured", requestID(r)))
 		return
 	}
 	postID := strings.ToLower(strings.TrimSpace(r.PathValue("post_id")))
