@@ -18,14 +18,14 @@ func TestFreshMediaBridgeRejectsOwnerAndMetadataMismatch(t *testing.T) {
 		SHA256:strings.Repeat("a",64),
 	}
 	if !validFreshMediaBridgeRequest(valid) { t.Fatal("valid Appwrite media metadata rejected") }
-	cases:=[]freshMediaBridgeRequest{
-		{OwnerID:"other",Key:valid.Key,Visibility:"private",ContentType:valid.ContentType,SizeBytes:valid.SizeBytes,SHA256:valid.SHA256},
-		{OwnerID:valid.OwnerID,Key:"users/user_123.test/not-a-digest",Visibility:"private",ContentType:valid.ContentType,SizeBytes:valid.SizeBytes,SHA256:valid.SHA256},
-		{OwnerID:valid.OwnerID,Key:valid.Key,Visibility:"public",ContentType:valid.ContentType,SizeBytes:valid.SizeBytes,SHA256:valid.SHA256},
-		{OwnerID:valid.OwnerID,Key:valid.Key,Visibility:"private",ContentType:"text/html",SizeBytes:valid.SizeBytes,SHA256:valid.SHA256},
-		{OwnerID:valid.OwnerID,Key:valid.Key,Visibility:"private",ContentType:valid.ContentType,SizeBytes:501<<20,SHA256:valid.SHA256},
-		{OwnerID:valid.OwnerID,Key:valid.Key,Visibility:"private",ContentType:valid.ContentType,SizeBytes:valid.SizeBytes,SHA256:"bad"},
-	}
+	cases:=[]freshMediaBridgeRequest{}
+	candidate:=valid; candidate.OwnerID="other"; cases=append(cases,candidate)
+	candidate=valid; candidate.Key="users/user_123.test/not-a-digest"; cases=append(cases,candidate)
+	candidate=valid; candidate.Visibility="public"; cases=append(cases,candidate)
+	candidate=valid; candidate.ContentType="text/html"; cases=append(cases,candidate)
+	candidate=valid; candidate.SizeBytes=501<<20; cases=append(cases,candidate)
+	candidate=valid; candidate.SHA256="bad"; cases=append(cases,candidate)
+	candidate=valid; candidate.R2Bucket=""; cases=append(cases,candidate)
 	for i, candidate:=range cases {
 		if validFreshMediaBridgeRequest(candidate) { t.Fatalf("invalid media registration case %d accepted",i) }
 	}
