@@ -70,6 +70,10 @@ func (s *service) federationInternalReady(w http.ResponseWriter, r *http.Request
 	if !s.federationInternalAuth(w, r) {
 		return
 	}
+	if s.federationOutbox == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PUBLISHER_UNAVAILABLE", "The transactional Federation publisher is not configured", requestID(r)))
+		return
+	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_DATABASE_UNAVAILABLE", "Canonical account storage is unavailable", requestID(r)))
 		return
@@ -87,6 +91,10 @@ func (s *service) federationActorByHandle(w http.ResponseWriter, r *http.Request
 	if !s.federationInternalAuth(w, r) {
 		return
 	}
+	if s.federationOutbox == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PUBLISHER_UNAVAILABLE", "The transactional Federation publisher is not configured", requestID(r)))
+		return
+	}
 	handle := strings.ToLower(strings.TrimSpace(r.PathValue("handle")))
 	if len(handle) < 3 || len(handle) > 30 || !localAccountUsernamePattern.MatchString(handle) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_FEDERATION_HANDLE", "A valid local account handle is required", requestID(r)))
@@ -97,6 +105,10 @@ func (s *service) federationActorByHandle(w http.ResponseWriter, r *http.Request
 
 func (s *service) federationActorByID(w http.ResponseWriter, r *http.Request) {
 	if !s.federationInternalAuth(w, r) {
+		return
+	}
+	if s.federationOutbox == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PUBLISHER_UNAVAILABLE", "The transactional Federation publisher is not configured", requestID(r)))
 		return
 	}
 	userID := strings.ToLower(strings.TrimSpace(r.PathValue("user_id")))
@@ -137,6 +149,10 @@ func (s *service) federationActorLookup(w http.ResponseWriter, r *http.Request, 
 func (s *service) federationPreference(w http.ResponseWriter, r *http.Request) {
 	userID, requestIDValue, ok := s.socialAuth(w, r)
 	if !ok {
+		return
+	}
+	if r.Method == http.MethodPut && s.federationOutbox == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PUBLISHER_UNAVAILABLE", "Federation cannot be enabled until the transactional publisher is configured", requestIDValue))
 		return
 	}
 	if r.Method == http.MethodGet {
