@@ -186,6 +186,26 @@ jobs:
             migrations/20261112_media_replication_outbox.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
+      - name: Verify durable media replication queue schema
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $media_replication_schema$
+          BEGIN
+            IF to_regclass('testagram_media.storage_replicas') IS NULL
+               OR to_regclass('testagram_media.media_replication_outbox') IS NULL
+               OR to_regclass('testagram_media.media_replication_health') IS NULL THEN
+              RAISE EXCEPTION 'Durable media replication schema is incomplete';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_trigger
+              WHERE tgname='media_replication_enqueue_after_asset_write'
+                AND NOT tgisinternal
+            ) THEN
+              RAISE EXCEPTION 'Canonical media completion does not enqueue replication';
+            END IF;
+          END $media_replication_schema$;
+          SQL
       - name: Verify media attachment, poll voting and private history constraints
         run: |
           set -euo pipefail
