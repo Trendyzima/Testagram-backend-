@@ -71,6 +71,7 @@ type downloadRequest struct {
 	OwnerID string `json:"owner_id"`
 	Namespace string `json:"namespace"`
 	Key string `json:"key"`
+	Method string `json:"method,omitempty"`
 }
 
 type deleteRequest struct {
@@ -165,9 +166,18 @@ func (c *Client) Status(ctx context.Context, ownerID, namespace, key string) (Me
 }
 
 func (c *Client) DownloadURL(ctx context.Context, requesterID, ownerID, namespace, key string) (DownloadGrant, error) {
+	return c.DownloadURLMethod(ctx, requesterID, ownerID, namespace, key, http.MethodGet)
+}
+
+func (c *Client) HeadURL(ctx context.Context, requesterID, ownerID, namespace, key string) (DownloadGrant, error) {
+	return c.DownloadURLMethod(ctx, requesterID, ownerID, namespace, key, http.MethodHead)
+}
+
+func (c *Client) DownloadURLMethod(ctx context.Context, requesterID, ownerID, namespace, key, method string) (DownloadGrant, error) {
+	if method != http.MethodGet && method != http.MethodHead { return DownloadGrant{}, errors.New("unsupported Data Centre media delivery method") }
 	var result DownloadGrant
 	err := c.post(ctx, "/internal/v1/media/download-url", downloadRequest{
-		RequesterID: requesterID, OwnerID: ownerID, Namespace: namespace, Key: key,
+		RequesterID: requesterID, OwnerID: ownerID, Namespace: namespace, Key: key, Method: method,
 	}, &result)
 	if err != nil {
 		return DownloadGrant{}, err
