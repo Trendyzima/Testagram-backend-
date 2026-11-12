@@ -86,9 +86,9 @@ func (s *service) registerFreshMediaAsset(w http.ResponseWriter, r *http.Request
 	}
 	_, err := s.db.Exec(r.Context(), `
 		INSERT INTO testagram_media.assets
-		  (object_key, owner_id, visibility, content_type, original_name,
-		   size_bytes, etag, status, storage_namespace, storage_provider, checksum_sha256)
-		VALUES ($1,$2,'private',$3,'fresh-api-upload',$4,'','ready','legacy-media','fresh-b2-r2',$5)
+		  (object_key, owner_id, visibility, content_type, size_bytes, etag,
+		   status, storage_namespace, storage_provider, checksum_sha256)
+		VALUES ($1,$2,'private',$3,$4,'','ready','legacy-media','fresh-b2-r2',$5)
 		ON CONFLICT (object_key) DO NOTHING
 	`, in.Key, in.OwnerID, in.ContentType, in.SizeBytes, in.SHA256)
 	if err != nil {
