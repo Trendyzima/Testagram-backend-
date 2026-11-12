@@ -78,6 +78,8 @@ type capabilityRequest struct {
 	Input      map[string]any `json:"input"`
 }
 
+func freshMediaFeatureEnabled() bool { return strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true") }
+
 func env(name, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
@@ -1146,7 +1148,7 @@ func main() {
 			log.Printf("private Testagram feed ranking integration enabled")
 		}
 	}
-	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
+	freshMediaEnabled := freshMediaFeatureEnabled()
 	var dataCentreMedia *datacentreclient.Client
 	dataCentreURL := strings.TrimSpace(os.Getenv("DATA_CENTRE_MEDIA_API_URL"))
 	dataCentreToken := strings.TrimSpace(os.Getenv("FRESH_DATA_CENTRE_INTERNAL_TOKEN"))
