@@ -39,6 +39,7 @@ This is the shared communication contract for six runtime repositories. `testagr
 - Backend post transaction and outbox event must commit atomically. The dispatcher retries bounded batches and acknowledges only after durable Federation acceptance.
 - Use separate credentials in each direction: Backend's `FEDERATION_INTERNAL_TOKEN` is mapped to Federation's `FEDERATION_INGRESS_TOKEN` for Backend -> Federation; Backend's `FEDERATION_BACKEND_INTERNAL_TOKEN` is mapped to Federation's `BACKEND_INTERNAL_TOKEN` for Federation -> Backend. Values must be independently generated; no legacy shared-token fallback is accepted. Never reuse Appwrite user JWTs as service credentials.
 - Backend owns canonical remote follower relationships in `testagram_local.remote_follows`. Federation may cache accepted follower inboxes for delivery routing, but must call the private Backend Follow/Undo contract first. Undo must match the exact original Follow activity ID.
+- An opted-in account's public post is inserted into the Backend transactional Federation outbox in the same database transaction as the post. ActivityPub object dereferencing is resolved from canonical Backend data and rechecks public visibility, account status and federation consent.
 - Federation delivery, inbox and outbox polling remain disabled until signature, consent, replay, durability, idempotency and interoperability gates pass.
 
 ### Backend -> Data Centre
