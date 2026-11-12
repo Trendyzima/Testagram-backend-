@@ -57,4 +57,19 @@ func TestHashtagEndpointsFailClosedWithoutDatabase(t *testing.T) {
 	if trending.Code != http.StatusServiceUnavailable || !strings.Contains(trending.Body.String(), "SOCIAL_DATABASE_UNAVAILABLE") {
 		t.Fatalf("trending without DB: status=%d body=%s", trending.Code, trending.Body.String())
 	}
+
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/hashtags/testagram/follow"},
+		{http.MethodPost, "/api/hashtags/testagram/follow"},
+		{http.MethodDelete, "/api/hashtags/testagram/follow"},
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
+		if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "SOCIAL_DATABASE_UNAVAILABLE") {
+			t.Errorf("%s %s without DB: status=%d body=%s", route.method, route.path, recorder.Code, recorder.Body.String())
+		}
+	}
 }
