@@ -64,6 +64,7 @@ func TestR2CanBeSelectedAsPrimaryWithBothProviders(t *testing.T) {
 	clear(t)
 	for key, value := range map[string]string{
 		"B2_S3_ENDPOINT": "https://s3.us-east-005.backblazeb2.com",
+		"B2_S3_REGION": "us-east-005",
 		"B2_S3_ACCESS_KEY_ID": "b2-key",
 		"B2_S3_SECRET_ACCESS_KEY": "b2-secret",
 		"B2_S3_BUCKET": "testagram-b2",
