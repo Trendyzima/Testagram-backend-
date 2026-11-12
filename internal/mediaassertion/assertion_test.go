@@ -2,7 +2,23 @@ package mediaassertion
 import("strings";"testing";"time")
 func TestIssueVerifyBindsViewerObjectAndExpiry(t *testing.T){s:=[]byte(strings.Repeat("s",40));i,e:=New(s,2*time.Minute);if e!=nil{t.Fatal(e)};now:=time.Unix(1800000000,0).UTC();key:="users/alice/0123456789abcdef0123456789abcdef";token,exp,e:=i.Issue(key,"alice",now);if e!=nil{t.Fatal(e)};if !exp.Equal(now.Add(2*time.Minute)){t.Fatal("wrong expiry")};if _,e=Verify(s,token,key,"alice",now.Add(time.Second));e!=nil{t.Fatal(e)};if _,e=Verify(s,token,key,"bob",now);e==nil{t.Fatal("wrong viewer accepted")};if _,e=Verify(s,token,"users/alice/ffffffffffffffffffffffffffffffff","alice",now);e==nil{t.Fatal("wrong key accepted")};if _,e=Verify(s,token,key,"alice",exp);e==nil{t.Fatal("expired token accepted")}}
 func TestRejectWeakSecretAndOwnerMismatch(t *testing.T){if _,e:=New([]byte("short"),time.Minute);e==nil{t.Fatal("weak secret accepted")};i,_:=New([]byte(strings.Repeat("x",32)),time.Minute);if _,_,e:=i.Issue("users/bob/0123456789abcdef0123456789abcdef","alice",time.Now());e==nil{t.Fatal("cross-owner key accepted")};if _,_,e:=i.Issue("../private/object","alice",time.Now());e==nil{t.Fatal("invalid key accepted")}}
-func TestRejectTampering(t *testing.T){s:=[]byte(strings.Repeat("k",32));i,_:=New(s,time.Minute);now:=time.Now().UTC();key:="users/alice/0123456789abcdef0123456789abcdef";token,_,e:=i.Issue(key,"alice",now);if e!=nil{t.Fatal(e)};replacement:=byte('A');if token[len(token)-1]==replacement{replacement='B'};tampered:=token[:len(token)-1]+string(replacement);if _,e:=Verify(s,tampered,key,"alice",now);e==nil{t.Fatal("tampered assertion accepted")}}
+func TestRejectTampering(t *testing.T) {
+ s := []byte(strings.Repeat("k", 32))
+ i, err := New(s, time.Minute)
+ if err != nil { t.Fatal(err) }
+ now := time.Now().UTC()
+ key := "users/alice/0123456789abcdef0123456789abcdef"
+ token, _, err := i.Issue(key, "alice", now)
+ if err != nil { t.Fatal(err) }
+ // Change the first signature character. Changing only the final base64url
+ // character can alter unused padding bits without changing decoded bytes.
+ signatureStart := strings.LastIndex(token, ".") + 1
+ if signatureStart <= 0 || signatureStart >= len(token) { t.Fatal("invalid issued token") }
+ replacement := byte('A')
+ if token[signatureStart] == replacement { replacement = 'B' }
+ tampered := token[:signatureStart] + string(replacement) + token[signatureStart+1:]
+ if _, err := Verify(s, tampered, key, "alice", now); err == nil { t.Fatal("tampered assertion accepted") }
+}
 
 func TestIssuerVerifyForKey(t *testing.T) {
 	secret := []byte(strings.Repeat("v", 32))
