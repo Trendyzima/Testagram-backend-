@@ -277,7 +277,7 @@ func federationUniqueConflict(err error) bool {
 }
 
 func validFederationRemoteURI(raw string) bool {
-	if len(raw) < 12 || len(raw) > 2048 || strings.ContainsAny(raw, "\\r\\n\\t ") {
+	if len(raw) < 12 || len(raw) > 2048 || strings.ContainsAny(raw, "\r\n\t ") {
 		return false
 	}
 	u, err := url.Parse(strings.TrimSpace(raw))
