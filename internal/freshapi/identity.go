@@ -35,6 +35,12 @@ var identityFingerprintPattern = regexp.MustCompile("^[a-f0-9]{64}$")
 var identitySessionPattern = regexp.MustCompile("^[A-Za-z0-9_-]{8,128}$")
 
 func (s *Server) registerIdentityVerifiedAccount(w http.ResponseWriter, r *http.Request) {
+	// A valid HMAC proves possession of a signing secret, not that two
+	// independent authorized reviewers approved this application. Until token
+	// issuance and one-time redemption are backed by the PostgreSQL review
+	// ledger and provisioning saga, this endpoint must not create identities.
+	writeError(w, http.StatusServiceUnavailable, "identity review registration pipeline is not enabled")
+	return
 	if s.identitySecret == "" || s.appwriteServerKey == "" {
 		writeError(w, http.StatusServiceUnavailable, "Appwrite identity registration is not configured")
 		return
