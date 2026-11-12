@@ -71,8 +71,8 @@ func configureMediaReplicator(primary *virtualstorage.S3Provider) (*virtualstora
 		return nil, err
 	}
 	primaryBuckets := map[string]string{
-		"media-private": env("MEDIA_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media")),
-		"media-public": env("MEDIA_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media")),
+		"media-private": env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))),
+		"media-public": env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
 	}
 	r2Buckets := map[string]string{
 		"media-private": replicaBucket("CLOUDFLARE_R2", "private", "CLOUDFLARE_R2_BUCKET"),
