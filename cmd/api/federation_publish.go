@@ -24,7 +24,7 @@ func normalizeFederationPublicBaseURL(raw string) (string, error) {
 	return raw, nil
 }
 
-func buildFederationNote(baseURL, postID, handle, displayName, content string, createdAt time.Time) (map[string]any, string, error) {
+func buildFederationNote(baseURL, postID, handle, content string, createdAt time.Time) (map[string]any, string, error) {
 	baseURL, err := normalizeFederationPublicBaseURL(baseURL)
 	if err != nil {
 		return nil, "", err
@@ -47,14 +47,11 @@ func buildFederationNote(baseURL, postID, handle, displayName, content string, c
 		"published":   createdAt.UTC().Format(time.RFC3339Nano),
 		"to":          []string{activityStreamsPublic},
 	}
-	if strings.TrimSpace(displayName) != "" {
-		note["name"] = strings.TrimSpace(displayName)
-	}
 	return note, actorURI, nil
 }
 
-func buildFederationCreateActivity(baseURL, postID, handle, displayName, content string, createdAt time.Time) (string, []byte, error) {
-	note, actorURI, err := buildFederationNote(baseURL, postID, handle, displayName, content, createdAt)
+func buildFederationCreateActivity(baseURL, postID, handle, content string, createdAt time.Time) (string, []byte, error) {
+	note, actorURI, err := buildFederationNote(baseURL, postID, handle, content, createdAt)
 	if err != nil {
 		return "", nil, err
 	}
@@ -80,9 +77,9 @@ func buildFederationCreateActivity(baseURL, postID, handle, displayName, content
 }
 
 func (s *service) enqueueFederationCreateTx(ctx context.Context, tx pgx.Tx, userID, postID, content string, createdAt time.Time) error {
-	var handle, displayName, accountStatus string
+	var handle, accountStatus string
 	var enabled, discoverable, protected bool
-	if err := tx.QueryRow(ctx, `SELECT username,display_name,federation_enabled,
+	if err := tx.QueryRow(ctx, `SELECT username,federation_enabled,
 		discoverable_by_username,protected_account,account_status
 		FROM testagram_local.accounts WHERE user_id=$1::uuid`, userID).
 		Scan(&handle, &displayName, &enabled, &discoverable, &protected, &accountStatus); err != nil {
@@ -94,7 +91,7 @@ func (s *service) enqueueFederationCreateTx(ctx context.Context, tx pgx.Tx, user
 	if s.federationOutbox == nil {
 		return errors.New("federation publishing is not configured for an opted-in account")
 	}
-	activityID, payload, err := buildFederationCreateActivity(s.federationPublicBaseURL, postID, handle, displayName, content, createdAt)
+	activityID, payload, err := buildFederationCreateActivity(s.federationPublicBaseURL, postID, handle, content, createdAt)
 	if err != nil {
 		return err
 	}
@@ -120,9 +117,9 @@ func (s *service) federationObject(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	var handle, displayName, content string
+	var handle, content string
 	var createdAt time.Time
-	err := s.db.QueryRow(ctx, `SELECT a.username,a.display_name,p.text,p.created_at
+	err := s.db.QueryRow(ctx, `SELECT a.username,p.text,p.created_at
 		FROM testagram_local.posts p
 		JOIN testagram_local.accounts a ON a.user_id=p.author_id
 		WHERE p.id=$1::uuid AND p.visibility='public' AND p.deleted_at IS NULL
@@ -137,7 +134,7 @@ func (s *service) federationObject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_OBJECT_LOOKUP_FAILED", "The canonical public object could not be loaded", requestID(r)))
 		return
 	}
-	note, _, err := buildFederationNote(s.federationPublicBaseURL, postID, handle, displayName, content, createdAt)
+	note, _, err := buildFederationNote(s.federationPublicBaseURL, postID, handle, content, createdAt)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_OBJECT_BUILD_FAILED", "The public ActivityPub object could not be prepared", requestID(r)))
 		return
