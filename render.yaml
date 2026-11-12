@@ -17,9 +17,9 @@ services:
       - key: APPWRITE_ENDPOINT
         value: https://fra.cloud.appwrite.io/v1
       - key: APPWRITE_PROJECT_ID
-        value: 6af01f05003503d9d603
+        sync: false
       - key: APPWRITE_DATABASE_ID
-        value: testagram-db
+        value: 6af01f05003503d9d603
       - key: APPWRITE_SERVER_API_KEY
         sync: false
       - key: IDENTITY_PREAUTH_SECRET
