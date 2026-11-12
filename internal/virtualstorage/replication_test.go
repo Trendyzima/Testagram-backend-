@@ -132,3 +132,30 @@ func TestReplicatorRejectsInvalidProviderTopology(t *testing.T) {
 		t.Fatalf("expected duplicate provider validation, got %v",err)
 	}
 }
+
+func TestReplicatorDeletesPrimaryAndEveryReplica(t *testing.T) {
+	primary:=newReplicaTestStore()
+	r2:=newReplicaTestStore()
+	b2:=newReplicaTestStore()
+	key:="users/user-1/photo.webp"
+	scoped:=tenantPrefix("user-1")+key
+	for _,entry:=range []struct{store *replicaTestStore;bucket string}{{primary,"vps-private"},{r2,"r2-private"},{b2,"b2-private"}} {
+		entry.store.objects[replicaTestKey(entry.bucket,scoped)]=replicaTestObject{
+			info:ObjectInfo{Key:scoped,Size:10,ContentType:"image/webp"},
+			hash:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}
+	}
+	replicator,err:=NewReplicator("instabox-vps",primary,
+		map[string]string{"media-private":"vps-private","media-public":"vps-public"},
+		[]ReplicaTarget{
+			{Name:"cloudflare-r2",Provider:r2,Buckets:map[string]string{"media-private":"r2-private","media-public":"r2-public"}},
+			{Name:"backblaze-b2",Provider:b2,Buckets:map[string]string{"media-private":"b2-private","media-public":"b2-public"}},
+		})
+	if err!=nil { t.Fatal(err) }
+	if err:=replicator.Delete(context.Background(),"user-1","media-private",key);err!=nil { t.Fatal(err) }
+	for _,entry:=range []struct{store *replicaTestStore;bucket string}{{primary,"vps-private"},{r2,"r2-private"},{b2,"b2-private"}} {
+		if _,ok:=entry.store.objects[replicaTestKey(entry.bucket,scoped)];ok {
+			t.Fatalf("object remains in %s after replica deletion",entry.bucket)
+		}
+	}
+}
