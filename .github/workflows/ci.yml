@@ -420,7 +420,7 @@ jobs:
               "TESTAGRAM_FEDERATION_IMAGE": "sha-4c94a813107bc6d5f70fc3186d8377cb275d7475",
           }
           for key, tag in expected.items():
-              if not re.search(rf'{key}="ghcr\\.io/trendyzima/[^"]*{re.escape(tag)}"', deploy):
+              if not re.search(rf'{key}="ghcr\.io/trendyzima/[^"]*{re.escape(tag)}"', deploy):
                   raise SystemExit(f"{key} is not pinned to its reviewed immutable image")
               if f'write_dc_env_value {key} "${key}"' not in deploy:
                   raise SystemExit(f"{key} is not synchronized into existing Data Centre .env files")
