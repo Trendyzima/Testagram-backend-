@@ -1,9 +1,9 @@
-# Testagram six-repository runtime integration contract
+# Testagram six-runtime-repository integration contract
 
 Status: implementation and staging contract; not production cutover authorization.
 Reviewed: 2026-11-11.
 
-This is the shared communication contract for the six retained Testagram repositories. Each repository owns its domain; no repository may bypass the Backend's product authorization or become a second source of truth.
+This is the shared communication contract for six runtime repositories. `testagram-api` is the separate contract control plane, not a runtime service. Each runtime repository owns its domain; no repository may bypass the Backend's product authorization or become a second source of truth.
 
 ## Service ownership
 
@@ -15,6 +15,7 @@ This is the shared communication contract for the six retained Testagram reposit
 | `cdn-` | Media/HLS/DASH delivery, cache, origin/shield routing, range handling and playback-token validation | Public media requests and configured private/public origins; no product authorization |
 | `federated-content` | ActivityPub actors, keys, inbox/outbox, signature verification, remote delivery and federation state | Private Backend actor/outbox APIs; remote ActivityPub peers |
 | `the-algorithm` | Stateless feed ordering over an already-authorized bounded candidate set | Private Backend ranking API only |
+| `testagram-api` (control plane; not a runtime) | OpenAPI, private contracts, event schemas, SDKs, source pins and cross-repository compatibility CI | No runtime requests, product data or authorization decisions |
 
 ## Canonical request paths
 
@@ -36,7 +37,7 @@ This is the shared communication contract for the six retained Testagram reposit
 - Backend publishes authorized activities to Federation at `POST /internal/v1/activities`.
 - Publish request fields are `activity_id`, `actor_user_id`, and `activity`; duplicate activity IDs must be idempotent.
 - Backend post transaction and outbox event must commit atomically. The dispatcher retries bounded batches and acknowledges only after durable Federation acceptance.
-- Use separate credentials in each direction: `FEDERATION_INTERNAL_TOKEN` authenticates Backend -> Federation; `FEDERATION_BACKEND_INTERNAL_TOKEN` authenticates Federation -> Backend. Never reuse Appwrite user JWTs as service credentials.
+- Use separate credentials in each direction: Backend's `FEDERATION_INTERNAL_TOKEN` is mapped to Federation's `FEDERATION_INGRESS_TOKEN` for Backend -> Federation; Backend's `FEDERATION_BACKEND_INTERNAL_TOKEN` is mapped to Federation's `BACKEND_INTERNAL_TOKEN` for Federation -> Backend. Values must be independently generated; no legacy shared-token fallback is accepted. Never reuse Appwrite user JWTs as service credentials.
 - Federation delivery, inbox and outbox polling remain disabled until signature, consent, replay, durability, idempotency and interoperability gates pass.
 
 ### Backend -> Data Centre
