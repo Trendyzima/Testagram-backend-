@@ -96,16 +96,11 @@ func TestIdentitySecretsRejectWeakOrMultilineValues(t *testing.T) {
 	}
 }
 
-func TestRegisterIdentityVerifiedAccountCreatesAppwriteUserAndProfile(t *testing.T) {
-	api, mock := testServer(t)
+func TestRegisterIdentityVerifiedAccountFailsClosedUntilDurableReviewPipeline(t *testing.T) {
+	api, mock, state := testServerWithState(t)
 	defer mock.Close()
-	secret := strings.Repeat("k", 48)
-	if err := api.WithIdentitySecret(secret); err != nil {
-		t.Fatal(err)
-	}
-	if err := api.WithAppwriteServerKey("appwrite-test-server-key"); err != nil {
-		t.Fatal(err)
-	}
+	if err := api.WithIdentitySecret(strings.Repeat("k", 48)); err != nil { t.Fatal(err) }
+	if err := api.WithAppwriteServerKey("appwrite-test-server-key"); err != nil { t.Fatal(err) }
 	now := time.Now().UTC().Unix()
 	payload := identityApprovalPayload{
 		Email: "new@example.com", BirthDate: "1990-01-01",
@@ -114,28 +109,17 @@ func TestRegisterIdentityVerifiedAccountCreatesAppwriteUserAndProfile(t *testing
 		IssuedAt: now, ExpiresAt: now + 900,
 	}
 	body, _ := json.Marshal(map[string]any{
-		"identity_approval_token": signedIdentityToken(t, secret, payload),
+		"identity_approval_token": signedIdentityToken(t, strings.Repeat("k", 48), payload),
 		"password": "correct-horse-battery-staple",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("registration status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registration status=%d body=%s; expected fail-closed response", rec.Code, rec.Body.String())
 	}
-	var response struct {
-		OK   bool `json:"ok"`
-		Data struct {
-			UserID        string `json:"user_id"`
-			EmailVerified bool   `json:"email_verified"`
-			EmailVerificationRequired bool `json:"email_verification_required"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if !response.OK || response.Data.UserID != "new_user_1" || response.Data.EmailVerified || !response.Data.EmailVerificationRequired {
-		t.Fatalf("unexpected registration response: %+v", response)
+	if state.createdAppwriteUsers != 0 {
+		t.Fatalf("unreviewed registration created %d Appwrite users", state.createdAppwriteUsers)
 	}
 }
 
@@ -152,8 +136,8 @@ func TestRegisterIdentityVerifiedAccountRejectsInvalidApprovalBeforeAppwriteCall
 	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("invalid approval status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("registration should remain disabled until durable review pipeline exists: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -178,6 +162,6 @@ func TestRegisterIdentityVerifiedAccountRejectsDuplicateFingerprint(t *testing.T
 	req := httptest.NewRequest(http.MethodPost, "/v1/identity/register", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict { t.Fatalf("duplicate fingerprint status=%d body=%s", rec.Code, rec.Body.String()) }
-	if state.createdAppwriteUsers != 0 { t.Fatalf("duplicate identity created %d Appwrite users", state.createdAppwriteUsers) }
+	if rec.Code != http.StatusServiceUnavailable { t.Fatalf("registration should remain disabled until durable review pipeline exists: status=%d body=%s", rec.Code, rec.Body.String()) }
+	if state.createdAppwriteUsers != 0 { t.Fatalf("disabled registration created %d Appwrite users", state.createdAppwriteUsers) }
 }
