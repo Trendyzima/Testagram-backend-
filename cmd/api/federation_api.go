@@ -108,6 +108,7 @@ func (s *service) federationActorLookup(w http.ResponseWriter, r *http.Request, 
 		WHERE ` + predicate + `
 		  AND account_status='active'
 		  AND discoverable_by_username=TRUE
+		  AND protected_account=FALSE
 		  AND federation_enabled=TRUE`
 	var profile federationActorProfile
 	err := s.db.QueryRow(r.Context(), query, value).Scan(
@@ -152,9 +153,13 @@ func (s *service) federationPreference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if *input.Enabled {
-		var discoverable bool
-		if err := s.db.QueryRow(r.Context(), "SELECT discoverable_by_username FROM testagram_local.accounts WHERE user_id=$1", userID).Scan(&discoverable); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PREFERENCE_READ_FAILED", "Account discovery settings could not be verified", requestIDValue))
+		var discoverable, protected bool
+		if err := s.db.QueryRow(r.Context(), "SELECT discoverable_by_username,protected_account FROM testagram_local.accounts WHERE user_id=$1", userID).Scan(&discoverable, &protected); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_PREFERENCE_READ_FAILED", "Account privacy settings could not be verified", requestIDValue))
+			return
+		}
+		if protected {
+			writeJSON(w, http.StatusConflict, errorBody("FEDERATION_REQUIRES_PUBLIC_ACCOUNT", "Protected accounts cannot enable public federation", requestIDValue))
 			return
 		}
 		if !discoverable {
