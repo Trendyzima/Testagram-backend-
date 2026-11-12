@@ -52,7 +52,7 @@ func decodeFreshMediaBridgeRequest(w http.ResponseWriter, r *http.Request, out *
 
 func validFreshMediaBridgeRequest(in freshMediaBridgeRequest) bool {
 	match := freshMediaObjectKeyPattern.FindStringSubmatch(in.Key)
-	if !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
+	if !freshMediaOwnerPattern.MatchString(in.ViewerID) || !freshMediaOwnerPattern.MatchString(in.OwnerID) || len(match) != 3 || match[1] != in.OwnerID {
 		return false
 	}
 	if in.Visibility != "private" || in.SizeBytes < 1 || in.SizeBytes > 500<<20 || !freshMediaSHA256Pattern.MatchString(in.SHA256) {
@@ -125,8 +125,9 @@ func (s *service) revokeFreshMediaAsset(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var in struct {
-		OwnerID string `json:"owner_id"`
-		Key     string `json:"key"`
+		ViewerID string `json:"viewer_id"`
+		OwnerID  string `json:"owner_id"`
+		Key      string `json:"key"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFreshMediaBridgeBody)
 	decoder := json.NewDecoder(r.Body)
@@ -135,6 +136,7 @@ func (s *service) revokeFreshMediaAsset(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid media revocation", http.StatusBadRequest)
 		return
 	}
+	in.ViewerID = strings.TrimSpace(in.ViewerID)
 	in.OwnerID = strings.TrimSpace(in.OwnerID)
 	in.Key = strings.TrimSpace(in.Key)
 	match := freshMediaObjectKeyPattern.FindStringSubmatch(in.Key)
@@ -190,7 +192,7 @@ func (s *service) freshMediaCDNDownloadURL(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "media authorization denied", http.StatusNotFound)
 		return
 	}
-	assertion, expiresAt, err := s.cdnMediaAssertions.Issue(in.Key, in.OwnerID, time.Now())
+	assertion, expiresAt, err := s.cdnMediaAssertions.IssueForViewer(in.Key, in.OwnerID, in.ViewerID, time.Now())
 	if err != nil {
 		http.Error(w, "media authorization unavailable", http.StatusServiceUnavailable)
 		return
