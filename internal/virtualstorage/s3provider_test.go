@@ -217,3 +217,36 @@ func TestS3ProviderRejectsInsecureRemoteEndpoints(t *testing.T) {
 		t.Fatal("invalid SigV4 region was accepted")
 	}
 }
+
+
+func TestAppwriteS3ProviderPresignsUnderRegionalStorageEndpoint(t *testing.T) {
+	// Appwrite Cloud's S3-compatible endpoint is path-style:
+	// https://<region>.cloud.appwrite.io/v1/s3
+	// Its access key is the project ID and its secret is a storage-scoped API key.
+	provider, err := NewS3Provider(S3Config{
+		Endpoint: "https://fra.cloud.appwrite.io/v1/s3",
+		AccessKey: "appwrite-project-id",
+		SecretKey: "server-api-key-secret",
+		Region: "fra",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := provider.PresignPut(context.Background(), "avatars", "users/user_1/avatar.webp", "image/webp", 2048, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Host != "fra.cloud.appwrite.io" || u.Path != "/v1/s3/avatars/users/user_1/avatar.webp" {
+		t.Fatalf("Appwrite S3 path prefix was not preserved: %s", signed)
+	}
+	if !strings.Contains(u.Query().Get("X-Amz-Credential"), "/fra/s3/aws4_request") {
+		t.Fatalf("Appwrite regional SigV4 scope missing: %s", u.Query().Get("X-Amz-Credential"))
+	}
+	if strings.Contains(signed, "server-api-key-secret") {
+		t.Fatal("Appwrite API key secret leaked into the presigned URL")
+	}
+}
