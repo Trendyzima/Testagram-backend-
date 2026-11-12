@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -22,6 +23,10 @@ type federationActorProfile struct {
 	DisplayName        string `json:"display_name"`
 	Summary            string `json:"summary"`
 	FederationEnabled  bool   `json:"federation_enabled"`
+}
+
+func federationBackendTokenFromEnv() string {
+	return strings.TrimSpace(os.Getenv("FEDERATION_BACKEND_INTERNAL_TOKEN"))
 }
 
 func federationTokenMatches(expected, authorization string) bool {
