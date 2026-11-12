@@ -8,7 +8,7 @@ The Backend now has an opt-in, durable object-replication path for virtual-stora
 2. A PostgreSQL trigger writes a replication or deletion job in the same transaction as the asset lifecycle transition. No Redis queue or best-effort in-memory enqueue is involved.
 3. The API process runs a bounded worker that leases jobs with `FOR UPDATE SKIP LOCKED`. Expired leases are reclaimable after a crash.
 4. The worker verifies the primary object's size, content type and SHA-256, then streams it to Cloudflare R2 and Backblaze B2. Each provider copy is read back and SHA-256 verified by the S3 provider implementation.
-5. The worker records all three verified placements in `testagram_media.storage_replicas` and marks the job complete in one PostgreSQL transaction.
+5. The worker records all three verified placements in `testagram_media.storage_replicas` and marks the job complete in one PostgreSQL transaction. Every 15 minutes it also schedules a reconciliation scan for missing, degraded or older-than-24-hour placements. Reconciliation performs destination HEAD and SHA-256 checks, and repairs only missing or drifted copies rather than blindly re-uploading healthy objects.
 6. Retryable failures use capped exponential backoff. After 20 attempts the job becomes a dead letter; the stable error code is stored without response bodies, credentials, signed URLs or object bytes.
 7. Deletion and quarantine transitions enqueue a delete operation. The worker removes the tenant-scoped object from all three providers and records a deleted placement state where the asset row remains.
 
@@ -82,7 +82,7 @@ Never mass-reset dead letters without identifying the underlying provider failur
 - Run disposable MinIO-origin tests for success, wrong checksum, missing primary, R2 outage, B2 outage, partial-copy retry and process restart during an active lease.
 - Verify the three provider objects independently using SHA-256 read-back, not ETags.
 - Test deletion/quarantine propagation and retry after one provider is unavailable.
-- Add reconciliation that compares the canonical asset ledger with provider object listings and repairs missing/mismatched copies.
+- Extend reconciliation with provider-listing sweeps for untracked orphan objects and verify recovery after credentials or provider endpoints change.
 - Add the media delivery readiness gate so private/public delivery cannot claim replica availability before all required placements are verified.
 - Perform an independent offsite backup and full restore drill; measure and record RPO/RTO.
 - Only then consider enabling the worker in production. The CI schema test is not a production provider-origin test.
