@@ -47,6 +47,7 @@ func buildFederationNote(baseURL, postID, handle, content string, createdAt time
 		"mediaType":   "text/html",
 		"published":   createdAt.UTC().Format(time.RFC3339Nano),
 		"to":          []string{activityStreamsPublic},
+		"cc":          []string{actorURI + "/followers"},
 	}
 	return note, actorURI, nil
 }
@@ -68,6 +69,7 @@ func buildFederationCreateActivity(baseURL, postID, handle, content string, crea
 		"actor":     actorURI,
 		"published": createdAt.UTC().Format(time.RFC3339Nano),
 		"to":        []string{activityStreamsPublic},
+		"cc":        []string{actorURI + "/followers"},
 		"object":    note,
 	}
 	payload, err := json.Marshal(activity)
