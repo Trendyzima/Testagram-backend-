@@ -118,7 +118,7 @@ jobs:
               if "run" in step:
                   subprocess.run(["bash", "-n"], input=step["run"], text=True, check=True)
           target = next(step for step in steps if step.get("name") == "Configure public CDN URL and restart Backend and Go CDN")
-          match = re.search(r"(?m)^\\s*cmd='([^']*)'\\s*$", target["run"])
+          match = re.search(r"(?m)^\s*cmd='([^']*)'\s*$", target["run"])
           if not match:
               raise SystemExit("Remote CDN configuration command was not found or contains unsafe quote boundaries.")
           subprocess.run(["bash", "-n"], input=match.group(1), text=True, check=True)
