@@ -1247,6 +1247,7 @@ func main() {
 		go federationWorker.Run(signalCtx)
 	}
 	go svc.runStorageDeletionWorker(signalCtx)
+	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
 	if replicationApplyEnabled {
 		if replicationStore == nil {
 			log.Fatal("REPLICATION_APPLY_ENABLED requires replication configuration and database access")
