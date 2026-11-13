@@ -1326,6 +1326,15 @@ func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility
 }
 
 func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace, storageProvider string) error {
+	// The asset is already in deletion_pending/quarantine_pending when this
+	// method is called. Purge first so a failed invalidation leaves the durable
+	// storage_deletion_jobs row retryable and never deletes bytes behind a stale
+	// shared-cache entry.
+	if s.cdnPurger != nil {
+		if err := s.cdnPurger.Purge(ctx, key); err != nil {
+			return err
+		}
+	}
 	if storageProvider == "data-centre" {
 		if s.dataCentreMedia == nil { return errors.New("Data Centre media service is unavailable") }
 		status, err := s.dataCentreMedia.Delete(ctx, userID, userID, storageNamespace, key)
