@@ -26,7 +26,7 @@ Optional secret:
 3. If suspended, request `POST /v1/machines/{id}/resume`.
 4. If running, probe both `/healthz` and `/readyz` three times, 15 seconds apart. If all probes fail, re-read the machine and confirm it is still running, has no active lifecycle operation, and still has `desiredState=running`. Only then perform a controlled stop followed by start.
 5. Poll each accepted operation until success/failure, with a five-minute bound. Never issue a second lifecycle operation while one is active.
-6. Persist a 30-minute action cooldown across scheduled runs. Serialize runs to prevent concurrent restarts.
+6. Persist a 30-minute cooldown specifically for disruptive stop/start restarts. Unexpected stopped machines are started again on the next scheduled check if a previous start attempt fails; suspended machines are similarly resumed again. Serialize runs to prevent concurrent restarts.
 7. Never delete, recreate, restore, resize, or alter machine disks. A provider `error` state, deleted machine, active cooldown, API authorization failure, billing restriction, or provider cooldown is surfaced for operator action rather than bypassed.
 
 The watchdog does not automatically override an intentional provider state where `desiredState` is not `running`. To keep a production workload continuously available, configure the Instabox machine's idle auto-suspend and maximum-run policy appropriately in the provider dashboard; the watchdog does not silently change billing or lifecycle policy.
