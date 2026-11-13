@@ -460,6 +460,10 @@ jobs:
             echo "Data Centre private media profile remains disabled: DATA_CENTRE_MEDIA_ENABLED is not true."
           fi
           printf '%s\n' "$media_enabled" > "$ROOT/media-enabled.txt"
+          # Backend reads FRESH_MEDIA_ENABLED; keep it synchronized with the
+          # deployment-level DATA_CENTRE_MEDIA_ENABLED gate.
+          write_env_value FRESH_MEDIA_ENABLED "$media_enabled"
+          chmod 600 "$BASE_ENV"
 
           overlay_status=not_started
           if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" config -q; then
