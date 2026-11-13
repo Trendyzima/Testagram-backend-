@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"io"
 	"io/fs"
 	"log"
@@ -31,6 +32,7 @@ var webFiles embed.FS
 type app struct {
 	appwriteEndpoint string
 	appwriteProject  string
+	backendAPIURL    string
 	appwriteAPIKey   string
 	serviceAuthKey   []byte
 	database         *pgxpool.Pool
@@ -115,6 +117,12 @@ func newApp() (*app, error) {
 	if project == "" {
 		return nil, errors.New("APPWRITE_PROJECT_ID is required")
 	}
+	backendAPIURL := strings.TrimRight(env("BACKEND_INTERNAL_URL", "http://api:8080"), "/")
+	backendParsed, backendErr := url.Parse(backendAPIURL)
+	if backendErr != nil || backendParsed.Host == "" || backendParsed.User != nil || backendParsed.RawQuery != "" || backendParsed.Fragment != "" ||
+		(backendParsed.Scheme != "https" && !(backendParsed.Scheme == "http" && (backendParsed.Hostname() == "api" || backendParsed.Hostname() == "localhost" || backendParsed.Hostname() == "127.0.0.1"))) {
+		return nil, errors.New("BACKEND_INTERNAL_URL must be HTTPS or a private Docker API origin")
+	}
 	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if databaseURL == "" {
 		return nil, errors.New("DATABASE_URL is required for PostgreSQL-owned staff roles")
@@ -143,6 +151,7 @@ func newApp() (*app, error) {
 	return &app{
 		appwriteEndpoint: strings.TrimRight(parsedEndpoint.String(), "/"),
 		appwriteProject: project,
+		backendAPIURL: backendAPIURL,
 		appwriteAPIKey: strings.TrimSpace(os.Getenv("APPWRITE_API_KEY")),
 		serviceAuthKey: serviceAuthKey,
 		database: db,
@@ -181,6 +190,10 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/sensitive-actions", a.handleSensitiveActionRequest)
 	mux.HandleFunc("GET /api/admin/sensitive-actions", a.handleSensitiveActionQueue)
 	mux.HandleFunc("GET /api/admin/audit", a.handleAdminAudit)
+	mux.HandleFunc("GET /api/admin/identity/review-queue", a.handleIdentityReviewQueue)
+	mux.HandleFunc("GET /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", a.handleIdentityReviewEvidence)
+	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", a.handleIdentityReviewDecision)
+	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", a.handleIdentityApplicationApprove)
 	mux.HandleFunc("POST /internal/admin/authorize", a.handleInternalAuthorize)
 	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/decision", a.handleSensitiveActionDecision)
 	return a.securityHeaders(mux)
@@ -357,6 +370,130 @@ func (a *app) handleSession(w http.ResponseWriter, r *http.Request) {
 	if !ok { writeJSON(w, 200, map[string]any{"authenticated":false,"staff":false}); return }
 	role := staffRole(user)
 	writeJSON(w, 200, map[string]any{"authenticated":true,"staff":role!="","email":user.Email,"role":role,"user_id":user.ID})
+}
+
+func (a *app) identityJWT(ctx context.Context, sessionSecret string) (string, error) {
+	var result struct {
+		JWT string `json:"jwt"`
+	}
+	if _, err := a.appwriteRequest(ctx, http.MethodPost, "/account/jwts", sessionSecret, nil, &result); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(result.JWT) == "" {
+		return "", errors.New("Appwrite did not issue a reviewer JWT")
+	}
+	return result.JWT, nil
+}
+
+// identityProxy authenticates the staff cookie locally, obtains a short-lived
+// Appwrite JWT server-side, then lets Backend independently enforce identity.review.
+// The JWT and private evidence bytes never enter browser JavaScript storage.
+func (a *app) identityProxy(w http.ResponseWriter, r *http.Request, backendPath string, evidenceStream bool) {
+	staffSession, _, ok := a.requireStaff(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	jwt, err := a.identityJWT(ctx, staffSession.Secret)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Reviewer authentication could not be established"})
+		return
+	}
+	var body []byte
+	if r.Method == http.MethodPost {
+		body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+		if err != nil {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "Review request is too large"})
+			return
+		}
+	}
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, r.Method, a.backendAPIURL+backendPath, reader)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Identity review service is unavailable"})
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := *a.client
+	client.Timeout = 45 * time.Second
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Identity review service could not be reached"})
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Cache-Control", "private, no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	if evidenceStream && resp.StatusCode == http.StatusOK {
+		for _, key := range []string{"Content-Type", "Content-Length", "Content-Disposition", "X-Content-Type-Options", "Content-Security-Policy", "Cross-Origin-Resource-Policy"} {
+			if value := resp.Header.Get(key); value != "" {
+				w.Header().Set(key, value)
+			}
+		}
+		size, parseErr := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+		if parseErr != nil || size < 1 || size > 15<<20 {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Evidence response metadata is invalid"})
+			return
+		}
+		if _, err := io.CopyN(w, resp.Body, size); err != nil {
+			// Content-Length makes a truncated stream fail closed at the client.
+			return
+		}
+		return
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Identity review response could not be read"})
+		return
+	}
+	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	} else {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(raw)
+}
+
+func (a *app) handleIdentityReviewQueue(w http.ResponseWriter, r *http.Request) {
+	a.identityProxy(w, r, "/api/admin/identity/review-queue", false)
+}
+
+func (a *app) handleIdentityReviewEvidence(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET required"})
+		return
+	}
+	backendPath := "/api/admin/identity/sessions/" + url.PathEscape(r.PathValue("session_id")) +
+		"/evidence/" + url.PathEscape(r.PathValue("evidence_id"))
+	a.identityProxy(w, r, backendPath, true)
+}
+
+func (a *app) handleIdentityReviewDecision(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+		return
+	}
+	backendPath := "/api/admin/identity/sessions/" + url.PathEscape(r.PathValue("session_id")) + "/decision"
+	a.identityProxy(w, r, backendPath, false)
+}
+
+func (a *app) handleIdentityApplicationApprove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+		return
+	}
+	backendPath := "/api/admin/identity/applications/" + url.PathEscape(r.PathValue("application_id")) + "/approve"
+	a.identityProxy(w, r, backendPath, false)
 }
 
 func (a *app) handleSignIn(w http.ResponseWriter, r *http.Request) {
