@@ -8,10 +8,48 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+)
+
+var identityApplicationIDPattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}package main
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"path"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+)
+var identityIdempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}package main
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"path"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
 )
 
 const (
