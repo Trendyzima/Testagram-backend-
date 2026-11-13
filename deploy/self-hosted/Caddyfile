@@ -27,6 +27,10 @@
     Referrer-Policy no-referrer
     -Server
   }
+  # New canonical CDN paths use Backend authorization and visibility checks.
+  # Legacy signed MinIO object URLs retain the existing media-cache origin.
+  @cdn_media path /v1/* /media/* /users/* /profiles/* /uploads/* /avatars/* /covers/* /photos/* /videos/*
+  reverse_proxy @cdn_media cdn:8080
   reverse_proxy media-cache:8081
 }
 
