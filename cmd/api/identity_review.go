@@ -34,6 +34,9 @@ type identityReviewSnapshot struct {
 }
 
 func (s *service) identityReviewer(r *http.Request) (appwriteAccount, int, error) {
+	if s.db == nil {
+		return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("identity database is unavailable")
+	}
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	if len(header) < 8 || !strings.EqualFold(header[:7], "Bearer ") {
 		return appwriteAccount{}, http.StatusUnauthorized, errors.New("staff authentication required")
