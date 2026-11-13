@@ -31,7 +31,7 @@ func TestIdentityRequestTokenShapes(t *testing.T) {
 	if identityApplicationIDPattern.MatchString("not-a-uuid") {
 		t.Fatal("invalid identifier accepted")
 	}
-	if !identityIdempotencyKeyPattern.MatchString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO") {
+	if !identityIdempotencyKeyPattern.MatchString("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ") {
 		t.Fatal("valid URL-safe idempotency key rejected")
 	}
 	if identityIdempotencyKeyPattern.MatchString("short") {
