@@ -310,6 +310,13 @@ jobs:
           if [[ -z "$(read_env_value MEDIA_REPLICATION_ENABLED)" ]]; then write_env_value MEDIA_REPLICATION_ENABLED false; fi
           if [[ -z "$(read_env_value TESTAGRAM_TERMS_VERSION)" ]]; then write_env_value TESTAGRAM_TERMS_VERSION ""; fi
           if [[ -z "$(read_env_value TESTAGRAM_PRIVACY_VERSION)" ]]; then write_env_value TESTAGRAM_PRIVACY_VERSION ""; fi
+          # Copy provider settings into Backend's own .env as well as the
+          # Data Centre .env. The Backend replicator stays disabled unless
+          # MEDIA_REPLICATION_ENABLED is explicitly enabled after staging.
+          for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+            value="${!key:-}"
+            if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
+          done
           ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
           ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
           ensure_random_secret CDN_PURGE_TOKEN
