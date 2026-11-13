@@ -140,6 +140,91 @@ BEGIN
 END;
 $reviewer_fks$;
 
+-- The database itself refuses approval-token issuance unless the linked
+-- sensitive-action request is approved by exactly two distinct, recorded
+-- reviewers and the reviewed application snapshot matches the current row.
+CREATE OR REPLACE FUNCTION testagram_identity.assert_two_person_identity_approval()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v_request_id UUID;
+  v_action_type TEXT;
+  v_request_status TEXT;
+  v_required_approvals SMALLINT;
+  v_requester TEXT;
+  v_payload JSONB;
+  v_application RECORD;
+  v_approved_count INTEGER;
+BEGIN
+  SELECT id, email, username, display_name, evidence_fingerprint_sha256,
+         terms_version, privacy_version, status, sensitive_action_request_id
+    INTO v_application
+  FROM testagram_identity.identity_applications
+  WHERE id = NEW.application_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR v_application.sensitive_action_request_id IS NULL THEN
+    RAISE EXCEPTION 'identity approval token requires a linked application and approval request';
+  END IF;
+  IF v_application.status <> 'approved' THEN
+    RAISE EXCEPTION 'identity application must be approved before token issuance';
+  END IF;
+
+  v_request_id := v_application.sensitive_action_request_id;
+  SELECT action_type, status, required_approvals, requested_by_appwrite_user_id, payload
+    INTO v_action_type, v_request_status, v_required_approvals, v_requester, v_payload
+  FROM testagram_auth.sensitive_action_requests
+  WHERE id = v_request_id
+  FOR UPDATE;
+
+  IF NOT FOUND
+     OR v_action_type <> 'identity.approve'
+     OR v_request_status <> 'approved'
+     OR v_required_approvals <> 2 THEN
+    RAISE EXCEPTION 'linked sensitive-action request is not a completed two-person identity approval';
+  END IF;
+
+  IF v_requester = NEW.first_approver_appwrite_user_id
+     OR v_requester = NEW.second_approver_appwrite_user_id THEN
+    RAISE EXCEPTION 'approval requester cannot be an identity approver';
+  END IF;
+
+  IF v_payload->>'application_id' IS DISTINCT FROM NEW.application_id::text
+     OR v_payload->>'email' IS DISTINCT FROM v_application.email
+     OR v_payload->>'username' IS DISTINCT FROM v_application.username
+     OR v_payload->>'display_name' IS DISTINCT FROM v_application.display_name
+     OR v_payload->>'evidence_fingerprint_sha256' IS DISTINCT FROM encode(v_application.evidence_fingerprint_sha256, 'hex')
+     OR v_payload->>'terms_version' IS DISTINCT FROM v_application.terms_version
+     OR v_payload->>'privacy_version' IS DISTINCT FROM v_application.privacy_version THEN
+    RAISE EXCEPTION 'approval payload does not match the current identity application';
+  END IF;
+
+  SELECT count(DISTINCT approver_appwrite_user_id)
+    INTO v_approved_count
+  FROM testagram_auth.sensitive_action_approvals
+  WHERE request_id = v_request_id
+    AND decision = 'approved'
+    AND approver_appwrite_user_id IN (
+      NEW.first_approver_appwrite_user_id,
+      NEW.second_approver_appwrite_user_id
+    );
+
+  IF v_approved_count <> 2 THEN
+    RAISE EXCEPTION 'two distinct recorded approvals are required before token issuance';
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval
+  ON testagram_identity.identity_approval_tokens;
+
+CREATE TRIGGER identity_approval_token_requires_two_person_approval
+BEFORE INSERT ON testagram_identity.identity_approval_tokens
+FOR EACH ROW EXECUTE FUNCTION testagram_identity.assert_two_person_identity_approval();
+
 -- Durable worker leases and reconciliation metadata. External Appwrite calls
 -- cannot be part of a PostgreSQL transaction, so ambiguous outcomes must be
 -- recoverable and observable rather than treated as exactly-once operations.
