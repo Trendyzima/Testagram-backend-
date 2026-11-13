@@ -481,6 +481,10 @@ jobs:
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
+          assert "ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9" in compose, "Backend Compose must pin the provenance-verified Go CDN image by digest"
+          assert "ORIGIN_URL: http://api:8080" in compose and "ORIGIN_AUTH_TOKEN:" in compose, "Go CDN must use the private Backend origin and service credential"
+          assert "reverse_proxy @cdn_media cdn:8080" in caddy and "reverse_proxy media-cache:8081" in caddy, "Caddy must route canonical CDN paths without breaking legacy signed MinIO paths"
+          assert "543093e47bde602512adfc2b4aa30caed8cf0e60" in deploy and "Go CDN public cache miss authenticated and classified by Backend" in deploy, "InstaBox deploy must pin, health-check and smoke the CDN-to-Backend path"
           assert "envs:(" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
           assert "DATA_CENTRE_MEDIA_ENABLED:$media_enabled" in deploy and 'if $media_enabled == "true" then' in deploy, "media provider credentials must be forwarded only after explicit media activation"
           for check in (
