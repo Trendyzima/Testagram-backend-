@@ -410,32 +410,60 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_EVIDENCE_METADATA", "Use a supported document image or PDF with a valid size and SHA-256 digest", requestID(r)))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	var evidenceID string
-	if err := s.db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceID); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
-		return
-	}
-	nonce, err := authRandomToken()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Evidence upload could not be prepared", requestID(r)))
-		return
-	}
-	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
-	objectKey := path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
-	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, input.ContentType, input.SizeBytes)
-	if err != nil {
+	if s.virtualStorage == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
 		return
 	}
-	_, err = s.db.Exec(ctx, `
-		INSERT INTO testagram_identity.verification_evidence
-		  (id,session_id,object_key,content_type,size_bytes,sha256)
-		VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)
-	`, evidenceID, r.PathValue("session_id"), objectKey, input.ContentType, input.SizeBytes, digest)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
+
+	// Reissue an upload URL for an identical pending reservation. This makes
+	// failed/expired PUT attempts retryable without creating duplicate evidence
+	// rows or locking the applicant out of the session.
+	var evidenceID, objectKey, storedContentType string
+	var storedSize int64
+	var storedDigest []byte
+	err = s.db.QueryRow(ctx, `
+		SELECT id::text,object_key,content_type,size_bytes,sha256
+		FROM testagram_identity.verification_evidence
+		WHERE session_id=$1::uuid AND status='upload_pending'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, r.PathValue("session_id")).Scan(&evidenceID,&objectKey,&storedContentType,&storedSize,&storedDigest)
+	if err == nil {
+		if storedContentType != input.ContentType || storedSize != input.SizeBytes ||
+			subtle.ConstantTimeCompare(storedDigest,digest) != 1 {
+			writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "A different evidence file is already reserved; retry with the same file or contact support", requestID(r)))
+			return
+		}
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		if err := s.db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceID); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
+			return
+		}
+		nonce, err := authRandomToken()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Evidence upload could not be prepared", requestID(r)))
+			return
+		}
+		objectKey = path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
+		_, err = s.db.Exec(ctx, `
+			INSERT INTO testagram_identity.verification_evidence
+			  (id,session_id,object_key,content_type,size_bytes,sha256)
+			VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)
+		`, evidenceID, r.PathValue("session_id"), objectKey, input.ContentType, input.SizeBytes, digest)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "An evidence upload is already reserved for this session; retry the same file", requestID(r)))
+			return
+		}
+	} else {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload reservation could not be read", requestID(r)))
+		return
+	}
+	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, input.ContentType, input.SizeBytes)
 	if err != nil {
-		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "An evidence upload is already reserved for this session", requestID(r)))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -458,6 +486,10 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	access, err := s.identitySessionAccess(r)
 	if err != nil || (access.Status != "in_progress" && access.Status != "created") {
 		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
+		return
+	}
+	if s.virtualStorage == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -516,7 +548,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.verification_sessions
 		SET status='manual_review',evidence_reference=$2,evidence_fingerprint_sha256=$3,
-		    submitted_at=now(),updated_at=now()
+		    submitted_at=now(),expires_at=GREATEST(expires_at,now()+interval '7 days'),updated_at=now()
 		WHERE id=$1::uuid
 	`, r.PathValue("session_id"), evidenceRef, digest); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence submission could not be committed", requestID(r)))
@@ -525,7 +557,9 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
 		SET evidence_reference=$2,evidence_fingerprint_sha256=$3,
-		    adult_verification_result='manual_review',status='under_review',updated_at=now()
+		    adult_verification_result='manual_review',status='under_review',
+		    status_access_token_expires_at=GREATEST(COALESCE(status_access_token_expires_at,now()),now()+interval '30 days'),
+		    updated_at=now()
 		WHERE id=$1::uuid
 	`, access.ApplicationID, evidenceRef, digest); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence submission could not be committed", requestID(r)))
