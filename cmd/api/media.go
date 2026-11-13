@@ -417,6 +417,10 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 	}
 	viewerHeader := strings.TrimSpace(r.Header.Get("X-Testagram-Viewer-Authorization"))
 	requesterID := ownerID
+	if !strings.HasPrefix(key, "users/"+ownerID+"/") {
+		http.Error(w, "media object owner mismatch", http.StatusNotFound)
+		return
+	}
 	if viewerHeader != "" {
 		if !strings.HasPrefix(viewerHeader, "Bearer ") || len(viewerHeader) > 8192 || strings.ContainsAny(viewerHeader, "\r\n") {
 			http.Error(w, "invalid viewer assertion", http.StatusUnauthorized)
@@ -433,7 +437,6 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "media authorization denied", http.StatusNotFound)
 			return
 		}
-		requesterID = claims.Subject
 	} else if visibility != "public" {
 		// No viewer assertion is accepted only for a canonical ready public asset.
 		http.Error(w, "viewer assertion required", http.StatusUnauthorized)
@@ -765,7 +768,14 @@ if body.ChecksumSHA256 == "" { writeJSON(w, http.StatusUnprocessableEntity, erro
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_REPLICA_STATUS_UNAVAILABLE", "Data Centre media verification status is temporarily unavailable", id))
 				return
 			}
-			if mediaState.Status == "protected" { actualType, size, etag = mediaState.ContentType, mediaState.SizeBytes, mediaState.SHA256; break }
+			if mediaState.Status == "protected" {
+				if subtle.ConstantTimeCompare([]byte(strings.ToLower(mediaState.SHA256)), []byte(body.ChecksumSHA256)) != 1 {
+					writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_REPLICA_DIGEST_MISMATCH", "Data Centre protected digest does not match the Backend upload digest", id))
+					return
+				}
+				actualType, size, etag = mediaState.ContentType, mediaState.SizeBytes, mediaState.SHA256
+				break
+			}
 			if mediaState.Status == "replication_failed" {
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_REPLICA_FAILED", "Media is uploaded but its durable replica is not ready; retry completion", id))
 				return
