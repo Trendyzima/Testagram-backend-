@@ -147,9 +147,9 @@ services:
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
-      CDN_MEDIA_ASSERTION_SECRET: ${CDN_MEDIA_ASSERTION_SECRET:-}
+      CDN_MEDIA_ASSERTION_SECRET: ${CDN_MEDIA_ASSERTION_SECRET:?Set CDN_MEDIA_ASSERTION_SECRET in .env}
       CDN_MEDIA_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
-      CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:-}
+      CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
       # Private Data Centre media lifecycle; provider credentials stay in Data Centre only.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
