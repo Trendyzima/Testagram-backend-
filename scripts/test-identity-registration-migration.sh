@@ -96,6 +96,12 @@ BEGIN
     (app_id,'ci-reviewer-one','approved','First independent approval','audit-reference-0001'),
     (app_id,'ci-reviewer-two','approved','Second independent approval','audit-reference-0002');
 
+  INSERT INTO testagram_auth.sensitive_action_approvals
+    (request_id,approver_appwrite_user_id,decision,reason)
+  VALUES
+    (action_id,'ci-reviewer-one','approved','First independent approval'),
+    (action_id,'ci-reviewer-two','approved','Second independent approval');
+
   UPDATE testagram_auth.sensitive_action_requests
   SET status='approved',decided_at=now()
   WHERE id=action_id;
