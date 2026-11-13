@@ -468,6 +468,9 @@ jobs:
           import re
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
+          assert "FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}" in deploy, "deployment must consume the repository Federation read secret"
+          assert "envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token}" in deploy, "deployment must forward the Federation read secret to the VPS environment"
+          assert "must be distinct from FEDERATION_INGRESS_TOKEN" in deploy, "Federation credentials must remain independently keyed"
           expected = {
               "TESTAGRAM_ALGORITHM_IMAGE": "sha-6ae0532c171383b84731063d590d775524f9da1e",
               "TESTAGRAM_FEDERATION_IMAGE": "sha-edf4f59f843514596d35273c888ff1c16ec0f73e",
