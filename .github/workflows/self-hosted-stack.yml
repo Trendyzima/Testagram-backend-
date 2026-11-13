@@ -139,7 +139,18 @@ jobs:
             and to_regclass('testagram_local.post_create_idempotency') is not null
             and to_regclass('testagram_local.follows') is not null")
           test "$result" = "t"
+          # Re-apply the same migrations through the guarded existing-volume
+          # runner to prove the backup path and idempotent upgrade behavior.
+          bash apply-current-schema-migrations.sh --confirm
+          result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select
+            to_regclass('testagram_identity.identity_applications') is not null
+            and to_regclass('testagram_identity.verification_sessions') is not null
+            and to_regclass('testagram_identity.verification_evidence') is not null
+            and to_regclass('testagram_auth.sensitive_action_approvals') is not null
+            and to_regclass('testagram_local.post_create_idempotency') is not null")
+          test "$result" = "t"
           docker compose down -v
+          rm -rf backups
       - name: Ensure no live secrets were added to the example
         run: |
           grep -q 'REPLACE_WITH_LONG_RANDOM_POSTGRES_PASSWORD' deploy/self-hosted/.env.example
