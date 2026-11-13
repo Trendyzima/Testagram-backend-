@@ -144,7 +144,7 @@ type identityReviewSnapshot struct {
 	PrivacyVersion              string `json:"privacy_version"`
 }
 
-func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, applicationID, reviewerID, decision, reason string, rawPayload []byte, approvalCount int) (string, error) {
+func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, applicationID, reviewerID, decision, reason string, rawPayload []byte, approvalCount int) (string, error) {
 	var snapshot identityReviewSnapshot
 	if err := json.Unmarshal(rawPayload, &snapshot); err != nil {
 		return "", errors.New("identity approval payload is invalid")
@@ -154,22 +154,54 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, application
 		return "", errors.New("identity approval payload is not bound to an auditable application")
 	}
 
-	var email, username, displayName, termsVersion, privacyVersion, applicationStatus string
+	var email, username, displayName, termsVersion, privacyVersion, applicationStatus, linkedRequestID string
 	var evidenceFingerprint []byte
 	var adultVerified bool
 	err := tx.QueryRow(ctx, `
 		SELECT email, username, display_name, evidence_fingerprint_sha256,
-		       terms_version, privacy_version, status, adult_verified_at IS NOT NULL
+		       terms_version, privacy_version, status, adult_verified_at IS NOT NULL,
+		       sensitive_action_request_id::text
 		FROM testagram_identity.identity_applications
 		WHERE id=$1::uuid
 		FOR UPDATE
 	`, applicationID).Scan(&email, &username, &displayName, &evidenceFingerprint,
-		&termsVersion, &privacyVersion, &applicationStatus, &adultVerified)
+		&termsVersion, &privacyVersion, &applicationStatus, &adultVerified, &linkedRequestID)
 	if err != nil {
 		return "", errors.New("identity application was not found")
 	}
+	if linkedRequestID != requestID {
+		return "", errors.New("identity application is not linked to this approval request")
+	}
 	if applicationStatus != "pending" && applicationStatus != "under_review" {
 		return "", errors.New("identity application is no longer reviewable")
+	}
+	var actionType, requestStatus, targetReference string
+	var requiredApprovals, recordedApprovals int
+	err = tx.QueryRow(ctx, `
+		SELECT action_type, status, target_reference, required_approvals
+		FROM testagram_auth.sensitive_action_requests
+		WHERE id=$1::uuid
+		FOR UPDATE
+	`, requestID).Scan(&actionType, &requestStatus, &targetReference, &requiredApprovals)
+	if err != nil || actionType != "identity.approve" || targetReference != applicationID || requiredApprovals != 2 {
+		return "", errors.New("linked approval request does not match the identity application")
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT count(DISTINCT approver_appwrite_user_id)
+		FROM testagram_auth.sensitive_action_approvals
+		WHERE request_id=$1::uuid AND decision='approved'
+	`, requestID).Scan(&recordedApprovals)
+	if err != nil || recordedApprovals != approvalCount {
+		return "", errors.New("approval count does not match the durable approval ledger")
+	}
+	if decision == "rejected" && requestStatus != "rejected" {
+		return "", errors.New("rejected identity decision is not reflected in the approval ledger")
+	}
+	if decision == "approved" && approvalCount >= 2 && requestStatus != "approved" {
+		return "", errors.New("completed two-person approval is not reflected in the approval ledger")
+	}
+	if decision == "approved" && approvalCount < 2 && requestStatus != "pending" {
+		return "", errors.New("incomplete approval request is not pending")
 	}
 	if !adultVerified {
 		return "", errors.New("verified adult evidence is required before review decisions")
@@ -309,7 +341,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 
 	applicationState := ""
 	if err == nil && action == "identity.approve" {
-		applicationState, err = recordIdentityApplicationReview(ctx, tx, targetReference, approver.ID, input.Decision, input.Reason, payload, count)
+		applicationState, err = recordIdentityApplicationReview(ctx, tx, id, targetReference, approver.ID, input.Decision, input.Reason, payload, count)
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `
