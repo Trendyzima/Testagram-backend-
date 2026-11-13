@@ -497,6 +497,10 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", s.identityReviewDecision)
 	mux.HandleFunc("OPTIONS /api/admin/identity/applications/{application_id}/approve", s.mediaPreflight)
 	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", s.identityApplicationApprove)
+	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}/provisioning-token", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/applications/{application_id}/provisioning-token", s.identityApplicationProvisioningToken)
+	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}/redeem", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/applications/{application_id}/redeem", s.identityApplicationRedeem)
 	// Independent authentication routes use Testagram PostgreSQL only; Redis, Upstash and Supabase are not in this request path.
 	for _, action := range []string{"signup", "resend-verification", "verify-email", "login", "forgot-password", "reset-password"} {
 		action := action
