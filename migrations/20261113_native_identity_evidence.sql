@@ -3,6 +3,11 @@
 -- an opaque object key, validated content metadata and a SHA-256 digest.
 BEGIN;
 
+-- Platform owners can review identity applications; other roles require an explicit permission grant.
+INSERT INTO testagram_auth.staff_role_permissions(role,permission_key)
+VALUES ('owner','identity.review')
+ON CONFLICT DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS testagram_identity.verification_evidence (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   session_id UUID NOT NULL REFERENCES testagram_identity.verification_sessions(id) ON DELETE RESTRICT,
