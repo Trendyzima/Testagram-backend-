@@ -137,7 +137,7 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
              patch.object(watchdog, "READY_URL", "https://example.test/readyz"), \
              patch.object(watchdog, "FAILURES_REQUIRED", 3), \
-             patch.object(watchdog, "ACTION_COOLDOWN", 300):
+             patch.object(watchdog, "RESTART_COOLDOWN", 300):
             self.assertEqual(watchdog.main(), 0)
         actions = [call[1].rsplit("/", 1)[-1] for call in api.calls if call[0] == "POST"]
         self.assertEqual(actions, ["stop", "start"])
@@ -145,7 +145,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_running_machine_restart_is_stop_then_start(self):
         api = FakeAPI()
-        with patch.object(watchdog, "ACTION_COOLDOWN", 300), \
+        with patch.object(watchdog, "RESTART_COOLDOWN", 300), \
              patch.object(watchdog, "DRY_RUN", False), \
              patch.object(watchdog, "save_state"):
             result = watchdog.restart_running(api, {})
@@ -155,7 +155,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_cooldown_prevents_repeated_restart(self):
         api = FakeAPI()
-        with patch.object(watchdog, "ACTION_COOLDOWN", 1800), \
+        with patch.object(watchdog, "RESTART_COOLDOWN", 1800), \
              patch.object(watchdog, "DRY_RUN", False), \
              patch.object(watchdog, "save_state"):
             result = watchdog.restart_running(api, {"last_restart_at": __import__("time").time()})
