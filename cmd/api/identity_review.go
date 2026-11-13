@@ -428,18 +428,20 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		writeJSON(w,http.StatusConflict,errorBody("INVALID_APPROVAL_COUNT","Approval ledger has an unexpected number of approvals",requestID(r)))
 		return
 	}
-	if _,err=tx.Exec(ctx,`
+	requestTag, err := tx.Exec(ctx,`
 		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
 		WHERE id=$1::uuid AND status='pending' AND required_approvals=2
-	`,requestIDValue); err!=nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_APPROVAL_FAILED","Approval request could not be finalized",requestID(r)))
+	`,requestIDValue)
+	if err != nil || requestTag.RowsAffected() != 1 {
+		writeJSON(w,http.StatusConflict,errorBody("IDENTITY_APPROVAL_FAILED","Two-person approval request could not be finalized exactly once",requestID(r)))
 		return
 	}
-	if _,err=tx.Exec(ctx,`
+	applicationTag, err := tx.Exec(ctx,`
 		UPDATE testagram_identity.identity_applications SET status='approved',status_access_token_expires_at=now()+interval '30 days',updated_at=now()
 		WHERE id=$1::uuid AND status='verified'
-	`,applicationID); err!=nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_APPROVAL_FAILED","Application could not be approved",requestID(r)))
+	`,applicationID)
+	if err != nil || applicationTag.RowsAffected() != 1 {
+		writeJSON(w,http.StatusConflict,errorBody("IDENTITY_APPROVAL_FAILED","Application approval state could not be advanced",requestID(r)))
 		return
 	}
 	if _,err=tx.Exec(ctx,`
