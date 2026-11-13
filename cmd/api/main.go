@@ -1077,6 +1077,9 @@ func main() {
 		}
 		log.Printf("viewer-bound CDN media assertions enabled")
 	}
+	if freshMediaEnabled && (cdnMediaAssertions == nil || cdnMediaBaseURL == "" || len(cdnOriginAuthToken) < 32) {
+		log.Fatal("FRESH_MEDIA_ENABLED requires CDN_MEDIA_ASSERTION_SECRET, HTTPS CDN_MEDIA_BASE_URL and CDN_ORIGIN_AUTH_TOKEN; private media must not bypass the CDN origin")
+	}
 	var virtualStorageManager *virtualstorage.Manager
 	var primaryVirtualStorageProvider *virtualstorage.S3Provider
 	var mediaReplicator *virtualstorage.Replicator
