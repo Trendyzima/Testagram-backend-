@@ -263,6 +263,37 @@ func (p *S3Provider) CopyFrom(ctx context.Context, source *S3Provider, sourceBuc
 	}
 	return nil
 }
+// DetectContentType inspects the first 512 stored bytes rather than trusting
+// client-controlled S3 metadata. It is used before identity evidence is sealed.
+func (p *S3Provider) DetectContentType(ctx context.Context, bucket, key string) (string, error) {
+	getURL, err := p.PresignGet(ctx, bucket, key, time.Minute)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
+	if err != nil {
+		return "", err
+	}
+	client := *p.client
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("evidence content inspection returned HTTP %d", resp.StatusCode)
+	}
+	prefix, err := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if err != nil {
+		return "", err
+	}
+	if len(prefix) == 0 {
+		return "", ErrObjectMismatch
+	}
+	return strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(prefix), ";")[0])), nil
+}
+
 func (p *S3Provider) Head(ctx context.Context, bucket, key string) (ObjectInfo, error) {
 	u, err := p.presign(ctx, http.MethodHead, bucket, key, url.Values{}, nil, time.Minute)
 	if err != nil {
