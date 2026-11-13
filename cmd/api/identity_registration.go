@@ -27,66 +27,8 @@ const (
 	identityAdultThreshold      = 18
 )
 
-var identityApplicationIDPattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}package main
-
-import (
-	"bytes"
-	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"regexp"
-	"strings"
-	"time"
-
-	"github.com/jackc/pgx/v5"
-)
-
-const (
-	maxIdentityApplicationBody = 16 << 10
-	maxIdswyftWebhookBody       = 64 << 10
-	identityAdultThreshold      = 18
-)
-
-)
-var identityIdempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}package main
-
-import (
-	"bytes"
-	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"regexp"
-	"strings"
-	"time"
-
-	"github.com/jackc/pgx/v5"
-)
-
-const (
-	maxIdentityApplicationBody = 16 << 10
-	maxIdswyftWebhookBody       = 64 << 10
-	identityAdultThreshold      = 18
-)
-
-)
+var identityApplicationIDPattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}$`)
+var identityIdempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 
 type identityApplicationInput struct {
 	Email          string `json:"email"`
