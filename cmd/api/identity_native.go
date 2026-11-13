@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"path"
 	"regexp"
@@ -392,11 +391,17 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	var evidenceID, nonce string
-	if err := s.db.QueryRow(ctx, "SELECT gen_random_uuid()::text,encode(gen_random_bytes(24),'hex')").Scan(&evidenceID, &nonce); err != nil {
+	var evidenceID string
+	if err := s.db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
 		return
 	}
+	nonce, err := authRandomToken()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Evidence upload could not be prepared", requestID(r)))
+		return
+	}
+	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
 	objectKey := path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
 	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, input.ContentType, input.SizeBytes)
 	if err != nil {
@@ -527,15 +532,3 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "manual_review", "message": "Evidence was securely received and queued for manual review."})
 }
 
-func (s *service) identitySessionExpire(ctx context.Context, sessionID string) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE testagram_identity.verification_sessions
-		SET status='expired',updated_at=now()
-		WHERE id=$1::uuid AND expires_at<=now()
-		  AND status IN ('created','in_progress','submitted','manual_review')
-	`, sessionID)
-	if err != nil {
-		return fmt.Errorf("expire identity session: %w", err)
-	}
-	return nil
-}
