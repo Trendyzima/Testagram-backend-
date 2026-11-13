@@ -542,6 +542,7 @@ jobs:
           assert 'mc mb --ignore-existing "local/$identity_bucket"' in minio_init
           assert 'mc anonymous set none "local/$identity_bucket"' in minio_init
           assert '"$private_bucket" "$public_bucket" "$identity_bucket"' in minio_init, "restricted MinIO media identity must access the private evidence bucket"
+          assert "testagram-media-api-identity-v1" in minio_init, "existing MinIO installs must receive a versioned policy that grants private evidence access"
           expected = {
               "TESTAGRAM_ALGORITHM_IMAGE": "sha-6ae0532c171383b84731063d590d775524f9da1e",
               "TESTAGRAM_FEDERATION_IMAGE": "sha-edf4f59f843514596d35273c888ff1c16ec0f73e",
