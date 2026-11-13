@@ -105,6 +105,24 @@ jobs:
               if key not in api_env:
                   raise SystemExit(f"Backend API is missing CDN setting {key}.")
           PY
+          python - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          import yaml
+          workflow_path = pathlib.Path("../../.github/workflows/instabox-deploy.yml")
+          with workflow_path.open(encoding="utf-8") as handle:
+              workflow = yaml.safe_load(handle)
+          steps = workflow["jobs"]["deploy"]["steps"]
+          for step in steps:
+              if "run" in step:
+                  subprocess.run(["bash", "-n"], input=step["run"], text=True, check=True)
+          target = next(step for step in steps if step.get("name") == "Configure public CDN URL and restart Backend and Go CDN")
+          match = re.search(r"(?m)^\\s*cmd='([^']*)'\\s*$", target["run"])
+          if not match:
+              raise SystemExit("Remote CDN configuration command was not found or contains unsafe quote boundaries.")
+          subprocess.run(["bash", "-n"], input=match.group(1), text=True, check=True)
+          PY
       - name: Check public ports are limited to HTTPS edge
         working-directory: deploy/self-hosted
         run: |
