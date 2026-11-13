@@ -263,6 +263,8 @@ jobs:
             printf -v "$key" '%s' "$value"
           }
           ensure_random_secret FEDERATION_INGRESS_TOKEN
+          ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
+          ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
           # The repository secret is the source of truth for standard Backend -> Federation reads.
           if [[ -n "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ]]; then
             write_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
@@ -274,6 +276,9 @@ jobs:
           fi
           FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
           write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
+          TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:d90bc8efa3425cda5b3ac104f9c8daa186a9e79970f855c1acca772f8434374a"
+          write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
+          if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
             if grep -q '^APPWRITE_PROJECT_ID=' "$BASE_ENV"; then
               sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$BASE_ENV"
@@ -291,6 +296,23 @@ jobs:
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
+
+          echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" pull media-cache
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate media-cache
+          cdn_ready=false
+          for attempt in $(seq 1 36); do
+            if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T media-cache wget -q -O /dev/null http://127.0.0.1:8081/readyz; then
+              cdn_ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$cdn_ready" != "true" ]]; then
+            sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
+            sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=100 media-cache api
+            exit 1
+          fi
 
           echo "Waiting for Backend readiness..."
           backend_ready=false
@@ -419,6 +441,11 @@ jobs:
             fi
             echo "Verified $service image: $actual"
           }
+          cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q media-cache)"
+          if [[ -z "$cdn_container" ]]; then echo "::error::Go CDN container is not running"; exit 1; fi
+          cdn_image="$(sudo docker inspect --format '{{.Config.Image}}' "$cdn_container")"
+          if [[ "$cdn_image" != "$TESTAGRAM_CDN_IMAGE" ]]; then echo "::error::Go CDN image digest mismatch"; exit 1; fi
+          echo "Verified Go CDN image digest: $cdn_image"
           verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
           verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
 
@@ -439,6 +466,9 @@ jobs:
           }
           verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
           verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_INTERNAL_TOKEN "$FEDERATION_INGRESS_TOKEN"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_ORIGIN_AUTH_TOKEN "$CDN_ORIGIN_AUTH_TOKEN"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_AUTH_TOKEN "$CDN_ORIGIN_AUTH_TOKEN"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://api:8080"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 
@@ -529,7 +559,7 @@ jobs:
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
           cmd='set -euo pipefail
-          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
+          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
           for container in "${containers[@]}"; do
             ready=false
             status=missing
@@ -605,15 +635,37 @@ jobs:
           echo "media_url=$url" >> "$GITHUB_OUTPUT"
           echo "MinIO media URL: $url"
 
-      - name: Configure public media URL and restart API
+      - name: Publish Go CDN media endpoint over HTTPS
+        id: publish_cdn
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          body='{"port":8081,"name":"testagram-cdn","protocol":"http","access":"public"}'
+          published="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
+            -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Content-Type: application/json" -d "$body" \
+            "$API/v1/machines/$MACHINE_ID/ports")"
+          url="$(jq -r '.url // empty' <<<"$published")"
+          if [[ -z "$url" || "$url" != https://* ]]; then
+            echo "::error::InstaBox did not return a valid HTTPS URL for the Go CDN port."
+            jq -c '.error // .' <<<"$published"
+            exit 1
+          fi
+          echo "cdn_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Go CDN URL: $url"
+
+      - name: Configure public CDN URL and restart Backend and Go CDN
         shell: bash
         run: |
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
           MEDIA_URL="${{ steps.publish_media.outputs.media_url }}"
-          cmd='set -euo pipefail; ROOT=/data/home/testagram; BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"; sed -i "s|^MINIO_PUBLIC_ENDPOINT=.*|MINIO_PUBLIC_ENDPOINT=$MEDIA_URL|" "$BASE_ENV"; sed -i "s|^MEDIA_PUBLIC_BASE_URL=.*|MEDIA_PUBLIC_BASE_URL=$MEDIA_URL/testagram-public-media|" "$BASE_ENV"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" up -d api; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz'
-          payload="$(jq -nc --arg cmd "$cmd" --arg media "$MEDIA_URL" '{cmd:$cmd,envs:{MEDIA_URL:$media},timeoutSeconds:120}')"
+          CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
+          cmd='set -euo pipefail; ROOT=/data/home/testagram; BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"; upsert_env(){ key="$1"; value="$2"; if grep -q "^\${key}=" "$BASE_ENV"; then sed -i "s|^\${key}=.*|\${key}=\${value}|" "$BASE_ENV"; else printf "%s=%s\\n" "$key" "$value" >> "$BASE_ENV"; fi; }; CDN_URL="\${CDN_URL%/}"; upsert_env MINIO_PUBLIC_ENDPOINT "$MEDIA_URL"; upsert_env CDN_MEDIA_BASE_URL "$CDN_URL"; upsert_env MEDIA_PUBLIC_BASE_URL "$CDN_URL/v1"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" up -d --force-recreate media-cache api; for attempt in $(seq 1 36); do if sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache wget -q -O /dev/null http://127.0.0.1:8081/readyz && sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz; then exit 0; fi; sleep 5; done; echo "Backend or Go CDN failed readiness after URL update" >&2; exit 1'
+          payload="$(jq -nc --arg cmd "$cmd" --arg media "$MEDIA_URL" --arg cdn "$CDN_URL" '{cmd:$cmd,envs:{MEDIA_URL:$media,CDN_URL:$cdn},timeoutSeconds:240}')"
           result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" -d "$payload" \
             "$API/v1/machines/$MACHINE_ID/exec")"
@@ -631,9 +683,12 @@ jobs:
           set -euo pipefail
           URL="${{ steps.publish.outputs.api_url }}"
           MEDIA_URL="${{ steps.publish_media.outputs.media_url }}"
+          CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
           for attempt in $(seq 1 30); do
-            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null && curl -fsS "$MEDIA_URL/minio/health/live" >/dev/null; then
-              echo "Testagram API and public media storage are reachable and ready."
+            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null && curl -fsS "$MEDIA_URL/minio/health/live" >/dev/null && curl -fsS "$CDN_URL/healthz" >/tmp/cdn-health.json && curl -fsS "$CDN_URL/readyz" >/tmp/cdn-ready.txt && grep -q '"service":"testagram-cdn"' /tmp/cdn-health.json && grep -qx 'ready' /tmp/cdn-ready.txt; then
+              private_status="$(curl -sS -o /dev/null -w '%{http_code}' "$CDN_URL/v1/users/cdn-smoke/0123456789abcdef0123456789abcdef")"
+              case "$private_status" in 401|403|404) ;; *) echo "::error::Unauthenticated media request returned unsafe HTTP $private_status"; exit 1 ;; esac
+              echo "Testagram API, MinIO and the pinned Go CDN are reachable; CDN readiness and unauthenticated media denial passed."
               exit 0
             fi
             sleep 10
@@ -649,6 +704,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Machine: ${{ steps.machine.outputs.machine_id || 'not resolved' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- API URL: ${{ steps.publish.outputs.api_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Go CDN URL: ${{ steps.publish_cdn.outputs.cdn_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend health: checked at /healthz and /readyz" >> "$GITHUB_STEP_SUMMARY"
           echo "- Appwrite project ID: ${{ secrets.APPWRITE_PROJECT_ID != '' && 'configured' || 'not configured; login-dependent services are skipped' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
