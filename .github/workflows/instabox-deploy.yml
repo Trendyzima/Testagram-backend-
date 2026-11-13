@@ -276,13 +276,19 @@ jobs:
           read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
           write_env_value() {
             local key="$1" value="$2"
+            # .env values are later sourced by Bash and parsed by Compose. Accept
+            # only a conservative secret/URL alphabet to prevent shell or dotenv injection.
+            if [[ ! "$value" =~ ^[A-Za-z0-9._:/+=-]*$ ]]; then
+              echo "::error::Unsupported characters in $key; refusing unsafe dotenv value."
+              return 1
+            fi
             if grep -q "^${key}=" "$BASE_ENV"; then
               sed -i "s|^${key}=.*|${key}=${value}|" "$BASE_ENV"
             else
               printf '%s=%s\n' "$key" "$value" >> "$BASE_ENV"
             fi
           }
-          ensure_random_secret() {
+                    ensure_random_secret() {
             local key="$1" value
             value="$(read_env_value "$key")"
             if [[ ! "$value" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
@@ -304,6 +310,28 @@ jobs:
           FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
           write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
           write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"
+          # Persist optional identity settings and credentials without logging their values.
+          if [[ -n "${APPWRITE_API_KEY:-}" ]]; then write_env_value APPWRITE_API_KEY "$APPWRITE_API_KEY"; fi
+          write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}"
+          for key in TESTAGRAM_TERMS_VERSION TESTAGRAM_PRIVACY_VERSION IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_REGION CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ENDPOINT B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY B2_S3_REGION B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET; do
+            value="${!key:-}"
+            if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
+          done
+          identity_ready=true
+          for key in APPWRITE_PROJECT_ID APPWRITE_API_KEY TESTAGRAM_TERMS_VERSION TESTAGRAM_PRIVACY_VERSION CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET B2_S3_ENDPOINT B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY B2_S3_REGION B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET; do
+            if [[ -z "$(read_env_value "$key")" ]]; then identity_ready=false; fi
+          done
+          if [[ "${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}" == "true" && "$identity_ready" == "true" ]]; then
+            write_env_value VIRTUAL_STORAGE_ENABLED true
+            write_env_value MEDIA_REPLICATION_ENABLED true
+            write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED true
+            echo "Native registration prerequisites are configured; API startup will validate all private storage providers."
+          else
+            write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false
+            if [[ "${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}" == "true" ]]; then
+              echo "WARNING: Native registration requested but Appwrite, policy or three-provider storage configuration is incomplete; registration remains disabled."
+            fi
+          fi
           # Persist optional identity settings and credentials without logging their values.
           write_env_value() {
             local key="$1" value="$2" escaped
