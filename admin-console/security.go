@@ -349,7 +349,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	}
 	if !canReview { writeJSON(w,403,map[string]string{"error":"You do not have permission to review sensitive actions"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_appwrite_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
+	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_appwrite_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the approval queue"}); return }
 	defer rows.Close()
 	type item struct {
@@ -363,17 +363,28 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 		ExpiresAt time.Time `json:"expires_at"`
 		CreatedAt time.Time `json:"created_at"`
 		ApprovalCount int `json:"approval_count"`
+		Payload json.RawMessage `json:"payload,omitempty"`
 	}
 	items:=make([]item,0)
 	for rows.Next() {
 		var v item
-		if err:=rows.Scan(&v.ID,&v.ActionType,&v.RequestedBy,&v.TargetReference,&v.Reason,&v.Status,&v.RequiredApprovals,&v.ExpiresAt,&v.CreatedAt,&v.ApprovalCount); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the approval queue"}); return }
+		if err:=rows.Scan(&v.ID,&v.ActionType,&v.RequestedBy,&v.TargetReference,&v.Reason,&v.Status,&v.RequiredApprovals,&v.ExpiresAt,&v.CreatedAt,&v.Payload,&v.ApprovalCount); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the approval queue"}); return }
 		if !canAudit {
 			permission,permissionErr:=approvalPermissionForAction(v.ActionType)
 			if permissionErr!=nil { continue }
 			allowed,permissionErr:=a.hasPermission(user,permission)
 			if permissionErr!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
 			if !allowed { continue }
+		}
+		if v.ActionType == "identity.approve" {
+			canReviewIdentity, permissionErr := a.hasPermission(user, "identity.review")
+			if permissionErr != nil {
+				writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"})
+				return
+			}
+			if !canReviewIdentity { v.Payload = nil }
+		} else {
+			v.Payload = nil
 		}
 		items=append(items,v)
 	}
