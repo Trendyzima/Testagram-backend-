@@ -63,7 +63,7 @@ func TestCDNPurgerRejectsUnauthorizedServerFailureAndRedirect(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newCDNPurger: %v", err)
 			}
-			if err := purger.Purge(context.Background(), "users/owner/key.webp"); err == nil {
+			if err := purger.Purge(context.Background(), "users/owner/0123456789abcdef0123456789abcdef"); err == nil {
 				t.Fatalf("Purge unexpectedly accepted HTTP %d", status)
 			}
 			if redirectedRequests != 0 {
@@ -105,7 +105,7 @@ func TestDeleteMediaObjectPurgesBeforeDeletingStorage(t *testing.T) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if got := r.URL.Query().Get("path"); got != "users/owner/key.webp" {
+		if got := r.URL.Query().Get("path"); got != "users/owner/0123456789abcdef0123456789abcdef" {
 			http.Error(w, "wrong key", http.StatusBadRequest)
 			return
 		}
@@ -142,7 +142,7 @@ func TestDeleteMediaObjectPurgesBeforeDeletingStorage(t *testing.T) {
 		t.Fatalf("create CDN purger: %v", err)
 	}
 	svc := &service{media: signer, cdnPurger: purger, upstream: storageServer.Client()}
-	if err := svc.deleteMediaObjectWithNamespace(context.Background(), "owner", "users/owner/key.webp", "public", "legacy-media", "default"); err != nil {
+	if err := svc.deleteMediaObjectWithNamespace(context.Background(), "owner", "users/owner/0123456789abcdef0123456789abcdef", "public", "legacy-media", "default"); err != nil {
 		t.Fatalf("deleteMediaObjectWithNamespace: %v", err)
 	}
 	mu.Lock()
@@ -181,7 +181,7 @@ func TestDeleteMediaObjectDoesNotDeleteStorageWhenPurgeFails(t *testing.T) {
 		t.Fatalf("create CDN purger: %v", err)
 	}
 	svc := &service{media: signer, cdnPurger: purger, upstream: storageServer.Client()}
-	if err := svc.deleteMediaObjectWithNamespace(context.Background(), "owner", "users/owner/key.webp", "public", "legacy-media", "default"); err == nil {
+	if err := svc.deleteMediaObjectWithNamespace(context.Background(), "owner", "users/owner/0123456789abcdef0123456789abcdef", "public", "legacy-media", "default"); err == nil {
 		t.Fatal("expected deletion to remain pending when CDN purge fails")
 	}
 	if storageDeletes != 0 {
