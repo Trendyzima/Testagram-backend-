@@ -32,25 +32,23 @@ backup="$backup_dir/testagram-pre-current-schema-$stamp.dump"
 checksum="$backup.sha256"
 
 sudo docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
-ready=false
 for attempt in $(seq 1 40); do
   if sudo docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
       sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
-    ready=true
     break
+  fi
+  if [[ "$attempt" -eq 40 ]]; then
+    sudo docker compose --env-file "$env_file" -f "$compose_file" logs --tail=100 postgres
+    echo "PostgreSQL did not become ready; no migration was applied." >&2
+    exit 1
   fi
   sleep 2
 done
-if [[ "$ready" != "true" ]]; then
-  sudo docker compose --env-file "$env_file" -f "$compose_file" logs --tail=100 postgres
-  echo "PostgreSQL did not become ready; no migration was applied." >&2
-  exit 1
-fi
 
 sudo docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-  sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
+  sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | tee "$backup" >/dev/null
 test -s "$backup"
-sudo docker run --rm -i postgres:17-alpine pg_restore --list - < "$backup" >/dev/null
+cat "$backup" | sudo docker run --rm -i postgres:17-alpine pg_restore --list - >/dev/null
 sha256sum "$backup" > "$checksum"
 chmod 600 "$backup" "$checksum"
 
