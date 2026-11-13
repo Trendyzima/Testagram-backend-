@@ -307,6 +307,12 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	`, submissionHash).Scan(&applicationID, &applicationStatus, &verificationResult, &existingEmail, &existingUsername, &existingDisplayName, &existingTermsVersion, &existingPrivacyVersion)
 
 	isExisting := err == nil
+	if isExisting && (existingEmail != email || existingUsername != username ||
+		existingDisplayName != displayName || existingTermsVersion != termsVersion ||
+		existingPrivacyVersion != privacyVersion) {
+		writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used for a different application", requestID(r)))
+		return
+	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
