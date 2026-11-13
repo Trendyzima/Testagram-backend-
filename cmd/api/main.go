@@ -1205,6 +1205,22 @@ func main() {
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
+	if strings.TrimSpace(os.Getenv("IDSWYFT_API_BASE_URL")) != "" &&
+		strings.TrimSpace(os.Getenv("IDSWYFT_API_KEY")) != "" &&
+		strings.TrimSpace(os.Getenv("IDSWYFT_WEBHOOK_SECRET")) != "" &&
+		strings.TrimSpace(os.Getenv("IDSWYFT_VERIFICATION_ORIGIN")) != "" &&
+		strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_API_URL")) != "" {
+		webhookCtx, webhookCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if webhookErr := svc.ensureIdswyftWebhook(webhookCtx); webhookErr != nil {
+			log.Printf("identity registration remains disabled: Idswyft webhook readiness check failed")
+		} else {
+			svc.idswyftWebhookReady = true
+			log.Printf("Idswyft age-assurance webhook is registered and verified")
+		}
+		webhookCancel()
+	} else {
+		log.Printf("identity registration remains disabled: Idswyft and registration policy configuration is incomplete")
+	}
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
