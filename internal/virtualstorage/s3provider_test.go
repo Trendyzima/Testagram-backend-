@@ -29,7 +29,7 @@ func TestS3ProviderPresignsScopedOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Host != "objects.example.test" || u.Path != "/private-media/tenants/u1/a.jpg" || u.Query().Get("X-Amz-SignedHeaders") != "content-type;host" || len(u.Query().Get("X-Amz-Signature")) != 64 {
+	if u.Host != "objects.example.test" || u.Path != "/private-media/tenants/u1/a.jpg" || u.Query().Get("X-Amz-SignedHeaders") != "content-length;content-type;host" || len(u.Query().Get("X-Amz-Signature")) != 64 {
 		t.Fatalf("unexpected signed PUT URL: %s", put)
 	}
 	get, err := p.PresignGet(context.Background(), "private-media", "tenants/u1/a.jpg", time.Minute)
