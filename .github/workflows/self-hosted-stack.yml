@@ -52,8 +52,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Verify immutable Go CDN image is publicly pullable by Instabox
-        run: docker pull ghcr.io/trendyzima/testagram-edge@sha256:fcb1fa9e1b2bd4a17a1face0dcd8591d7f11880474d28179cea94fcfcb8cdf34
+      - name: Verify pinned Go CDN image, scratch healthcheck and writable cache volume
+        env:
+          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:fcb1fa9e1b2bd4a17a1face0dcd8591d7f11880474d28179cea94fcfcb8cdf34
+        run: |
+          set -euo pipefail
+          docker pull "$TESTAGRAM_CDN_IMAGE"
+          docker volume create testagram-cdn-cache-ci >/dev/null
+          cleanup() {
+            docker rm -f testagram-cdn-ci >/dev/null 2>&1 || true
+            docker volume rm testagram-cdn-cache-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name testagram-cdn-ci --read-only --tmpfs /tmp \
+            -v testagram-cdn-cache-ci:/cache \
+            -e ORIGIN_URL=http://127.0.0.1:1 \
+            -e ORIGIN_AUTH_TOKEN=ci-only-origin-token-not-for-production \
+            "$TESTAGRAM_CDN_IMAGE"
+          for attempt in $(seq 1 30); do
+            state="$(docker inspect --format '{{.State.Health.Status}}' testagram-cdn-ci)"
+            if [[ "$state" == "healthy" ]]; then break; fi
+            if [[ "$state" == "unhealthy" ]]; then docker logs testagram-cdn-ci; exit 1; fi
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' testagram-cdn-ci)" = "healthy"
+          docker exec testagram-cdn-ci /healthcheck
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.10"
