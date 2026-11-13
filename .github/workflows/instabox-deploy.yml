@@ -21,6 +21,7 @@ jobs:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID || secrets.APPWRITE_PROJECT_ID || '6af01d97002875d6d7bd' }}
+      APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
     steps:
       - name: Resolve and start the InstaBox machine
         id: machine
@@ -116,6 +117,7 @@ jobs:
         env:
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
           ONSPACE_AI_API_KEY: ${{ secrets.ONSPACE_AI_API_KEY }}
+          APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -205,7 +207,7 @@ jobs:
           MINIO_MEDIA_ACCESS_KEY=testagram-media-api
           MINIO_MEDIA_SECRET_KEY=$MINIO_MEDIA_SECRET_KEY
           VIRTUAL_STORAGE_ENABLED=false
-          APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
+          APPWRITE_ENDPOINT=${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
           APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-}
           ALGORITHM_URL=http://algorithm:8092
           ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
@@ -275,6 +277,7 @@ jobs:
           fi
           FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
           write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
+          write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"
           if [[ -n "${ONSPACE_AI_API_KEY:-}" ]]; then
             # The provider key is sent only over the authenticated machine-exec
             # channel and stored in the private deployment env, never logged.
@@ -492,7 +495,7 @@ jobs:
           echo "REMOTE_DEPLOY_STARTED"
           REMOTE_OUTER
 
-          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" --arg onspace_key "${ONSPACE_AI_API_KEY:-}" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,ONSPACE_AI_API_KEY:$onspace_key},timeoutSeconds:90}')"
+          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg appwrite_endpoint "$APPWRITE_ENDPOINT" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" --arg onspace_key "${ONSPACE_AI_API_KEY:-}" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,APPWRITE_ENDPOINT:$appwrite_endpoint,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,ONSPACE_AI_API_KEY:$onspace_key},timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
