@@ -149,6 +149,12 @@ func TestS3ProviderMinIOLifecycle(t *testing.T) {
 	}
 	stagingKey := fmt.Sprintf("identity/session/evidence-%d.txt", time.Now().UnixNano())
 	sealedKey := stagingKey + ".sealed"
+	spoofKey := fmt.Sprintf("identity/session/spoof-%d.jpg", time.Now().UnixNano())
+	defer func() {
+		for _, objectKey := range []string{tenantPrefix("ci")+stagingKey, tenantPrefix("ci")+sealedKey, tenantPrefix("ci")+spoofKey} {
+			_ = p.Delete(context.Background(), bucket, objectKey)
+		}
+	}()
 	stagingURL, err := manager.UploadURL(ctx, "ci", "identity-evidence-private", stagingKey, "text/plain", int64(len(payload)))
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +193,6 @@ func TestS3ProviderMinIOLifecycle(t *testing.T) {
 	}
 
 	// A client cannot label arbitrary bytes as a supported identity document.
-	spoofKey := fmt.Sprintf("identity/session/spoof-%d.jpg", time.Now().UnixNano())
 	spoofURL, err := manager.UploadURL(ctx, "ci", "identity-evidence-private", spoofKey, "image/jpeg", int64(len(payload)))
 	if err != nil {
 		t.Fatal(err)
