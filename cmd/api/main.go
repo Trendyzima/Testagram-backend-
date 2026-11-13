@@ -613,6 +613,7 @@ func (s *service) routes() http.Handler {
 		mux.HandleFunc("POST /internal/media/fresh/revoke", s.revokeFreshMediaAsset)
 		mux.HandleFunc("POST /internal/media/fresh/cdn-download-url", s.freshMediaCDNDownloadURL)
 	}
+	mux.HandleFunc("GET /internal/tv/catalog", s.tvCatalogRead)
 	mux.HandleFunc("POST /internal/tv/health", s.tvHealthBatch)
 	mux.HandleFunc("GET /api/tv/health", s.tvHealthRead)
 	mux.HandleFunc("GET /api/replication/public/{origin}/{entity_type}/{entity_id}", s.publicReplicationProjection)
