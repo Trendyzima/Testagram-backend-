@@ -49,6 +49,18 @@ ALTER TABLE testagram_local.wallet_ledger_entries ADD CONSTRAINT wallet_ledger_t
   CHECK ((transfer_id IS NOT NULL AND topup_id IS NULL) OR (transfer_id IS NULL AND topup_id IS NOT NULL));
 CREATE UNIQUE INDEX IF NOT EXISTS testagram_local_wallet_ledger_topup_uidx ON testagram_local.wallet_ledger_entries(topup_id,user_id,direction) WHERE topup_id IS NOT NULL;
 
-GRANT SELECT,INSERT,UPDATE ON testagram_local.wallet_topups TO testagram_app,service_role;
-GRANT SELECT,INSERT,UPDATE ON testagram_local.wallet_transactions,testagram_local.wallet_ledger_entries TO testagram_app,service_role;
+-- Keep the migration portable to isolated PostgreSQL instances while
+-- granting the least privileges to the application group roles when present.
+DO $grants$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'testagram_app') THEN
+    GRANT SELECT,INSERT,UPDATE ON testagram_local.wallet_topups TO testagram_app;
+    GRANT SELECT,INSERT,UPDATE ON testagram_local.wallet_transactions,testagram_local.wallet_ledger_entries TO testagram_app;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role') THEN
+    GRANT SELECT,INSERT,UPDATE ON testagram_local.wallet_topups TO service_role;
+    GRANT SELECT,INSERT,UPDATE ON testagram_local.wallet_transactions,testagram_local.wallet_ledger_entries TO service_role;
+  END IF;
+END
+$grants$;
 COMMIT;
