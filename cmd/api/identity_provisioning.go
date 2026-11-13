@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type identityProvisioningToken struct {
@@ -17,6 +18,10 @@ type identityProvisioningToken struct {
 }
 
 func (s *service) identityApplicationProvisioningToken(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_STORE_UNAVAILABLE","Identity database is unavailable",requestID(r)))
+		return
+	}
 	if !s.cors(w,r) {
 		writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",requestID(r)))
 		return
@@ -110,7 +115,8 @@ func (s *service) identityApplicationProvisioningToken(w http.ResponseWriter, r 
 		writeJSON(w,http.StatusConflict,errorBody("TWO_PERSON_APPROVAL_REQUIRED","Two distinct approvers are required",requestID(r)))
 		return
 	}
-	_,err=tx.Exec(ctx,`
+	var tokenWriteTag pgconn.CommandTag
+	tokenWriteTag,err=tx.Exec(ctx,`
 		INSERT INTO testagram_identity.identity_approval_tokens
 		  (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
 		   second_approver_appwrite_user_id,issued_at,expires_at)
@@ -120,6 +126,7 @@ func (s *service) identityApplicationProvisioningToken(w http.ResponseWriter, r 
 		      issued_at=now(),expires_at=now()+interval '15 minutes'
 		  WHERE testagram_identity.identity_approval_tokens.consumed_at IS NULL
 	`,authTokenHash(token),authTokenHash(jti),applicationID,firstApprover,secondApprover)
+	if err==nil && tokenWriteTag.RowsAffected()!=1 { err=errors.New("provisioning token already consumed") }
 	if err!=nil {
 		writeJSON(w,http.StatusConflict,errorBody("PROVISIONING_TOKEN_UNAVAILABLE","A provisioning token could not be issued",requestID(r)))
 		return
@@ -133,6 +140,10 @@ func (s *service) identityApplicationProvisioningToken(w http.ResponseWriter, r 
 }
 
 func (s *service) identityApplicationRedeem(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_STORE_UNAVAILABLE","Identity database is unavailable",requestID(r)))
+		return
+	}
 	if !s.cors(w,r) {
 		writeJSON(w,http.StatusForbidden,errorBody("ORIGIN_NOT_ALLOWED","Origin is not allowed",requestID(r)))
 		return
