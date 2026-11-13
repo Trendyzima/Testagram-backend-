@@ -523,6 +523,14 @@ jobs:
             echo "Data Centre private media profile remains disabled: DATA_CENTRE_MEDIA_ENABLED is not true."
           fi
           printf '%s\n' "$media_enabled" > "$ROOT/media-enabled.txt"
+          # Persist the profile gate so later read-only Compose inspections and
+          # routine operator commands see the same enabled service set.
+          write_dc_env_value DATA_CENTRE_MEDIA_ENABLED "$media_enabled"
+          if [[ "$media_enabled" == true ]]; then
+            write_dc_env_value COMPOSE_PROFILES media
+          else
+            write_dc_env_value COMPOSE_PROFILES ""
+          fi
           # Backend reads FRESH_MEDIA_ENABLED; keep it synchronized with the
           # deployment-level DATA_CENTRE_MEDIA_ENABLED gate.
           write_env_value FRESH_MEDIA_ENABLED "$media_enabled"
