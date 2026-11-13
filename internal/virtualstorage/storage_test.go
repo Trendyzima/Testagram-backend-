@@ -143,3 +143,19 @@ func TestStorageTenantAcceptsAppwriteOwnerIDCharacters(t *testing.T) {
 		t.Fatalf("Appwrite owner ID rejected: %v", err)
 	}
 }
+
+func (f *fakeProvider) PresignHead(_ context.Context, bucket, key string, _ time.Duration) (string, error) {
+	f.bucket, f.key = bucket, key
+	return "https://storage.example/signed-head", nil
+}
+
+func TestHeadURLSignsOwnerScopedHeadOperation(t *testing.T) {
+	provider := &fakeProvider{}
+	m, err := New(provider, []Namespace{{Name:"media-private",PhysicalBucket:"private",MaxObjectBytes:1<<20,AllowedTypes:map[string]struct{}{"image/webp":{}},UploadTTL:time.Minute,DownloadTTL:time.Minute}})
+	if err != nil { t.Fatal(err) }
+	got, err := m.HeadURL(context.Background(), "user-123", "user-123", "media-private", "users/user-123/0123456789abcdef0123456789abcdef")
+	if err != nil { t.Fatal(err) }
+	if got != "https://storage.example/signed-head" || provider.bucket != "private" || provider.key != "tenants/user-123/users/user-123/0123456789abcdef0123456789abcdef" {
+		t.Fatalf("unexpected HEAD grant: url=%s bucket=%s key=%s", got, provider.bucket, provider.key)
+	}
+}
