@@ -1131,7 +1131,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_SIZE_NOT_ATTACHABLE", "Post media must be between 1 byte and 20 MiB", id))
 		return
 	}
-	publicURL := publicMediaURLForStorage(body.Key, userID, storageNamespace)
+	publicURL := publicMediaURLForStorage(body.Key, userID, storageNamespace, storageProvider)
 	if publicURL == "" {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
 		return
