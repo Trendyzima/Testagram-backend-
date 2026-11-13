@@ -84,6 +84,24 @@ func TestS3ProviderMinIOLifecycle(t *testing.T) {
 		t.Fatalf("upload object returned HTTP %d", resp.StatusCode)
 	}
 
+	// A presigned URL must bind the exact declared Content-Length. This
+	// prevents an applicant from declaring a small evidence object and
+	// uploading a much larger body before server-side checksum validation.
+	wrongSizeURL, err := p.PresignPut(ctx, bucket, key+"-wrong-size", "text/plain", int64(len(payload)+1), 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongSizeRequest := mustRequest(t, ctx, http.MethodPut, wrongSizeURL, bytes.NewReader(payload))
+	wrongSizeRequest.Header.Set("Content-Type", "text/plain")
+	wrongSizeResponse, err := p.do(wrongSizeRequest)
+	if err != nil {
+		t.Fatalf("wrong-size upload request: %v", err)
+	}
+	drainAndClose(t, wrongSizeResponse)
+	if wrongSizeResponse.StatusCode < 400 || wrongSizeResponse.StatusCode >= 500 {
+		t.Fatalf("wrong-size upload returned HTTP %d; expected a signature rejection", wrongSizeResponse.StatusCode)
+	}
+
 	info, err := p.Head(ctx, bucket, key)
 	if err != nil {
 		t.Fatalf("HEAD uploaded object: %v", err)
