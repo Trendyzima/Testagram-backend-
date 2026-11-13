@@ -171,6 +171,8 @@ func capabilityGroup(name string) string {
 	}
 }
 
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *statusRecorder) WriteHeader(status int) {
 	if w.wroteHeader {
 		return
@@ -603,6 +605,20 @@ func (s *service) routes() http.Handler {
 		s.requests.Add(1)
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		if r.Method == http.MethodPut && r.URL.Path == "/api/media/upload" {
+			// The bounded upload gateway may stream up to 500 MiB. Extend only
+			// this route socket deadlines; ordinary API requests keep short limits.
+			deadline := time.Now().Add(40 * time.Minute)
+			controller := http.NewResponseController(recorder)
+			if err := controller.SetReadDeadline(deadline); err != nil {
+				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload read deadline unavailable"})
+				return
+			}
+			if err := controller.SetWriteDeadline(deadline); err != nil {
+				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload write deadline unavailable"})
+				return
+			}
+		}
 		mux.ServeHTTP(recorder, r)
 		s.recordRequest(normalizedMethod(r.Method), normalizedRoute(r.URL.Path), recorder.status, time.Since(started))
 	})
