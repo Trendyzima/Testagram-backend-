@@ -51,7 +51,8 @@ for pair in "Backend|$BACKEND_COMPOSE|$BACKEND_ENV" "Data Centre|$DC_COMPOSE|$DC
     continue
   fi
   config="$(sudo docker compose "${compose_args[@]}" config --format json)"
-  mapfile -t expected_services < <(jq -r '.services | to_entries[] | select((.value.profiles // []) | length == 0) | .key' <<<"$config")
+  media_enabled="$(sed -n 's/^DATA_CENTRE_MEDIA_ENABLED=//p' "$env_file" | tail -n1 | tr -d '"')"
+  mapfile -t expected_services < <(jq -r --arg media "$media_enabled" '.services | to_entries[] | select(((.value.profiles // []) | length == 0) or ($media == "true" and ((.value.profiles // []) | index("media") != null))) | .key' <<<"$config")
   mapfile -t present_services < <(sudo docker compose "${compose_args[@]}" ps --all --services | sort -u)
   for service in "${expected_services[@]}"; do
     if ! printf '%s\n' "${present_services[@]}" | grep -Fxq "$service"; then
