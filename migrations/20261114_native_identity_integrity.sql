@@ -19,6 +19,70 @@ BEGIN
 END;
 $reviewer_fk$;
 
+DO $decision_semantics$
+DECLARE
+  constraint_name text;
+BEGIN
+  -- The initial schema's unnamed CHECK incorrectly required an age-threshold
+  -- pass for identity-assurance sessions too. Replace it with purpose-aware rules.
+  FOR constraint_name IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid='testagram_identity.verification_sessions'::regclass
+      AND contype='c'
+      AND pg_get_constraintdef(oid) LIKE '%verified_age_over_threshold%'
+      AND pg_get_constraintdef(oid) LIKE '%status%'
+  LOOP
+    EXECUTE format(
+      'ALTER TABLE testagram_identity.verification_sessions DROP CONSTRAINT %I',
+      constraint_name
+    );
+  END LOOP;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='verification_sessions_decision_semantics_check'
+      AND conrelid='testagram_identity.verification_sessions'::regclass
+  ) THEN
+    ALTER TABLE testagram_identity.verification_sessions
+      ADD CONSTRAINT verification_sessions_decision_semantics_check
+      CHECK (
+        (
+          status='verified'
+          AND decided_at IS NOT NULL
+          AND (
+            (purpose='age_assurance' AND verified_age_over_threshold IS TRUE)
+            OR (purpose='identity_assurance' AND verified_age_over_threshold IS NULL)
+          )
+        )
+        OR (
+          status<>'verified'
+          AND (
+            verified_age_over_threshold IS NULL
+            OR (
+              purpose='age_assurance'
+              AND verified_age_over_threshold IS FALSE
+              AND decided_at IS NOT NULL
+            )
+          )
+        )
+      ) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='verification_sessions_decider_staff_fk'
+      AND conrelid='testagram_identity.verification_sessions'::regclass
+  ) THEN
+    ALTER TABLE testagram_identity.verification_sessions
+      ADD CONSTRAINT verification_sessions_decider_staff_fk
+      FOREIGN KEY (decided_by_appwrite_user_id)
+      REFERENCES testagram_auth.staff_roles(appwrite_user_id)
+      ON DELETE RESTRICT NOT VALID;
+  END IF;
+END;
+$decision_semantics$;
+
 DO $session_evidence$
 BEGIN
   IF NOT EXISTS (
