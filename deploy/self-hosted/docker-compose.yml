@@ -219,8 +219,9 @@ services:
       ORIGIN_URL: "http://api:8080"
       ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
       PUBLIC_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
+      HEALTHCHECK_URL: "http://127.0.0.1:8081/readyz"
       MEDIA_URL_PREFIX: "/v1"
-      CACHE_DIR: "/app/cache"
+      CACHE_DIR: "/cache"
       MAX_CACHE_BYTES: ${CDN_MAX_CACHE_BYTES:-21474836480}
       HOT_CACHE_BYTES: ${CDN_HOT_CACHE_BYTES:-536870912}
       MAX_SEGMENT_BYTES: ${CDN_MAX_OBJECT_BYTES:-1073741824}
@@ -233,10 +234,10 @@ services:
       api:
         condition: service_started
     volumes:
-      - cdn-cache-data:/app/cache
+      - cdn-cache-data:/cache
     expose: ["8081"]
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8081/readyz"]
+      test: ["CMD", "/healthcheck"]
       interval: 15s
       timeout: 5s
       retries: 6
