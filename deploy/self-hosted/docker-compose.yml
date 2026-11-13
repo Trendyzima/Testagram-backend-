@@ -220,6 +220,7 @@ services:
       ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
       PUBLIC_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
       HEALTHCHECK_URL: "http://127.0.0.1:8081/readyz"
+      HEALTHCHECK_URL: "http://127.0.0.1:8081/readyz"
       MEDIA_URL_PREFIX: "/v1"
       CACHE_DIR: "/cache"
       MAX_CACHE_BYTES: ${CDN_MAX_CACHE_BYTES:-21474836480}
