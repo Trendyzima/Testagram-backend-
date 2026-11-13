@@ -476,6 +476,18 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func idswyftWebhookSignature(raw []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(raw)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func verifyIdswyftWebhookSignature(raw []byte, signature, secret string) bool {
+	expected := idswyftWebhookSignature(raw, secret)
+	return len(signature) == len(expected) &&
+		subtle.ConstantTimeCompare([]byte(signature), []byte(expected)) == 1
+}
+
 func (s *service) idswyftIdentityWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
@@ -493,11 +505,8 @@ func (s *service) idswyftIdentityWebhook(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_WEBHOOK_BODY", "Webhook body is invalid", requestID(r)))
 		return
 	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write(raw)
-	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	actual := strings.TrimSpace(r.Header.Get("X-Idswyft-Signature"))
-	if len(actual) != len(expected) || subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
+	if !verifyIdswyftWebhookSignature(raw, actual, secret) {
 		writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_WEBHOOK_SIGNATURE", "Webhook signature is invalid", requestID(r)))
 		return
 	}
@@ -636,7 +645,7 @@ func (s *service) ensureIdswyftWebhook(ctx context.Context) error {
 	apiKey := strings.TrimSpace(os.Getenv("IDSWYFT_API_KEY"))
 	secret := strings.TrimSpace(os.Getenv("IDSWYFT_WEBHOOK_SECRET"))
 	publicBase := strings.TrimRight(strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_API_URL")), "/")
-	if apiBase == "" || apiKey == "" || len(secret) < 32 || publicBase == "" {
+	if apiBase == "" || !strings.HasPrefix(apiKey, "isk_") || len(secret) < 32 || publicBase == "" {
 		return errors.New("Idswyft webhook registration configuration is incomplete")
 	}
 	apiURL, err := parseConfiguredHTTPSURL(apiBase, false)
