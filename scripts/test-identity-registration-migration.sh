@@ -174,10 +174,13 @@ DECLARE
 BEGIN
   SELECT id INTO app_id FROM testagram_identity.identity_applications
   WHERE email='first@example.test';
-  INSERT INTO testagram_identity.registration_provisioning
-    (application_id,idempotency_key_sha256)
-  VALUES (app_id,decode(repeat('9',64),'hex'))
-  RETURNING id INTO provision_id;
+  SELECT id INTO provision_id
+  FROM testagram_identity.registration_provisioning
+  WHERE application_id=app_id;
+
+  UPDATE testagram_identity.registration_provisioning
+  SET lease_owner=NULL,lease_expires_at=NULL
+  WHERE id=provision_id;
 
   BEGIN
     UPDATE testagram_identity.registration_provisioning
