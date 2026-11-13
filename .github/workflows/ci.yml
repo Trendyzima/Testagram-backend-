@@ -481,7 +481,11 @@ jobs:
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
-          assert "envs:{APPWRITE_PROJECT_ID:$appwrite,APPWRITE_ENDPOINT:$appwrite_endpoint,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,ONSPACE_AI_API_KEY:$onspace_key,APPLY_BACKEND_SCHEMA_MIGRATIONS:$apply_schema_migrations}" in deploy, "deployment must forward Appwrite region, Federation read, moderation and explicit migration approval to the VPS environment"
+          assert "APPWRITE_API_KEY:$appwrite_api_key" in deploy and "CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret" in deploy and "B2_S3_SECRET_ACCESS_KEY:$b2_secret" in deploy, "deployment must forward Appwrite provisioning and private replica credentials"
+          assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET:$identity_bucket" in deploy, "deployment must forward the isolated private evidence bucket"
+          assert "identity_ready=true" in deploy and 'write_env_value MEDIA_REPLICATION_ENABLED true' in deploy, "native registration must require complete three-provider storage readiness"
+          assert 'write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false' in deploy, "native registration must fail closed when prerequisites are incomplete"
+          assert 'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api APPWRITE_API_KEY' not in deploy or 'APPWRITE_API_KEY' in deploy, "Appwrite provisioning key must be wired to the API container"
           assert "vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1'" in deploy, "deployment must default to the configured Frankfurt Appwrite region"
           assert 'write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"' in deploy, "deployment must synchronize the Appwrite endpoint into existing VPS env files"
           assert 'write_dc_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"' in deploy, "deployment must synchronize the Appwrite endpoint into existing Data Centre env files"
@@ -516,6 +520,21 @@ jobs:
               'credential value redacted',
           ):
               assert check in deploy, f"deployment must verify redacted runtime environment: {check}"
+          compose = Path("deploy/self-hosted/docker-compose.yml").read_text()
+          for setting in (
+              "APPWRITE_API_KEY:",
+              "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:",
+              "TESTAGRAM_TERMS_VERSION:",
+              "TESTAGRAM_PRIVACY_VERSION:",
+              "IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
+              "CLOUDFLARE_R2_ACCESS_KEY_ID:",
+              "B2_S3_ACCESS_KEY_ID:",
+          ):
+              assert setting in compose, f"API Compose must inject native identity setting: {setting}"
+          minio_init = Path("deploy/self-hosted/minio-tools/init.sh").read_text()
+          assert 'mc mb --ignore-existing "local/$identity_bucket"' in minio_init
+          assert 'mc anonymous set none "local/$identity_bucket"' in minio_init
+          assert '"$private_bucket" "$public_bucket" "$identity_bucket"' in minio_init, "restricted MinIO media identity must access the private evidence bucket"
           expected = {
               "TESTAGRAM_ALGORITHM_IMAGE": "sha-6ae0532c171383b84731063d590d775524f9da1e",
               "TESTAGRAM_FEDERATION_IMAGE": "sha-edf4f59f843514596d35273c888ff1c16ec0f73e",
