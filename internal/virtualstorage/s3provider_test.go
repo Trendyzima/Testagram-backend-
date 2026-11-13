@@ -217,3 +217,18 @@ func TestS3ProviderRejectsInsecureRemoteEndpoints(t *testing.T) {
 		t.Fatal("invalid SigV4 region was accepted")
 	}
 }
+
+func TestS3ProviderPresignsMethodCorrectHEAD(t *testing.T) {
+	provider, err := NewS3Provider(S3Config{Endpoint:"https://s3.example.com",AccessKey:"access",SecretKey:"secret",Region:"us-west-004"})
+	if err != nil { t.Fatal(err) }
+	head, err := provider.PresignHead(context.Background(), "private-bucket", "users/user-123/object", time.Minute)
+	if err != nil { t.Fatal(err) }
+	get, err := provider.PresignGet(context.Background(), "private-bucket", "users/user-123/object", time.Minute)
+	if err != nil { t.Fatal(err) }
+	headURL, err := url.Parse(head)
+	if err != nil { t.Fatal(err) }
+	getURL, err := url.Parse(get)
+	if err != nil { t.Fatal(err) }
+	if headURL.Query().Get("X-Amz-Signature") == "" || getURL.Query().Get("X-Amz-Signature") == "" { t.Fatal("missing SigV4 signature") }
+	if headURL.Query().Get("X-Amz-Signature") == getURL.Query().Get("X-Amz-Signature") { t.Fatal("HEAD and GET must have distinct method-bound signatures") }
+}

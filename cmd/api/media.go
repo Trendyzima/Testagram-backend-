@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -15,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -82,7 +86,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil {
+	if (s.media == nil && s.virtualStorage == nil && s.dataCentreMedia == nil) || (s.freshMediaEnabled && (s.dataCentreMedia == nil || s.mediaIntentFactory == nil)) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage is not configured on this server", id))
 		return
 	}
@@ -124,13 +128,20 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer and contain no line breaks", id))
 		return
 	}
-	intent, err := s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+	var intent media.UploadIntent
+	if s.freshMediaEnabled {
+		intent, err = s.mediaIntentFactory.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+	} else {
+		intent, err = s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
 		return
 	}
 	storageNamespace, storageProvider := "legacy-media", "default"
-	if s.virtualStorage != nil {
+	if s.freshMediaEnabled {
+		storageNamespace, storageProvider = intent.Bucket, "data-centre"
+	} else if s.virtualStorage != nil {
 		storageNamespace = "media-private"
 		if body.Visibility == "public" {
 			storageNamespace = "media-public"
@@ -149,7 +160,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	// to handle or trust a provider URL.
 	intent.URL = "/api/media/upload?key=" + url.QueryEscape(intent.Key)
 	if body.Visibility == "public" {
-		intent.PublicURL = publicMediaURLForStorage(intent.Key, userID, storageNamespace)
+		intent.PublicURL = publicMediaURLForStorage(intent.Key, userID, storageNamespace, storageProvider)
 		if intent.PublicURL == "" {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
 			return
@@ -242,7 +253,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.db == nil || (s.virtualStorage == nil && s.media == nil) {
+	if s.db == nil || (s.virtualStorage == nil && s.media == nil && s.dataCentreMedia == nil) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Bounded upload gateway is unavailable", id))
 		return
 	}
@@ -260,14 +271,14 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_KEY", "A valid upload intent key is required", id))
 		return
 	}
-	var ownerID, contentType, namespace, visibility, intentStatus string
+	var ownerID, contentType, namespace, visibility, intentStatus, storageProvider string
 	var maxBytes int64
 	var expiresAt time.Time
-	err = s.db.QueryRow(r.Context(), `select owner_id, content_type, storage_namespace, visibility, max_bytes, status, expires_at
+	err = s.db.QueryRow(r.Context(), `select owner_id, content_type, storage_namespace, visibility, max_bytes, status, expires_at, storage_provider
 		from testagram_media.upload_intents where object_key=$1`, key).
-		Scan(&ownerID, &contentType, &namespace, &visibility, &maxBytes, &intentStatus, &expiresAt)
+		Scan(&ownerID, &contentType, &namespace, &visibility, &maxBytes, &intentStatus, &expiresAt, &storageProvider)
 	if err != nil || ownerID != userID || intentStatus != "issued" || !time.Now().Before(expiresAt) || maxBytes < 1 ||
-		(namespace == "legacy-media" && s.media == nil) || (namespace != "legacy-media" && s.virtualStorage == nil) {
+		(namespace == "legacy-media" && s.media == nil) || (storageProvider == "data-centre" && s.dataCentreMedia == nil) || (namespace != "legacy-media" && storageProvider != "data-centre" && s.virtualStorage == nil) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
@@ -298,7 +309,8 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	defer tmp.Close()
-	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, tmp)
+	hasher := sha256.New()
+	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, io.MultiWriter(tmp, hasher))
 	if copyErr != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(copyErr, &maxErr) {
@@ -319,6 +331,10 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	var target string
 	if namespace == "legacy-media" {
 		target, err = s.media.PresignObjectPut(userID, key, visibility, contentType, 10*time.Minute, time.Now())
+	} else if storageProvider == "data-centre" {
+		var grant datacentreclient.UploadGrant
+		grant, err = s.dataCentreMedia.CreateUploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
+		target = grant.UploadURL
 	} else {
 		target, err = s.virtualStorage.UploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
 	}
@@ -333,7 +349,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ContentLength = n
 	req.Header.Set("Content-Type", contentType)
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: 40 * time.Minute, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage could not accept the upload", id))
@@ -345,7 +361,8 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage rejected the bounded upload", id))
 		return
 	}
-	completed, stateErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploaded', updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading' and expires_at > now()", key, userID)
+	checksumSHA256 := hex.EncodeToString(hasher.Sum(nil))
+	completed, stateErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploaded', checksum_sha256=$3, updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading' and expires_at > now()", key, userID, checksumSHA256)
 	if stateErr != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_STATE_FAILED", "Object uploaded but intent state could not be saved; stale-upload cleanup will reconcile it", id))
 		return
@@ -376,116 +393,139 @@ func cdnOriginObjectSize(resp *http.Response) (int64, error) {
 }
 
 func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
- w.Header().Set("Cache-Control","private, no-store")
- w.Header().Set("X-Testagram-Visibility","private")
- w.Header().Set("X-Content-Type-Options","nosniff")
- if r.Method!=http.MethodGet && r.Method!=http.MethodHead {
-  w.Header().Set("Allow","GET, HEAD")
-  http.Error(w,"method not allowed",http.StatusMethodNotAllowed)
-  return
- }
- if s.cdnMediaAssertions==nil || len(s.cdnOriginAuthToken)<32 || s.db==nil {
-  http.Error(w,"trusted media origin is not configured",http.StatusServiceUnavailable)
-  return
- }
- serviceToken:=strings.TrimSpace(r.Header.Get("X-Testagram-Origin-Auth"))
- if subtle.ConstantTimeCompare([]byte(serviceToken),[]byte(s.cdnOriginAuthToken))!=1 {
-  http.Error(w,"unauthorized",http.StatusUnauthorized)
-  return
- }
- viewerHeader:=strings.TrimSpace(r.Header.Get("X-Testagram-Viewer-Authorization"))
- if !strings.HasPrefix(viewerHeader,"Bearer ") || len(viewerHeader)>8192 {
-  http.Error(w,"viewer assertion required",http.StatusUnauthorized)
-  return
- }
- key:=r.PathValue("key")
- claims,err:=s.cdnMediaAssertions.VerifyForKey(strings.TrimSpace(strings.TrimPrefix(viewerHeader,"Bearer ")),key,time.Now())
- if err!=nil {
-  http.Error(w,"media authorization denied",http.StatusForbidden)
-  return
- }
- mediaOwner:=claims.Owner
- if mediaOwner=="" { mediaOwner=claims.Subject }
- var ownerID,visibility,assetStatus,storageNamespace string
- err=s.db.QueryRow(r.Context(),"select owner_id, visibility, status, storage_namespace from testagram_media.assets where object_key=$1",key).
-  Scan(&ownerID,&visibility,&assetStatus,&storageNamespace)
- if err!=nil || ownerID!=mediaOwner || visibility!="private" || assetStatus!="ready" {
-  http.Error(w,"media authorization denied",http.StatusNotFound)
-  return
- }
- var signedURL string
- if storageNamespace!="legacy-media" {
-  if s.virtualStorage==nil {
-   http.Error(w,"media storage unavailable",http.StatusServiceUnavailable)
-   return
-  }
-  signedURL,err=s.virtualStorage.DownloadURL(r.Context(),ownerID,ownerID,storageNamespace,key)
- } else if s.media!=nil {
-  signedURL,err=s.media.PresignPrivateDownload(ownerID,key,time.Minute,time.Now())
- } else {
-  err=errors.New("media signer unavailable")
- }
- if err!=nil {
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- upstreamReq,err:=http.NewRequestWithContext(r.Context(),r.Method,signedURL,nil)
- if err!=nil {
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- copyCDNOriginRequestHeaders(r,upstreamReq)
- client:=&http.Client{Transport:s.upstream.Transport,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}
- resp,err:=client.Do(upstreamReq)
- if err!=nil {
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- defer resp.Body.Close()
- switch resp.StatusCode {
- case http.StatusOK,http.StatusPartialContent,http.StatusNotModified,http.StatusRequestedRangeNotSatisfiable:
- case http.StatusNotFound,http.StatusGone:
-  http.Error(w,"media object unavailable",http.StatusNotFound)
-  return
- default:
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- if resp.StatusCode!=http.StatusNotModified {
-  size,sizeErr:=cdnOriginObjectSize(resp)
-  if sizeErr!=nil {
-   http.Error(w,"media origin returned incomplete size metadata",http.StatusBadGateway)
-   return
-  }
-  if size>maxCDNOriginObjectBytes {
-   http.Error(w,"media object exceeds the CDN delivery limit",http.StatusRequestEntityTooLarge)
-   return
-  }
-  if (resp.StatusCode==http.StatusPartialContent || resp.StatusCode==http.StatusRequestedRangeNotSatisfiable) && strings.TrimSpace(resp.Header.Get("Content-Range"))=="" {
-   http.Error(w,"media origin omitted range metadata",http.StatusBadGateway)
-   return
-  }
- }
- writeCDNOriginResponse(w,r,resp,key)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Testagram-Visibility", "private")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.cdnMediaAssertions == nil || len(s.cdnOriginAuthToken) < 32 || s.db == nil {
+		http.Error(w, "trusted media origin is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	serviceToken := strings.TrimSpace(r.Header.Get("X-Testagram-Origin-Auth"))
+	if serviceToken == "" || strings.ContainsAny(serviceToken, " \t\r\n") || subtle.ConstantTimeCompare([]byte(serviceToken), []byte(s.cdnOriginAuthToken)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	key := r.PathValue("key")
+	var ownerID, visibility, assetStatus, storageNamespace, storageProvider string
+	err := s.db.QueryRow(r.Context(), "select owner_id, visibility, status, storage_namespace, storage_provider from testagram_media.assets where object_key=$1", key).Scan(&ownerID, &visibility, &assetStatus, &storageNamespace, &storageProvider)
+	if err != nil || assetStatus != "ready" {
+		http.Error(w, "media object unavailable", http.StatusNotFound)
+		return
+	}
+	viewerHeader := strings.TrimSpace(r.Header.Get("X-Testagram-Viewer-Authorization"))
+	requesterID := ownerID
+	if !strings.HasPrefix(key, "users/"+ownerID+"/") {
+		http.Error(w, "media object owner mismatch", http.StatusNotFound)
+		return
+	}
+	if viewerHeader != "" {
+		if !strings.HasPrefix(viewerHeader, "Bearer ") || len(viewerHeader) > 8192 || strings.ContainsAny(viewerHeader, "\r\n") {
+			http.Error(w, "invalid viewer assertion", http.StatusUnauthorized)
+			return
+		}
+		claims, verifyErr := s.cdnMediaAssertions.VerifyForKey(strings.TrimSpace(strings.TrimPrefix(viewerHeader, "Bearer ")), key, time.Now())
+		if verifyErr != nil {
+			http.Error(w, "media authorization denied", http.StatusForbidden)
+			return
+		}
+		claimOwner := claims.Owner
+		if claimOwner == "" { claimOwner = claims.Subject }
+		if visibility != "private" || claimOwner != ownerID {
+			http.Error(w, "media authorization denied", http.StatusNotFound)
+			return
+		}
+	} else if visibility != "public" {
+		// No viewer assertion is accepted only for a canonical ready public asset.
+		http.Error(w, "viewer assertion required", http.StatusUnauthorized)
+		return
+	}
+	var signedURL string
+	if storageProvider == "data-centre" {
+		if s.dataCentreMedia == nil { http.Error(w, "Data Centre media service unavailable", http.StatusServiceUnavailable); return }
+		var grant datacentreclient.DownloadGrant
+		if r.Method == http.MethodHead {
+			grant, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+		} else {
+			grant, err = s.dataCentreMedia.DownloadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+		}
+		signedURL = grant.URL
+	} else if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+		if r.Method == http.MethodHead {
+			signedURL, err = s.virtualStorage.HeadURL(r.Context(), ownerID, ownerID, storageNamespace, key)
+		} else {
+			signedURL, err = s.virtualStorage.DownloadURL(r.Context(), ownerID, ownerID, storageNamespace, key)
+		}
+	} else if storageNamespace == "legacy-media" && s.media != nil {
+		if r.Method == http.MethodHead {
+			signedURL, err = s.media.PresignObjectHead(ownerID, key, visibility, time.Minute, time.Now())
+		} else {
+			signedURL, err = s.media.PresignObjectGet(ownerID, key, visibility, time.Minute, time.Now())
+		}
+	} else {
+		err = errors.New("media storage adapter unavailable")
+	}
+	if err != nil || signedURL == "" {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, signedURL, nil)
+	if err != nil {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	copyCDNOriginRequestHeaders(r, upstreamReq)
+	client := &http.Client{Transport: s.upstream.Transport, Timeout: 30 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified, http.StatusRequestedRangeNotSatisfiable:
+	case http.StatusNotFound, http.StatusGone:
+		http.Error(w, "media object unavailable", http.StatusNotFound)
+		return
+	default:
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	if resp.StatusCode != http.StatusNotModified {
+		size, sizeErr := cdnOriginObjectSize(resp)
+		if sizeErr != nil { http.Error(w, "media origin returned incomplete size metadata", http.StatusBadGateway); return }
+		if size > maxCDNOriginObjectBytes { http.Error(w, "media object exceeds the CDN delivery limit", http.StatusRequestEntityTooLarge); return }
+		if (resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusRequestedRangeNotSatisfiable) && strings.TrimSpace(resp.Header.Get("Content-Range")) == "" {
+			http.Error(w, "media origin omitted range metadata", http.StatusBadGateway)
+			return
+		}
+	}
+	writeCDNOriginResponse(w, r, resp, key, visibility)
 }
-
 func copyCDNOriginRequestHeaders(source,destination *http.Request) {
  for _,name:=range []string{"Range","If-Range","If-None-Match","If-Modified-Since"} {
   if value:=strings.TrimSpace(source.Header.Get(name));value!="" { destination.Header.Set(name,value) }
  }
 }
 
-func writeCDNOriginResponse(w http.ResponseWriter,r *http.Request,resp *http.Response,objectKey string) {
- for _,name:=range []string{"Content-Type","Content-Length","Content-Range","Accept-Ranges","ETag","Last-Modified"} {
-  if value:=resp.Header.Get(name);value!="" { w.Header().Set(name,value) }
- }
- w.Header().Set("Cache-Control","private, no-store")
- w.Header().Set("X-Testagram-Visibility","private")
- w.WriteHeader(resp.StatusCode)
- if r.Method==http.MethodHead || resp.StatusCode==http.StatusNotModified { return }
- if n,copyErr:=io.Copy(w,resp.Body);copyErr!=nil {
-  log.Printf("CDN media stream interrupted after %d bytes for %s: %v",n,objectKey,copyErr)
- }
+func writeCDNOriginResponse(w http.ResponseWriter, r *http.Request, resp *http.Response, objectKey, visibility string) {
+	for _, name := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+		if value := resp.Header.Get(name); value != "" { w.Header().Set(name, value) }
+	}
+	if visibility == "public" {
+		w.Header().Set("Cache-Control", "public, max-age=0, s-maxage=300")
+		w.Header().Set("X-Testagram-Visibility", "public")
+	} else {
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("X-Testagram-Visibility", "private")
+	}
+	w.WriteHeader(resp.StatusCode)
+	if r.Method == http.MethodHead || resp.StatusCode == http.StatusNotModified { return }
+	if n, copyErr := io.Copy(w, resp.Body); copyErr != nil { log.Printf("CDN media stream interrupted after %d bytes for %s: %v", n, objectKey, copyErr) }
 }
 
 func (s *service) mediaCDNDownloadURL(w http.ResponseWriter, r *http.Request) {
@@ -512,7 +552,7 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil {
+	if s.media == nil && s.dataCentreMedia == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage is not configured on this server", id))
 		return
 	}
@@ -534,8 +574,8 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
 		return
 	}
-	var visibility, assetStatus, storageNamespace string
-	if err := s.db.QueryRow(r.Context(), `select visibility, status, storage_namespace from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus, &storageNamespace); err != nil {
+	var visibility, assetStatus, storageNamespace, storageProvider string
+	if err := s.db.QueryRow(r.Context(), `select visibility, status, storage_namespace, storage_provider from testagram_media.assets where object_key=$1 and owner_id=$2`, body.Key, userID).Scan(&visibility, &assetStatus, &storageNamespace, &storageProvider); err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
 		return
 	}
@@ -544,7 +584,12 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var signedURL string
-	if storageNamespace != "legacy-media" {
+	if storageProvider == "data-centre" {
+		if s.dataCentreMedia == nil { writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Data Centre media service is unavailable", id)); return }
+		var grant datacentreclient.DownloadGrant
+		grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
+		signedURL = grant.URL
+	} else if storageNamespace != "legacy-media" {
 		if s.virtualStorage == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This media object requires the virtual storage provider", id))
 			return
@@ -569,7 +614,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -582,7 +627,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at, storage_namespace
+	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at, storage_namespace, storage_provider
 		from testagram_media.assets where owner_id=$1 and status='ready'
 		order by created_at desc limit 100`, userID)
 	if err != nil {
@@ -592,22 +637,26 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := make([]map[string]any, 0)
 	for rows.Next() {
-		var key, visibility, contentType, originalName, storageNamespace string
+		var key, visibility, contentType, originalName, storageNamespace, storageProvider string
 		var sizeBytes int64
 		var createdAt time.Time
-		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt, &storageNamespace); err != nil {
+		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt, &storageNamespace, &storageProvider); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not read media assets", id))
 			return
 		}
 		mediaURL := ""
-		if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+		if storageProvider == "data-centre" && s.dataCentreMedia == nil || storageProvider != "data-centre" && storageNamespace != "legacy-media" && s.virtualStorage == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "Some media objects require the virtual storage provider", id))
 			return
 		}
 		if visibility == "public" {
-			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
+			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace, storageProvider)
 		} else if visibility == "private" {
-			if storageNamespace != "legacy-media" {
+			if storageProvider == "data-centre" {
+				var grant datacentreclient.DownloadGrant
+				grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
+				mediaURL = grant.URL
+			} else if storageNamespace != "legacy-media" {
 				mediaURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
 			} else {
 				mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
@@ -646,7 +695,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -664,12 +713,12 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
 		return
 	}
-	var intentOwner, intentVisibility, intentType, intentName, intentStatus, storageNamespace, storageProvider string
+	var intentOwner, intentVisibility, intentType, intentName, intentStatus, storageNamespace, storageProvider, intentChecksum string
 	var intentMaxBytes int64
 	var intentExpires time.Time
-	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider
+	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider, coalesce(checksum_sha256, '')
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
-		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider)
+		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider, &intentChecksum)
 	if err != nil || intentOwner != userID ||
 		(time.Now().After(intentExpires) && intentStatus != "completed") ||
 		(storageNamespace == "legacy-media" && intentStatus != "issued" && intentStatus != "uploaded" && intentStatus != "completed") ||
@@ -684,11 +733,19 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		body.ContentType = intentType
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+body.ChecksumSHA256 = strings.ToLower(strings.TrimSpace(body.ChecksumSHA256))
+intentChecksum = strings.ToLower(strings.TrimSpace(intentChecksum))
+if body.ChecksumSHA256 == "" { body.ChecksumSHA256 = intentChecksum } else if intentChecksum != "" && body.ChecksumSHA256 != intentChecksum {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_CHECKSUM_MISMATCH", "Client checksum does not match the server-computed upload checksum", id)); return
+	}
+if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISSING", "The upload gateway has not recorded a server-computed checksum", id)); return }
 	if intentVisibility != body.Visibility || intentType != body.ContentType {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
 		return
 	}
-	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
+	var maxBytes int64
+	var ok bool
+	if storageProvider == "data-centre" { maxBytes, ok = s.mediaIntentFactory.MaxBytesForContentType(body.ContentType) } else { maxBytes, ok = s.media.MaxBytesForContentType(body.ContentType) }
 	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
@@ -697,15 +754,60 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_INTENT_INVALID", "Stored upload limit is invalid", id))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	verifyTimeout := 8 * time.Second
+	if storageProvider == "data-centre" { verifyTimeout = 25 * time.Second }
+	ctx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
 	defer cancel()
 	var actualType, etag string
 	var size int64
-	if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+	if storageProvider == "data-centre" && s.dataCentreMedia == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Data Centre media service is unavailable", id))
+		return
+	}
+	if storageProvider != "data-centre" && storageNamespace != "legacy-media" && s.virtualStorage == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This upload intent requires the virtual storage provider", id))
 		return
 	}
-	if storageNamespace != "legacy-media" {
+	if storageProvider == "data-centre" {
+		if _, verifyErr := s.dataCentreMedia.Verify(ctx, userID, storageNamespace, body.Key, body.ContentType, body.ChecksumSHA256, intentMaxBytes); verifyErr != nil {
+			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Data Centre could not queue media verification and replica recovery", id))
+			return
+		}
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			mediaState, statusErr := s.dataCentreMedia.Status(ctx, userID, storageNamespace, body.Key)
+			if statusErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_REPLICA_STATUS_UNAVAILABLE", "Data Centre media verification status is temporarily unavailable", id))
+				return
+			}
+			if mediaState.Status == "protected" {
+				if subtle.ConstantTimeCompare([]byte(strings.ToLower(mediaState.SHA256)), []byte(body.ChecksumSHA256)) != 1 {
+					writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_REPLICA_DIGEST_MISMATCH", "Data Centre protected digest does not match the Backend upload digest", id))
+					return
+				}
+				actualType, size, etag = mediaState.ContentType, mediaState.SizeBytes, mediaState.SHA256
+				break
+			}
+			if mediaState.Status == "replication_failed" {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_REPLICA_FAILED", "Media is uploaded but its durable replica is not ready; retry completion", id))
+				return
+			}
+			if mediaState.Status == "deleted" || mediaState.Status == "delete_pending" {
+				writeJSON(w, http.StatusConflict, errorBody("MEDIA_OBJECT_DELETING", "Media object is being deleted and cannot be completed", id))
+				return
+			}
+			if !time.Now().Before(deadline) || ctx.Err() != nil {
+				writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "replication_pending", "retry_after_ms": 1000}, "error": nil, "request_id": id})
+				return
+			}
+			select {
+			case <-ctx.Done():
+				writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "replication_pending", "retry_after_ms": 1000}, "error": nil, "request_id": id})
+				return
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	} else if storageNamespace != "legacy-media" {
 		info, verifyErr := s.virtualStorage.VerifyUpload(ctx, userID, storageNamespace, body.Key, body.ContentType, intentMaxBytes)
 		if verifyErr != nil {
 			if errors.Is(verifyErr, virtualstorage.ErrNotFound) {
@@ -723,10 +825,6 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Virtual storage could not verify the uploaded object; retry completion", id))
-			return
-		}
-		if strings.TrimSpace(body.ChecksumSHA256) == "" {
-			writeJSON(w, http.StatusBadRequest, errorBody("MEDIA_CHECKSUM_REQUIRED", "checksum_sha256 is required and must be the SHA-256 of the uploaded bytes", id))
 			return
 		}
 		if checksumErr := s.virtualStorage.VerifyUploadChecksum(ctx, userID, storageNamespace, body.Key, intentMaxBytes, body.ChecksumSHA256); checksumErr != nil {
@@ -791,7 +889,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
 			set status='cleanup_pending', expires_at=now(), updated_at=now()
 			where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','cleanup_pending')`, body.Key, userID)
-		if storageNamespace == "legacy-media" || s.virtualStorage == nil {
+		if storageNamespace == "legacy-media" || (s.virtualStorage == nil && s.dataCentreMedia == nil) {
 			if deleteErr := s.deleteMediaObject(r.Context(), userID, body.Key, body.Visibility); deleteErr == nil {
 				_, _ = s.db.Exec(r.Context(), `update testagram_media.upload_intents
 					set status='expired', updated_at=now() where object_key=$1 and owner_id=$2 and status='cleanup_pending'`, body.Key, userID)
@@ -835,7 +933,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		asset.MediaType = "video"
 	}
 	if body.Visibility == "public" {
-		asset.PublicURL = publicMediaURLForStorage(body.Key, userID, storageNamespace)
+		asset.PublicURL = publicMediaURLForStorage(body.Key, userID, storageNamespace, storageProvider)
 		if asset.PublicURL == "" {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
 			return
@@ -894,7 +992,7 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorBody("MODERATION_UNAUTHORIZED", "A valid operator moderation token is required", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -955,7 +1053,7 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.deleteMediaObjectWithNamespace(ctx, ownerID, body.Key, visibility, storageNamespace); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, ownerID, body.Key, visibility, storageNamespace, storageProvider); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
 		return
 	}
@@ -1021,11 +1119,11 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var visibility, contentType, originalName, assetStatus, storageNamespace string
+	var visibility, contentType, originalName, assetStatus, storageNamespace, storageProvider string
 	var sizeBytes int64
-	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, storage_namespace
+	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, storage_namespace, storage_provider
 		from testagram_media.assets where object_key=$1 and owner_id=$2 for update`, body.Key, userID).
-		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &storageNamespace)
+		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &storageNamespace, &storageProvider)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
 		return
@@ -1043,7 +1141,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("MEDIA_SIZE_NOT_ATTACHABLE", "Post media must be between 1 byte and 20 MiB", id))
 		return
 	}
-	publicURL := publicMediaURLForStorage(body.Key, userID, storageNamespace)
+	publicURL := publicMediaURLForStorage(body.Key, userID, storageNamespace, storageProvider)
 	if publicURL == "" {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media URL is not configured", id))
 		return
@@ -1095,11 +1193,11 @@ func productPostMediaType(contentType string) (string, bool) {
 	}
 }
 
-func publicMediaURLForStorage(key, ownerID, storageNamespace string) string {
-	if storageNamespace == "legacy-media" || storageNamespace == "" {
+func publicMediaURLForStorage(key, ownerID, storageNamespace, storageProvider string) string {
+	if storageNamespace == "legacy-media" || storageNamespace == "" || storageProvider == "data-centre" {
 		return publicMediaURL(key)
 	}
-	// Virtual-storage objects are physically stored below the tenant prefix.
+	// Legacy virtual-storage objects are physically stored below the tenant prefix.
 	return publicMediaURL("tenants/" + ownerID + "/" + strings.TrimLeft(key, "/"))
 }
 
@@ -1141,7 +1239,7 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil && s.virtualStorage == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -1200,7 +1298,7 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.deleteMediaObjectWithNamespace(ctx, userID, body.Key, visibility, storageNamespace); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, userID, body.Key, visibility, storageNamespace, storageProvider); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
 		return
 	}
@@ -1224,15 +1322,25 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 
 
 func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility string) error {
-	return s.deleteMediaObjectWithNamespace(ctx, userID, key, visibility, "legacy-media")
+	return s.deleteMediaObjectWithNamespace(ctx, userID, key, visibility, "legacy-media", "default")
 }
 
-func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
+func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace, storageProvider string) error {
+	if storageProvider == "data-centre" {
+		if s.dataCentreMedia == nil { return errors.New("Data Centre media service is unavailable") }
+		status, err := s.dataCentreMedia.Delete(ctx, userID, userID, storageNamespace, key)
+		if err != nil { return err }
+		if status != "deleted" { return errors.New("Data Centre media deletion remains pending") }
+		return nil
+	}
 	if storageNamespace != "" && storageNamespace != "legacy-media" {
 		if s.virtualStorage == nil {
 			return errors.New("virtual storage provider is required for this namespace")
 		}
 		return s.virtualStorage.Delete(ctx, userID, userID, storageNamespace, key)
+	}
+	if s.media == nil {
+		return errors.New("legacy media storage signer is unavailable")
 	}
 	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
 	if err != nil {
@@ -1280,17 +1388,17 @@ func (s *service) runMediaJanitor(ctx context.Context) {
 }
 
 type mediaCleanupObject struct {
-	key, ownerID, visibility, namespace string
+	key, ownerID, visibility, namespace, provider string
 }
 
 func (s *service) cleanupMediaBatch(ctx context.Context) error {
-	if s.db == nil || s.media == nil {
+	if s.db == nil || (s.media == nil && s.dataCentreMedia == nil && s.virtualStorage == nil) {
 		return nil
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace
+	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace, storage_provider
 		from testagram_media.upload_intents
 		where (expires_at <= now() and status in ('issued','uploaded','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '2 hours')
 		order by expires_at asc limit 50`)
@@ -1300,7 +1408,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var intents []mediaCleanupObject
 	for intentRows.Next() {
 		var item mediaCleanupObject
-		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.namespace); err != nil {
+		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.namespace, &item.provider); err != nil {
 			intentRows.Close()
 			return err
 		}
@@ -1321,7 +1429,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 			// Completion/cancellation may have won the race after selection.
 			continue
 		}
-		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
+		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace, item.provider); err != nil {
 			continue
 		}
 		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='expired', updated_at=now()
@@ -1330,7 +1438,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 		}
 	}
 
-	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status, storage_namespace
+	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status, storage_namespace, storage_provider
 		from testagram_media.assets where status in ('deletion_pending','quarantine_pending')
 		order by updated_at asc limit 50`)
 	if err != nil {
@@ -1343,7 +1451,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var assets []pendingMediaObject
 	for assetRows.Next() {
 		var item pendingMediaObject
-		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.namespace); err != nil {
+		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.namespace, &item.provider); err != nil {
 			assetRows.Close()
 			return err
 		}
@@ -1355,7 +1463,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	}
 	assetRows.Close()
 	for _, item := range assets {
-		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
+		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace, item.provider); err != nil {
 			continue
 		}
 		if err := s.detachMediaFromPosts(batchCtx, item.key); err != nil {

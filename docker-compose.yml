@@ -33,6 +33,9 @@ services:
       MEDIA_PRIVATE_BUCKET: ${MEDIA_PRIVATE_BUCKET:-testagram-private-media}
       MEDIA_PUBLIC_BUCKET: ${MEDIA_PUBLIC_BUCKET:-testagram-public-media}
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
+      FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
+      DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
+      FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
       ALGORITHM_URL: ${ALGORITHM_URL:-}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site,http://localhost:5173,http://127.0.0.1:5173}

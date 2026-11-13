@@ -74,7 +74,7 @@ func TestWriteCDNOriginResponsePreservesPartialRange(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/media/video", nil)
 	rec := httptest.NewRecorder()
 
-	writeCDNOriginResponse(rec, req, resp, "users/u1/video.mp4")
+	writeCDNOriginResponse(rec, req, resp, "users/u1/video.mp4", "private")
 
 	if rec.Code != http.StatusPartialContent || rec.Body.String() != "abcde" {
 		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
@@ -104,9 +104,24 @@ func TestWriteCDNOriginResponseHEADHasHeadersButNoBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodHead, "/media/video", nil)
 	rec := httptest.NewRecorder()
 
-	writeCDNOriginResponse(rec, req, resp, "users/u1/video.mp4")
+	writeCDNOriginResponse(rec, req, resp, "users/u1/video.mp4", "private")
 
 	if rec.Code != http.StatusOK || rec.Body.Len() != 0 || rec.Header().Get("Content-Length") != "1048576" {
 		t.Fatalf("HEAD status=%d bytes=%d headers=%+v", rec.Code, rec.Body.Len(), rec.Header())
 	}
+}
+
+func TestWriteCDNOriginResponsePublicUsesSharedCachePolicy(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{"Content-Type": []string{"image/webp"}, "Content-Length": []string{"3"}},
+		Body: io.NopCloser(strings.NewReader("img")),
+	}
+	req := httptest.NewRequest(http.MethodGet, "/media/image", nil)
+	rec := httptest.NewRecorder()
+	writeCDNOriginResponse(rec, req, resp, "users/u1/image", "public")
+	if rec.Header().Get("X-Testagram-Visibility") != "public" || rec.Header().Get("Cache-Control") != "public, max-age=0, s-maxage=300" {
+		t.Fatalf("public origin cache policy is unsafe: %v", rec.Header())
+	}
+	if rec.Body.String() != "img" { t.Fatalf("body = %q", rec.Body.String()) }
 }

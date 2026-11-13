@@ -45,7 +45,9 @@ This is the shared communication contract for six runtime repositories. `testagr
 ### Backend -> Data Centre
 - Data Centre's platform listener is private (default port 8095). Current implemented routes include health/readiness/metrics, feature-flag configuration, event intake and audit intake.
 - The Data Centre platform service is not a product API and does not own user identity, post visibility, media ownership, quota or retention decisions.
-- The current Backend mainline does not yet have a verified typed Data Centre platform client. Do not claim Backend <-> Data Centre cache, queue, rate-limit or media-placement integration is active until the client, matching routes, authentication and contract tests are implemented together.
+- The current integration PR adds a typed `internal/datacentreclient` for the five dedicated media lifecycle routes (`upload-url`, `verify`, `status`, `download-url`, `delete`). It uses `DATA_CENTRE_MEDIA_API_URL` plus `FRESH_DATA_CENTRE_INTERNAL_TOKEN`, sends API version 1, validates provider URLs and accepts the asynchronous `delete_pending` state. This is PR-branch implementation, not merged mainline proof until PR #206 is merged and its post-merge CI passes.
+- The separate Data Centre platform listener (feature flags, events, audit, cache/queue/rate-limit and media-placement control APIs) still has no verified typed Backend client. Do not claim those platform integrations are active.
+- In the self-hosted Backend Compose profile, the Backend stack creates the private Docker network `testagram-platform`; the Data Centre media service must join that external network, and port 8096 must not be published. Configure `DATA_CENTRE_MEDIA_API_URL=http://media:8096` and the same high-entropy `FRESH_DATA_CENTRE_INTERNAL_TOKEN` in Backend and Data Centre media. Keep `FRESH_MEDIA_ENABLED=false` until live B2/R2 and CDN acceptance passes.
 - Data Centre media placement/replica evidence is not durable until byte count and SHA-256 are independently read back and verified.
 
 ### Backend -> CDN -> object origin

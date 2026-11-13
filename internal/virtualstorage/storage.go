@@ -23,7 +23,7 @@ var (
 	ErrObjectMismatch    = errors.New("uploaded object does not match declared metadata")
 	ErrChecksumMismatch  = errors.New("uploaded object SHA-256 does not match expected checksum")
 	ErrChecksumUnavailable = errors.New("storage provider cannot calculate a content SHA-256")
-	tenantIDPattern     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	tenantIDPattern     = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 	namespacePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 )
 
@@ -151,6 +151,17 @@ func (m *Manager) DownloadURL(ctx context.Context, requesterTenant, ownerTenant,
 		return "", ErrForbidden
 	}
 	return m.provider.PresignGet(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key, ns.DownloadTTL)
+}
+
+// HeadURL creates a method-correct signed HEAD capability for the owner-scoped object.
+func (m *Manager) HeadURL(ctx context.Context, requesterTenant, ownerTenant, namespace, key string) (string, error) {
+	ns, err := m.namespace(namespace)
+	if err != nil { return "", err }
+	if !tenantIDPattern.MatchString(ownerTenant) || !tenantIDPattern.MatchString(requesterTenant) || !validKey(key) { return "", ErrInvalidKey }
+	if !ns.Public && requesterTenant != ownerTenant { return "", ErrForbidden }
+	presigner, ok := m.provider.(interface { PresignHead(context.Context, string, string, time.Duration) (string, error) })
+	if !ok { return "", errors.New("storage provider does not support method-correct HEAD signing") }
+	return presigner.PresignHead(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key, ns.DownloadTTL)
 }
 
 // VerifyUpload checks provider-observed metadata before an upload can be marked

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
@@ -67,6 +68,9 @@ type service struct {
 	federationPublicBaseURL   string
 	upstream                  *http.Client
 	media                     *media.Signer
+	mediaIntentFactory        *media.IntentFactory
+	dataCentreMedia           *datacentreclient.Client
+	freshMediaEnabled         bool
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
 	cdnOriginAuthToken        string
@@ -167,6 +171,8 @@ func capabilityGroup(name string) string {
 		return "other"
 	}
 }
+
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *statusRecorder) WriteHeader(status int) {
 	if w.wroteHeader {
@@ -588,6 +594,7 @@ func (s *service) routes() http.Handler {
 		mux.Handle("POST /internal/replication/events", s.replicationReceiver)
 	}
 	mux.HandleFunc("GET /internal/cdn/v1/{key...}", s.mediaCDNOrigin)
+	mux.HandleFunc("HEAD /internal/cdn/v1/{key...}", s.mediaCDNOrigin)
 	mux.HandleFunc("OPTIONS /api/media/cdn-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/cdn-download-url", s.mediaCDNDownloadURL)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
@@ -600,6 +607,20 @@ func (s *service) routes() http.Handler {
 		s.requests.Add(1)
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		if r.Method == http.MethodPut && r.URL.Path == "/api/media/upload" {
+			// The bounded upload gateway may stream up to 500 MiB. Extend only
+			// this route socket deadlines; ordinary API requests keep short limits.
+			deadline := time.Now().Add(40 * time.Minute)
+			controller := http.NewResponseController(recorder)
+			if err := controller.SetReadDeadline(deadline); err != nil {
+				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload read deadline unavailable"})
+				return
+			}
+			if err := controller.SetWriteDeadline(deadline); err != nil {
+				writeJSON(recorder, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "upload write deadline unavailable"})
+				return
+			}
+		}
 		mux.ServeHTTP(recorder, r)
 		s.recordRequest(normalizedMethod(r.Method), normalizedRoute(r.URL.Path), recorder.status, time.Since(started))
 	})
@@ -661,7 +682,7 @@ func normalizedRoute(path string) string {
 		"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/me/profile",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
 		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
-		"/api/media/list", "/internal/media/quarantine", "/internal/replication/events":
+		"/api/media/list", "/api/media/cdn-download-url", "/internal/media/quarantine", "/internal/cdn/v1/{key...}", "/internal/replication/events":
 		return path
 	default:
 		return "unmatched"
@@ -1013,6 +1034,24 @@ func main() {
 		}
 		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
+	var dataCentreMedia *datacentreclient.Client
+	var mediaIntentFactory *media.IntentFactory
+	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
+	dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
+	dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
+	if dataCentreURL != "" || dataCentreToken != "" {
+		if dataCentreURL == "" || dataCentreToken == "" { log.Fatal("DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN must be configured together") }
+		dataCentreMedia, err = datacentreclient.New(dataCentreURL, dataCentreToken, &http.Client{Timeout: 10 * time.Second})
+		if err != nil || dataCentreMedia == nil { log.Fatalf("configure private Data Centre media client: %v", err) }
+	}
+	if freshMediaEnabled {
+		if dataCentreMedia == nil { log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN") }
+		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 45 * time.Minute})
+		if err != nil { log.Fatalf("configure Data Centre media upload policy: %v", err) }
+		log.Printf("private Data Centre media lifecycle enabled for new uploads")
+	} else {
+		log.Printf("fresh Data Centre media uploads disabled by FRESH_MEDIA_ENABLED=false; existing Data Centre assets remain readable/deletable when the client is configured")
+	}
 	var cdnMediaAssertions *mediaassertion.Issuer
 	cdnAssertionSecret := env("CDN_MEDIA_ASSERTION_SECRET", "")
 	cdnMediaBaseURL := strings.TrimRight(env("CDN_MEDIA_BASE_URL", ""), "/")
@@ -1033,6 +1072,9 @@ func main() {
 			log.Fatal("CDN_ORIGIN_AUTH_TOKEN must contain at least 32 bytes when CDN media assertions are configured")
 		}
 		log.Printf("viewer-bound CDN media assertions enabled")
+	}
+	if freshMediaEnabled && (cdnMediaAssertions == nil || cdnMediaBaseURL == "" || len(cdnOriginAuthToken) < 32) {
+		log.Fatal("FRESH_MEDIA_ENABLED requires CDN_MEDIA_ASSERTION_SECRET, HTTPS CDN_MEDIA_BASE_URL and CDN_ORIGIN_AUTH_TOKEN; private media must not bypass the CDN origin")
 	}
 	var virtualStorageManager *virtualstorage.Manager
 	var primaryVirtualStorageProvider *virtualstorage.S3Provider
@@ -1143,7 +1185,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
+		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,

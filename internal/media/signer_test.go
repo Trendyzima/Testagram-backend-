@@ -230,3 +230,23 @@ func TestPresignObjectPutSignsKnownOwnerScopedKey(t *testing.T) {
 		t.Fatal("cross-owner PUT URL must be rejected")
 	}
 }
+
+func TestUploadIntentAcceptsAppwriteOwnerIDCharacters(t *testing.T) {
+	s := testSigner(t, "https://s3.example.invalid")
+	intent, err := s.CreateUploadIntent("appwrite.user_123", "image/webp", "private", 1024, time.Now())
+	if err != nil { t.Fatalf("Appwrite owner ID rejected: %v", err) }
+	if !strings.HasPrefix(intent.Key, "users/appwrite.user_123/") { t.Fatalf("owner binding incorrect: %s", intent.Key) }
+}
+
+func TestPresignObjectGetUsesVisibilityBucket(t *testing.T) {
+	signer := testSigner(t, "https://media.example.test")
+	now := time.Date(2026, 10, 17, 12, 30, 0, 0, time.UTC)
+	key := "users/user-123/0123456789abcdef0123456789abcdef"
+	got, err := signer.PresignObjectGet("user-123", key, "public", time.Minute, now)
+	if err != nil { t.Fatal(err) }
+	u, err := url.Parse(got)
+	if err != nil { t.Fatal(err) }
+	if !strings.HasPrefix(u.Path, "/public-media/users/user-123/") { t.Fatalf("wrong public origin path: %s", u.Path) }
+	if u.Query().Get("X-Amz-Signature") == "" { t.Fatal("GET URL is not signed") }
+	if _, err := signer.PresignObjectGet("other-user", key, "public", time.Minute, now); err == nil { t.Fatal("cross-owner GET URL must be rejected") }
+}
