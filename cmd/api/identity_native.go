@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"log"
 	"net/http"
 	"path"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 )
 
 var identityApplicationIDPattern = regexp.MustCompile("^[0-9a-fA-F-]{36}$")
@@ -536,3 +538,143 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "manual_review", "message": "Evidence was securely received and queued for manual review."})
 }
 
+
+
+// runIdentityMaintenance expires abandoned sessions and removes evidence after
+// its configured retention period. Failures are retried on the next tick.
+func (s *service) runIdentityMaintenance(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		s.expireIdentitySessions(ctx)
+		s.purgeExpiredIdentityEvidence(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *service) expireIdentitySessions(ctx context.Context) {
+	if s.db == nil {
+		return
+	}
+	workCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(workCtx)
+	if err != nil {
+		log.Printf("identity session expiry transaction unavailable")
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	rows, err := tx.Query(workCtx, `
+		UPDATE testagram_identity.verification_sessions
+		SET status='expired',updated_at=now()
+		WHERE id IN (
+		  SELECT id FROM testagram_identity.verification_sessions
+		  WHERE expires_at<=now()
+		    AND status IN ('created','in_progress','submitted','manual_review')
+		  ORDER BY expires_at
+		  LIMIT 100
+		  FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id::text,application_id::text
+	`)
+	if err != nil {
+		log.Printf("identity session expiry scan failed")
+		return
+	}
+	type expiredSession struct{ sessionID, applicationID string }
+	expired := make([]expiredSession, 0)
+	for rows.Next() {
+		var item expiredSession
+		if err := rows.Scan(&item.sessionID, &item.applicationID); err != nil {
+			rows.Close()
+			log.Printf("identity session expiry result could not be read")
+			return
+		}
+		expired = append(expired, item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Printf("identity session expiry result was incomplete")
+		return
+	}
+	for _, item := range expired {
+		if _, err := tx.Exec(workCtx, `
+			INSERT INTO testagram_identity.verification_events
+			  (session_id,event_type,actor_type,actor_reference,request_id)
+			VALUES ($1::uuid,'session_expired','system','testagram-identity-service','identity-expiry-worker')
+		`, item.sessionID); err != nil {
+			log.Printf("identity session expiry audit failed")
+			return
+		}
+		if _, err := tx.Exec(workCtx, `
+			UPDATE testagram_identity.identity_applications
+			SET status='expired',adult_verification_result='failed',updated_at=now()
+			WHERE id=$1::uuid AND status IN ('pending','verification_pending','under_review')
+		`, item.applicationID); err != nil {
+			log.Printf("identity application expiry update failed")
+			return
+		}
+	}
+	if err := tx.Commit(workCtx); err != nil {
+		log.Printf("identity session expiry commit failed")
+	}
+}
+
+func (s *service) purgeExpiredIdentityEvidence(ctx context.Context) {
+	if s.db == nil || s.virtualStorage == nil {
+		return
+	}
+	workCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	rows, err := s.db.Query(workCtx, `
+		SELECT e.id::text,a.id::text,e.object_key
+		FROM testagram_identity.verification_evidence e
+		JOIN testagram_identity.verification_sessions v ON v.id=e.session_id
+		JOIN testagram_identity.identity_applications a ON a.id=v.application_id
+		WHERE e.retention_until<=now()
+		  AND e.status IN ('upload_pending','verified','quarantined')
+		ORDER BY e.retention_until
+		LIMIT 100
+	`)
+	if err != nil {
+		log.Printf("identity evidence retention scan failed")
+		return
+	}
+	type expiredEvidence struct{ evidenceID, applicationID, objectKey string }
+	items := make([]expiredEvidence, 0)
+	for rows.Next() {
+		var item expiredEvidence
+		if err := rows.Scan(&item.evidenceID,&item.applicationID,&item.objectKey); err != nil {
+			rows.Close()
+			log.Printf("identity evidence retention result could not be read")
+			return
+		}
+		items = append(items,item)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Printf("identity evidence retention result was incomplete")
+		return
+	}
+	for _, item := range items {
+		err := s.virtualStorage.Delete(workCtx,item.applicationID,item.applicationID,identityEvidenceNamespace,item.objectKey)
+		if err != nil && !errors.Is(err,virtualstorage.ErrNotFound) {
+			log.Printf("identity evidence object deletion failed; will retry")
+			continue
+		}
+		_, err = s.db.Exec(workCtx, `
+			UPDATE testagram_identity.verification_evidence
+			SET status='deleted',uploaded_at=COALESCE(uploaded_at,now()),
+			    verified_at=NULL
+			WHERE id=$1::uuid AND status IN ('upload_pending','verified','quarantined')
+			  AND retention_until<=now()
+		`,item.evidenceID)
+		if err != nil {
+			log.Printf("identity evidence retention state update failed")
+		}
+	}
+}
