@@ -442,34 +442,6 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_APPROVAL_FAILED","Application could not be approved",requestID(r)))
 		return
 	}
-	var firstApprover,secondApprover string
-	err=tx.QueryRow(ctx,`
-		SELECT approver_appwrite_user_id FROM testagram_auth.sensitive_action_approvals
-		WHERE request_id=$1::uuid AND decision='approved'
-		ORDER BY created_at ASC LIMIT 1
-	`,requestIDValue).Scan(&firstApprover)
-	if err==nil {
-		err=tx.QueryRow(ctx,`
-			SELECT approver_appwrite_user_id FROM testagram_auth.sensitive_action_approvals
-			WHERE request_id=$1::uuid AND decision='approved' AND approver_appwrite_user_id<>$2
-			ORDER BY created_at ASC LIMIT 1
-		`,requestIDValue,firstApprover).Scan(&secondApprover)
-	}
-	token,jti:="",""
-	if err==nil { token,err=authRandomToken() }
-	if err==nil { jti,err=authRandomToken() }
-	if err==nil {
-		_,err=tx.Exec(ctx,`
-			INSERT INTO testagram_identity.identity_approval_tokens
-			  (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
-			   second_approver_appwrite_user_id,expires_at)
-			VALUES ($1,$2,$3::uuid,$4,$5,now()+interval '15 minutes')
-		`,authTokenHash(token),authTokenHash(jti),applicationID,firstApprover,secondApprover)
-	}
-	if err!=nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_APPROVAL_TOKEN_FAILED","Approved account could not receive a provisioning authorization",requestID(r)))
-		return
-	}
 	if _,err=tx.Exec(ctx,`
 		INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,request_id,metadata)
 		VALUES ($1,'identity.account_approval.completed',$2,$3::uuid,jsonb_build_object('approval_count',2))
@@ -482,5 +454,5 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.Header().Set("Cache-Control","no-store")
-	writeJSON(w,http.StatusOK,map[string]any{"status":"approved","approval_token":token,"expires_in_seconds":900,"provisioning":"authorized"})
+	writeJSON(w,http.StatusOK,map[string]any{"status":"approved","account_approval":"approved","provisioning":"pending"})
 }
