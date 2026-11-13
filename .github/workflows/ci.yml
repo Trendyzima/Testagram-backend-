@@ -458,6 +458,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Install workflow YAML validator
+        run: python -m pip install --disable-pip-version-check PyYAML
       - name: Validate Compose configuration
         env:
           POSTGRES_PASSWORD: ci-only-password-not-for-production
@@ -478,7 +480,11 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import re
+          import yaml
 
+          for workflow in Path(".github/workflows").glob("*.yml"):
+              with workflow.open(encoding="utf-8") as handle:
+                  yaml.safe_load(handle)
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
           assert "APPWRITE_API_KEY:$appwrite_api_key" in deploy and "CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret" in deploy and "B2_S3_SECRET_ACCESS_KEY:$b2_secret" in deploy, "deployment must forward Appwrite provisioning and private replica credentials"
