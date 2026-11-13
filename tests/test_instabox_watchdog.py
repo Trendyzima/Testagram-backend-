@@ -79,6 +79,43 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(len(api.calls), 1)
         notify.assert_not_called()
 
+    def test_unexpected_stop_is_started_when_desired_state_is_running(self):
+        api = FakeAPI({
+            "id": "machine-123", "state": "stopped",
+            "desiredState": "running", "operationId": None
+        })
+        with patch.object(watchdog, "API", return_value=api), \
+             patch.object(watchdog, "load_state", return_value={}), \
+             patch.object(watchdog, "save_state"), \
+             patch.object(watchdog, "notify") as notify, \
+             patch.object(watchdog, "API_KEY", "test-key"), \
+             patch.object(watchdog, "MACHINE_ID", "machine-123"), \
+             patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
+             patch.object(watchdog, "READY_URL", "https://example.test/readyz"), \
+             patch.object(watchdog, "ACTION_COOLDOWN", 300):
+            self.assertEqual(watchdog.main(), 0)
+        self.assertTrue(any(call[0] == "POST" and call[1].endswith("/start") for call in api.calls))
+        notify.assert_called_once()
+
+    def test_running_unhealthy_machine_is_power_cycled_only_after_all_probes_fail(self):
+        api = FakeAPI()
+        with patch.object(watchdog, "API", return_value=api), \
+             patch.object(watchdog, "load_state", return_value={}), \
+             patch.object(watchdog, "save_state"), \
+             patch.object(watchdog, "notify") as notify, \
+             patch.object(watchdog, "probe", return_value=(False, "HTTP 503")), \
+             patch.object(watchdog.time, "sleep"), \
+             patch.object(watchdog, "API_KEY", "test-key"), \
+             patch.object(watchdog, "MACHINE_ID", "machine-123"), \
+             patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
+             patch.object(watchdog, "READY_URL", "https://example.test/readyz"), \
+             patch.object(watchdog, "FAILURES_REQUIRED", 3), \
+             patch.object(watchdog, "ACTION_COOLDOWN", 300):
+            self.assertEqual(watchdog.main(), 0)
+        actions = [call[1].rsplit("/", 1)[-1] for call in api.calls if call[0] == "POST"]
+        self.assertEqual(actions, ["stop", "start"])
+        notify.assert_called_once()
+
     def test_running_machine_restart_is_stop_then_start(self):
         api = FakeAPI()
         with patch.object(watchdog, "ACTION_COOLDOWN", 300), \
