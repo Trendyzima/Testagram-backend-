@@ -78,5 +78,3 @@ func configureIdentityMediaReplicator(primary *virtualstorage.S3Provider) (*virt
 		{Name: "backblaze-b2", Provider: b2, Buckets: b2Buckets},
 	})
 }
-
-var _ = http.MethodGet
