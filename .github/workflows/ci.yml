@@ -470,7 +470,7 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
           FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
           FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
-          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:fcb1fa9e1b2bd4a17a1face0dcd8591d7f11880474d28179cea94fcfcb8cdf34
+          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9
           CDN_ORIGIN_AUTH_TOKEN: ci-only-cdn-origin-token-not-for-production-32-chars
           CDN_MEDIA_ASSERTION_SECRET: ci-only-cdn-assertion-secret-not-for-production-32
           CDN_MEDIA_BASE_URL: https://media.example.invalid
