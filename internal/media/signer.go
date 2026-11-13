@@ -25,33 +25,7 @@ const (
 
 var (
 	userIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-	objectKeyPattern = regexp.MustCompile(`^users/[A-Za-z0-9._-]{1,128}/[a-f0-9]{32}$`) = regexp.MustCompile(`^users/[A-Za-z0-9._-]{1,128}/[a-f0-9]{32}// Package media creates short-lived S3-compatible upload and download URLs for MinIO.
-// It intentionally uses only the standard library so the backend does not need to
-// proxy large media bodies or add an SDK dependency to the request path.
-package media
-
-import (
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
-	"fmt"
-	"net/url"
-	"path"
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
-)
-
-const (
-	defaultRegion = "us-east-1"
-	defaultUploadTTL = 10 * time.Minute
-)
-
-var (
-	) = regexp.MustCompile(`^users/[A-Za-z0-9-]{1,128}/[a-f0-9]{32}$`)
+	objectKeyPattern = regexp.MustCompile(`^users/[A-Za-z0-9._-]{1,128}/[a-f0-9]{32}$`)
 	allowedTypes = map[string]string{
 		"image/jpeg": "image", "image/png": "image", "image/webp": "image", "image/gif": "image", "image/avif": "image",
 		"video/mp4": "video", "video/webm": "video",
