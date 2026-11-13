@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 from scripts import instabox_watchdog as watchdog
 
+watchdog.MACHINE_ID = "machine-123"
+
 
 class FakeAPI:
     def __init__(self, machine=None):
@@ -34,7 +36,8 @@ class WatchdogTests(unittest.TestCase):
                     {"id": "machine-123", "name": "testagramdb"},
                     {"id": "other-id", "name": "another-machine"}
                 ], "nextCursor": None}
-        self.assertEqual(watchdog.resolve_machine_id(ListAPI()), "machine-123")
+        with patch.object(watchdog, "MACHINE_ID", ""):
+            self.assertEqual(watchdog.resolve_machine_id(ListAPI()), "machine-123")
 
     def test_machine_name_resolution_fails_closed_on_duplicates(self):
         class ListAPI:
@@ -43,7 +46,8 @@ class WatchdogTests(unittest.TestCase):
                     {"id": "machine-123", "name": "testagramdb"},
                     {"id": "machine-456", "name": "testagramdb"}
                 ], "nextCursor": None}
-        with self.assertRaisesRegex(watchdog.WatchdogError, "found 2"):
+        with patch.object(watchdog, "MACHINE_ID", ""), \
+             self.assertRaisesRegex(watchdog.WatchdogError, "found 2"):
             watchdog.resolve_machine_id(ListAPI())
 
     def test_machine_snapshot_rejects_wrong_machine_id(self):
@@ -68,7 +72,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_active_operation_is_not_interrupted(self):
         api = FakeAPI({
-            "id": "machine-123", "state": "running",
+            "id": "machine-123", "name": "testagramdb", "state": "running",
             "desiredState": "running", "operationId": "op-in-progress"
         })
         with patch.object(watchdog, "API", return_value=api), \
@@ -84,7 +88,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_intentional_stop_is_never_overridden(self):
         api = FakeAPI({
-            "id": "machine-123", "state": "stopped",
+            "id": "machine-123", "name": "testagramdb", "state": "stopped",
             "desiredState": "stopped", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
@@ -100,7 +104,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_unexpected_stop_is_started_when_desired_state_is_running(self):
         api = FakeAPI({
-            "id": "machine-123", "state": "stopped",
+            "id": "machine-123", "name": "testagramdb", "state": "stopped",
             "desiredState": "running", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
