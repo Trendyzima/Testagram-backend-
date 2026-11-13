@@ -156,16 +156,24 @@ DECLARE
   v_payload JSONB;
   v_application RECORD;
   v_approved_count INTEGER;
+  v_total_approved_count INTEGER;
 BEGIN
   SELECT id, email, username, display_name, evidence_fingerprint_sha256,
-         terms_version, privacy_version, status, sensitive_action_request_id
+         terms_version, privacy_version, status, sensitive_action_request_id,
+         adult_verified_at
     INTO v_application
   FROM testagram_identity.identity_applications
   WHERE id = NEW.application_id
   FOR UPDATE;
 
-  IF NOT FOUND OR v_application.sensitive_action_request_id IS NULL THEN
-    RAISE EXCEPTION 'identity approval token requires a linked application and approval request';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'identity approval token requires an existing application';
+  END IF;
+  IF v_application.sensitive_action_request_id IS NULL THEN
+    RAISE EXCEPTION 'identity approval token requires a linked approval request';
+  END IF;
+  IF v_application.adult_verified_at IS NULL THEN
+    RAISE EXCEPTION 'verified adult evidence is required before identity approval token issuance';
   END IF;
   IF v_application.status <> 'approved' THEN
     RAISE EXCEPTION 'identity application must be approved before token issuance';
@@ -201,6 +209,11 @@ BEGIN
   END IF;
 
   SELECT count(DISTINCT approver_appwrite_user_id)
+    INTO v_total_approved_count
+  FROM testagram_auth.sensitive_action_approvals
+  WHERE request_id = v_request_id AND decision = 'approved';
+
+  SELECT count(DISTINCT approver_appwrite_user_id)
     INTO v_approved_count
   FROM testagram_auth.sensitive_action_approvals
   WHERE request_id = v_request_id
@@ -210,7 +223,7 @@ BEGIN
       NEW.second_approver_appwrite_user_id
     );
 
-  IF v_approved_count <> 2 THEN
+  IF v_approved_count <> 2 OR v_total_approved_count <> 2 THEN
     RAISE EXCEPTION 'two distinct recorded approvals are required before token issuance';
   END IF;
 
