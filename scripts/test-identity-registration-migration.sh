@@ -37,7 +37,8 @@ for migration in \
   migrations/20261111_identity_registration_pipeline.sql \
   migrations/20261113_identity_registration_hardening.sql \
   migrations/20261113_identity_idswyft_intake.sql \
-  migrations/20261113_native_identity_verification.sql; do
+  migrations/20261113_native_identity_verification.sql \\
+  migrations/20261114_native_identity_integrity.sql; do
   psql_ci < "$migration"
 done
 
@@ -46,6 +47,8 @@ psql_ci < migrations/20261113_identity_registration_hardening.sql
 psql_ci < migrations/20261113_identity_idswyft_intake.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
@@ -236,6 +239,65 @@ BEGIN
   END;
 END;
 $lease_invariant$;
+SQL
+
+# Exercise native verification session constraints and immutable audit records.
+psql_ci <<'SQL'
+DO $native_identity$
+DECLARE
+  app_id uuid := gen_random_uuid();
+  session_id uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO testagram_identity.identity_applications
+    (id,email,username,display_name,adult_confirmed_at,evidence_reference,
+     evidence_fingerprint_sha256,terms_version,privacy_version,
+     terms_accepted_at,privacy_accepted_at)
+  VALUES
+    (app_id,'native@example.test','native_ci','Native CI',now(),
+     'native-pending-reference',decode(repeat('9',64),'hex'),
+     'terms-v1','privacy-v1',now(),now());
+
+  INSERT INTO testagram_identity.verification_sessions
+    (id,application_id,session_token_sha256,purpose,requested_minimum_age,expires_at)
+  VALUES
+    (session_id,app_id,decode(repeat('a',64),'hex'),'age_assurance',18,now()+interval '1 day');
+
+  INSERT INTO testagram_identity.verification_events
+    (session_id,event_type,actor_type,actor_reference,request_id)
+  VALUES
+    (session_id,'session_created','applicant','native-ci','native-session-created');
+
+  INSERT INTO testagram_identity.verification_reviews
+    (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
+  VALUES
+    (session_id,'ci-reviewer-one','escalate','needs_second_review','opaque-native-evidence-ref');
+
+  BEGIN
+    UPDATE testagram_identity.verification_events
+    SET actor_reference='tampered' WHERE session_id=session_id;
+    RAISE EXCEPTION 'verification event update unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'verification event update unexpectedly succeeded' THEN RAISE; END IF;
+  END;
+
+  BEGIN
+    DELETE FROM testagram_identity.verification_reviews
+    WHERE verification_reviews.session_id=session_id;
+    RAISE EXCEPTION 'verification review deletion unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'verification review deletion unexpectedly succeeded' THEN RAISE; END IF;
+  END;
+
+  BEGIN
+    UPDATE testagram_identity.verification_sessions
+    SET status='submitted',submitted_at=now()
+    WHERE id=session_id;
+    RAISE EXCEPTION 'evidence-free submission unexpectedly succeeded';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END;
+$native_identity$;
 SQL
 
 # Exercise the Admin Console review handler against this same isolated database.
