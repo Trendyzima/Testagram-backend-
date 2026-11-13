@@ -1339,6 +1339,9 @@ func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, ke
 		}
 		return s.virtualStorage.Delete(ctx, userID, userID, storageNamespace, key)
 	}
+	if s.media == nil {
+		return errors.New("legacy media storage signer is unavailable")
+	}
 	deleteURL, err := s.media.PresignObjectDelete(userID, key, visibility, time.Minute, time.Now())
 	if err != nil {
 		return err
