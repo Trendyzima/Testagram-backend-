@@ -155,6 +155,7 @@ func TestMediaCDNOriginPostgresIntegration(t *testing.T) {
 	publicKey := "users/" + ownerID + "/" + strings.Repeat("1", 32)
 	privateKey := "users/" + ownerID + "/" + strings.Repeat("2", 32)
 	quarantinedKey := "users/" + ownerID + "/" + strings.Repeat("3", 32)
+	deletedKey := "users/" + ownerID + "/" + strings.Repeat("5", 32)
 	mismatchedKey := "users/different-owner/" + strings.Repeat("4", 32)
 
 	insertAsset := func(key, owner, visibility, status string) {
@@ -170,6 +171,7 @@ VALUES ($1,$2,$3,'image/webp',3,'ci-etag',$4,'legacy-media','default','')`, key,
 	insertAsset(publicKey, ownerID, "public", "ready")
 	insertAsset(privateKey, ownerID, "private", "ready")
 	insertAsset(quarantinedKey, ownerID, "public", "quarantined")
+	insertAsset(deletedKey, ownerID, "public", "deleted")
 	insertAsset(mismatchedKey, ownerID, "public", "ready")
 	defer func() {
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_media.assets WHERE owner_id=$1", ownerID)
@@ -255,6 +257,9 @@ VALUES ($1,$2,$3,'image/webp',3,'ci-etag',$4,'legacy-media','default','')`, key,
 	}
 	if got := call(http.MethodGet, quarantinedKey, originToken, "", ""); got.Code != http.StatusNotFound {
 		t.Fatalf("quarantined asset status=%d, want 404", got.Code)
+	}
+	if got := call(http.MethodGet, deletedKey, originToken, "", ""); got.Code != http.StatusNotFound {
+		t.Fatalf("deleted asset status=%d, want 404", got.Code)
 	}
 	if got := call(http.MethodGet, mismatchedKey, originToken, "", ""); got.Code != http.StatusNotFound {
 		t.Fatalf("owner/key mismatch status=%d, want 404", got.Code)
