@@ -240,6 +240,262 @@ paths:
       responses:
         '200': { description: Signed media delivery URL }
         '401': { description: Invalid or expired Appwrite JWT }
+  /api/identity/applications:
+    post:
+      security: []
+      operationId: createNativeIdentityApplication
+      summary: Create a Testagram-owned age-assurance application
+      description: Requires the identity-registration feature gate, configured policy versions, PostgreSQL, private evidence storage and verified three-provider replication. Returns opaque applicant and verification-session bearer tokens; store them only in secure client storage.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}
+    federationInternalBearer:
+      type: http
+      scheme: bearer
+    appwriteJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: Appwrite JWT
+ }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, username, display_name, adult_confirmed, terms_accepted, privacy_accepted]
+              properties:
+                email: { type: string, format: email, maxLength: 320 }
+                username: { type: string, minLength: 3, maxLength: 30 }
+                display_name: { type: string, minLength: 2, maxLength: 80 }
+                adult_confirmed: { type: boolean, const: true }
+                terms_accepted: { type: boolean, const: true }
+                privacy_accepted: { type: boolean, const: true }
+      responses:
+        '202': { description: Application and manual age-assurance session created; bearer tokens returned once }
+        '400': { description: Invalid registration details or missing idempotency key }
+        '409': { description: Idempotency key reused with a different application }
+        '429': { description: Registration rate limit exceeded }
+        '503': { description: Registration disabled or required storage/replication/policy dependency unavailable }
+  /api/identity/applications/{application_id}:
+    get:
+      security: []
+      operationId: getNativeIdentityApplicationStatus
+      summary: Read application status using its applicant token
+      parameters:
+        - in: path
+          name: application_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: X-Application-Token
+          required: true
+          schema: { type: string, minLength: 32, maxLength: 128 }
+      responses:
+        '200': { description: Current application and age-assurance status; no evidence bytes or staff data }
+        '404': { description: Application not found or token invalid }
+  /api/identity/sessions/{session_id}:
+    get:
+      security: []
+      operationId: getNativeIdentitySessionStatus
+      summary: Read verification-session status using its session token
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: X-Verification-Session-Token
+          required: true
+          schema: { type: string, minLength: 32, maxLength: 128 }
+      responses:
+        '200': { description: Verification session state and expiry }
+        '404': { description: Session not found or token invalid }
+  /api/identity/sessions/{session_id}/evidence/upload-url:
+    post:
+      security: []
+      operationId: reserveNativeIdentityEvidenceUpload
+      summary: Reserve a bounded private identity-evidence upload
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: X-Verification-Session-Token
+          required: true
+          schema: { type: string, minLength: 32, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content_type, size_bytes, sha256]
+              properties:
+                content_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+                size_bytes: { type: integer, minimum: 1, maximum: 15728640 }
+                sha256: { type: string, pattern: '^[a-fA-F0-9]{64}
+    federationInternalBearer:
+      type: http
+      scheme: bearer
+    appwriteJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: Appwrite JWT
+ }
+      responses:
+        '201': { description: Same-origin Backend upload path and opaque evidence ID; no object-store URL is exposed }
+        '400': { description: Invalid metadata }
+        '404': { description: Session not found or not accepting evidence }
+  /api/identity/sessions/{session_id}/evidence/{evidence_id}/upload:
+    put:
+      security: []
+      operationId: uploadNativeIdentityEvidence
+      summary: Upload private evidence through the authenticated Backend proxy
+      description: Backend enforces the reserved content type, exact content length and SHA-256 before streaming to the private object store. Clients never receive a MinIO or provider presigned URL.
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: evidence_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: X-Verification-Session-Token
+          required: true
+          schema: { type: string, minLength: 32, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary, maxLength: 15728640 }
+      responses:
+        '204': { description: Private object stored; submission and cross-provider verification still required }
+        '400': { description: Reserved metadata mismatch }
+        '404': { description: Session or evidence reservation not found }
+        '409': { description: SHA-256 mismatch }
+        '502': { description: Private object store rejected the upload }
+  /api/identity/sessions/{session_id}/evidence/submit:
+    post:
+      security: []
+      operationId: submitNativeIdentityEvidence
+      summary: Verify and submit evidence for manual review
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: X-Verification-Session-Token
+          required: true
+          schema: { type: string, minLength: 32, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [evidence_id]
+              properties:
+                evidence_id: { type: string, format: uuid }
+      responses:
+        '202': { description: Evidence integrity and all configured replica copies verified; queued for manual review }
+        '409': { description: Upload incomplete, checksum mismatch or session no longer submittable }
+        '503': { description: Private storage or replication unavailable; evidence is not accepted for review }
+  /api/admin/identity/review-queue:
+    get:
+      operationId: listNativeIdentityReviewQueue
+      summary: List pending manual identity reviews
+      description: Requires an Appwrite JWT, verified staff email and identity.review permission. Response contains a same-origin evidence endpoint, never a storage-provider URL.
+      responses:
+        '200': { description: Bounded queue of evidence metadata and authenticated evidence paths }
+        '401': { description: Staff authentication required }
+        '403': { description: identity.review permission required }
+        '503': { description: Identity database or private storage unavailable }
+  /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}:
+    get:
+      operationId: downloadNativeIdentityReviewEvidence
+      summary: Stream private evidence to an authorized reviewer
+      description: Requires an Appwrite JWT, verified staff email and identity.review permission. Backend streams the bounded object with attachment disposition and no-store headers; provider URLs are never returned.
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: evidence_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Private evidence bytes
+          headers:
+            Cache-Control: { schema: { type: string, example: 'private, no-store, max-age=0' } }
+            Content-Disposition: { schema: { type: string } }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { description: Staff authentication required }
+        '403': { description: identity.review permission required }
+        '404': { description: Evidence is not available for review }
+  /api/admin/identity/sessions/{session_id}/decision:
+    post:
+      operationId: decideNativeIdentityEvidenceReview
+      summary: Record an independent manual evidence-review decision
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, reason_code]
+              properties:
+                decision: { type: string, enum: [verified, failed, escalate] }
+                reason_code: { type: string, minLength: 2, maxLength: 64 }
+      responses:
+        '200': { description: Review decision recorded }
+        '202': { description: Additional independent review required }
+        '401': { description: Staff authentication required }
+        '403': { description: identity.review permission required }
+        '409': { description: Session is not awaiting review or reviewer independence invariant failed }
+  /api/admin/identity/applications/{application_id}/approve:
+    post:
+      operationId: approveNativeIdentityApplication
+      summary: Record a distinct reviewer approval for account provisioning
+      parameters:
+        - in: path
+          name: application_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 8, maxLength: 1000 }
+      responses:
+        '202': { description: First independent approval recorded; a second reviewer is required }
+        '200': { description: Two-person approval accepted and account provisioning completed }
+        '403': { description: Self-approval or reviewer mismatch forbidden }
+        '409': { description: Application is not awaiting approval or duplicate decision }
 components:
   securitySchemes:
     federationInternalBearer:
