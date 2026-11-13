@@ -149,7 +149,9 @@ sql="SELECT
   AND to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
   AND to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
   AND to_regclass('testagram_local.post_create_idempotency') IS NOT NULL
-  AND to_regclass('testagram_local.follows') IS NOT NULL;"
+  AND to_regclass('testagram_local.follows') IS NOT NULL
+  AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'testagram_app')
+  AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role');"
 result="$("${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$1"' sh "$sql")"
 if [[ "$result" != "t" ]]; then
