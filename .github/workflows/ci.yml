@@ -473,6 +473,7 @@ jobs:
           FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
           FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
           CDN_ORIGIN_AUTH_TOKEN: ci-only-cdn-origin-token-not-for-production
+          CDN_MEDIA_ASSERTION_SECRET: ci-only-cdn-assertion-secret-not-for-production
         run: |
           export ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           export ADMIN_PUBLIC_URL=https://ops.example.invalid
