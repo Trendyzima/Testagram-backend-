@@ -23,7 +23,7 @@ WEBHOOK_URL = os.getenv("WATCHDOG_ALERT_WEBHOOK", "")
 FAILURES_REQUIRED = int(os.getenv("WATCHDOG_FAILURES_REQUIRED", "3"))
 PROBE_INTERVAL = int(os.getenv("WATCHDOG_PROBE_INTERVAL_SECONDS", "15"))
 PROBE_TIMEOUT = int(os.getenv("WATCHDOG_PROBE_TIMEOUT_SECONDS", "10"))
-ACTION_COOLDOWN = int(os.getenv("WATCHDOG_ACTION_COOLDOWN_SECONDS", "1800"))
+RESTART_COOLDOWN = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "1800"))
 OPERATION_TIMEOUT = int(os.getenv("WATCHDOG_OPERATION_TIMEOUT_SECONDS", "300"))
 DRY_RUN = os.getenv("WATCHDOG_DRY_RUN", "false").lower() == "true"
 
@@ -223,8 +223,6 @@ def lifecycle(api: API, action: str) -> None:
 
 def recover_stopped(api: API, state: dict[str, Any]) -> str:
     now = int(time.time())
-    if now - int(state.get("last_action_at", 0)) < ACTION_COOLDOWN:
-        return "machine is stopped, but automatic-start cooldown is active"
     if DRY_RUN:
         return "DRY RUN: would start stopped machine"
     state.update(last_action_at=now, last_action="start")
@@ -235,8 +233,6 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
 
 def recover_suspended(api: API, state: dict[str, Any]) -> str:
     now = int(time.time())
-    if now - int(state.get("last_action_at", 0)) < ACTION_COOLDOWN:
-        return "machine is suspended, but recovery cooldown is active"
     if DRY_RUN:
         return "DRY RUN: would resume suspended machine"
     state.update(last_action_at=now, last_action="resume")
@@ -247,11 +243,11 @@ def recover_suspended(api: API, state: dict[str, Any]) -> str:
 
 def restart_running(api: API, state: dict[str, Any]) -> str:
     now = int(time.time())
-    if now - int(state.get("last_action_at", 0)) < ACTION_COOLDOWN:
+    if now - int(state.get("last_restart_at", 0)) < RESTART_COOLDOWN:
         return "health checks failed, but restart cooldown is active"
     if DRY_RUN:
         return "DRY RUN: would stop then start the running machine"
-    state.update(last_action_at=now, last_action="stop-start")
+    state.update(last_action_at=now, last_restart_at=now, last_action="stop-start")
     save_state(state)
     lifecycle(api, "stop")
     lifecycle(api, "start")
@@ -269,7 +265,7 @@ def main() -> int:
             raise WatchdogError(f"{label} URL must use HTTPS")
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
-    if FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or ACTION_COOLDOWN < 300:
+    if FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or RESTART_COOLDOWN < 300:
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, >=1s interval and >=300s cooldown")
     api = API()
     MACHINE_ID = resolve_machine_id(api)
