@@ -53,6 +53,14 @@ class WatchdogTests(unittest.TestCase):
              self.assertRaisesRegex(watchdog.WatchdogError, "found 2"):
             watchdog.resolve_machine_id(ListAPI())
 
+    def test_wait_for_service_requires_both_health_and_readiness(self):
+        with patch.object(watchdog, "probe", side_effect=[
+            (False, "HTTP 503"), (True, "HTTP 200"),
+            (True, "HTTP 200"), (True, "HTTP 200")
+        ]) as probe, patch.object(watchdog.time, "sleep"):
+            watchdog.wait_for_service()
+        self.assertEqual(probe.call_count, 4)
+
     def test_machine_snapshot_rejects_wrong_machine_id(self):
         api = FakeAPI({"id": "another-machine", "state": "running", "desiredState": "running"})
         with self.assertRaisesRegex(watchdog.WatchdogError, "different machine ID"):
@@ -115,6 +123,7 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "load_state", return_value={"last_action_at": __import__("time").time()}), \
              patch.object(watchdog, "save_state"), \
              patch.object(watchdog, "notify") as notify, \
+             patch.object(watchdog, "wait_for_service"), \
              patch.object(watchdog, "API_KEY", "test-key"), \
              patch.object(watchdog, "MACHINE_ID", "machine-123"), \
              patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
@@ -130,6 +139,7 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "load_state", return_value={}), \
              patch.object(watchdog, "save_state"), \
              patch.object(watchdog, "notify") as notify, \
+             patch.object(watchdog, "wait_for_service"), \
              patch.object(watchdog, "probe", return_value=(False, "HTTP 503")), \
              patch.object(watchdog.time, "sleep"), \
              patch.object(watchdog, "API_KEY", "test-key"), \
@@ -147,7 +157,8 @@ class WatchdogTests(unittest.TestCase):
         api = FakeAPI()
         with patch.object(watchdog, "RESTART_COOLDOWN", 300), \
              patch.object(watchdog, "DRY_RUN", False), \
-             patch.object(watchdog, "save_state"):
+             patch.object(watchdog, "save_state"), \
+             patch.object(watchdog, "wait_for_service"):
             result = watchdog.restart_running(api, {})
         lifecycle_posts = [call[1].rsplit("/", 1)[-1] for call in api.calls if call[0] == "POST"]
         self.assertEqual(lifecycle_posts, ["stop", "start"])
