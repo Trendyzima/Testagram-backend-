@@ -1,6 +1,13 @@
 name: Instabox VPS Watchdog
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/instabox_watchdog.py"
+      - "tests/test_instabox_watchdog.py"
+      - ".github/workflows/instabox-vps-watchdog.yml"
+      - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -14,8 +21,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate watchdog safety logic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile watchdog
+        run: python3 -m py_compile scripts/instabox_watchdog.py
+      - name: Run watchdog unit tests
+        run: python3 -m unittest tests.test_instabox_watchdog -v
+
   watchdog:
     name: Check and recover Testagram VPS
+    needs: validate
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
