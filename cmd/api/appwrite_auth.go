@@ -137,5 +137,39 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("Appwrite identity could not be mapped to the Testagram account")
 	}
+	if account.EmailVerification {
+		// A newly provisioned account remains deactivated until Appwrite confirms
+		// the email. The first verified Appwrite request completes the saga.
+		if _, err := s.db.Exec(ctx, `
+			UPDATE testagram_local.accounts a
+			SET account_status='active',updated_at=now()
+			WHERE a.user_id=$1::uuid
+			  AND EXISTS (
+			    SELECT 1 FROM testagram_identity.registration_provisioning p
+			    WHERE p.canonical_user_id=a.user_id
+			      AND p.appwrite_user_id=$2
+			      AND p.status='linked'
+			  )
+		`, canonicalID, account.ID); err != nil {
+			return "", http.StatusServiceUnavailable, errors.New("Testagram account activation could not be completed")
+		}
+		if _, err := s.db.Exec(ctx, `
+			UPDATE testagram_identity.registration_provisioning
+			SET status='completed',updated_at=now()
+			WHERE appwrite_user_id=$1 AND canonical_user_id=$2::uuid AND status='linked'
+		`, account.ID, canonicalID); err != nil {
+			return "", http.StatusServiceUnavailable, errors.New("Testagram provisioning state could not be completed")
+		}
+		if _, err := s.db.Exec(ctx, `
+			UPDATE testagram_identity.identity_applications a
+			SET status='provisioned',updated_at=now()
+			FROM testagram_identity.registration_provisioning p
+			WHERE p.application_id=a.id AND p.appwrite_user_id=$1
+			  AND p.canonical_user_id=$2::uuid AND p.status='completed'
+			  AND a.status='provisioning'
+		`, account.ID, canonicalID); err != nil {
+			return "", http.StatusServiceUnavailable, errors.New("Testagram application state could not be completed")
+		}
+	}
 	return canonicalID, http.StatusOK, nil
 }
