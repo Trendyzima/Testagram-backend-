@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 
-# Apply the post-028 self-hosted PostgreSQL migrations to an existing persistent
+# Apply the post-025 self-hosted PostgreSQL migrations to an existing persistent
 # volume. PostgreSQL init scripts do not rerun when the volume already exists.
 # This is an explicit operator action and creates a validated backup first.
 # The social-core migration can deduplicate legacy follow rows; retain the backup.
@@ -64,9 +64,12 @@ apply_migration() {
   echo "Applied $filename"
 }
 
-# These files are mounted by docker-compose.yml as 029 through 053. Keep this
+# These files are mounted by docker-compose.yml as 026 through 053. Keep this
 # order aligned with the dependency order exercised by PostgreSQL CI.
 migrations=(
+  026_media_replica_ledger.sql
+  027_media_replication_outbox.sql
+  028_fresh_media_owner_keys.sql
   029_appwrite_identity_link_audit.sql
   030_social_core.sql
   031_federation_actor_consent.sql
