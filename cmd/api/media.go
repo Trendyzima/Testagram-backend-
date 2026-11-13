@@ -411,8 +411,8 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	var ownerID, visibility, assetStatus, storageNamespace string
-	err := s.db.QueryRow(r.Context(), "select owner_id, visibility, status, storage_namespace from testagram_media.assets where object_key=$1", key).Scan(&ownerID, &visibility, &assetStatus, &storageNamespace)
+	var ownerID, visibility, assetStatus, storageNamespace, storageProvider string
+	err := s.db.QueryRow(r.Context(), "select owner_id, visibility, status, storage_namespace, storage_provider from testagram_media.assets where object_key=$1", key).Scan(&ownerID, &visibility, &assetStatus, &storageNamespace, &storageProvider)
 	if err != nil || assetStatus != "ready" {
 		http.Error(w, "media object unavailable", http.StatusNotFound)
 		return
@@ -446,10 +446,16 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
-		if r.Method == http.MethodHead {
-			signedURL, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+		if s.dataCentreMedia == nil {
+			err = errors.New("Data Centre media adapter unavailable")
 		} else {
-			signedURL, err = s.dataCentreMedia.DownloadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+			var grant datacentreclient.DownloadGrant
+			if r.Method == http.MethodHead {
+				grant, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+			} else {
+				grant, err = s.dataCentreMedia.DownloadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+			}
+			signedURL = grant.URL
 		}
 	} else if storageNamespace != "legacy-media" && s.virtualStorage != nil {
 		if r.Method == http.MethodHead {
@@ -582,7 +588,13 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
-		signedURL, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
+		if s.dataCentreMedia == nil {
+			err = errors.New("Data Centre media adapter unavailable")
+		} else {
+			var grant datacentreclient.DownloadGrant
+			grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
+			signedURL = grant.URL
+		}
 	} else if storageNamespace != "legacy-media" {
 		if s.virtualStorage == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This media object requires the virtual storage provider", id))
@@ -754,11 +766,15 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 	defer cancel()
 	var actualType, etag string
 	var size int64
-	if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+	if storageProvider == "data-centre" && s.dataCentreMedia == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("DATA_CENTRE_MEDIA_NOT_CONFIGURED", "This upload intent requires the Data Centre media provider", id))
+		return
+	}
+	if storageProvider != "data-centre" && storageNamespace != "legacy-media" && s.virtualStorage == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This upload intent requires the virtual storage provider", id))
 		return
 	}
-	if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+	if storageProvider == "data-centre" && s.dataCentreMedia != nil {
 		if _, verifyErr := s.dataCentreMedia.Verify(ctx, userID, storageNamespace, body.Key, body.ContentType, body.ChecksumSHA256, intentMaxBytes); verifyErr != nil {
 			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Data Centre could not queue media verification and replica recovery", id))
 			return
