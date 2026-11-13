@@ -161,9 +161,12 @@ func (s *service) identityProvisioningRedeem(w http.ResponseWriter, r *http.Requ
 
 	// A committed provisioning result is replay-safe for the same Appwrite identity.
 	var oldAppwrite, oldCanonical, oldStatus string
-	oldErr := tx.QueryRow(ctx, `SELECT appwrite_user_id,canonical_user_id::text,status
-		FROM testagram_identity.registration_provisioning
-		WHERE application_id=$1::uuid`, applicationID).Scan(&oldAppwrite, &oldCanonical, &oldStatus)
+	oldErr := tx.QueryRow(ctx, `SELECT p.appwrite_user_id,p.canonical_user_id::text,p.status
+		FROM testagram_identity.registration_provisioning p
+		JOIN testagram_identity.appwrite_accounts a
+		  ON a.appwrite_user_id=p.appwrite_user_id AND a.canonical_user_id=p.canonical_user_id
+		JOIN testagram_local.accounts u ON u.user_id=p.canonical_user_id
+		WHERE p.application_id=$1::uuid`, applicationID).Scan(&oldAppwrite, &oldCanonical, &oldStatus)
 	if oldErr == nil && oldAppwrite == account.ID &&
 		(oldStatus == "linked" || oldStatus == "verification_sent" || oldStatus == "completed") {
 		if err := tx.Commit(ctx); err != nil {
