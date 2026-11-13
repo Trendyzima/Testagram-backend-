@@ -351,10 +351,11 @@ func (s *service) attachHomeFeedMediaURLs(ctx context.Context, viewerID string, 
 	rows, err := s.db.Query(mediaCtx, `
 SELECT a.object_key, a.owner_id, a.visibility, a.content_type, a.storage_namespace,
        a.storage_provider,
-       EXISTS (
-         SELECT 1 FROM testagram_media.storage_replicas sr
-         WHERE sr.object_key=a.object_key AND sr.provider='cloudflare-r2' AND sr.state='verified'
-       ) AS r2_verified
+       (CASE WHEN a.storage_provider='data-centre' THEN length(coalesce(a.checksum_sha256,''))=64
+             ELSE EXISTS (
+               SELECT 1 FROM testagram_media.storage_replicas sr
+               WHERE sr.object_key=a.object_key AND sr.provider='cloudflare-r2' AND sr.state='verified'
+             ) END) AS r2_verified
 FROM testagram_media.assets a
 WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 	if err != nil {
@@ -383,7 +384,7 @@ WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 			}
 			mediaURL := ""
 			if asset.Visibility == "public" {
-				mediaURL = publicMediaURLForStorage(asset.ObjectKey, asset.OwnerID, asset.StorageNamespace)
+				mediaURL = publicMediaURLForStorage(asset.ObjectKey, asset.OwnerID, asset.StorageNamespace, asset.StorageProvider)
 			} else if s.cdnMediaAssertions != nil && s.cdnMediaBaseURL != "" {
 				if !asset.R2Verified {
 					return errors.New("private media CDN origin is not verified; refusing direct-storage fallback")
