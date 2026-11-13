@@ -294,6 +294,15 @@ jobs:
           ensure_random_secret FEDERATION_BACKEND_INTERNAL_TOKEN
           ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
           ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
+          if [[ "$CDN_MEDIA_ASSERTION_SECRET" == "$CDN_ORIGIN_AUTH_TOKEN" ]]; then
+            echo "::error::CDN viewer assertion and origin service credentials must be distinct."
+            exit 1
+          fi
+          CDN_MEDIA_BASE_URL="$(read_env_value CDN_MEDIA_BASE_URL)"
+          if [[ "$CDN_MEDIA_BASE_URL" != https://* ]]; then
+            echo "::error::CDN_MEDIA_BASE_URL must be an HTTPS URL."
+            exit 1
+          fi
           if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
           if [[ -z "$(read_env_value CDN_CACHE_DIR)" ]]; then write_env_value CDN_CACHE_DIR "$ROOT/storage/cdn-cache"; fi
           mkdir -p "$ROOT/storage/cdn-cache"
@@ -453,6 +462,10 @@ jobs:
               exit 1
             }
             ensure_random_secret FRESH_DATA_CENTRE_INTERNAL_TOKEN
+            if [[ "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" == "$CDN_ORIGIN_AUTH_TOKEN" || "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" == "$CDN_MEDIA_ASSERTION_SECRET" || "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" == "$FEDERATION_INGRESS_TOKEN" || "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; then
+              echo "::error::Data Centre media service token must be independent of CDN and Federation credentials."
+              exit 1
+            fi
             write_env_value DATA_CENTRE_MEDIA_API_URL "http://media:8096"
             write_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
             write_dc_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
