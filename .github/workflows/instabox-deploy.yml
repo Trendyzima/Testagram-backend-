@@ -115,6 +115,7 @@ jobs:
         id: remote
         env:
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
+          DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           B2_S3_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
           B2_S3_REGION: ${{ vars.B2_S3_REGION }}
           B2_S3_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
@@ -393,11 +394,15 @@ jobs:
           # The private media service is enabled only when both independent providers
           # are fully configured. It remains off otherwise; Backend must not receive a
           # half-configured URL/token pair.
-          media_enabled=true
-          for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
-            if [[ -z "${!key:-}" ]]; then media_enabled=false; fi
-          done
-          if [[ "$media_enabled" == true ]]; then
+          media_enabled=false
+          if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then
+            media_enabled=true
+            for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+              if [[ -z "${!key:-}" ]]; then
+                echo "::error::DATA_CENTRE_MEDIA_ENABLED=true requires complete B2 and R2 configuration; missing $key (value redacted)."
+                exit 1
+              fi
+            done
             [[ "$B2_S3_ENDPOINT" == https://* && "$CLOUDFLARE_R2_ENDPOINT" == https://* ]] || {
               echo "::error::B2 and R2 media endpoints must both use HTTPS."
               exit 1
@@ -423,7 +428,7 @@ jobs:
               echo "::error::Backend has a partial Data Centre media client configuration but B2/R2 provider configuration is incomplete."
               exit 1
             fi
-            echo "Data Centre private media profile remains disabled: complete B2/R2 provider configuration is not present."
+            echo "Data Centre private media profile remains disabled: DATA_CENTRE_MEDIA_ENABLED is not true."
           fi
           printf '%s\n' "$media_enabled" > "$ROOT/media-enabled.txt"
 
@@ -586,11 +591,12 @@ jobs:
             --arg cmd "$REMOTE_COMMAND" \
             --arg appwrite "${APPWRITE_PROJECT_ID:-}" \
             --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
+            --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
             --arg b2_endpoint "${B2_S3_ENDPOINT:-}" --arg b2_region "${B2_S3_REGION:-}" --arg b2_bucket "${B2_S3_BUCKET:-}" \
             --arg b2_access "$B2_S3_ACCESS_KEY_ID" --arg b2_secret "$B2_S3_SECRET_ACCESS_KEY" \
             --arg r2_endpoint "${CLOUDFLARE_R2_ENDPOINT:-}" --arg r2_region "${CLOUDFLARE_R2_REGION:-}" --arg r2_bucket "${CLOUDFLARE_R2_BUCKET:-}" \
             --arg r2_access "$CLOUDFLARE_R2_ACCESS_KEY_ID" --arg r2_secret "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
-            '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+            '{cmd:$cmd,envs:({APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token} + (if $media_enabled == "true" then {B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret} else {} end)),timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
