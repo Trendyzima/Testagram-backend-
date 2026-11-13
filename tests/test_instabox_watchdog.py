@@ -115,7 +115,7 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "MACHINE_ID", "machine-123"), \
              patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
              patch.object(watchdog, "READY_URL", "https://example.test/readyz"), \
-             patch.object(watchdog, "ACTION_COOLDOWN", 300):
+             patch.object(watchdog, "RESTART_COOLDOWN", 300):
             self.assertEqual(watchdog.main(), 0)
         self.assertTrue(any(call[0] == "POST" and call[1].endswith("/start") for call in api.calls))
         notify.assert_called_once()
