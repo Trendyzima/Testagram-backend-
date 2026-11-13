@@ -260,7 +260,7 @@ BEGIN
   INSERT INTO testagram_identity.verification_sessions
     (id,application_id,session_token_sha256,purpose,requested_minimum_age,expires_at)
   VALUES
-    (session_id,app_id,decode(repeat('a',64),'hex'),'age_assurance',18,now()+interval '1 day');
+    (v_session_id,app_id,decode(repeat('a',64),'hex'),'age_assurance',18,now()+interval '1 day');
 
   -- Identity assurance must not require an age-threshold result.
   INSERT INTO testagram_identity.verification_sessions
