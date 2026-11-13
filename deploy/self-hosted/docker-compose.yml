@@ -46,8 +46,8 @@ services:
       - ../../migrations/20261108_wallet_mpesa_topups.sql:/docker-entrypoint-initdb.d/035_wallet_mpesa_topups.sql:ro
       - ../../migrations/20261109_iptv_social.sql:/docker-entrypoint-initdb.d/036_iptv_social.sql:ro
       - ../../migrations/20261109_post_views.sql:/docker-entrypoint-initdb.d/037_post_views.sql:ro
-      - ../../migrations/20261109_thread_interactions.sql:/docker-entrypoint-initdb.d/038_thread_interactions.sql:ro
-      - ../../migrations/20261109_threads_browsing_history.sql:/docker-entrypoint-initdb.d/039_threads_browsing_history.sql:ro
+      - ../../migrations/20261109_threads_browsing_history.sql:/docker-entrypoint-initdb.d/038_threads_browsing_history.sql:ro
+      - ../../migrations/20261109_thread_interactions.sql:/docker-entrypoint-initdb.d/039_thread_interactions.sql:ro
       - ../../migrations/20261111_admin_security_controls.sql:/docker-entrypoint-initdb.d/040_admin_security_controls.sql:ro
       - ../../migrations/20261111_identity_registration_pipeline.sql:/docker-entrypoint-initdb.d/041_identity_registration_pipeline.sql:ro
       - ../../migrations/20261111_profile_storage_capacity.sql:/docker-entrypoint-initdb.d/042_profile_storage_capacity.sql:ro
