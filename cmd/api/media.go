@@ -352,7 +352,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ContentLength = n
 	req.Header.Set("Content-Type", contentType)
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: 30 * time.Minute, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage could not accept the upload", id))
