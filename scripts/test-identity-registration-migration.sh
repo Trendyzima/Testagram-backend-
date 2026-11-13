@@ -236,7 +236,23 @@ $lease_invariant$;
 SQL
 
 # Exercise the Admin Console review handler against this same isolated database.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration# Consent evidence must be immutable after insertion.
+if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
+  echo "legal consent audit mutation unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "Identity registration hardening migration and invariants passed."
+ -count=1
+
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestIdswyftVerifiedWebhookCreatesOneTwoPersonReviewRequest# Consent evidence must be immutable after insertion.
+if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
+  echo "legal consent audit mutation unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "Identity registration hardening migration and invariants passed."
+ -count=1
 
 # Consent evidence must be immutable after insertion.
 if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
