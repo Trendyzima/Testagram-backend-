@@ -73,8 +73,8 @@ BEGIN
      decode(repeat('2',64),'hex'),action_id);
 
   -- A token cannot be issued while the ledger is still pending.
-  DO $premature_token$
-  DECLARE rejected BOOLEAN := FALSE;
+  DECLARE
+    premature_token_rejected BOOLEAN := FALSE;
   BEGIN
     BEGIN
       INSERT INTO testagram_identity.identity_approval_tokens
@@ -84,13 +84,12 @@ BEGIN
         (decode(repeat('a',64),'hex'),decode(repeat('b',64),'hex'),app_id,
          'ci-reviewer-one','ci-reviewer-two',now()+interval '10 minutes');
     EXCEPTION WHEN raise_exception THEN
-      rejected := TRUE;
+      premature_token_rejected := TRUE;
     END;
-    IF NOT rejected THEN
+    IF NOT premature_token_rejected THEN
       RAISE EXCEPTION 'token issuance before two-person approval was accepted';
     END IF;
   END;
-  $premature_token$;
 
   INSERT INTO testagram_identity.identity_application_reviews
     (application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference)
