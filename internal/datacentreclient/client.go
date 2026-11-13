@@ -153,7 +153,7 @@ func (c *Client) CreateUploadURL(ctx context.Context, ownerID, namespace, key, c
 	if err != nil {
 		return UploadGrant{}, err
 	}
-	if result.IntentID == "" || !validProviderURL(result.UploadURL) || !result.ExpiresAt.After(time.Now()) || result.MaxBytes != size || result.Primary != "backblaze_b2" {
+	if result.IntentID == "" || !validProviderURL(result.UploadURL) || !result.ExpiresAt.After(time.Now()) || result.ExpiresAt.After(time.Now().Add(time.Hour+30*time.Second)) || result.MaxBytes != size || result.Primary != "backblaze_b2" {
 		return UploadGrant{}, errors.New("Data Centre returned an invalid upload authorization")
 	}
 	return result, nil
