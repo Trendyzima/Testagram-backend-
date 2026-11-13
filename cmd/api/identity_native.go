@@ -99,6 +99,21 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
+	var accountConflict bool
+	if err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1 FROM testagram_local.accounts WHERE lower(username)=lower($1)
+		  UNION ALL
+		  SELECT 1 FROM testagram_identity.appwrite_accounts WHERE email=$2
+		)
+	`, username, email).Scan(&accountConflict); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
+		return
+	}
+	if accountConflict {
+		writeJSON(w, http.StatusConflict, errorBody("ACCOUNT_OR_USERNAME_EXISTS", "An account or username already exists for these details", requestID(r)))
+		return
+	}
 	allowed, rateErr := s.authRateAllowed(ctx, "identity-application-ip", authClientIP(r), 5)
 	if rateErr != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
