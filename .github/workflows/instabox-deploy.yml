@@ -288,7 +288,7 @@ jobs:
               printf '%s=%s\n' "$key" "$value" >> "$BASE_ENV"
             fi
           }
-                    ensure_random_secret() {
+          ensure_random_secret() {
             local key="$1" value
             value="$(read_env_value "$key")"
             if [[ ! "$value" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
@@ -313,6 +313,7 @@ jobs:
           # Persist optional identity settings and credentials without logging their values.
           if [[ -n "${APPWRITE_API_KEY:-}" ]]; then write_env_value APPWRITE_API_KEY "$APPWRITE_API_KEY"; fi
           write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}"
+          if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then write_env_value APPWRITE_PROJECT_ID "$APPWRITE_PROJECT_ID"; fi
           for key in TESTAGRAM_TERMS_VERSION TESTAGRAM_PRIVACY_VERSION IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_REGION CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ENDPOINT B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY B2_S3_REGION B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET; do
             value="${!key:-}"
             if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
@@ -567,14 +568,6 @@ jobs:
           elif [[ -z "$(read_env_value ONSPACE_AI_API_KEY)" ]]; then
             echo "WARNING: ONSPACE_AI_API_KEY is not configured; post publishing remains fail-closed."
           fi
-          if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
-            if grep -q '^APPWRITE_PROJECT_ID=' "$BASE_ENV"; then
-              sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$BASE_ENV"
-            else
-              echo "APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID" >> "$BASE_ENV"
-            fi
-          fi
-
           set -a
           # shellcheck disable=SC1090
           source "$BASE_ENV"
