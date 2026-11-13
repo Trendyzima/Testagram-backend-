@@ -58,6 +58,7 @@ jobs:
           WATCHDOG_PROBE_INTERVAL_SECONDS: "15"
           WATCHDOG_RESTART_COOLDOWN_SECONDS: "1800"
           WATCHDOG_OPERATION_TIMEOUT_SECONDS: "300"
+          WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS: "300"
         run: python3 scripts/instabox_watchdog.py
       - name: Ensure cooldown state file exists
         if: always()
