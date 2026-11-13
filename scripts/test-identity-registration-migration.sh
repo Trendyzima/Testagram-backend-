@@ -56,7 +56,10 @@ BEGIN
     (id,action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
   VALUES
     (action_id,'identity.approve','ci-reviewer-one',app_id::text,
-     'CI registration approval request',jsonb_build_object('application_id',app_id::text),repeat('a',64));
+     'CI registration approval request',jsonb_build_object('application_id',app_id::text,'email','first@example.test',
+       'username','ci_first','display_name','CI First',
+       'evidence_fingerprint_sha256',repeat('1',64),
+       'terms_version','terms-v1','privacy_version','privacy-v1'),repeat('a',64));
 
   INSERT INTO testagram_identity.identity_applications
     (id,email,username,display_name,adult_confirmed_at,evidence_reference,
@@ -73,6 +76,13 @@ BEGIN
   VALUES
     (app_id,'ci-reviewer-one','approved','First independent approval','audit-reference-0001'),
     (app_id,'ci-reviewer-two','approved','Second independent approval','audit-reference-0002');
+
+  UPDATE testagram_auth.sensitive_action_requests
+  SET status='approved',decided_at=now()
+  WHERE id=action_id;
+  UPDATE testagram_identity.identity_applications
+  SET status='approved'
+  WHERE id=app_id;
 
   INSERT INTO testagram_identity.identity_approval_tokens
     (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
