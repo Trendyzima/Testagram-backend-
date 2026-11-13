@@ -171,12 +171,13 @@ jobs:
           bash -n scripts/install-testagram-autonomy.sh
           bash -n deploy/self-hosted/apply-federation-outbox-migration.sh
           bash -n deploy/self-hosted/apply-current-schema-migrations.sh
+          sh -n deploy/self-hosted/minio-tools/init.sh
       - name: Install ShellCheck
         run: |
           sudo apt-get update
           sudo apt-get install --yes shellcheck
       - name: Lint recovery scripts
-        run: shellcheck --severity=style scripts/testagram-reconcile.sh scripts/install-testagram-autonomy.sh deploy/self-hosted/apply-federation-outbox-migration.sh deploy/self-hosted/apply-current-schema-migrations.sh
+        run: shellcheck --severity=style scripts/testagram-reconcile.sh scripts/install-testagram-autonomy.sh deploy/self-hosted/apply-federation-outbox-migration.sh deploy/self-hosted/apply-current-schema-migrations.sh deploy/self-hosted/minio-tools/init.sh
       - name: Validate systemd unit structure
         run: |
           grep -q '^OnBootSec=45s$' deploy/self-hosted/systemd/testagram-reconcile.timer
