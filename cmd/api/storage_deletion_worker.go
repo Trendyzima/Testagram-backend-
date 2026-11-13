@@ -29,7 +29,7 @@ func (s *service) runStorageDeletionWorker(ctx context.Context) {
 
 type storageDeletionJob struct {
 	id                                                      int64
-	key, ownerID, visibility, namespace, reason string
+	key, ownerID, visibility, namespace, provider, reason string
 	attempts                                                int
 }
 
@@ -37,7 +37,7 @@ type storageDeletionJob struct {
 // performs network I/O outside the transaction so slow object stores never hold
 // row locks. A stale processing lease is recoverable after a process crash.
 func (s *service) processStorageDeletionBatch(ctx context.Context) error {
-	if s.db == nil || s.media == nil {
+	if s.db == nil || (s.media == nil && s.dataCentreMedia == nil && s.virtualStorage == nil) {
 		return nil
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
@@ -66,14 +66,14 @@ func (s *service) processStorageDeletionBatch(ctx context.Context) error {
 	set status='processing', locked_at=now(), attempts=j.attempts+1, updated_at=now()
 	from picked
 	where j.id=picked.id
-	returning j.id, j.object_key, j.owner_id, j.visibility, j.storage_namespace, j.reason, j.attempts`)
+	returning j.id, j.object_key, j.owner_id, j.visibility, j.storage_namespace, j.storage_provider, j.reason, j.attempts`)
 	if err != nil {
 		return err
 	}
 	jobs := make([]storageDeletionJob, 0, 20)
 	for rows.Next() {
 		var job storageDeletionJob
-		if err := rows.Scan(&job.id, &job.key, &job.ownerID, &job.visibility, &job.namespace, &job.reason, &job.attempts); err != nil {
+		if err := rows.Scan(&job.id, &job.key, &job.ownerID, &job.visibility, &job.namespace, &job.provider, &job.reason, &job.attempts); err != nil {
 			rows.Close()
 			return err
 		}
@@ -117,7 +117,7 @@ func (s *service) processStorageDeletionBatch(ctx context.Context) error {
 }
 
 func (s *service) performStorageDeletion(ctx context.Context, job storageDeletionJob) error {
-	if err := s.deleteMediaObjectWithNamespace(ctx, job.ownerID, job.key, job.visibility, job.namespace); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, job.ownerID, job.key, job.visibility, job.namespace, job.provider); err != nil {
 		return err
 	}
 	if job.reason == "user_delete" || job.reason == "moderation" {
