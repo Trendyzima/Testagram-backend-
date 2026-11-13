@@ -360,8 +360,42 @@ END;
 $evidence_retention$;
 SQL
 
+# Provide the canonical account table needed by the API provisioning integration.
+psql_ci <<'SQL'
+CREATE SCHEMA IF NOT EXISTS testagram_local;
+CREATE TABLE IF NOT EXISTS testagram_local.accounts (
+  user_id UUID PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+SQL
+
+# Exercise the complete PostgreSQL provisioning transaction with a real
+# Appwrite Account endpoint stub, including consumed-token replay and identity mismatch.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestNativeIdentityProvisioningTokenAndRedeemIntegration
+
+# Consent evidence must be immutable after insertion.
+if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
+  echo "legal consent audit mutation unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "Identity registration hardening migration and invariants passed."
+ -count=1
+
 # Exercise the Admin Console review handler against this same isolated database.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration
+
+# Consent evidence must be immutable after insertion.
+if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
+  echo "legal consent audit mutation unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "Identity registration hardening migration and invariants passed."
+ -count=1
 
 # Consent evidence must be immutable after insertion.
 if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
