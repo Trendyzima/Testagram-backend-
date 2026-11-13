@@ -181,6 +181,12 @@ jobs:
           sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
           sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content"
           sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/flutter-client"
+          # The CDN source and its published runtime image are pinned independently.
+          CDN_SOURCE_SHA=543093e47bde602512adfc2b4aa30caed8cf0e60
+          sync_repo https://github.com/Trendyzima/cdn-.git "$REPOS/cdn"
+          git -C "$REPOS/cdn" fetch --depth 1 origin "$CDN_SOURCE_SHA"
+          git -C "$REPOS/cdn" checkout --detach "$CDN_SOURCE_SHA"
+          test "$(git -C "$REPOS/cdn" rev-parse HEAD)" = "$CDN_SOURCE_SHA"
 
           BASE_ENV="$BACKEND/deploy/self-hosted/.env"
           BASE_COMPOSE="$BACKEND/deploy/self-hosted/docker-compose.yml"
@@ -233,6 +239,13 @@ jobs:
           MEDIA_PUBLIC_BUCKET=testagram-public-media
           MINIO_PUBLIC_ENDPOINT=https://media.testagram.site
           MEDIA_PUBLIC_BASE_URL=https://media.testagram.site/testagram-public-media
+          CDN_MEDIA_BASE_URL=https://media.testagram.site
+          CDN_MEDIA_ASSERTION_SECRET=
+          CDN_ORIGIN_AUTH_TOKEN=
+          CDN_NODE_ID=instabox-primary
+          CDN_CACHE_DIR=/data/home/testagram/storage/cdn-cache
+          CDN_MAX_CACHE_BYTES=2147483648
+          CDN_HOT_CACHE_BYTES=268435456
           MINIO_REGION=us-east-1
           ALLOWED_ORIGINS=https://testagram.site,https://www.testagram.site
           API_DOMAIN=api.testagram.site
@@ -279,6 +292,13 @@ jobs:
             write_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
           fi
           ensure_random_secret FEDERATION_BACKEND_INTERNAL_TOKEN
+          ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
+          ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
+          if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
+          if [[ -z "$(read_env_value CDN_CACHE_DIR)" ]]; then write_env_value CDN_CACHE_DIR "$ROOT/storage/cdn-cache"; fi
+          mkdir -p "$ROOT/storage/cdn-cache"
+          sudo chown 65532:65532 "$ROOT/storage/cdn-cache"
+          sudo chmod 0750 "$ROOT/storage/cdn-cache"
           if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; then
             echo "::error::FEDERATION_BACKEND_INTERNAL_TOKEN must be distinct from FEDERATION_INGRESS_TOKEN."
             exit 1
@@ -302,6 +322,10 @@ jobs:
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
+          # Pull the immutable, provenance-attested Go CDN image and start it only
+          # after Backend is running: the CDN's readiness probe requires a trusted origin.
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" pull cdn
+          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate cdn
 
           echo "Waiting for Backend readiness..."
           backend_ready=false
@@ -317,6 +341,27 @@ jobs:
             sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=100 postgres api object-storage object-init
             exit 1
           fi
+          cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q cdn)"
+          if [[ -z "$cdn_container" ]]; then echo "::error::Go CDN container was not created."; exit 1; fi
+          cdn_ready=false
+          for attempt in $(seq 1 36); do
+            cdn_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cdn_container" 2>/dev/null || echo missing)"
+            if [[ "$cdn_health" == healthy ]]; then cdn_ready=true; break; fi
+            if [[ "$cdn_health" == missing || "$cdn_health" == exited || "$cdn_health" == dead || "$cdn_health" == unhealthy ]]; then break; fi
+            sleep 5
+          done
+          if [[ "$cdn_ready" != true ]]; then
+            echo "::error::Go CDN did not become healthy with its trusted Backend origin."
+            sudo docker logs --tail=100 "$cdn_container" 2>&1 || true
+            exit 1
+          fi
+          actual_cdn_image="$(sudo docker inspect --format '{{.Config.Image}}' "$cdn_container")"
+          expected_cdn_image="ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9"
+          if [[ "$actual_cdn_image" != "$expected_cdn_image" ]]; then
+            echo "::error::Go CDN image mismatch; refusing an unpinned runtime."
+            exit 1
+          fi
+          echo "Verified Go CDN readiness and immutable image reference."
 
           if ! curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
             echo "MinIO is healthy inside Docker but its host loopback port is not reachable" >&2
@@ -508,6 +553,11 @@ jobs:
           verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_INTERNAL_TOKEN "$FEDERATION_INGRESS_TOKEN"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_MEDIA_BASE_URL "https://media.testagram.site"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_MEDIA_ASSERTION_SECRET "$(read_env_value CDN_MEDIA_ASSERTION_SECRET)"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_ORIGIN_AUTH_TOKEN "$(read_env_value CDN_ORIGIN_AUTH_TOKEN)"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" cdn ORIGIN_URL "http://api:8080"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" cdn ORIGIN_AUTH_TOKEN "$(read_env_value CDN_ORIGIN_AUTH_TOKEN)"
 
           if [[ "$media_enabled" == true ]]; then
             echo "Applying the additive media lifecycle migration to its dedicated database..."
@@ -584,6 +634,9 @@ jobs:
           expect_http_status "$api_container" 401 "Backend read token rejected by Federation ingress" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_BACKEND_INTERNAL_TOKEN" --header="Content-Type: application/json" --post-data="{}" http://federation-api:8081/internal/v1/activities'
           expect_http_status "$api_container" 200 "Federation read token accepted by Backend" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_BACKEND_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8080/internal/v1/federation/readyz'
           expect_http_status "$api_container" 401 "Federation ingress token rejected by Backend read endpoint" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8080/internal/v1/federation/readyz'
+          # A public cache miss must reach the trusted Backend origin and be classified
+          # as not-found, not fail with a missing/wrong CDN service credential.
+          expect_http_status "$api_container" 404 "Go CDN public cache miss authenticated and classified by Backend" 'wget -S -O /dev/null http://cdn:8080/v1/users/__testagram_cdn_probe__/00000000000000000000000000000000'
 
           echo "Data Centre overlay status: $overlay_status"
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
@@ -658,7 +711,7 @@ jobs:
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
           cmd='set -euo pipefail
-          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
+          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-cdn-1 testagram-self-hosted-object-storage-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
           if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
             containers+=(testagram-data-centre-media-1)
           fi
@@ -782,5 +835,6 @@ jobs:
           echo "- Machine: ${{ steps.machine.outputs.machine_id || 'not resolved' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- API URL: ${{ steps.publish.outputs.api_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend health: checked at /healthz and /readyz" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Go CDN: pinned digest, container health and Backend-origin cache-miss smoke verified" >> "$GITHUB_STEP_SUMMARY"
           echo "- Appwrite project ID: ${{ secrets.APPWRITE_PROJECT_ID != '' && 'configured' || 'not configured; login-dependent services are skipped' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
