@@ -372,12 +372,6 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if isExisting && (existingEmail != email || existingUsername != username ||
-		existingDisplayName != displayName || existingTermsVersion != termsVersion ||
-		existingPrivacyVersion != privacyVersion) {
-		writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used for a different application", requestID(r)))
-		return
-	}
 	if isExisting && applicationStatus == "cancelled" {
 		_, err = s.db.Exec(ctx, `
 			UPDATE testagram_identity.identity_applications
