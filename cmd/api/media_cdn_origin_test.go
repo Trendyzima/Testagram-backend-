@@ -150,8 +150,6 @@ func TestMediaCDNOriginPostgresIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open media-origin PostgreSQL pool: %v", err)
 	}
-	defer db.Close()
-
 	ownerID := fmt.Sprintf("cdn_ci_%x", time.Now().UnixNano())
 	viewerID := "cdn_viewer_" + strings.TrimPrefix(ownerID, "cdn_ci_")
 	publicKey := "users/" + ownerID + "/" + strings.Repeat("1", 32)
@@ -173,9 +171,10 @@ VALUES ($1,$2,$3,'image/webp',3,'ci-etag',$4,'legacy-media','default','')`, key,
 	insertAsset(privateKey, ownerID, "private", "ready")
 	insertAsset(quarantinedKey, ownerID, "public", "quarantined")
 	insertAsset(mismatchedKey, ownerID, "public", "ready")
-	t.Cleanup(func() {
+	defer func() {
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_media.assets WHERE owner_id=$1", ownerID)
-	})
+		db.Close()
+	}()
 
 	var mu sync.Mutex
 	var seenMethods []string
