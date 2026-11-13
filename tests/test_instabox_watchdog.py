@@ -8,7 +8,7 @@ class FakeAPI:
     def __init__(self, machine=None):
         self.machine = machine or {
             "id": "machine-123",
-            "name": "testagram",
+            "name": "testagramdb",
             "state": "running",
             "desiredState": "running",
             "operationId": None,
@@ -27,6 +27,25 @@ class FakeAPI:
 
 
 class WatchdogTests(unittest.TestCase):
+    def test_resolves_machine_by_unique_exact_name(self):
+        class ListAPI:
+            def request(self, method, path, body=None, idempotency_key=None):
+                return {"machines": [
+                    {"id": "machine-123", "name": "testagramdb"},
+                    {"id": "other-id", "name": "another-machine"}
+                ], "nextCursor": None}
+        self.assertEqual(watchdog.resolve_machine_id(ListAPI()), "machine-123")
+
+    def test_machine_name_resolution_fails_closed_on_duplicates(self):
+        class ListAPI:
+            def request(self, method, path, body=None, idempotency_key=None):
+                return {"machines": [
+                    {"id": "machine-123", "name": "testagramdb"},
+                    {"id": "machine-456", "name": "testagramdb"}
+                ], "nextCursor": None}
+        with self.assertRaisesRegex(watchdog.WatchdogError, "found 2"):
+            watchdog.resolve_machine_id(ListAPI())
+
     def test_machine_snapshot_rejects_wrong_machine_id(self):
         api = FakeAPI({"id": "another-machine", "state": "running", "desiredState": "running"})
         with self.assertRaisesRegex(watchdog.WatchdogError, "different machine ID"):
