@@ -167,6 +167,8 @@ jobs:
           deploy_source = workflow_path.read_text(encoding="utf-8")
           if "ensure_random_secret CDN_PURGE_TOKEN" not in deploy_source or "CDN_PURGE_URL" not in deploy_source:
               raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
+          if deploy_source.index('host_arch="$(uname -m)"') > deploy_source.index('up -d postgres'):
+              raise SystemExit("Instabox must reject an unsupported CDN host architecture before changing services.")
           match = re.search(r"(?m)^\s*cmd='([^']*)'\s*$", target["run"])
           if not match:
               raise SystemExit("Remote CDN configuration command was not found or contains unsafe quote boundaries.")
