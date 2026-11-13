@@ -485,6 +485,23 @@ jobs:
           assert "vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1'" in deploy, "deployment must default to the configured Frankfurt Appwrite region"
           assert 'write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"' in deploy, "deployment must synchronize the Appwrite endpoint into existing VPS env files"
           assert 'write_dc_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"' in deploy, "deployment must synchronize the Appwrite endpoint into existing Data Centre env files"
+          assert "apply_backend_schema_migrations" in deploy, "persistent schema migrations must require an explicit workflow-dispatch input"
+          assert "APPLY_BACKEND_SCHEMA_MIGRATIONS:$apply_schema_migrations" in deploy, "deployment must forward the explicit schema migration approval to the VPS"
+          assert 'apply-current-schema-migrations.sh" --confirm' in deploy, "deployment must call the backed-up schema migration runner only after approval"
+          migration_runner = Path("deploy/self-hosted/apply-current-schema-migrations.sh").read_text()
+          assert 'pg_dump --format=custom' in migration_runner and 'pg_restore --list' in migration_runner and 'sha256sum' in migration_runner, "schema migration runner must create and validate a checksummed backup"
+          assert 'if [[ "${1:-}" != "--confirm" ]]' in migration_runner, "schema migration runner must refuse implicit execution"
+          for migration in (
+              "029_appwrite_identity_link_audit.sql",
+              "030_social_core.sql",
+              "040_admin_security_controls.sql",
+              "041_identity_registration_pipeline.sql",
+              "043_social_post_idempotency.sql",
+              "051_native_identity_verification.sql",
+              "052_native_identity_integrity.sql",
+              "053_native_identity_evidence.sql",
+          ):
+              assert migration in migration_runner, f"schema migration runner is missing {migration}"
           assert "must be distinct from FEDERATION_INGRESS_TOKEN" in deploy, "Federation credentials must remain independently keyed"
           for check in (
               'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_BACKEND_INTERNAL_TOKEN',
