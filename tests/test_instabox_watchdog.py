@@ -22,6 +22,9 @@ class FakeAPI:
         if method == "GET" and path == "/v1/machines/machine-123":
             return self.machine
         if method == "POST" and path.endswith(("/stop", "/start", "/resume")):
+            action = path.rsplit("/", 1)[-1]
+            self.machine["state"] = "stopped" if action == "stop" else "running"
+            self.machine["operationId"] = None
             return {"id": "op-1", "machineId": "machine-123", "state": "queued"}
         if method == "GET" and path == "/v1/operations/op-1":
             return {"id": "op-1", "machineId": "machine-123", "state": "succeeded"}
@@ -69,6 +72,7 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(post[2], {})
         self.assertTrue(post[3].startswith("testagram-watchdog-machine-123-start-"))
         self.assertEqual(api.calls[1][1], "/v1/operations/op-1")
+        self.assertEqual(api.calls[2][1], "/v1/machines/machine-123")
 
     def test_active_operation_is_not_interrupted(self):
         api = FakeAPI({
