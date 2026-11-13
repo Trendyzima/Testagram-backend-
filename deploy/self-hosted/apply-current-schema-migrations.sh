@@ -42,7 +42,9 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="$backup_dir/testagram-pre-current-schema-$stamp.dump"
 checksum="$backup.sha256"
 
-"${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" up -d postgres
+if ! "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" ps --status running --services | grep -qx postgres; then
+  "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" up -d postgres
+fi
 for attempt in $(seq 1 40); do
   if "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
       sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
