@@ -285,6 +285,7 @@ DO $native_identity$
 DECLARE
   app_id uuid := gen_random_uuid();
   v_session_id uuid := gen_random_uuid();
+  evidence_id uuid := gen_random_uuid();
 BEGIN
   INSERT INTO testagram_identity.identity_applications
     (id,email,username,display_name,adult_confirmed_at,evidence_reference,
@@ -314,6 +315,39 @@ BEGIN
     (session_id,event_type,actor_type,actor_reference,request_id)
   VALUES
     (v_session_id,'session_created','applicant','native-ci','native-session-created');
+
+  -- Evidence begins as a staging object, can only be promoted once, and
+  -- cannot be rewritten or deleted outside the retention transition.
+  INSERT INTO testagram_identity.verification_evidence
+    (id,session_id,object_key,staging_object_key,content_type,size_bytes,sha256)
+  VALUES
+    (evidence_id,v_session_id,'identity/native-ci/evidence-staging.jpg',
+     'identity/native-ci/evidence-staging.jpg','image/jpeg',1,decode(repeat('d',64),'hex'));
+
+  UPDATE testagram_identity.verification_evidence
+  SET object_key='identity/native-ci/evidence-sealed.jpg',
+      status='verified',uploaded_at=now(),verified_at=now()
+  WHERE id=evidence_id;
+
+  BEGIN
+    UPDATE testagram_identity.verification_evidence
+    SET object_key='identity/native-ci/tampered.jpg'
+    WHERE id=evidence_id;
+    RAISE EXCEPTION 'verified evidence mutation unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'verified evidence mutation unexpectedly succeeded' THEN RAISE; END IF;
+  END;
+
+  UPDATE testagram_identity.verification_evidence
+  SET status='deleted',verified_at=NULL
+  WHERE id=evidence_id;
+
+  BEGIN
+    DELETE FROM testagram_identity.verification_evidence WHERE id=evidence_id;
+    RAISE EXCEPTION 'evidence metadata deletion unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'evidence metadata deletion unexpectedly succeeded' THEN RAISE; END IF;
+  END;
 
   INSERT INTO testagram_identity.verification_reviews
     (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
