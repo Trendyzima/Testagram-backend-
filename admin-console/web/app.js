@@ -276,6 +276,18 @@ async function loadApprovalQueue() {
       const requester = document.createElement("small");
       requester.textContent = "Requested by " + item.requested_by + " · expires " + new Date(item.expires_at).toLocaleString();
       card.append(heading, detail, requester);
+      if (item.action_type === "identity.approve" && item.payload) {
+        const applicant = document.createElement("p");
+        applicant.textContent = "Applicant: " + (item.payload.display_name || "—") +
+          " · @" + (item.payload.username || "—") +
+          " · " + (item.payload.email || "—");
+        const evidence = document.createElement("small");
+        evidence.textContent = "Adult-evidence audit reference: " +
+          (item.payload.evidence_audit_reference || "not supplied") +
+          " · Terms " + (item.payload.terms_version || "—") +
+          " · Privacy " + (item.payload.privacy_version || "—");
+        card.append(applicant, evidence);
+      }
       if (currentUser && currentUser.user_id !== item.requested_by) {
         const form = document.createElement("form");
         form.className = "form compact";

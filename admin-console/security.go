@@ -133,36 +133,238 @@ func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely record the approval request"}); return }
 	writeJSON(w,201,map[string]any{"id":id,"status":"pending","required_approvals":2,"message":"Request recorded. Two different authorised staff members must approve it. The action has not been executed."})
 }
-func (a *app) handleSensitiveActionDecision(w http.ResponseWriter,r *http.Request) {
-	id:=r.PathValue("id")
-	if len(id)!=36 || !regexp.MustCompile("^[0-9a-fA-F-]{36}$").MatchString(id) { writeJSON(w,400,map[string]string{"error":"Invalid approval request ID"}); return }
-	var input decisionInput; if !decodeBody(w,r,&input) { return }
-	input.Reason=strings.TrimSpace(input.Reason); decision,decisionErr:=normalizeSensitiveDecision(input.Decision); if decisionErr!=nil { writeJSON(w,400,map[string]string{"error":"Decision must be approved or rejected"}); return }; input.Decision=decision; if len(input.Reason)<8 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A decision reason of at least 8 characters is required"}); return }
-	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second); defer cancel()
-	var action,requester,status string
-	err:=a.database.QueryRow(ctx,"SELECT action_type,requested_by_appwrite_user_id,status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid AND expires_at>now()",id).Scan(&action,&requester,&status)
-	if err!=nil { writeJSON(w,404,map[string]string{"error":"Approval request not found or expired"}); return }
-	if status!="pending" { writeJSON(w,409,map[string]string{"error":"This request is no longer pending"}); return }
-	permission,err:=approvalPermissionForAction(action); if err!=nil { writeJSON(w,400,map[string]string{"error":"Unsupported approval type"}); return }
-	s,approver,ok:=a.requirePermission(w,r,permission); if !ok { return }
-	if !a.requireRecentStepUp(w,s) { return }
-	if allowed,rateErr:=a.consumeAdminRateLimit(ctx,approver.ID,"sensitive-decision",30,time.Hour); rateErr!=nil { writeJSON(w,503,map[string]string{"error":"Security rate-limit service is unavailable"}); return } else if !allowed { writeJSON(w,429,map[string]string{"error":"Too many approval decisions. Try again later."}); return }
-	if approver.ID==requester { writeJSON(w,403,map[string]string{"error":"The requester cannot approve their own sensitive action"}); return }
-	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Approval service is unavailable"}); return }
-	defer func(){_ = tx.Rollback(context.Background())}()
-	var locked string
-	err=tx.QueryRow(ctx,"SELECT status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid AND expires_at>now() FOR UPDATE",id).Scan(&locked)
-	if err!=nil || locked!="pending" { writeJSON(w,409,map[string]string{"error":"This request is no longer pending"}); return }
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_appwrite_user_id,decision,reason) VALUES($1::uuid,$2,$3,$4)",id,approver.ID,input.Decision,input.Reason)
-	if err!=nil { writeJSON(w,409,map[string]string{"error":"You have already decided this request or the approval could not be recorded"}); return }
+type identityReviewSnapshot struct {
+	ApplicationID              string `json:"application_id"`
+	Email                       string `json:"email"`
+	Username                    string `json:"username"`
+	DisplayName                 string `json:"display_name"`
+	EvidenceFingerprintSHA256   string `json:"evidence_fingerprint_sha256"`
+	EvidenceAuditReference      string `json:"evidence_audit_reference"`
+	TermsVersion                string `json:"terms_version"`
+	PrivacyVersion              string `json:"privacy_version"`
+}
+
+func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, applicationID, reviewerID, decision, reason string, rawPayload []byte, approvalCount int) (string, error) {
+	var snapshot identityReviewSnapshot
+	if err := json.Unmarshal(rawPayload, &snapshot); err != nil {
+		return "", errors.New("identity approval payload is invalid")
+	}
+	if snapshot.ApplicationID != applicationID ||
+		len(snapshot.EvidenceAuditReference) < 8 || len(snapshot.EvidenceAuditReference) > 200 {
+		return "", errors.New("identity approval payload is not bound to an auditable application")
+	}
+
+	var email, username, displayName, termsVersion, privacyVersion, applicationStatus, linkedRequestID string
+	var evidenceFingerprint []byte
+	var adultVerified bool
+	err := tx.QueryRow(ctx, `
+		SELECT email, username, display_name, evidence_fingerprint_sha256,
+		       terms_version, privacy_version, status, adult_verified_at IS NOT NULL,
+		       sensitive_action_request_id::text
+		FROM testagram_identity.identity_applications
+		WHERE id=$1::uuid
+		FOR UPDATE
+	`, applicationID).Scan(&email, &username, &displayName, &evidenceFingerprint,
+		&termsVersion, &privacyVersion, &applicationStatus, &adultVerified, &linkedRequestID)
+	if err != nil {
+		return "", errors.New("identity application was not found")
+	}
+	if linkedRequestID != requestID {
+		return "", errors.New("identity application is not linked to this approval request")
+	}
+	if applicationStatus != "pending" && applicationStatus != "under_review" {
+		return "", errors.New("identity application is no longer reviewable")
+	}
+	var actionType, requestStatus, targetReference string
+	var requiredApprovals, recordedApprovals int
+	err = tx.QueryRow(ctx, `
+		SELECT action_type, status, target_reference, required_approvals
+		FROM testagram_auth.sensitive_action_requests
+		WHERE id=$1::uuid
+		FOR UPDATE
+	`, requestID).Scan(&actionType, &requestStatus, &targetReference, &requiredApprovals)
+	if err != nil || actionType != "identity.approve" || targetReference != applicationID || requiredApprovals != 2 {
+		return "", errors.New("linked approval request does not match the identity application")
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT count(DISTINCT approver_appwrite_user_id)
+		FROM testagram_auth.sensitive_action_approvals
+		WHERE request_id=$1::uuid AND decision='approved'
+	`, requestID).Scan(&recordedApprovals)
+	if err != nil || recordedApprovals != approvalCount {
+		return "", errors.New("approval count does not match the durable approval ledger")
+	}
+	if decision == "rejected" && requestStatus != "rejected" {
+		return "", errors.New("rejected identity decision is not reflected in the approval ledger")
+	}
+	if decision == "approved" && approvalCount >= 2 && requestStatus != "approved" {
+		return "", errors.New("completed two-person approval is not reflected in the approval ledger")
+	}
+	if decision == "approved" && approvalCount < 2 && requestStatus != "pending" {
+		return "", errors.New("incomplete approval request is not pending")
+	}
+	if !adultVerified {
+		return "", errors.New("verified adult evidence is required before review decisions")
+	}
+	if snapshot.Email != email || snapshot.Username != username ||
+		snapshot.DisplayName != displayName ||
+		snapshot.EvidenceFingerprintSHA256 != hex.EncodeToString(evidenceFingerprint) ||
+		snapshot.TermsVersion != termsVersion || snapshot.PrivacyVersion != privacyVersion {
+		return "", errors.New("identity application changed after the review request was created")
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_identity.identity_application_reviews
+		  (application_id, reviewer_appwrite_user_id, decision, reason, evidence_audit_reference)
+		VALUES ($1::uuid, $2, $3, $4, $5)
+	`, applicationID, reviewerID, decision, reason, snapshot.EvidenceAuditReference)
+	if err != nil {
+		return "", errors.New("identity review was already recorded or could not be persisted")
+	}
+
+	nextStatus := "under_review"
+	if decision == "rejected" {
+		nextStatus = "rejected"
+	} else if approvalCount >= 2 {
+		nextStatus = "approved"
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE testagram_identity.identity_applications
+		SET status=$2, updated_at=now()
+		WHERE id=$1::uuid
+	`, applicationID, nextStatus)
+	if err != nil {
+		return "", errors.New("identity application status could not be updated")
+	}
+	return nextStatus, nil
+}
+
+func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if len(id) != 36 || !regexp.MustCompile("^[0-9a-fA-F-]{36}$").MatchString(id) {
+		writeJSON(w, 400, map[string]string{"error": "Invalid approval request ID"})
+		return
+	}
+	var input decisionInput
+	if !decodeBody(w, r, &input) { return }
+	input.Reason = strings.TrimSpace(input.Reason)
+	decision, decisionErr := normalizeSensitiveDecision(input.Decision)
+	if decisionErr != nil {
+		writeJSON(w, 400, map[string]string{"error": "Decision must be approved or rejected"})
+		return
+	}
+	input.Decision = decision
+	if len(input.Reason) < 8 || len(input.Reason) > 1000 {
+		writeJSON(w, 400, map[string]string{"error": "A decision reason of at least 8 characters is required"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	var action, requester, status string
+	err := a.database.QueryRow(ctx, `
+		SELECT action_type, requested_by_appwrite_user_id, status
+		FROM testagram_auth.sensitive_action_requests
+		WHERE id=$1::uuid AND expires_at>now()
+	`, id).Scan(&action, &requester, &status)
+	if err != nil {
+		writeJSON(w, 404, map[string]string{"error": "Approval request not found or expired"})
+		return
+	}
+	if status != "pending" {
+		writeJSON(w, 409, map[string]string{"error": "This request is no longer pending"})
+		return
+	}
+	permission, err := approvalPermissionForAction(action)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "Unsupported approval type"})
+		return
+	}
+	s, approver, ok := a.requirePermission(w, r, permission)
+	if !ok { return }
+	if !a.requireRecentStepUp(w, s) { return }
+	if allowed, rateErr := a.consumeAdminRateLimit(ctx, approver.ID, "sensitive-decision", 30, time.Hour); rateErr != nil {
+		writeJSON(w, 503, map[string]string{"error": "Security rate-limit service is unavailable"})
+		return
+	} else if !allowed {
+		writeJSON(w, 429, map[string]string{"error": "Too many approval decisions. Try again later."})
+		return
+	}
+	if approver.ID == requester {
+		writeJSON(w, 403, map[string]string{"error": "The requester cannot approve their own sensitive action"})
+		return
+	}
+
+	tx, err := a.database.Begin(ctx)
+	if err != nil {
+		writeJSON(w, 503, map[string]string{"error": "Approval service is unavailable"})
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	var lockedStatus, targetReference string
+	var payload []byte
+	err = tx.QueryRow(ctx, `
+		SELECT status, target_reference, payload
+		FROM testagram_auth.sensitive_action_requests
+		WHERE id=$1::uuid AND expires_at>now()
+		FOR UPDATE
+	`, id).Scan(&lockedStatus, &targetReference, &payload)
+	if err != nil || lockedStatus != "pending" {
+		writeJSON(w, 409, map[string]string{"error": "This request is no longer pending"})
+		return
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_approvals
+		  (request_id, approver_appwrite_user_id, decision, reason)
+		VALUES ($1::uuid, $2, $3, $4)
+	`, id, approver.ID, input.Decision, input.Reason)
+	if err != nil {
+		writeJSON(w, 409, map[string]string{"error": "You have already decided this request or the approval could not be recorded"})
+		return
+	}
 	var count int
-	err=tx.QueryRow(ctx,"SELECT count(*) FROM testagram_auth.sensitive_action_approvals WHERE request_id=$1::uuid AND decision='approved'",id).Scan(&count)
-	state:="pending"
-	if input.Decision=="rejected" { state="rejected"; _,err=tx.Exec(ctx,"UPDATE testagram_auth.sensitive_action_requests SET status='rejected',decided_at=now() WHERE id=$1::uuid AND status='pending'",id) } else if err==nil && count>=2 { state="approved"; _,err=tx.Exec(ctx,"UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now() WHERE id=$1::uuid AND status='pending'",id) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,request_id,metadata) SELECT $1,$2,target_reference,id,jsonb_build_object('action_type',action_type,'decision', $3, 'approval_count',$4) FROM testagram_auth.sensitive_action_requests WHERE id=$5::uuid",approver.ID,"sensitive_action."+input.Decision,input.Decision,count,id) }
-	if err==nil { err=tx.Commit(ctx) }
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely record the approval"}); return }
-	writeJSON(w,200,map[string]any{"ok":true,"status":state,"approval_count":count,"required_approvals":2,"message":"Decision recorded. The underlying action is not executed by this approval ledger."})
+	err = tx.QueryRow(ctx, `
+		SELECT count(DISTINCT approver_appwrite_user_id)
+		FROM testagram_auth.sensitive_action_approvals
+		WHERE request_id=$1::uuid AND decision='approved'
+	`, id).Scan(&count)
+	state := "pending"
+	if input.Decision == "rejected" {
+		state = "rejected"
+		_, err = tx.Exec(ctx, "UPDATE testagram_auth.sensitive_action_requests SET status='rejected',decided_at=now() WHERE id=$1::uuid AND status='pending'", id)
+	} else if err == nil && count >= 2 {
+		state = "approved"
+		_, err = tx.Exec(ctx, "UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now() WHERE id=$1::uuid AND status='pending'", id)
+	}
+
+	applicationState := ""
+	if err == nil && action == "identity.approve" {
+		applicationState, err = recordIdentityApplicationReview(ctx, tx, id, targetReference, approver.ID, input.Decision, input.Reason, payload, count)
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO testagram_auth.admin_security_audit
+			  (actor_appwrite_user_id, action, target_reference, request_id, metadata)
+			SELECT $1, $2, target_reference, id,
+			       jsonb_build_object('action_type', action_type, 'decision', $3, 'approval_count', $4)
+			FROM testagram_auth.sensitive_action_requests
+			WHERE id=$5::uuid
+		`, approver.ID, "sensitive_action."+input.Decision, input.Decision, count, id)
+	}
+	if err == nil { err = tx.Commit(ctx) }
+	if err != nil {
+		writeJSON(w, 503, map[string]string{"error": "Could not safely record the approval"})
+		return
+	}
+	response := map[string]any{
+		"ok": true, "status": state, "approval_count": count,
+		"required_approvals": 2,
+		"message": "Decision recorded. The underlying action is not executed by this approval ledger.",
+	}
+	if action == "identity.approve" { response["application_status"] = applicationState }
+	writeJSON(w, 200, response)
 }
 func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) {
 	_,user,ok:=a.requireStaff(w,r); if !ok { return }
@@ -179,7 +381,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	}
 	if !canReview { writeJSON(w,403,map[string]string{"error":"You do not have permission to review sensitive actions"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_appwrite_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
+	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_appwrite_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the approval queue"}); return }
 	defer rows.Close()
 	type item struct {
@@ -193,17 +395,28 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 		ExpiresAt time.Time `json:"expires_at"`
 		CreatedAt time.Time `json:"created_at"`
 		ApprovalCount int `json:"approval_count"`
+		Payload json.RawMessage `json:"payload,omitempty"`
 	}
 	items:=make([]item,0)
 	for rows.Next() {
 		var v item
-		if err:=rows.Scan(&v.ID,&v.ActionType,&v.RequestedBy,&v.TargetReference,&v.Reason,&v.Status,&v.RequiredApprovals,&v.ExpiresAt,&v.CreatedAt,&v.ApprovalCount); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the approval queue"}); return }
+		if err:=rows.Scan(&v.ID,&v.ActionType,&v.RequestedBy,&v.TargetReference,&v.Reason,&v.Status,&v.RequiredApprovals,&v.ExpiresAt,&v.CreatedAt,&v.Payload,&v.ApprovalCount); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read the approval queue"}); return }
 		if !canAudit {
 			permission,permissionErr:=approvalPermissionForAction(v.ActionType)
 			if permissionErr!=nil { continue }
 			allowed,permissionErr:=a.hasPermission(user,permission)
 			if permissionErr!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
 			if !allowed { continue }
+		}
+		if v.ActionType == "identity.approve" {
+			canReviewIdentity, permissionErr := a.hasPermission(user, "identity.review")
+			if permissionErr != nil {
+				writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"})
+				return
+			}
+			if !canReviewIdentity { v.Payload = nil }
+		} else {
+			v.Payload = nil
 		}
 		items=append(items,v)
 	}
