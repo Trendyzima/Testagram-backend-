@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 API_BASE = os.getenv("INSTABOX_API_BASE_URL", "https://api.instabox.sh").rstrip("/")
 API_KEY = os.getenv("INSTABOX_API_KEY", "")
@@ -53,6 +53,8 @@ class API:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read(4096).decode("utf-8", "replace")
+            if self.key:
+                detail = detail.replace(self.key, "[REDACTED]")
             raise WatchdogError(f"Instabox API {method} {path} returned HTTP {exc.code}: {detail}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise WatchdogError(f"Instabox API unavailable for {method} {path}: {exc}") from exc
@@ -217,6 +219,10 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
 def main() -> int:
     if not API_KEY or not MACHINE_ID or not HEALTH_URL or not READY_URL:
         raise WatchdogError("Configure INSTABOX_API_KEY, INSTABOX_MACHINE_ID, TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
+    for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL),
+                         ("readiness", READY_URL)):
+        if urlparse(value).scheme != "https":
+            raise WatchdogError(f"{label} URL must use HTTPS")
     if FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or ACTION_COOLDOWN < 300:
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, >=1s interval and >=300s cooldown")
     api = API()
@@ -225,6 +231,17 @@ def main() -> int:
     machine_state = machine["state"]
     desired = machine["desiredState"]
     emit(f"machine={MACHINE_ID} state={machine_state} desiredState={desired}")
+
+    cooldown_until = machine.get("cooldownUntil")
+    if cooldown_until:
+        from datetime import datetime, timezone
+        try:
+            deadline = datetime.fromisoformat(cooldown_until.replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            raise WatchdogError("Instabox returned an invalid cooldownUntil timestamp")
+        if deadline > datetime.now(timezone.utc):
+            emit(f"provider cooldown is active until {cooldown_until}; not attempting recovery")
+            return 0
 
     if machine.get("operationId"):
         emit(f"machine has active operation {machine['operationId']}; leaving it undisturbed")
