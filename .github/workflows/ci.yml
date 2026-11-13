@@ -470,6 +470,7 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
           FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
           FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
+          CDN_ORIGIN_AUTH_TOKEN: ci-only-cdn-origin-token-not-for-production
         run: |
           export ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           export ADMIN_PUBLIC_URL=https://ops.example.invalid
@@ -480,6 +481,8 @@ jobs:
           import re
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
+          compose = Path("deploy/self-hosted/docker-compose.yml").read_text()
+          caddy = Path("deploy/self-hosted/Caddyfile").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
           assert "ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9" in compose, "Backend Compose must pin the provenance-verified Go CDN image by digest"
           assert "ORIGIN_URL: http://api:8080" in compose and "ORIGIN_AUTH_TOKEN:" in compose, "Go CDN must use the private Backend origin and service credential"
