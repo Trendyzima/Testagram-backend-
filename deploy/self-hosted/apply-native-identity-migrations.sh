@@ -52,7 +52,8 @@ for migration in \
   033_native_identity_verification.sql \
   034_native_identity_integrity.sql \
   035_native_identity_evidence.sql \
-  036_native_identity_vendor_neutral.sql; do
+  036_native_identity_vendor_neutral.sql \
+  037_native_identity_sealed_evidence.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
     sh -ec "psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -f /docker-entrypoint-initdb.d/$migration"
 done
