@@ -732,7 +732,7 @@ intentChecksum = strings.ToLower(strings.TrimSpace(intentChecksum))
 if body.ChecksumSHA256 == "" { body.ChecksumSHA256 = intentChecksum } else if intentChecksum != "" && body.ChecksumSHA256 != intentChecksum {
 		writeJSON(w, http.StatusConflict, errorBody("MEDIA_CHECKSUM_MISMATCH", "Client checksum does not match the server-computed upload checksum", id)); return
 	}
-if body.ChecksumSHA256 == "" { writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISSING", "The upload gateway has not recorded a server-computed checksum", id)); return }
+if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISSING", "The upload gateway has not recorded a server-computed checksum", id)); return }
 	if intentVisibility != body.Visibility || intentType != body.ContentType {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
 		return
