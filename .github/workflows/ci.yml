@@ -513,6 +513,7 @@ jobs:
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "B2_S3_PUBLIC_BUCKET" in deploy and "CLOUDFLARE_R2_PUBLIC_BUCKET" in deploy and 'MEDIA_REPLICATION_ENABLED' in deploy, "deployment must wire distinct provider buckets and keep replication explicitly gated"
           assert "MEDIA_REPLICATION_ENABLED=true requires complete B2/R2 settings" in deploy, "deployment must reject incomplete replication activation"
+          assert 'write_dc_env_value DATA_CENTRE_MEDIA_ENABLED "$media_enabled"' in deploy and 'write_dc_env_value COMPOSE_PROFILES media' in deploy, "Data Centre media profile activation must persist across later Compose operations"
           identity = Path("cmd/api/identity_native.go").read_text()
           review = Path("cmd/api/identity_review.go").read_text()
           assert 'uploadPath := "/api/identity/sessions/"' in identity and "s.identityEvidenceUpload" in Path("cmd/api/main.go").read_text(), "identity evidence uploads must use the authenticated Backend proxy"
