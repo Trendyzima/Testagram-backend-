@@ -502,6 +502,7 @@ jobs:
           migration_runner = Path("deploy/self-hosted/apply-current-schema-migrations.sh").read_text()
           assert 'pg_dump --format=custom' in migration_runner and 'pg_restore --list' in migration_runner and 'sha256sum' in migration_runner, "schema migration runner must create and validate a checksummed backup"
           assert 'if [[ "${1:-}" != "--confirm" ]]' in migration_runner, "schema migration runner must refuse implicit execution"
+          assert 'ps --status running --services' in migration_runner, "migration runner must reuse a healthy existing PostgreSQL container instead of recreating it"
           for migration in (
               "029_appwrite_identity_link_audit.sql",
               "030_social_core.sql",
