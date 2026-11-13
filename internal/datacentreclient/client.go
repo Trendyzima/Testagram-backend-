@@ -114,6 +114,28 @@ func New(baseURL, token string, client *http.Client) (*Client, error) {
 	return &Client{baseURL: u, token: token, http: client}, nil
 }
 
+
+// validProviderURL prevents a compromised or misconfigured media service from
+// turning the Backend upload gateway into an HTTP, loopback, private-network,
+// or arbitrary-port request proxy. B2 and R2 presigned URLs are HTTPS origins.
+func validProviderURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if net.ParseIP(host) != nil || host == "localhost" || !strings.Contains(host, ".") ||
+		strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") ||
+		strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".test") ||
+		strings.HasSuffix(host, ".invalid") {
+		return false
+	}
+	return true
+}
+
 func isPrivateServiceHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "localhost" || strings.HasSuffix(host, ".internal") || host == "control-plane" || host == "media" {
@@ -131,7 +153,7 @@ func (c *Client) CreateUploadURL(ctx context.Context, ownerID, namespace, key, c
 	if err != nil {
 		return UploadGrant{}, err
 	}
-	if result.UploadURL == "" || result.MaxBytes != size || result.Primary != "backblaze_b2" {
+	if result.IntentID == "" || !validProviderURL(result.UploadURL) || !result.ExpiresAt.After(time.Now()) || result.MaxBytes != size || result.Primary != "backblaze_b2" {
 		return UploadGrant{}, errors.New("Data Centre returned an invalid upload authorization")
 	}
 	return result, nil
@@ -182,7 +204,7 @@ func (c *Client) DownloadURLMethod(ctx context.Context, requesterID, ownerID, na
 	if err != nil {
 		return DownloadGrant{}, err
 	}
-	if result.URL == "" || (result.Provider != "cloudflare_r2" && result.Provider != "backblaze_b2") {
+	if !validProviderURL(result.URL) || (result.Provider != "cloudflare_r2" && result.Provider != "backblaze_b2") {
 		return DownloadGrant{}, errors.New("Data Centre returned an invalid media delivery URL")
 	}
 	return result, nil
