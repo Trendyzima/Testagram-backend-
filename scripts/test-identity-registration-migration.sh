@@ -262,6 +262,16 @@ BEGIN
   VALUES
     (session_id,app_id,decode(repeat('a',64),'hex'),'age_assurance',18,now()+interval '1 day');
 
+  -- Identity assurance must not require an age-threshold result.
+  INSERT INTO testagram_identity.verification_sessions
+    (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
+     evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
+     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_appwrite_user_id)
+  VALUES
+    (gen_random_uuid(),app_id,decode(repeat('b',64),'hex'),'identity_assurance',NULL,'verified',
+     'opaque-identity-evidence',decode(repeat('c',64),'hex'),'document_review','reviewed',
+     NULL,now()+interval '1 day',now(),now(),'ci-reviewer-two');
+
   INSERT INTO testagram_identity.verification_events
     (session_id,event_type,actor_type,actor_reference,request_id)
   VALUES
