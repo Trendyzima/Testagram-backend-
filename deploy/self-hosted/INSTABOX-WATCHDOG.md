@@ -32,6 +32,6 @@ The watchdog does not automatically override an intentional provider state where
 
 ## Validation and activation
 
-The workflow is activated by merging this change to the default branch. GitHub scheduled workflows have a five-minute minimum interval and may start later under platform load. Run it manually once after setting the required variables and secret. Confirm the first run reports the expected machine ID and healthy endpoints before relying on automatic recovery.
+The workflow is activated by merging this change to the default branch. GitHub scheduled workflows have a five-minute minimum interval and may start later under platform load. Run it manually once after setting the required variables and secret; manual runs default to **dry-run mode**, which checks the provider and endpoints without issuing lifecycle actions. Only disable dry-run after confirming the exact machine ID and both URLs. Scheduled runs use automatic recovery.
 
 Official API reference: https://instabox.sh/docs/api.md
