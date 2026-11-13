@@ -276,7 +276,7 @@ jobs:
           fi
           FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
           write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
-          TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:fcb1fa9e1b2bd4a17a1face0dcd8591d7f11880474d28179cea94fcfcb8cdf34"
+          TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9"
           write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
           if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
