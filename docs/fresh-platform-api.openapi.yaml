@@ -250,15 +250,7 @@ paths:
         - in: header
           name: Idempotency-Key
           required: true
-          schema: { type: string, minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}
-    federationInternalBearer:
-      type: http
-      scheme: bearer
-    appwriteJWT:
-      type: http
-      scheme: bearer
-      bearerFormat: Appwrite JWT
- }
+          schema: { type: string, minLength: 43, maxLength: 43 }
       requestBody:
         required: true
         content:
@@ -339,15 +331,7 @@ paths:
               properties:
                 content_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
                 size_bytes: { type: integer, minimum: 1, maximum: 15728640 }
-                sha256: { type: string, pattern: '^[a-fA-F0-9]{64}
-    federationInternalBearer:
-      type: http
-      scheme: bearer
-    appwriteJWT:
-      type: http
-      scheme: bearer
-      bearerFormat: Appwrite JWT
- }
+                sha256: { type: string, minLength: 64, maxLength: 64 }
       responses:
         '201': { description: Same-origin Backend upload path and opaque evidence ID; no object-store URL is exposed }
         '400': { description: Invalid metadata }
