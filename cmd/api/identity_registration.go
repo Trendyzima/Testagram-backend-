@@ -106,8 +106,10 @@ type idswyftStartRequest struct {
 type idswyftStartResponse struct {
 	Success         bool   `json:"success"`
 	VerificationID  string `json:"verification_id"`
-	VerificationURL string `json:"verification_url"`
-	Status          string `json:"status"`
+	VerificationURL  string `json:"verification_url"`
+	VerificationMode string `json:"verification_mode"`
+	AgeThreshold     int    `json:"age_threshold"`
+	Status           string `json:"status"`
 }
 
 type idswyftWebhookPayload struct {
@@ -161,11 +163,11 @@ func (s *service) startIdswyftAgeSession(ctx context.Context, applicationID stri
 	if apiBase == "" || apiKey == "" || verificationOrigin == "" {
 		return "", "", errors.New("Idswyft verification is not configured")
 	}
-	baseURL, err := parseConfiguredHTTPSURL(apiBase, false)
+	baseURL, err := parseConfiguredHTTPSURL(apiBase, true)
 	if err != nil {
 		return "", "", err
 	}
-	allowedOrigin, err := parseConfiguredHTTPSURL(verificationOrigin, false)
+	allowedOrigin, err := parseConfiguredHTTPSURL(verificationOrigin, true)
 	if err != nil || allowedOrigin.Path != "" || baseURL.Path != "" {
 		return "", "", errors.New("Idswyft verification origin must be an HTTPS origin")
 	}
@@ -197,12 +199,12 @@ func (s *service) startIdswyftAgeSession(ctx context.Context, applicationID stri
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil {
 		return "", "", errors.New("Idswyft returned an invalid verification response")
 	}
-	if !result.Success || len(result.VerificationID) != 36 || !identityApplicationIDPattern.MatchString(result.VerificationID) {
+	if !result.Success || result.VerificationMode != "age_only" || result.AgeThreshold != identityAdultThreshold || len(result.VerificationID) != 36 || !identityApplicationIDPattern.MatchString(result.VerificationID) {
 		return "", "", errors.New("Idswyft returned an invalid verification ID")
 	}
 	verificationURL, err := url.Parse(result.VerificationURL)
 	if err != nil || verificationURL.User != nil || verificationURL.Fragment != "" || verificationURL.RawQuery == "" ||
-		verificationURL.Scheme != "https" || !strings.EqualFold(verificationURL.Host, allowedOrigin.Host) ||
+		(verificationURL.Scheme != "https" && !(verificationURL.Scheme == "http" && (verificationURL.Hostname() == "localhost" || verificationURL.Hostname() == "127.0.0.1"))) || !strings.EqualFold(verificationURL.Host, allowedOrigin.Host) ||
 		!strings.EqualFold(verificationURL.Scheme, allowedOrigin.Scheme) {
 		return "", "", errors.New("Idswyft returned a verification URL outside the configured verification origin")
 	}
