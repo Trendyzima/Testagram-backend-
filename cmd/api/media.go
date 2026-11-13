@@ -411,8 +411,8 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.PathValue("key")
-	var ownerID, visibility, assetStatus, storageNamespace string
-	err := s.db.QueryRow(r.Context(), "select owner_id, visibility, status, storage_namespace from testagram_media.assets where object_key=$1", key).Scan(&ownerID, &visibility, &assetStatus, &storageNamespace)
+	var ownerID, visibility, assetStatus, storageNamespace, storageProvider string
+	err := s.db.QueryRow(r.Context(), "select owner_id, visibility, status, storage_namespace, storage_provider from testagram_media.assets where object_key=$1", key).Scan(&ownerID, &visibility, &assetStatus, &storageNamespace, &storageProvider)
 	if err != nil || assetStatus != "ready" {
 		http.Error(w, "media object unavailable", http.StatusNotFound)
 		return
@@ -446,11 +446,13 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
+		var grant datacentreclient.DownloadGrant
 		if r.Method == http.MethodHead {
-			signedURL, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+			grant, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
 		} else {
-			signedURL, err = s.dataCentreMedia.DownloadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+			grant, err = s.dataCentreMedia.DownloadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
 		}
+		signedURL = grant.URL
 	} else if storageNamespace != "legacy-media" && s.virtualStorage != nil {
 		if r.Method == http.MethodHead {
 			signedURL, err = s.virtualStorage.HeadURL(r.Context(), ownerID, ownerID, storageNamespace, key)
@@ -582,7 +584,9 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
-		signedURL, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
+		var grant datacentreclient.DownloadGrant
+		grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
+		signedURL = grant.URL
 	} else if storageNamespace != "legacy-media" {
 		if s.virtualStorage == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This media object requires the virtual storage provider", id))
