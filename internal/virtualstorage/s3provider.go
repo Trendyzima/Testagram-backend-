@@ -265,6 +265,21 @@ func (p *S3Provider) CopyFrom(ctx context.Context, source *S3Provider, sourceBuc
 }
 // DetectContentType inspects the first 512 stored bytes rather than trusting
 // client-controlled S3 metadata. It is used before identity evidence is sealed.
+func detectEvidenceContentType(prefix []byte) string {
+	switch {
+	case len(prefix) >= 3 && prefix[0] == 0xff && prefix[1] == 0xd8 && prefix[2] == 0xff:
+		return "image/jpeg"
+	case len(prefix) >= 8 && string(prefix[:8]) == "\x89PNG\r\n\x1a\n":
+		return "image/png"
+	case len(prefix) >= 12 && string(prefix[:4]) == "RIFF" && string(prefix[8:12]) == "WEBP":
+		return "image/webp"
+	case len(prefix) >= 5 && string(prefix[:5]) == "%PDF-":
+		return "application/pdf"
+	default:
+		return strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(prefix), ";")[0]))
+	}
+}
+
 func (p *S3Provider) DetectContentType(ctx context.Context, bucket, key string) (string, error) {
 	getURL, err := p.PresignGet(ctx, bucket, key, time.Minute)
 	if err != nil {
@@ -291,7 +306,7 @@ func (p *S3Provider) DetectContentType(ctx context.Context, bucket, key string) 
 	if len(prefix) == 0 {
 		return "", ErrObjectMismatch
 	}
-	return strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(prefix), ";")[0])), nil
+	return detectEvidenceContentType(prefix), nil
 }
 
 func (p *S3Provider) Head(ctx context.Context, bucket, key string) (ObjectInfo, error) {
