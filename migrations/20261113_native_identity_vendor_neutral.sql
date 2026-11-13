@@ -25,5 +25,15 @@ COMMENT ON COLUMN testagram_identity.identity_applications.adult_verification_se
   'Testagram-owned verification session identifier; no third-party provider session is required.';
 COMMENT ON COLUMN testagram_identity.identity_applications.adult_verification_checked_at IS
   'Timestamp when Testagram staff completed the native age-assurance review.';
+COMMENT ON COLUMN testagram_identity.identity_applications.adult_verification_provider IS
+  'Native Testagram verification method identifier; no external vendor is required.';
+COMMENT ON COLUMN testagram_identity.identity_applications.adult_verification_reference IS
+  'Opaque Testagram evidence audit reference for the completed verification decision.';
+COMMENT ON COLUMN testagram_identity.identity_applications.adult_verification_result IS
+  'Native Testagram age-assurance state: pending, manual_review, verified or failed.';
+COMMENT ON COLUMN testagram_identity.identity_applications.adult_verification_mode IS
+  'Age-assurance mode requested by Testagram; currently age_only.';
+COMMENT ON COLUMN testagram_identity.identity_applications.adult_verification_threshold IS
+  'Minimum age threshold required by Testagram registration policy.';
 
 COMMIT;
