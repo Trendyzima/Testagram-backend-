@@ -123,7 +123,13 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	// an existing Testagram profile, posts, actor ID, or storage ownership.
 	// Signup provisioning and existing-account linking are separate trusted,
 	// transactional flows; unknown identities fail closed here.
-	err = s.db.QueryRow(ctx, `
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("Testagram identity store is unavailable")
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	err = tx.QueryRow(ctx, `
 		UPDATE testagram_identity.appwrite_accounts
 		SET email = COALESCE(NULLIF($2, ''), email),
 		    email_verified = $3,
@@ -137,39 +143,68 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("Appwrite identity could not be mapped to the Testagram account")
 	}
+
 	if account.EmailVerification {
-		// A newly provisioned account remains deactivated until Appwrite confirms
-		// the email. The first verified Appwrite request completes the saga.
-		if _, err := s.db.Exec(ctx, `
-			UPDATE testagram_local.accounts a
-			SET account_status='active',updated_at=now()
-			WHERE a.user_id=$1::uuid
-			  AND EXISTS (
-			    SELECT 1 FROM testagram_identity.registration_provisioning p
-			    WHERE p.canonical_user_id=a.user_id
-			      AND p.appwrite_user_id=$2
-			      AND p.status='linked'
-			  )
-		`, canonicalID, account.ID); err != nil {
-			return "", http.StatusServiceUnavailable, errors.New("Testagram account activation could not be completed")
+		// Complete the email-verification activation transition atomically.
+		// A partial sequence must never leave an active account with a stale
+		// provisioning state, or a completed saga with a still-deactivated user.
+		var provisioningStatus string
+		provisioningErr := tx.QueryRow(ctx, `
+			SELECT status
+			FROM testagram_identity.registration_provisioning
+			WHERE appwrite_user_id=$1 AND canonical_user_id=$2::uuid
+			FOR UPDATE
+		`, account.ID, canonicalID).Scan(&provisioningStatus)
+		if provisioningErr == nil && provisioningStatus == "linked" {
+			var accountStatus string
+			if err := tx.QueryRow(ctx, `
+				SELECT account_status FROM testagram_local.accounts
+				WHERE user_id=$1::uuid FOR UPDATE
+			`, canonicalID).Scan(&accountStatus); err != nil {
+					return "", http.StatusServiceUnavailable, errors.New("Testagram account state could not be verified")
+			}
+			if accountStatus == "suspended" {
+				return "", http.StatusForbidden, errors.New("Testagram account is suspended")
+			}
+			if accountStatus != "active" && accountStatus != "deactivated" {
+				return "", http.StatusForbidden, errors.New("Testagram account is not eligible for activation")
+			}
+			if accountStatus == "deactivated" {
+				tag, err := tx.Exec(ctx, `
+					UPDATE testagram_local.accounts
+					SET account_status='active',updated_at=now()
+					WHERE user_id=$1::uuid AND account_status='deactivated'
+				`, canonicalID)
+				if err != nil || tag.RowsAffected() != 1 {
+					return "", http.StatusServiceUnavailable, errors.New("Testagram account activation could not be completed")
+				}
+			}
+			tag, err := tx.Exec(ctx, `
+				UPDATE testagram_identity.registration_provisioning
+				SET status='completed',completed_at=COALESCE(completed_at,now()),updated_at=now()
+				WHERE appwrite_user_id=$1 AND canonical_user_id=$2::uuid AND status='linked'
+			`, account.ID, canonicalID)
+			if err != nil || tag.RowsAffected() != 1 {
+				return "", http.StatusServiceUnavailable, errors.New("Testagram provisioning state could not be completed")
+			}
+			tag, err = tx.Exec(ctx, `
+				UPDATE testagram_identity.identity_applications a
+				SET status='provisioned',updated_at=now()
+				FROM testagram_identity.registration_provisioning p
+				WHERE p.application_id=a.id AND p.appwrite_user_id=$1
+				  AND p.canonical_user_id=$2::uuid AND p.status='completed'
+				  AND a.status='provisioning'
+			`, account.ID, canonicalID)
+			if err != nil || tag.RowsAffected() != 1 {
+				return "", http.StatusServiceUnavailable, errors.New("Testagram application state could not be completed")
+			}
+		} else if provisioningErr != nil && !errors.Is(provisioningErr, pgx.ErrNoRows) {
+			return "", http.StatusServiceUnavailable, errors.New("Testagram provisioning state could not be read")
 		}
-		if _, err := s.db.Exec(ctx, `
-			UPDATE testagram_identity.registration_provisioning
-			SET status='completed',updated_at=now()
-			WHERE appwrite_user_id=$1 AND canonical_user_id=$2::uuid AND status='linked'
-		`, account.ID, canonicalID); err != nil {
-			return "", http.StatusServiceUnavailable, errors.New("Testagram provisioning state could not be completed")
-		}
-		if _, err := s.db.Exec(ctx, `
-			UPDATE testagram_identity.identity_applications a
-			SET status='provisioned',updated_at=now()
-			FROM testagram_identity.registration_provisioning p
-			WHERE p.application_id=a.id AND p.appwrite_user_id=$1
-			  AND p.canonical_user_id=$2::uuid AND p.status='completed'
-			  AND a.status='provisioning'
-		`, account.ID, canonicalID); err != nil {
-			return "", http.StatusServiceUnavailable, errors.New("Testagram application state could not be completed")
-		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("Testagram identity update could not be committed")
 	}
 	return canonicalID, http.StatusOK, nil
 }
