@@ -47,7 +47,7 @@ BEGIN
     ALTER TABLE testagram_identity.verification_sessions
       ADD CONSTRAINT verification_sessions_age_threshold_check
       CHECK (
-        (purpose='age_assurance' AND requested_minimum_age BETWEEN 13 AND 100)
+        (purpose='age_assurance' AND requested_minimum_age IS NOT NULL AND requested_minimum_age BETWEEN 13 AND 100)
         OR (purpose='identity_assurance' AND requested_minimum_age IS NULL)
       ) NOT VALID;
   END IF;
