@@ -481,7 +481,17 @@ jobs:
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
-          assert "envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token}" in deploy, "deployment must forward the Federation read secret to the VPS environment"
+          assert "envs:(" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
+          assert "DATA_CENTRE_MEDIA_ENABLED:$media_enabled" in deploy and 'if $media_enabled == "true" then' in deploy, "media provider credentials must be forwarded only after explicit media activation"
+          for check in (
+              "DATA_CENTRE_MEDIA_ENABLED",
+              "media-migrate",
+              "up -d --build --force-recreate media",
+              'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media MEDIA_INTERNAL_TOKEN',
+              "Backend-to-Data-Centre private media readiness",
+              'media-enabled.txt',
+          ):
+              assert check in deploy, f"deployment must wire and verify private Data Centre media: {check}"
           assert "must be distinct from FEDERATION_INGRESS_TOKEN" in deploy, "Federation credentials must remain independently keyed"
           for check in (
               'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_BACKEND_INTERNAL_TOKEN',
