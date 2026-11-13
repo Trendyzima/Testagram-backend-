@@ -79,6 +79,7 @@ type service struct {
 	mediaReplicator           *virtualstorage.Replicator
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
+	idswyftWebhookReady       bool
 }
 
 type capabilityRequest struct {
@@ -480,6 +481,11 @@ func (s *service) routes() http.Handler {
 		}
 		_, _ = w.Write([]byte(output.String()))
 	})
+	// Public identity enrollment is a separate, Appwrite-backed review workflow.
+	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/applications", s.identityApplicationCreate)
+	mux.HandleFunc("GET /api/identity/applications/{application_id}", s.identityApplicationStatus)
+	mux.HandleFunc("POST /internal/v1/identity/idswyft-webhook", s.idswyftIdentityWebhook)
 	// Independent authentication routes use Testagram PostgreSQL only; Redis, Upstash and Supabase are not in this request path.
 	for _, action := range []string{"signup", "resend-verification", "verify-email", "login", "forgot-password", "reset-password"} {
 		action := action
@@ -704,7 +710,7 @@ func (s *service) cors(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key, x-request-id, accept")
+	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key, x-application-token, x-request-id, accept")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if origin == "" {
 		return true // non-browser clients do not use CORS
