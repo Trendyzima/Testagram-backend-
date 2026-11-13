@@ -422,6 +422,26 @@ jobs:
           verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
           verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
 
+          # Verify the actual container Config.Env values without ever printing credentials.
+          verify_container_env() {
+            local compose_file="$1" service="$2" key="$3" expected="$4" container actual_env
+            container="$(sudo docker compose --env-file "$DC_ENV" -f "$compose_file" ps -q "$service")"
+            if [[ -z "$container" ]]; then
+              echo "::error::Cannot verify $key: service $service has no running container."
+              return 1
+            fi
+            actual_env="$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container")"
+            if ! grep -Fqx -- "$key=$expected" <<< "$actual_env"; then
+              echo "::error::Runtime environment mismatch for $service/$key (credential value redacted)."
+              return 1
+            fi
+            echo "Verified runtime environment: $service/$key (value redacted)."
+          }
+          verify_container_env "$BASE_COMPOSE" api FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+          verify_container_env "$BASE_COMPOSE" api FEDERATION_INTERNAL_TOKEN "$FEDERATION_INGRESS_TOKEN"
+          verify_container_env "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+          verify_container_env "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+
           echo "Data Centre overlay status: $overlay_status"
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
           sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
