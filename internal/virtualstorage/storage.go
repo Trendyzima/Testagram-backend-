@@ -48,7 +48,7 @@ var (
 	ErrObjectMismatch    = errors.New("uploaded object does not match declared metadata")
 	ErrChecksumMismatch  = errors.New("uploaded object SHA-256 does not match expected checksum")
 	ErrChecksumUnavailable = errors.New("storage provider cannot calculate a content SHA-256")
-	tenantIDPattern     = )
+	)
 	namespacePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 )
 
