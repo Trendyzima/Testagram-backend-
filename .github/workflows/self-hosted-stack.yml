@@ -52,6 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Verify immutable Go CDN image is publicly pullable by Instabox
+        run: docker pull ghcr.io/trendyzima/testagram-edge@sha256:d90bc8efa3425cda5b3ac104f9c8daa186a9e79970f855c1acca772f8434374a
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.10"
