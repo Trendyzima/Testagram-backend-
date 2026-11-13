@@ -500,6 +500,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/submit", s.identityEvidenceSubmit)
 	mux.HandleFunc("OPTIONS /api/admin/identity/review-queue", s.mediaPreflight)
 	mux.HandleFunc("GET /api/admin/identity/review-queue", s.identityReviewQueue)
+	mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.mediaPreflight)
+	mux.HandleFunc("GET /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.identityReviewEvidence)
 	mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/decision", s.mediaPreflight)
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", s.identityReviewDecision)
 	mux.HandleFunc("OPTIONS /api/admin/identity/applications/{application_id}/approve", s.mediaPreflight)
