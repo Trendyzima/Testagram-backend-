@@ -725,7 +725,7 @@ func (s *service) cors(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key, x-application-token, x-request-id, accept")
+	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key, x-application-token, x-verification-session-token, x-identity-approval-token, x-identity-approval-jti, x-request-id, accept")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if origin == "" {
 		return true // non-browser clients do not use CORS
