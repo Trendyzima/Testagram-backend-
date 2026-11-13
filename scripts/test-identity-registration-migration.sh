@@ -37,7 +37,7 @@ for migration in \
   migrations/20261111_identity_registration_pipeline.sql \
   migrations/20261113_identity_registration_hardening.sql \
   migrations/20261113_identity_idswyft_intake.sql \
-  migrations/20261113_native_identity_verification.sql \\
+  migrations/20261113_native_identity_verification.sql \
   migrations/20261114_native_identity_integrity.sql; do
   psql_ci < "$migration"
 done
