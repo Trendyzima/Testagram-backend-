@@ -45,11 +45,20 @@ for pair in "Backend|$BACKEND_COMPOSE|$BACKEND_ENV" "Data Centre|$DC_COMPOSE|$DC
     continue
   fi
   pass "$label Compose and environment files exist"
-  if ! sudo docker compose --env-file "$env_file" -f "$compose_file" ps --all; then
+  compose_args=(--env-file "$env_file" -f "$compose_file")
+  if ! sudo docker compose "${compose_args[@]}" ps --all; then
     fail "$label Compose inventory could not be read"
     continue
   fi
-  mapfile -t stack_ids < <(sudo docker compose --env-file "$env_file" -f "$compose_file" ps --all -q)
+  config="$(sudo docker compose "${compose_args[@]}" config --format json)"
+  mapfile -t expected_services < <(jq -r '.services | to_entries[] | select((.value.profiles // []) | length == 0) | .key' <<<"$config")
+  mapfile -t present_services < <(sudo docker compose "${compose_args[@]}" ps --all --services | sort -u)
+  for service in "${expected_services[@]}"; do
+    if ! printf '%s\n' "${present_services[@]}" | grep -Fxq "$service"; then
+      fail "$label service $service has no container"
+    fi
+  done
+  mapfile -t stack_ids < <(sudo docker compose "${compose_args[@]}" ps --all -q)
   for id in "${stack_ids[@]}"; do
     [[ -z "$id" ]] && continue
     if [[ -z "${seen_container_ids[$id]:-}" ]]; then
