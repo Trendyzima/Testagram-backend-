@@ -24,8 +24,8 @@ mc mb --ignore-existing "local/$identity_bucket"
 mc anonymous set none "local/$identity_bucket"
 
 if [ -n "${MINIO_MEDIA_ACCESS_KEY:-}" ] && [ -n "${MINIO_MEDIA_SECRET_KEY:-}" ]; then
-  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::%s/*","arn:aws:s3:::%s/*"]}]}\n' \
-    "$private_bucket" "$public_bucket" > /tmp/testagram-media-policy.json
+  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::%s/*","arn:aws:s3:::%s/*","arn:aws:s3:::%s/*"]}]}\n' \
+    "$private_bucket" "$public_bucket" "$identity_bucket" > /tmp/testagram-media-policy.json
   mc admin policy create local testagram-media-api /tmp/testagram-media-policy.json || true
   mc admin user add local "$MINIO_MEDIA_ACCESS_KEY" "$MINIO_MEDIA_SECRET_KEY" >/dev/null 2>&1 || true
   mc admin policy attach local testagram-media-api --user "$MINIO_MEDIA_ACCESS_KEY"
