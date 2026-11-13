@@ -4,12 +4,12 @@ The watchdog runs from GitHub Actions, outside the Testagram VPS, every five min
 
 ## Required GitHub configuration
 
-Set these repository **Actions variables**:
+The workflow defaults to the previously confirmed machine and API endpoint, so no non-secret variable is required for the initial setup. Optional repository **Actions variables** can override these defaults:
 
-- `INSTABOX_MACHINE_NAME`: exact machine display name; defaults to the previously confirmed `testagramdb`. The watchdog resolves it to an immutable ID through the read-only machine-list API and refuses to act if the match is missing or ambiguous.
-- Optional `INSTABOX_MACHINE_ID`: exact immutable machine ID, if you prefer pinning the resource directly. When supplied, the script also verifies the configured name against the returned machine.
-- `TESTAGRAM_HEALTH_URL`: `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz`
-- `TESTAGRAM_READINESS_URL`: `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz`
+- `INSTABOX_MACHINE_NAME`: exact machine display name (default: `testagramdb`). The watchdog resolves it to an immutable ID through the read-only machine-list API and refuses to act if the match is missing or ambiguous.
+- `INSTABOX_MACHINE_ID`: exact immutable machine ID, if you prefer pinning the resource directly. When supplied, the script also verifies the configured name against the returned machine.
+- `TESTAGRAM_HEALTH_URL`: default `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz`
+- `TESTAGRAM_READINESS_URL`: default `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz`
 
 Set this repository **Actions secret**:
 
