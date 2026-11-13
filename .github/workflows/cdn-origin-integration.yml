@@ -1,0 +1,72 @@
+name: CDN Origin PostgreSQL Integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cmd/api/media.go"
+      - "cmd/api/media_cdn_origin_test.go"
+      - "internal/media/**"
+      - "internal/mediaassertion/**"
+      - "migrations/005_media_assets.sql"
+      - "migrations/006_media_lifecycle.sql"
+      - "migrations/008_virtual_storage_bridge.sql"
+      - ".github/workflows/cdn-origin-integration.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cmd/api/media.go"
+      - "cmd/api/media_cdn_origin_test.go"
+      - "internal/media/**"
+      - "internal/mediaassertion/**"
+      - "migrations/005_media_assets.sql"
+      - "migrations/006_media_lifecycle.sql"
+      - "migrations/008_virtual_storage_bridge.sql"
+      - ".github/workflows/cdn-origin-integration.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cdn-origin-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-origin:
+    name: Backend CDN origin authorization and delivery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-cdn-origin-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-cdn-origin-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-cdn-origin-ci
+          exit 1
+      - name: Apply the production media metadata migrations
+        run: |
+          set -euo pipefail
+          for migration in \
+            migrations/005_media_assets.sql \
+            migrations/006_media_lifecycle.sql \
+            migrations/008_virtual_storage_bridge.sql; do
+            docker exec -i testagram-cdn-origin-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
+          done
+      - name: Exercise public/private authorization, method signing, Range and HEAD
+        env:
+          TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run TestMediaCDNOriginPostgresIntegration -count=1 -v
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-cdn-origin-ci || true
