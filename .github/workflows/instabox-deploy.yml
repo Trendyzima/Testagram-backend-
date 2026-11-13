@@ -296,10 +296,10 @@ jobs:
 
           echo "Starting PostgreSQL, MinIO and the native Go API..."
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
-          sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
+          host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
 
-          host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
+          echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" pull media-cache
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate media-cache
           cdn_ready=false
