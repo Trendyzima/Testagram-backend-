@@ -150,12 +150,12 @@ func TestMediaCDNOriginPostgresIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open media-origin PostgreSQL pool: %v", err)
 	}
-	ownerID := fmt.Sprintf("cdn_ci_%x", time.Now().UnixNano())
-	viewerID := "cdn_viewer_" + strings.TrimPrefix(ownerID, "cdn_ci_")
+	ownerID := fmt.Sprintf("cdnci-%x", time.Now().UnixNano())
+	viewerID := "cdn_viewer_" + strings.TrimPrefix(ownerID, "cdnci-")
 	publicKey := "users/" + ownerID + "/" + strings.Repeat("1", 32)
 	privateKey := "users/" + ownerID + "/" + strings.Repeat("2", 32)
 	quarantinedKey := "users/" + ownerID + "/" + strings.Repeat("3", 32)
-	mismatchedKey := "users/different_owner/" + strings.Repeat("4", 32)
+	mismatchedKey := "users/different-owner/" + strings.Repeat("4", 32)
 
 	insertAsset := func(key, owner, visibility, status string) {
 		t.Helper()
