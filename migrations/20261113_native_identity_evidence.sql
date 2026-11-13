@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS testagram_identity.verification_evidence (
   object_key TEXT NOT NULL UNIQUE CHECK (
     length(object_key) BETWEEN 16 AND 512
     AND object_key !~ '(^|/)\.\.?(/|$)'
-    AND object_key !~ '[\\r\\n]'
+    AND position(chr(10) in object_key)=0
+    AND position(chr(13) in object_key)=0
   ),
   content_type TEXT NOT NULL CHECK (content_type IN (
     'image/jpeg','image/png','image/webp','application/pdf'
