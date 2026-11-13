@@ -230,3 +230,10 @@ func TestPresignObjectPutSignsKnownOwnerScopedKey(t *testing.T) {
 		t.Fatal("cross-owner PUT URL must be rejected")
 	}
 }
+
+func TestUploadIntentAcceptsAppwriteOwnerIDCharacters(t *testing.T) {
+	s := testSigner(t, "https://s3.example.invalid")
+	intent, err := s.CreateUploadIntent("appwrite.user_123", "image/webp", "private", 1024, time.Now())
+	if err != nil { t.Fatalf("Appwrite owner ID rejected: %v", err) }
+	if !strings.HasPrefix(intent.Key, "users/appwrite.user_123/") { t.Fatalf("owner binding incorrect: %s", intent.Key) }
+}
