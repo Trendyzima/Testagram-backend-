@@ -46,6 +46,8 @@ The native backend branch now provides:
 - `GET /api/admin/identity/review-queue`: Appwrite-authenticated staff queue with short-lived private evidence URLs.
 - `POST /api/admin/identity/sessions/{session_id}/decision`: requires two matching, distinct staff decisions; self-review is rejected.
 - `POST /api/admin/identity/applications/{application_id}/approve`: connects the two verified reviewers to the existing two-person sensitive-action ledger and marks the application approved only after both approvals. It deliberately does not expose a provisioning bearer token to staff.
+- `POST /api/identity/applications/{application_id}/provisioning-token`: the applicant proves possession of the application token and receives a 15-minute one-time provisioning token only after the two-person ledger is complete.
+- `POST /api/identity/applications/{application_id}/redeem`: validates the one-time token and the caller's Appwrite JWT, requires an exact email match, links the Appwrite identity to a new canonical Testagram UUID, and creates the local account in a deactivated state until email verification. Provisioning is idempotent for the same Appwrite identity.
 
 The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or calls an Idswyft API. The historical intake migration remains in migration history so already-migrated databases are upgraded safely; it is not a runtime dependency.
 
@@ -53,7 +55,7 @@ The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or
 
 1. Run and pass the isolated PostgreSQL migration/invariant workflow with the new evidence metadata migration.
 2. Pass Go formatting, unit, race, vet, build, OpenAPI and container CI on this branch.
-3. Implement applicant-bound approval-token issuance/redemption and connect it to the existing Appwrite/canonical-account provisioning saga, including idempotent retries and compensation.
-4. Integrate the Flutter applicant journey with native session creation, upload, submit and status polling; integrate the staff review surface.
-5. Exercise real private-bucket upload, checksum verification, short-lived reviewer download, expiry and retention deletion in staging.
+3. Add integration tests for the provisioning-token and redemption endpoints, including expired/replayed tokens, existing Appwrite identities, email mismatch, username conflict, and retry after partial Appwrite signup.
+4. Complete Flutter integration tests for the approved-account provisioning step, secure token persistence/resume, and the staff review surface.
+5. Exercise real private-bucket upload, exact Content-Length enforcement, checksum verification, short-lived reviewer download, expiry and retention deletion in staging.
 6. Run complete applicant-to-provisioned-account end-to-end and security tests. Public registration remains disabled until these gates pass.
