@@ -115,6 +115,7 @@ jobs:
         id: remote
         env:
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
+          ONSPACE_AI_API_KEY: ${{ secrets.ONSPACE_AI_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -274,6 +275,13 @@ jobs:
           fi
           FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
           write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
+          if [[ -n "${ONSPACE_AI_API_KEY:-}" ]]; then
+            # The provider key is sent only over the authenticated machine-exec
+            # channel and stored in the private deployment env, never logged.
+            write_env_value ONSPACE_AI_API_KEY "$ONSPACE_AI_API_KEY"
+          elif [[ -z "$(read_env_value ONSPACE_AI_API_KEY)" ]]; then
+            echo "WARNING: ONSPACE_AI_API_KEY is not configured; post publishing remains fail-closed."
+          fi
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
             if grep -q '^APPWRITE_PROJECT_ID=' "$BASE_ENV"; then
               sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$BASE_ENV"
@@ -477,7 +485,7 @@ jobs:
           echo "REMOTE_DEPLOY_STARTED"
           REMOTE_OUTER
 
-          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token},timeoutSeconds:90}')"
+          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" --arg onspace_key "${ONSPACE_AI_API_KEY:-}" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,ONSPACE_AI_API_KEY:$onspace_key},timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
