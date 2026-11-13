@@ -49,7 +49,7 @@ The native backend branch now provides:
 - `POST /api/identity/applications/{application_id}/provisioning-token`: the applicant proves possession of the application token and receives a 15-minute one-time provisioning token only after the two-person ledger is complete.
 - `POST /api/identity/applications/{application_id}/redeem`: validates the one-time token and the caller's Appwrite JWT, requires an exact email match, links the Appwrite identity to a new canonical Testagram UUID, and creates the local account in a deactivated state until email verification. Provisioning is idempotent for the same Appwrite identity.
 
-The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or calls an Idswyft API. The historical intake migration remains in migration history so already-migrated databases are upgraded safely; it is not a runtime dependency.
+The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or calls an Idswyft API. The historical intake migration remains in migration history for upgrade compatibility. A follow-up migration removes its webhook-only column from the live schema; it is not a runtime dependency.
 
 ## Remaining delivery gates
 
