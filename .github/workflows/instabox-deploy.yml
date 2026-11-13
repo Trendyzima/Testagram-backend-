@@ -269,8 +269,8 @@ jobs:
           fi
           ensure_random_secret FEDERATION_BACKEND_INTERNAL_TOKEN
           if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; then
-            FEDERATION_BACKEND_INTERNAL_TOKEN="$(openssl rand -hex 32)"
-            write_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+            echo "::error::FEDERATION_BACKEND_INTERNAL_TOKEN must be distinct from FEDERATION_INGRESS_TOKEN."
+            exit 1
           fi
           FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
           write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
