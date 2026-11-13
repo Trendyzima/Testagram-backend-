@@ -230,6 +230,12 @@ def main() -> int:
         emit(f"machine has active operation {machine['operationId']}; leaving it undisturbed")
         return 0
 
+    # Respect explicit provider/operator intent. Recovery only applies when
+    # the desired state remains running; never undo an intentional stop/pause.
+    if desired != "running":
+        emit(f"desiredState={desired}; respecting provider/operator intent")
+        return 0
+
     if machine_state == "stopped":
         result = recover_stopped(api, state)
         notify(result, "recovery")
@@ -274,7 +280,10 @@ def main() -> int:
         emit("provider desiredState changed during probing; skipping restart")
         return 0
     result = restart_running(api, state)
-    notify(f"All {FAILURES_REQUIRED} health/readiness probes failed. {result}", "recovery")
+    if result.startswith("power-cycled"):
+        notify(f"All {FAILURES_REQUIRED} health/readiness probes failed. {result}", "recovery")
+    else:
+        emit(result)
     return 0
 
 
