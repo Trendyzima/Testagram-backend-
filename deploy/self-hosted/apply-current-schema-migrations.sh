@@ -42,9 +42,20 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="$backup_dir/testagram-pre-current-schema-$stamp.dump"
 checksum="$backup.sha256"
 
-if ! "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" ps --status running --services | grep -qx postgres; then
+postgres_container="$("${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" ps -q postgres)"
+if [[ -z "$postgres_container" ]]; then
+  echo "Starting PostgreSQL for the guarded migration."
   "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" up -d postgres
+else
+  postgres_state="$("${DOCKER[@]}" inspect --format '{{.State.Status}}' "$postgres_container")"
+  if [[ "$postgres_state" != "running" ]]; then
+    echo "Starting PostgreSQL from state $postgres_state for the guarded migration."
+    "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" up -d postgres
+  else
+    echo "Reusing the running PostgreSQL container for the guarded migration."
+  fi
 fi
+echo "Waiting for PostgreSQL readiness before creating the backup."
 for attempt in $(seq 1 40); do
   if "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
       sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
@@ -61,6 +72,7 @@ done
 "${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | tee "$backup" >/dev/null
 test -s "$backup"
+echo "Created pre-migration PostgreSQL backup."
 cat "$backup" | "${DOCKER[@]}" run --rm -i postgres:17-alpine pg_restore --list - >/dev/null
 sha256sum "$backup" > "$checksum"
 chmod 600 "$backup" "$checksum"
