@@ -104,7 +104,7 @@ func TestWriteCDNOriginResponseHEADHasHeadersButNoBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodHead, "/media/video", nil)
 	rec := httptest.NewRecorder()
 
-	writeCDNOriginResponse(rec, req, resp, "users/u1/video.mp4")
+	writeCDNOriginResponse(rec, req, resp, "users/u1/video.mp4", "private")
 
 	if rec.Code != http.StatusOK || rec.Body.Len() != 0 || rec.Header().Get("Content-Length") != "1048576" {
 		t.Fatalf("HEAD status=%d bytes=%d headers=%+v", rec.Code, rec.Body.Len(), rec.Header())
