@@ -113,11 +113,17 @@ jobs:
 
       - name: Start deployment on the machine
         id: remote
+        env:
+          FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          if [[ -z "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ]]; then
+            echo "::error::Missing FEDERATION_BACKEND_INTERNAL_TOKEN repository secret."
+            exit 1
+          fi
 
           read -r -d '' REMOTE_COMMAND <<'REMOTE_OUTER' || true
           set -euo pipefail
@@ -176,7 +182,7 @@ jobs:
             ALGORITHM_INTERNAL_TOKEN="$(openssl rand -hex 32)"
             FEDERATION_INGRESS_TOKEN="$(openssl rand -hex 32)"
             FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
-            FEDERATION_BACKEND_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+            FEDERATION_BACKEND_INTERNAL_TOKEN="${FEDERATION_BACKEND_INTERNAL_TOKEN:-$(openssl rand -hex 32)}"
             ADMIN_SESSION_KEY="$(openssl rand -hex 32)"
             GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
             cat > "$BASE_ENV" <<EOF
@@ -257,10 +263,14 @@ jobs:
             printf -v "$key" '%s' "$value"
           }
           ensure_random_secret FEDERATION_INGRESS_TOKEN
+          # The repository secret is the source of truth for standard Backend -> Federation reads.
+          if [[ -n "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ]]; then
+            write_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+          fi
           ensure_random_secret FEDERATION_BACKEND_INTERNAL_TOKEN
           if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; then
-            FEDERATION_BACKEND_INTERNAL_TOKEN="$(openssl rand -hex 32)"
-            write_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+            echo "::error::FEDERATION_BACKEND_INTERNAL_TOKEN must be distinct from FEDERATION_INGRESS_TOKEN."
+            exit 1
           fi
           FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
           write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
@@ -307,8 +317,8 @@ jobs:
           DC_ENV="$DATACENTRE/backend/.env"
           mkdir -p "$DATACENTRE/backend"
           FEDERATION_DATABASE_URL="postgresql://testagram:$POSTGRES_PASSWORD@federation-db:5432/testagram_federation?sslmode=disable"
-          TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed:sha-a600b865dc650f9417f7ae40585992932f1ceef1"
-          TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation:sha-4c94a813107bc6d5f70fc3186d8377cb275d7475"
+          TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed:sha-6ae0532c171383b84731063d590d775524f9da1e"
+          TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation:sha-edf4f59f843514596d35273c888ff1c16ec0f73e"
           if [[ ! -f "$DC_ENV" ]]; then
             cat > "$DC_ENV" <<EOF
           DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
@@ -424,7 +434,7 @@ jobs:
           echo "REMOTE_DEPLOY_STARTED"
           REMOTE_OUTER
 
-          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite},timeoutSeconds:90}')"
+          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token},timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \

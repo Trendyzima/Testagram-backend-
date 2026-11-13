@@ -468,9 +468,12 @@ jobs:
           import re
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
+          assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
+          assert "envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token}" in deploy, "deployment must forward the Federation read secret to the VPS environment"
+          assert "must be distinct from FEDERATION_INGRESS_TOKEN" in deploy, "Federation credentials must remain independently keyed"
           expected = {
-              "TESTAGRAM_ALGORITHM_IMAGE": "sha-a600b865dc650f9417f7ae40585992932f1ceef1",
-              "TESTAGRAM_FEDERATION_IMAGE": "sha-4c94a813107bc6d5f70fc3186d8377cb275d7475",
+              "TESTAGRAM_ALGORITHM_IMAGE": "sha-6ae0532c171383b84731063d590d775524f9da1e",
+              "TESTAGRAM_FEDERATION_IMAGE": "sha-edf4f59f843514596d35273c888ff1c16ec0f73e",
           }
           for key, tag in expected.items():
               if not re.search(rf'{key}="ghcr\.io/trendyzima/[^"]*{re.escape(tag)}"', deploy):
