@@ -44,7 +44,7 @@ psql_ci < migrations/20261113_identity_registration_hardening.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
-VALUES ('ci-reviewer-one','administrator'),('ci-reviewer-two','administrator');
+VALUES ('ci-reviewer-one','administrator'),('ci-reviewer-two','administrator'),('ci-intake-service','operations');
 
 DO $registration$
 DECLARE
@@ -55,21 +55,42 @@ BEGIN
   INSERT INTO testagram_auth.sensitive_action_requests
     (id,action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
   VALUES
-    (action_id,'identity.approve','ci-reviewer-one',app_id::text,
+    (action_id,'identity.approve','ci-intake-service',app_id::text,
      'CI registration approval request',jsonb_build_object('application_id',app_id::text,'email','first@example.test',
        'username','ci_first','display_name','CI First',
        'evidence_fingerprint_sha256',repeat('1',64),
        'terms_version','terms-v1','privacy_version','privacy-v1'),repeat('a',64));
 
   INSERT INTO testagram_identity.identity_applications
-    (id,email,username,display_name,adult_confirmed_at,evidence_reference,
-     evidence_fingerprint_sha256,terms_version,privacy_version,
-     terms_accepted_at,privacy_accepted_at,submission_key_sha256,
-     sensitive_action_request_id)
+    (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
+     adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
+     evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
+     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id)
   VALUES
-    (app_id,'first@example.test','ci_first','CI First',now(),'opaque-ci-evidence-ref',
-     decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
+    (app_id,'first@example.test','ci_first','CI First',now(),now(),
+     'ci-provider','ci-adult-evidence-ref',now(),
+     'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
      decode(repeat('2',64),'hex'),action_id);
+
+  -- A token cannot be issued while the ledger is still pending.
+  DO $premature_token$
+  DECLARE rejected BOOLEAN := FALSE;
+  BEGIN
+    BEGIN
+      INSERT INTO testagram_identity.identity_approval_tokens
+        (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
+         second_approver_appwrite_user_id,expires_at)
+      VALUES
+        (decode(repeat('a',64),'hex'),decode(repeat('b',64),'hex'),app_id,
+         'ci-reviewer-one','ci-reviewer-two',now()+interval '10 minutes');
+    EXCEPTION WHEN raise_exception THEN
+      rejected := TRUE;
+    END;
+    IF NOT rejected THEN
+      RAISE EXCEPTION 'token issuance before two-person approval was accepted';
+    END IF;
+  END;
+  $premature_token$;
 
   INSERT INTO testagram_identity.identity_application_reviews
     (application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference)
