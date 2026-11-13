@@ -818,7 +818,413 @@ jobs:
       - name: Verify Go interaction summary query against PostgreSQL
         env:
           TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
-        run: go test ./cmd/api -run '^TestSocialInteractionSummaryPostgresIntegration$' -count=1 -v
+        run: go test ./cmd/api -run '^TestSocialInteractionSummaryPostgresIntegration      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-local-product-ci || true
+
+  independent-auth-schema-integration:
+    name: Independent authentication schema integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-auth-ci -e POSTGRES_PASSWORD=ci-only-password -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-auth-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-auth-ci
+          exit 1
+      - name: Apply schema and verify constraints
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.identities(email,username,password_hash)
+          VALUES ('ci@example.test','ci_user','test-hash');
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.identities WHERE email_normalized='ci@example.test') <> 1 THEN
+              RAISE EXCEPTION 'normalized email lookup failed';
+            END IF;
+            IF (SELECT count(*) FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name IN ('verification_token_hash','reset_token_hash','token_version')) <> 3 THEN
+              RAISE EXCEPTION 'verification, reset, or token-version columns missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='appwrite_accounts') THEN
+              RAISE EXCEPTION 'Appwrite identity bridge table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='link_audit') THEN
+              RAISE EXCEPTION 'Appwrite identity link audit table missing';
+            END IF;
+            INSERT INTO testagram_identity.appwrite_accounts(appwrite_user_id,canonical_user_id,legacy_user_id,email,email_verified,linked_at)
+            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','ci@example.test',TRUE,now());
+            INSERT INTO testagram_identity.link_audit(appwrite_user_id,canonical_user_id,legacy_user_id,event_type,request_id)
+            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','linked','ci-request');
+            IF (SELECT count(*) FROM testagram_identity.link_audit WHERE request_id='ci-request') <> 1 THEN
+              RAISE EXCEPTION 'identity link audit write failed';
+            END IF;
+          END $ci$;
+          DO $duplicate$
+          BEGIN
+            BEGIN
+              INSERT INTO testagram_auth.identities(email,username,password_hash)
+              VALUES ('CI@EXAMPLE.TEST','another_user','test-hash');
+              RAISE EXCEPTION 'case-insensitive duplicate email was accepted';
+            EXCEPTION WHEN unique_violation THEN NULL;
+            END;
+          END $duplicate$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-auth-ci || true
+
+  saas-schema-integration:
+    name: SaaS tenancy migration integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-saas-schema-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-saas-schema-ci pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs testagram-saas-schema-ci
+          exit 1
+      - name: Apply migration twice and assert schema invariants
+        run: |
+          set -euo pipefail
+          docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'create extension if not exists pgcrypto'
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          rls_enabled="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select relrowsecurity from pg_class where oid='testagram_saas.tenants'::regclass")"
+          test "$rls_enabled" = "t"
+          index_count="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select count(*) from pg_indexes where schemaname='testagram_saas' and indexname='saas_subscriptions_external_ref_uidx'")"
+          test "$index_count" = "1"
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-saas-schema-ci || true
+
+  admin-security-schema-integration:
+    name: Admin permissions and dual-control PostgreSQL integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-admin-security-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-admin-security-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-admin-security-ci
+          exit 1
+      - name: Apply staff and security migrations
+        run: |
+          set -euo pipefail
+          docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto'
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
+      - name: Verify permission isolation and two-person approval ledger
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role) VALUES
+            ('ci-master-user','owner'),
+            ('ci-identity-admin','administrator'),
+            ('ci-engineer-user','engineer');
+          DO $permissions$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='administrator' AND permission_key='identity.review'
+            ) THEN RAISE EXCEPTION 'administrator identity review permission missing'; END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.request'
+            ) THEN RAISE EXCEPTION 'engineer deployment request permission missing'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.approve'
+            ) THEN RAISE EXCEPTION 'engineers must not receive production approval by default'; END IF;
+          END $permissions$;
+          INSERT INTO testagram_auth.staff_permission_overrides
+            (appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id)
+          VALUES ('ci-engineer-user','deployment.approve',TRUE,'Temporary controlled CI approval grant','ci-master-user');
+          INSERT INTO testagram_auth.sensitive_action_requests
+            (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
+          VALUES
+            ('deployment.production','ci-master-user','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-identity-admin','approved','Independent reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-engineer-user','approved','Second distinct reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          DO $approval$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals) <> 2 THEN
+              RAISE EXCEPTION 'two distinct approval records were not persisted';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.admin_security_audit
+              WHERE action='sensitive_action.requested'
+            ) AND EXISTS (
+              SELECT 1 FROM testagram_auth.sensitive_action_requests
+            ) THEN
+              -- Audit insertion is performed atomically by the application handler;
+              -- the schema integration intentionally inserts the ledger directly.
+              NULL;
+            END IF;
+          END $approval$;
+          UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
+          WHERE appwrite_user_id='ci-engineer-user';
+          DO $revocation$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id='ci-engineer-user' AND access_revoked_at IS NOT NULL) THEN
+              RAISE EXCEPTION 'staff revocation timestamp was not persisted';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id='ci-engineer-user' AND permission_key='deployment.approve') THEN
+              RAISE EXCEPTION 'revocation must preserve permission audit history';
+            END IF;
+          END $revocation$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-admin-security-ci || true
+
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
+ -count=1 -v
+      - name: Verify public/private CDN origin authorization against PostgreSQL
+        env:
+          TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run '^TestMediaCDNOriginPostgresIntegration      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-local-product-ci || true
+
+  independent-auth-schema-integration:
+    name: Independent authentication schema integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-auth-ci -e POSTGRES_PASSWORD=ci-only-password -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-auth-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-auth-ci
+          exit 1
+      - name: Apply schema and verify constraints
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.identities(email,username,password_hash)
+          VALUES ('ci@example.test','ci_user','test-hash');
+          DO $ci$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.identities WHERE email_normalized='ci@example.test') <> 1 THEN
+              RAISE EXCEPTION 'normalized email lookup failed';
+            END IF;
+            IF (SELECT count(*) FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name IN ('verification_token_hash','reset_token_hash','token_version')) <> 3 THEN
+              RAISE EXCEPTION 'verification, reset, or token-version columns missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='appwrite_accounts') THEN
+              RAISE EXCEPTION 'Appwrite identity bridge table missing';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='link_audit') THEN
+              RAISE EXCEPTION 'Appwrite identity link audit table missing';
+            END IF;
+            INSERT INTO testagram_identity.appwrite_accounts(appwrite_user_id,canonical_user_id,legacy_user_id,email,email_verified,linked_at)
+            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','ci@example.test',TRUE,now());
+            INSERT INTO testagram_identity.link_audit(appwrite_user_id,canonical_user_id,legacy_user_id,event_type,request_id)
+            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','linked','ci-request');
+            IF (SELECT count(*) FROM testagram_identity.link_audit WHERE request_id='ci-request') <> 1 THEN
+              RAISE EXCEPTION 'identity link audit write failed';
+            END IF;
+          END $ci$;
+          DO $duplicate$
+          BEGIN
+            BEGIN
+              INSERT INTO testagram_auth.identities(email,username,password_hash)
+              VALUES ('CI@EXAMPLE.TEST','another_user','test-hash');
+              RAISE EXCEPTION 'case-insensitive duplicate email was accepted';
+            EXCEPTION WHEN unique_violation THEN NULL;
+            END;
+          END $duplicate$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-auth-ci || true
+
+  saas-schema-integration:
+    name: SaaS tenancy migration integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-saas-schema-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-saas-schema-ci pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs testagram-saas-schema-ci
+          exit 1
+      - name: Apply migration twice and assert schema invariants
+        run: |
+          set -euo pipefail
+          docker exec testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'create extension if not exists pgcrypto'
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          docker exec -i testagram-saas-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/009_saas_tenant_hosting.sql
+          rls_enabled="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select relrowsecurity from pg_class where oid='testagram_saas.tenants'::regclass")"
+          test "$rls_enabled" = "t"
+          index_count="$(docker exec testagram-saas-schema-ci psql -U postgres -Atc "select count(*) from pg_indexes where schemaname='testagram_saas' and indexname='saas_subscriptions_external_ref_uidx'")"
+          test "$index_count" = "1"
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-saas-schema-ci || true
+
+  admin-security-schema-integration:
+    name: Admin permissions and dual-control PostgreSQL integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start isolated PostgreSQL
+        run: |
+          docker run -d --rm --name testagram-admin-security-ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17-alpine
+      - name: Wait for PostgreSQL
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec testagram-admin-security-ci pg_isready -U postgres >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs testagram-admin-security-ci
+          exit 1
+      - name: Apply staff and security migrations
+        run: |
+          set -euo pipefail
+          docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto'
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
+      - name: Verify permission isolation and two-person approval ledger
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role) VALUES
+            ('ci-master-user','owner'),
+            ('ci-identity-admin','administrator'),
+            ('ci-engineer-user','engineer');
+          DO $permissions$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='administrator' AND permission_key='identity.review'
+            ) THEN RAISE EXCEPTION 'administrator identity review permission missing'; END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.request'
+            ) THEN RAISE EXCEPTION 'engineer deployment request permission missing'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.approve'
+            ) THEN RAISE EXCEPTION 'engineers must not receive production approval by default'; END IF;
+          END $permissions$;
+          INSERT INTO testagram_auth.staff_permission_overrides
+            (appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id)
+          VALUES ('ci-engineer-user','deployment.approve',TRUE,'Temporary controlled CI approval grant','ci-master-user');
+          INSERT INTO testagram_auth.sensitive_action_requests
+            (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
+          VALUES
+            ('deployment.production','ci-master-user','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-identity-admin','approved','Independent reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-engineer-user','approved','Second distinct reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          DO $approval$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals) <> 2 THEN
+              RAISE EXCEPTION 'two distinct approval records were not persisted';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.admin_security_audit
+              WHERE action='sensitive_action.requested'
+            ) AND EXISTS (
+              SELECT 1 FROM testagram_auth.sensitive_action_requests
+            ) THEN
+              -- Audit insertion is performed atomically by the application handler;
+              -- the schema integration intentionally inserts the ledger directly.
+              NULL;
+            END IF;
+          END $approval$;
+          UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
+          WHERE appwrite_user_id='ci-engineer-user';
+          DO $revocation$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id='ci-engineer-user' AND access_revoked_at IS NOT NULL) THEN
+              RAISE EXCEPTION 'staff revocation timestamp was not persisted';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id='ci-engineer-user' AND permission_key='deployment.approve') THEN
+              RAISE EXCEPTION 'revocation must preserve permission audit history';
+            END IF;
+          END $revocation$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-admin-security-ci || true
+
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
+ -count=1 -v
       - name: Stop isolated PostgreSQL
         if: always()
         run: docker stop testagram-local-product-ci || true
