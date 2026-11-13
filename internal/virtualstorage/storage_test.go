@@ -134,3 +134,12 @@ func TestNewRejectsDuplicateNamespaceAndInvalidPolicy(t *testing.T) {
 		t.Fatalf("invalid namespace error = %v, want ErrInvalidNamespace", err)
 	}
 }
+
+func TestStorageTenantAcceptsAppwriteOwnerIDCharacters(t *testing.T) {
+	provider := &fakeProvider{}
+	m, err := New(provider, []Namespace{{Name:"media-private",PhysicalBucket:"private",MaxObjectBytes:1<<20,AllowedTypes:map[string]struct{}{"image/webp":{}},UploadTTL:time.Minute,DownloadTTL:time.Minute}})
+	if err != nil { t.Fatal(err) }
+	if _, err := m.UploadURL(context.Background(), "appwrite.user_123", "media-private", "users/appwrite.user_123/0123456789abcdef0123456789abcdef", "image/webp", 100); err != nil {
+		t.Fatalf("Appwrite owner ID rejected: %v", err)
+	}
+}
