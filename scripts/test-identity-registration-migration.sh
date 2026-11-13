@@ -125,7 +125,7 @@ BEGIN
        evidence_fingerprint_sha256,terms_version,privacy_version,
        terms_accepted_at,privacy_accepted_at)
     VALUES
-      ('FIRST@example.test','other_user','Duplicate email',now(),'opaque-ci-evidence-ref-2',
+      ('first@example.test','other_user','Duplicate email',now(),'opaque-ci-evidence-ref-2',
        decode(repeat('6',64),'hex'),'terms-v1','privacy-v1',now(),now());
     RAISE EXCEPTION 'active duplicate email was accepted';
   EXCEPTION WHEN unique_violation THEN
