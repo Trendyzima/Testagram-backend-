@@ -494,6 +494,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/identity/sessions/{session_id}", s.identitySessionStatus)
 	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/upload-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/upload-url", s.identityEvidenceUploadURL)
+	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/{evidence_id}/upload", s.mediaPreflight)
+	mux.HandleFunc("PUT /api/identity/sessions/{session_id}/evidence/{evidence_id}/upload", s.identityEvidenceUpload)
 	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/submit", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/submit", s.identityEvidenceSubmit)
 	mux.HandleFunc("OPTIONS /api/admin/identity/review-queue", s.mediaPreflight)
