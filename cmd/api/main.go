@@ -483,6 +483,10 @@ func (s *service) routes() http.Handler {
 	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
+	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}/provisioning-token", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/applications/{application_id}/provisioning-token", s.identityProvisioningToken)
+	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}/redeem", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/applications/{application_id}/redeem", s.identityProvisioningRedeem)
 	mux.HandleFunc("POST /api/identity/applications", s.identityApplicationCreate)
 	mux.HandleFunc("GET /api/identity/applications/{application_id}", s.identityApplicationStatus)
 	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}", s.mediaPreflight)
