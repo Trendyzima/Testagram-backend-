@@ -6,13 +6,14 @@ The watchdog runs from GitHub Actions, outside the Testagram VPS, every five min
 
 Set these repository **Actions variables**:
 
-- `INSTABOX_MACHINE_ID`: exact immutable machine ID from the Instabox API (not the display name).
-- `TESTAGRAM_HEALTH_URL`: public HTTPS URL for the API `/healthz` endpoint.
-- `TESTAGRAM_READINESS_URL`: public HTTPS URL for the API `/readyz` endpoint.
+- `INSTABOX_MACHINE_NAME`: exact machine display name; defaults to the previously confirmed `testagramdb`. The watchdog resolves it to an immutable ID through the read-only machine-list API and refuses to act if the match is missing or ambiguous.
+- Optional `INSTABOX_MACHINE_ID`: exact immutable machine ID, if you prefer pinning the resource directly. When supplied, the script also verifies the configured name against the returned machine.
+- `TESTAGRAM_HEALTH_URL`: `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz`
+- `TESTAGRAM_READINESS_URL`: `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz`
 
 Set this repository **Actions secret**:
 
-- `INSTABOX_API_KEY`: an Instabox API key scoped to the workspace containing the machine, with `machines:read` and `machines:write`. Never put it in a repository variable, source file, issue, or workflow log.
+- `INSTABOX_API_KEY`: a newly created, restricted Instabox API key scoped to the workspace containing the machine, with only `machines:read` and `machines:write`. Do not reuse the previously saved full-access key; rotate/revoke that key and replace the GitHub secret. Never put credentials in a repository variable, source file, issue, or workflow log.
 
 Optional secret:
 
