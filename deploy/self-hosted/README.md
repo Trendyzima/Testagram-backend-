@@ -28,7 +28,7 @@ service-owned PostgreSQL outboxes and idempotent workers.
 1. Copy `.env.example` to `.env`.
 2. Set strong unique values for PostgreSQL, MinIO, control-plane, media and admin session secrets.
 3. Set `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`. Set `APPWRITE_API_KEY` only if owners will issue staff invitations; restrict it to user-management operations.
-4. Confirm the Appwrite identity bridge, native media-link and staff-role migrations are included.
+4. Confirm the Appwrite identity bridge, staff-role/security, native identity registration/session/evidence migrations, and native media-link migrations are included. The identity migration sequence is explicitly numbered in Compose; the legacy intake migration is retained only for upgrade compatibility.
 5. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
 6. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
 7. Start the Backend base stack:
