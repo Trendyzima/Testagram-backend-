@@ -628,11 +628,12 @@ func (s *service) ensureIdswyftWebhook(ctx context.Context) error {
 	apiKey := strings.TrimSpace(os.Getenv("IDSWYFT_API_KEY"))
 	secret := strings.TrimSpace(os.Getenv("IDSWYFT_WEBHOOK_SECRET"))
 	publicBase := strings.TrimRight(strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_API_URL")), "/")
-	if apiBase == "" || apiKey == "" || secret == "" || publicBase == "" {
+	if apiBase == "" || apiKey == "" || len(secret) < 32 || publicBase == "" {
 		return errors.New("Idswyft webhook registration configuration is incomplete")
 	}
-	if _, err := parseConfiguredHTTPSURL(apiBase, false); err != nil {
-		return err
+	apiURL, err := parseConfiguredHTTPSURL(apiBase, false)
+	if err != nil || apiURL.Path != "" {
+		return errors.New("Idswyft API base must be an HTTPS origin")
 	}
 	if _, err := parseConfiguredHTTPSURL(publicBase, false); err != nil {
 		return err
@@ -655,31 +656,51 @@ func (s *service) ensureIdswyftWebhook(ctx context.Context) error {
 	}
 
 	type webhookItem struct {
-		ID string `json:"id"`
-		URL string `json:"url"`
+		ID       string   `json:"id"`
+		URL      string   `json:"url"`
+		IsActive bool     `json:"is_active"`
+		Events   []string `json:"events"`
 	}
 	var list struct { Webhooks []webhookItem `json:"webhooks"` }
 	resp, err := request(http.MethodGet, "/api/webhooks", nil)
 	if err != nil { return errors.New("could not query Idswyft webhook configuration") }
-	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_ = resp.Body.Close()
 		return fmt.Errorf("Idswyft webhook listing returned HTTP %d", resp.StatusCode)
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&list); err != nil {
-		return errors.New("Idswyft webhook listing response is invalid")
-	}
+	decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&list)
+	_ = resp.Body.Close()
+	if decodeErr != nil { return errors.New("Idswyft webhook listing response is invalid") }
+
+	requiredEvents := []string{"verification.completed", "verification.failed", "verification.manual_review"}
 	for _, item := range list.Webhooks {
 		if item.URL != targetURL || item.ID == "" { continue }
-		update, updateErr := request(http.MethodPut, "/api/webhooks/"+url.PathEscape(item.ID), map[string]any{"is_active": true, "secret_token": secret})
-		if updateErr != nil { return errors.New("could not update Idswyft webhook") }
-		defer update.Body.Close()
-		if update.StatusCode < 200 || update.StatusCode >= 300 {
-			return fmt.Errorf("Idswyft webhook update returned HTTP %d", update.StatusCode)
+		if !item.IsActive {
+			return errors.New("the existing Idswyft registration webhook is inactive")
+		}
+		for _, required := range requiredEvents {
+			found := false
+			for _, event := range item.Events { if event == required { found = true; break } }
+			if !found { return errors.New("the existing Idswyft webhook is missing a required verification event") }
+		}
+		secretResp, secretErr := request(http.MethodGet, "/api/webhooks/"+url.PathEscape(item.ID)+"/secret", nil)
+		if secretErr != nil { return errors.New("could not verify existing Idswyft webhook secret") }
+		var secretResult struct { SecretKey string `json:"secret_key"` }
+		if secretResp.StatusCode < 200 || secretResp.StatusCode >= 300 {
+			_ = secretResp.Body.Close()
+			return fmt.Errorf("Idswyft webhook secret lookup returned HTTP %d", secretResp.StatusCode)
+		}
+		secretDecodeErr := json.NewDecoder(io.LimitReader(secretResp.Body, 8<<10)).Decode(&secretResult)
+		_ = secretResp.Body.Close()
+		if secretDecodeErr != nil || len(secretResult.SecretKey) != len(secret) ||
+			subtle.ConstantTimeCompare([]byte(secretResult.SecretKey), []byte(secret)) != 1 {
+			return errors.New("configured Idswyft webhook secret does not match the existing webhook")
 		}
 		return nil
 	}
-	created, err := request(http.MethodPost, "/api/webhooks/register", map[string]any{
-		"url": targetURL, "is_sandbox": false, "secret_token": secret,
+
+	created, err := request(http.MethodPost, "/api/webhooks", map[string]any{
+		"url": targetURL, "is_sandbox": false, "events": requiredEvents, "secret": secret,
 	})
 	if err != nil { return errors.New("could not register Idswyft webhook") }
 	defer created.Body.Close()
