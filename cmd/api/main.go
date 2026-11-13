@@ -1040,14 +1040,22 @@ func main() {
 	dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
 	dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
 	if dataCentreURL != "" || dataCentreToken != "" {
-		if dataCentreURL == "" || dataCentreToken == "" { log.Fatal("DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN must be configured together") }
+		if dataCentreURL == "" || dataCentreToken == "" {
+			log.Fatal("DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN must be configured together")
+		}
 		dataCentreMedia, err = datacentreclient.New(dataCentreURL, dataCentreToken, &http.Client{Timeout: 10 * time.Second})
-		if err != nil || dataCentreMedia == nil { log.Fatalf("configure private Data Centre media client: %v", err) }
+		if err != nil || dataCentreMedia == nil {
+			log.Fatalf("configure private Data Centre media client: %v", err)
+		}
 	}
 	if freshMediaEnabled {
-		if dataCentreMedia == nil { log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN") }
+		if dataCentreMedia == nil {
+			log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN")
+		}
 		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 45 * time.Minute})
-		if err != nil { log.Fatalf("configure Data Centre media upload policy: %v", err) }
+		if err != nil {
+			log.Fatalf("configure Data Centre media upload policy: %v", err)
+		}
 		log.Printf("private Data Centre media lifecycle enabled for new uploads")
 	} else {
 		log.Printf("fresh Data Centre media uploads disabled by FRESH_MEDIA_ENABLED=false; existing Data Centre assets remain readable/deletable when the client is configured")
