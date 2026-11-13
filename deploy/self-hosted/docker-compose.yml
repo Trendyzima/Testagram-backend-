@@ -147,9 +147,9 @@ services:
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
-      CDN_MEDIA_ASSERTION_SECRET: ${CDN_MEDIA_ASSERTION_SECRET:-}
+      CDN_MEDIA_ASSERTION_SECRET: ${CDN_MEDIA_ASSERTION_SECRET:?Set CDN_MEDIA_ASSERTION_SECRET in .env}
       CDN_MEDIA_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
-      CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:-}
+      CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
       # Private Data Centre media lifecycle; provider credentials stay in Data Centre only.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
@@ -213,19 +213,39 @@ services:
     networks: [edge, monitoring, platform]
 
   media-cache:
-    image: nginx:1.28-alpine
-    volumes:
-      - ./nginx-media-cache.conf:/etc/nginx/conf.d/default.conf:ro
-      - media-cache-data:/var/cache/nginx
+    image: ${TESTAGRAM_CDN_IMAGE:?Set TESTAGRAM_CDN_IMAGE to the reviewed Go CDN image digest}
+    environment:
+      LISTEN_ADDR: ":8081"
+      ORIGIN_URL: "http://api:8080"
+      ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
+      PUBLIC_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
+      MEDIA_URL_PREFIX: "/v1"
+      CACHE_DIR: "/app/cache"
+      MAX_CACHE_BYTES: ${CDN_MAX_CACHE_BYTES:-21474836480}
+      HOT_CACHE_BYTES: ${CDN_HOT_CACHE_BYTES:-536870912}
+      MAX_SEGMENT_BYTES: ${CDN_MAX_OBJECT_BYTES:-1073741824}
+      SEGMENT_TTL: ${CDN_SEGMENT_TTL:-120s}
+      MANIFEST_TTL: ${CDN_MANIFEST_TTL:-2s}
+      ORIGIN_TIMEOUT: ${CDN_ORIGIN_TIMEOUT:-30m}
+      NODE_ID: ${CDN_NODE_ID:-instabox-edge-1}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
     depends_on:
-      object-init:
-        condition: service_completed_successfully
+      api:
+        condition: service_started
+    volumes:
+      - cdn-cache-data:/app/cache
     expose: ["8081"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8081/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     read_only: true
-    tmpfs: ["/var/run", "/var/cache/nginx/client_temp", "/var/cache/nginx/proxy_temp"]
+    tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [edge, data]
+    networks: [edge]
 
   caddy:
     image: caddy:2-alpine
@@ -352,7 +372,7 @@ networks:
 volumes:
   postgres-data:
   object-data:
-  media-cache-data:
+  cdn-cache-data:
   caddy-data:
   caddy-config:
   prometheus-data:
