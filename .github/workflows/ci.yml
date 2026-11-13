@@ -818,7 +818,12 @@ jobs:
       - name: Verify Go interaction summary query against PostgreSQL
         env:
           TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
-        run: go test ./cmd/api -run '^TestSocialInteractionSummaryPostgresIntegration
+        run: go test ./cmd/api -run TestSocialInteractionSummaryPostgresIntegration -count=1 -v
+      - name: Verify public/private CDN origin authorization against PostgreSQL
+        env:
+          TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run TestMediaCDNOriginPostgresIntegration -count=1 -v
+      - name: Stop isolated PostgreSQL
         if: always()
         run: docker stop testagram-local-product-ci || true
 
