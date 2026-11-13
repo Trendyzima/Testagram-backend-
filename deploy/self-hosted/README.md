@@ -11,7 +11,7 @@ private networks created by this stack.
 - Control plane: node/workload inventory and hosting operations.
 - S3-compatible object storage: private and public media buckets.
 - Appwrite-authenticated staff console: server-side PostgreSQL role checks.
-- Caddy, Prometheus, Alertmanager and Grafana.
+- Caddy, the pinned Go media CDN, Prometheus, Alertmanager and Grafana.
 
 The base stack creates two stable networks for cross-repository services:
 `testagram-platform` (private database/service traffic) and
@@ -31,6 +31,8 @@ service-owned PostgreSQL outboxes and idempotent workers.
 4. Confirm the Appwrite identity bridge, native media-link and staff-role migrations are included.
 5. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
 6. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
+7. Generate `CDN_MEDIA_ASSERTION_SECRET` and `CDN_ORIGIN_AUTH_TOKEN` as independent random secrets. The Go CDN runs privately behind Caddy; only `/v1/` and canonical media aliases are routed through Backend authorization. Legacy signed MinIO object paths continue through `media-cache`.
+8. Create the CDN cache directory and make it writable by UID/GID 65532 (`mkdir -p "$CDN_CACHE_DIR" && chown 65532:65532 "$CDN_CACHE_DIR" && chmod 0750 "$CDN_CACHE_DIR"`). Do not publish the CDN container port directly.
 7. Start the Backend base stack:
 
 ```sh
