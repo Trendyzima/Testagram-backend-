@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+# Apply the post-028 self-hosted PostgreSQL migrations to an existing persistent
+# volume. PostgreSQL init scripts do not rerun when the volume already exists.
+# This is an explicit operator action and creates a validated backup first.
+# The social-core migration can deduplicate legacy follow rows; retain the backup.
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+compose_file="$script_dir/docker-compose.yml"
+env_file="$script_dir/.env"
+backup_dir="${TESTAGRAM_BACKUP_DIR:-$script_dir/backups}"
+
+if [[ "${1:-}" != "--confirm" ]]; then
+  echo "Refusing to change the persistent database without explicit confirmation." >&2
+  echo "After reviewing this script, run: $0 --confirm" >&2
+  exit 2
+fi
+if [[ ! -f "$env_file" ]]; then
+  echo "Missing $env_file; configure the self-hosted environment first." >&2
+  exit 2
+fi
+command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
+command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 2; }
+
+mkdir -p "$backup_dir"
+chmod 700 "$backup_dir"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup="$backup_dir/testagram-pre-current-schema-$stamp.dump"
+checksum="$backup.sha256"
+
+docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
+ready=false
+for attempt in $(seq 1 40); do
+  if docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+      sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+    ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$ready" != "true" ]]; then
+  docker compose --env-file "$env_file" -f "$compose_file" logs --tail=100 postgres
+  echo "PostgreSQL did not become ready; no migration was applied." >&2
+  exit 1
+fi
+
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
+test -s "$backup"
+docker run --rm -i postgres:17-alpine pg_restore --list - < "$backup" >/dev/null
+sha256sum "$backup" > "$checksum"
+chmod 600 "$backup" "$checksum"
+
+echo "Verified pre-migration backup: $backup"
+echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
+
+apply_migration() {
+  local filename="$1"
+  local mounted="/docker-entrypoint-initdb.d/$filename"
+  docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+    sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$mounted"
+  echo "Applied $filename"
+}
+
+# These files are mounted by docker-compose.yml as 029 through 053. Keep this
+# order aligned with the dependency order exercised by PostgreSQL CI.
+migrations=(
+  029_appwrite_identity_link_audit.sql
+  030_social_core.sql
+  031_federation_actor_consent.sql
+  032_communication_core.sql
+  033_testagram_polls.sql
+  034_wallet_audio_spaces.sql
+  035_wallet_mpesa_topups.sql
+  036_iptv_social.sql
+  037_post_views.sql
+  038_thread_interactions.sql
+  039_threads_browsing_history.sql
+  040_admin_security_controls.sql
+  041_identity_registration_pipeline.sql
+  042_profile_storage_capacity.sql
+  043_social_post_idempotency.sql
+  044_federation_remote_follows.sql
+  045_hashtag_follows.sql
+  046_instabox_avatar_storage.sql
+  047_profile_presentation_fields.sql
+  048_identity_idswyft_intake.sql
+  049_identity_registration_hardening.sql
+  050_media_upload_checksum.sql
+  051_native_identity_verification.sql
+  052_native_identity_integrity.sql
+  053_native_identity_evidence.sql
+)
+
+for migration in "${migrations[@]}"; do
+  apply_migration "$migration"
+done
+
+sql="SELECT
+  to_regclass('testagram_identity.identity_applications') IS NOT NULL
+  AND to_regclass('testagram_identity.verification_sessions') IS NOT NULL
+  AND to_regclass('testagram_identity.verification_evidence') IS NOT NULL
+  AND to_regclass('testagram_identity.verification_reviews') IS NOT NULL
+  AND to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+  AND to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
+  AND to_regclass('testagram_local.post_create_idempotency') IS NOT NULL
+  AND to_regclass('testagram_local.follows') IS NOT NULL;"
+result="$(docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$1"' sh "$sql")"
+if [[ "$result" != "t" ]]; then
+  echo "Schema verification failed. Backup retained at $backup." >&2
+  exit 1
+fi
+
+echo "Verified native identity, two-person approval, social graph and post idempotency schema."
+echo "Backup retained: $backup"
