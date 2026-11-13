@@ -40,7 +40,8 @@ for migration in \
   migrations/20261113_native_identity_verification.sql \
   migrations/20261113_native_identity_integrity.sql \
   migrations/20261113_native_identity_evidence.sql \
-  migrations/20261113_native_identity_vendor_neutral.sql; do
+  migrations/20261113_native_identity_vendor_neutral.sql \
+  migrations/20261113_native_identity_sealed_evidence.sql; do
   psql_ci < "$migration"
 done
 
@@ -55,6 +56,8 @@ psql_ci < migrations/20261113_native_identity_evidence.sql
 psql_ci < migrations/20261113_native_identity_evidence.sql
 psql_ci < migrations/20261113_native_identity_vendor_neutral.sql
 psql_ci < migrations/20261113_native_identity_vendor_neutral.sql
+psql_ci < migrations/20261113_native_identity_sealed_evidence.sql
+psql_ci < migrations/20261113_native_identity_sealed_evidence.sql
 
 psql_ci <<'SQL'
 DO $owner_identity_review$
@@ -72,6 +75,14 @@ BEGIN
       AND column_name='adult_verification_webhook_received_at'
   ) THEN
     RAISE EXCEPTION 'legacy webhook-only identity column remains in the native schema';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='verification_evidence'
+      AND column_name='staging_object_key'
+  ) THEN
+    RAISE EXCEPTION 'sealed evidence staging key is missing';
   END IF;
 END;
 $owner_identity_review$;
