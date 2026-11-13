@@ -106,6 +106,8 @@ The callback URL must be public HTTPS and registered with the matching Daraja ap
 
 Do not manually delete object bytes or edit asset status rows outside the API/worker lifecycle.
 
+For the exact B2/R2 secret names, bucket separation requirements, deployment-path differences and manual credential smoke test, see [Media provider credential setup](MEDIA-PROVIDER-SETUP.md). Provider credentials are Backend-owned; do not copy them into the Data Centre repository.
+
 ## Backup and restore
 
 - Back up PostgreSQL with a consistent snapshot and test restores regularly.
