@@ -6,10 +6,10 @@ create extension if not exists pgcrypto;
 DO $roles$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'testagram_app') THEN
-    CREATE ROLE testagram_app NOLOGIN;
+    EXECUTE 'CREATE ROLE testagram_app NOLOGIN';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role') THEN
-    CREATE ROLE service_role NOLOGIN;
+    EXECUTE 'CREATE ROLE service_role NOLOGIN';
   END IF;
 END
 $roles$;
