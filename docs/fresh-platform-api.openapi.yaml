@@ -480,6 +480,45 @@ paths:
         '200': { description: Two-person approval accepted and account provisioning completed }
         '403': { description: Self-approval or reviewer mismatch forbidden }
         '409': { description: Application is not awaiting approval or duplicate decision }
+  /internal/tv/catalog:
+    get:
+      operationId: readTVHealthCatalogueForGitHubMonitor
+      summary: Read the private TV channel catalogue for the authorized health workflow
+      description: Requires a short-lived GitHub Actions OIDC token from the Testagram TV Health Monitor workflow. Stream URLs are never exposed by the public TV API.
+      parameters:
+        - in: header
+          name: X-GitHub-OIDC-Token
+          required: true
+          schema:
+            type: string
+            minLength: 100
+            maxLength: 16384
+      responses:
+        '200':
+          description: Bounded TV channel catalogue
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, channels, count]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  count: { type: integer, minimum: 0, maximum: 20000 }
+                  channels:
+                    type: array
+                    maxItems: 20000
+                    items:
+                      type: object
+                      required: [id, url]
+                      properties:
+                        id: { type: string, maxLength: 128 }
+                        url: { type: string, format: uri, maxLength: 2048 }
+                        source: { type: string, maxLength: 128 }
+                        country: { type: string, maxLength: 128 }
+                        group_name: { type: string, maxLength: 256 }
+                        priority: { type: integer, minimum: 0, maximum: 100000 }
+        '401': { description: Authorized Testagram TV monitor identity required }
+        '503': { description: TV catalogue database unavailable }
 components:
   securitySchemes:
     federationInternalBearer:
