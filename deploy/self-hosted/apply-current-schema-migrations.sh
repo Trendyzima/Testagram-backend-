@@ -21,6 +21,7 @@ if [[ ! -f "$env_file" ]]; then
   echo "Missing $env_file; configure the self-hosted environment first." >&2
   exit 2
 fi
+command -v sudo >/dev/null || { echo "sudo is required" >&2; exit 2; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
 command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 2; }
 
@@ -30,10 +31,10 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="$backup_dir/testagram-pre-current-schema-$stamp.dump"
 checksum="$backup.sha256"
 
-docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
+sudo docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
 ready=false
 for attempt in $(seq 1 40); do
-  if docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  if sudo docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
       sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
     ready=true
     break
@@ -41,15 +42,15 @@ for attempt in $(seq 1 40); do
   sleep 2
 done
 if [[ "$ready" != "true" ]]; then
-  docker compose --env-file "$env_file" -f "$compose_file" logs --tail=100 postgres
+  sudo docker compose --env-file "$env_file" -f "$compose_file" logs --tail=100 postgres
   echo "PostgreSQL did not become ready; no migration was applied." >&2
   exit 1
 fi
 
-docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+sudo docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
 test -s "$backup"
-docker run --rm -i postgres:17-alpine pg_restore --list - < "$backup" >/dev/null
+sudo docker run --rm -i postgres:17-alpine pg_restore --list - < "$backup" >/dev/null
 sha256sum "$backup" > "$checksum"
 chmod 600 "$backup" "$checksum"
 
@@ -59,7 +60,7 @@ echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
 apply_migration() {
   local filename="$1"
   local mounted="/docker-entrypoint-initdb.d/$filename"
-  docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sudo docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
     sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$mounted"
   echo "Applied $filename"
 }
@@ -110,7 +111,7 @@ sql="SELECT
   AND to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
   AND to_regclass('testagram_local.post_create_idempotency') IS NOT NULL
   AND to_regclass('testagram_local.follows') IS NOT NULL;"
-result="$(docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+result="$(sudo docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "$1"' sh "$sql")"
 if [[ "$result" != "t" ]]; then
   echo "Schema verification failed. Backup retained at $backup." >&2
