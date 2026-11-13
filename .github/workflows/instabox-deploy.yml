@@ -295,6 +295,15 @@ jobs:
             printf -v "$key" '%s' "$value"
           }
           ensure_random_secret FEDERATION_INGRESS_TOKEN
+          # Private identity evidence is stored in a dedicated MinIO bucket.
+          # Registration and three-provider replication remain fail-closed until
+          # a separate staging acceptance and explicit operator activation.
+          write_env_value VIRTUAL_STORAGE_ENABLED true
+          write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-private
+          write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false
+          if [[ -z "$(read_env_value MEDIA_REPLICATION_ENABLED)" ]]; then write_env_value MEDIA_REPLICATION_ENABLED false; fi
+          if [[ -z "$(read_env_value TESTAGRAM_TERMS_VERSION)" ]]; then write_env_value TESTAGRAM_TERMS_VERSION ""; fi
+          if [[ -z "$(read_env_value TESTAGRAM_PRIVACY_VERSION)" ]]; then write_env_value TESTAGRAM_PRIVACY_VERSION ""; fi
           ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
           ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
           ensure_random_secret CDN_PURGE_TOKEN
