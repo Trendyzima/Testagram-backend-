@@ -391,116 +391,133 @@ func cdnOriginObjectSize(resp *http.Response) (int64, error) {
 }
 
 func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
- w.Header().Set("Cache-Control","private, no-store")
- w.Header().Set("X-Testagram-Visibility","private")
- w.Header().Set("X-Content-Type-Options","nosniff")
- if r.Method!=http.MethodGet && r.Method!=http.MethodHead {
-  w.Header().Set("Allow","GET, HEAD")
-  http.Error(w,"method not allowed",http.StatusMethodNotAllowed)
-  return
- }
- if s.cdnMediaAssertions==nil || len(s.cdnOriginAuthToken)<32 || s.db==nil {
-  http.Error(w,"trusted media origin is not configured",http.StatusServiceUnavailable)
-  return
- }
- serviceToken:=strings.TrimSpace(r.Header.Get("X-Testagram-Origin-Auth"))
- if subtle.ConstantTimeCompare([]byte(serviceToken),[]byte(s.cdnOriginAuthToken))!=1 {
-  http.Error(w,"unauthorized",http.StatusUnauthorized)
-  return
- }
- viewerHeader:=strings.TrimSpace(r.Header.Get("X-Testagram-Viewer-Authorization"))
- if !strings.HasPrefix(viewerHeader,"Bearer ") || len(viewerHeader)>8192 {
-  http.Error(w,"viewer assertion required",http.StatusUnauthorized)
-  return
- }
- key:=r.PathValue("key")
- claims,err:=s.cdnMediaAssertions.VerifyForKey(strings.TrimSpace(strings.TrimPrefix(viewerHeader,"Bearer ")),key,time.Now())
- if err!=nil {
-  http.Error(w,"media authorization denied",http.StatusForbidden)
-  return
- }
- mediaOwner:=claims.Owner
- if mediaOwner=="" { mediaOwner=claims.Subject }
- var ownerID,visibility,assetStatus,storageNamespace string
- err=s.db.QueryRow(r.Context(),"select owner_id, visibility, status, storage_namespace from testagram_media.assets where object_key=$1",key).
-  Scan(&ownerID,&visibility,&assetStatus,&storageNamespace)
- if err!=nil || ownerID!=mediaOwner || visibility!="private" || assetStatus!="ready" {
-  http.Error(w,"media authorization denied",http.StatusNotFound)
-  return
- }
- var signedURL string
- if storageNamespace!="legacy-media" {
-  if s.virtualStorage==nil {
-   http.Error(w,"media storage unavailable",http.StatusServiceUnavailable)
-   return
-  }
-  signedURL,err=s.virtualStorage.DownloadURL(r.Context(),ownerID,ownerID,storageNamespace,key)
- } else if s.media!=nil {
-  signedURL,err=s.media.PresignPrivateDownload(ownerID,key,time.Minute,time.Now())
- } else {
-  err=errors.New("media signer unavailable")
- }
- if err!=nil {
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- upstreamReq,err:=http.NewRequestWithContext(r.Context(),r.Method,signedURL,nil)
- if err!=nil {
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- copyCDNOriginRequestHeaders(r,upstreamReq)
- client:=&http.Client{Transport:s.upstream.Transport,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}
- resp,err:=client.Do(upstreamReq)
- if err!=nil {
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- defer resp.Body.Close()
- switch resp.StatusCode {
- case http.StatusOK,http.StatusPartialContent,http.StatusNotModified,http.StatusRequestedRangeNotSatisfiable:
- case http.StatusNotFound,http.StatusGone:
-  http.Error(w,"media object unavailable",http.StatusNotFound)
-  return
- default:
-  http.Error(w,"media origin unavailable",http.StatusBadGateway)
-  return
- }
- if resp.StatusCode!=http.StatusNotModified {
-  size,sizeErr:=cdnOriginObjectSize(resp)
-  if sizeErr!=nil {
-   http.Error(w,"media origin returned incomplete size metadata",http.StatusBadGateway)
-   return
-  }
-  if size>maxCDNOriginObjectBytes {
-   http.Error(w,"media object exceeds the CDN delivery limit",http.StatusRequestEntityTooLarge)
-   return
-  }
-  if (resp.StatusCode==http.StatusPartialContent || resp.StatusCode==http.StatusRequestedRangeNotSatisfiable) && strings.TrimSpace(resp.Header.Get("Content-Range"))=="" {
-   http.Error(w,"media origin omitted range metadata",http.StatusBadGateway)
-   return
-  }
- }
- writeCDNOriginResponse(w,r,resp,key)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Testagram-Visibility", "private")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.cdnMediaAssertions == nil || len(s.cdnOriginAuthToken) < 32 || s.db == nil {
+		http.Error(w, "trusted media origin is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	serviceToken := strings.TrimSpace(r.Header.Get("X-Testagram-Origin-Auth"))
+	if serviceToken == "" || strings.ContainsAny(serviceToken, " \t\r\n") || subtle.ConstantTimeCompare([]byte(serviceToken), []byte(s.cdnOriginAuthToken)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	key := r.PathValue("key")
+	var ownerID, visibility, assetStatus, storageNamespace string
+	err := s.db.QueryRow(r.Context(), "select owner_id, visibility, status, storage_namespace from testagram_media.assets where object_key=$1", key).Scan(&ownerID, &visibility, &assetStatus, &storageNamespace)
+	if err != nil || assetStatus != "ready" {
+		http.Error(w, "media object unavailable", http.StatusNotFound)
+		return
+	}
+	viewerHeader := strings.TrimSpace(r.Header.Get("X-Testagram-Viewer-Authorization"))
+	requesterID := ownerID
+	if viewerHeader != "" {
+		if !strings.HasPrefix(viewerHeader, "Bearer ") || len(viewerHeader) > 8192 || strings.ContainsAny(viewerHeader, "\r\n") {
+			http.Error(w, "invalid viewer assertion", http.StatusUnauthorized)
+			return
+		}
+		claims, verifyErr := s.cdnMediaAssertions.VerifyForKey(strings.TrimSpace(strings.TrimPrefix(viewerHeader, "Bearer ")), key, time.Now())
+		if verifyErr != nil {
+			http.Error(w, "media authorization denied", http.StatusForbidden)
+			return
+		}
+		claimOwner := claims.Owner
+		if claimOwner == "" { claimOwner = claims.Subject }
+		if visibility != "private" || claimOwner != ownerID {
+			http.Error(w, "media authorization denied", http.StatusNotFound)
+			return
+		}
+		requesterID = claims.Subject
+	} else if visibility != "public" {
+		// No viewer assertion is accepted only for a canonical ready public asset.
+		http.Error(w, "viewer assertion required", http.StatusUnauthorized)
+		return
+	}
+	var signedURL string
+	if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+		if r.Method == http.MethodHead {
+			signedURL, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+		} else {
+			signedURL, err = s.dataCentreMedia.DownloadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
+		}
+	} else if storageNamespace != "legacy-media" && s.virtualStorage != nil {
+		if r.Method == http.MethodHead {
+			signedURL, err = s.virtualStorage.HeadURL(r.Context(), ownerID, ownerID, storageNamespace, key)
+		} else {
+			signedURL, err = s.virtualStorage.DownloadURL(r.Context(), ownerID, ownerID, storageNamespace, key)
+		}
+	} else if storageNamespace == "legacy-media" && s.media != nil {
+		if r.Method == http.MethodHead {
+			signedURL, err = s.media.PresignObjectHead(ownerID, key, visibility, time.Minute, time.Now())
+		} else {
+			signedURL, err = s.media.PresignObjectGet(ownerID, key, visibility, time.Minute, time.Now())
+		}
+	} else {
+		err = errors.New("media storage adapter unavailable")
+	}
+	if err != nil || signedURL == "" {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, signedURL, nil)
+	if err != nil {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	copyCDNOriginRequestHeaders(r, upstreamReq)
+	client := &http.Client{Transport: s.upstream.Transport, Timeout: 30 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusPartialContent, http.StatusNotModified, http.StatusRequestedRangeNotSatisfiable:
+	case http.StatusNotFound, http.StatusGone:
+		http.Error(w, "media object unavailable", http.StatusNotFound)
+		return
+	default:
+		http.Error(w, "media origin unavailable", http.StatusBadGateway)
+		return
+	}
+	if resp.StatusCode != http.StatusNotModified {
+		size, sizeErr := cdnOriginObjectSize(resp)
+		if sizeErr != nil { http.Error(w, "media origin returned incomplete size metadata", http.StatusBadGateway); return }
+		if size > maxCDNOriginObjectBytes { http.Error(w, "media object exceeds the CDN delivery limit", http.StatusRequestEntityTooLarge); return }
+		if (resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusRequestedRangeNotSatisfiable) && strings.TrimSpace(resp.Header.Get("Content-Range")) == "" {
+			http.Error(w, "media origin omitted range metadata", http.StatusBadGateway)
+			return
+		}
+	}
+	writeCDNOriginResponse(w, r, resp, key, visibility)
 }
-
 func copyCDNOriginRequestHeaders(source,destination *http.Request) {
  for _,name:=range []string{"Range","If-Range","If-None-Match","If-Modified-Since"} {
   if value:=strings.TrimSpace(source.Header.Get(name));value!="" { destination.Header.Set(name,value) }
  }
 }
 
-func writeCDNOriginResponse(w http.ResponseWriter,r *http.Request,resp *http.Response,objectKey string) {
- for _,name:=range []string{"Content-Type","Content-Length","Content-Range","Accept-Ranges","ETag","Last-Modified"} {
-  if value:=resp.Header.Get(name);value!="" { w.Header().Set(name,value) }
- }
- w.Header().Set("Cache-Control","private, no-store")
- w.Header().Set("X-Testagram-Visibility","private")
- w.WriteHeader(resp.StatusCode)
- if r.Method==http.MethodHead || resp.StatusCode==http.StatusNotModified { return }
- if n,copyErr:=io.Copy(w,resp.Body);copyErr!=nil {
-  log.Printf("CDN media stream interrupted after %d bytes for %s: %v",n,objectKey,copyErr)
- }
+func writeCDNOriginResponse(w http.ResponseWriter, r *http.Request, resp *http.Response, objectKey, visibility string) {
+	for _, name := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+		if value := resp.Header.Get(name); value != "" { w.Header().Set(name, value) }
+	}
+	if visibility == "public" {
+		w.Header().Set("Cache-Control", "public, max-age=0, s-maxage=300")
+		w.Header().Set("X-Testagram-Visibility", "public")
+	} else {
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("X-Testagram-Visibility", "private")
+	}
+	w.WriteHeader(resp.StatusCode)
+	if r.Method == http.MethodHead || resp.StatusCode == http.StatusNotModified { return }
+	if n, copyErr := io.Copy(w, resp.Body); copyErr != nil { log.Printf("CDN media stream interrupted after %d bytes for %s: %v", n, objectKey, copyErr) }
 }
 
 func (s *service) mediaCDNDownloadURL(w http.ResponseWriter, r *http.Request) {
