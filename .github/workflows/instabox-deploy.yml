@@ -495,6 +495,16 @@ jobs:
           else
             echo "Post moderation is not configured; publishing remains fail-closed."
           fi
+          # Verify identity provisioning and replica credentials in the actual API container.
+          if [[ -n "${APPWRITE_API_KEY:-}" ]]; then
+            verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api APPWRITE_API_KEY "$APPWRITE_API_KEY"
+          fi
+          for key in TESTAGRAM_IDENTITY_REGISTRATION_ENABLED TESTAGRAM_TERMS_VERSION TESTAGRAM_PRIVACY_VERSION IDENTITY_EVIDENCE_PRIVATE_BUCKET VIRTUAL_STORAGE_ENABLED MEDIA_REPLICATION_ENABLED CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY B2_S3_ENDPOINT B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY; do
+            value="$(read_env_value "$key")"
+            if [[ -n "$value" ]]; then
+              verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api "$key" "$value"
+            fi
+          done
 
           # Exercise both credential directions against the live private service endpoints.
           # Valid Backend -> Federation requests deliberately use an empty payload, so the
