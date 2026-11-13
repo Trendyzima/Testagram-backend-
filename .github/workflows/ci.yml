@@ -488,7 +488,17 @@ jobs:
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
           assert "envs:(" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
           assert "DATA_CENTRE_MEDIA_ENABLED:$media_enabled" in deploy and 'if $media_enabled == "true" then' in deploy, "media provider credentials must be forwarded only after explicit media activation"
-          assert 'write_env_value FRESH_MEDIA_ENABLED "$media_enabled"' in deploy and "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" in Path("deploy/self-hosted/docker-compose.yml").read_text(), "deployment activation must reach the Backend runtime feature gate"
+          compose = Path("deploy/self-hosted/docker-compose.yml").read_text()
+          minio_init = Path("deploy/self-hosted/minio-tools/init.sh").read_text()
+          assert 'write_env_value FRESH_MEDIA_ENABLED "$media_enabled"' in deploy and "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" in compose, "deployment activation must reach the Backend runtime feature gate"
+          assert 'write_env_value VIRTUAL_STORAGE_ENABLED true' in deploy and "VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-true}" in compose, "private evidence storage must be enabled on the VPS"
+          assert 'write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false' in deploy and "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}" in compose, "identity registration must remain fail-closed until explicit acceptance"
+          assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in compose and "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in minio_init and 'mc anonymous set none "local/$identity_bucket"' in minio_init, "identity evidence must use a dedicated private MinIO bucket"
+          assert "CLOUDFLARE_R2_SECRET_ACCESS_KEY" in compose and "B2_S3_SECRET_ACCESS_KEY" in compose, "three-provider replication credentials must reach Backend only through environment mapping"
+          identity = Path("cmd/api/identity_native.go").read_text()
+          review = Path("cmd/api/identity_review.go").read_text()
+          assert 'uploadPath := "/api/identity/sessions/"' in identity and "s.identityEvidenceUpload" in Path("cmd/api/main.go").read_text(), "identity evidence uploads must use the authenticated Backend proxy"
+          assert "s.identityReviewEvidence" in Path("cmd/api/main.go").read_text() and 'Content-Disposition' in review and 'Cache-Control", "private, no-store' in review, "reviewer evidence must be streamed through authenticated no-store API"
           for check in (
               "DATA_CENTRE_MEDIA_ENABLED",
               "media-migrate",
