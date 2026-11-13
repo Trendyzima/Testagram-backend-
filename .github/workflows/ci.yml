@@ -520,6 +520,8 @@ jobs:
               raise SystemExit("Instabox deployment must generate independent CDN origin and viewer-assertion secrets on the VPS")
           if "pull media-cache" not in deploy or "verify_running_image" in deploy and "Go CDN image digest mismatch" not in deploy:
               raise SystemExit("Instabox deployment must pull and verify the immutable Go CDN image")
+          if "x86_64|amd64" not in deploy:
+              raise SystemExit("Instabox deployment must fail closed on unsupported CDN host architectures")
           for marker in ('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_ORIGIN_AUTH_TOKEN',
                          'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_AUTH_TOKEN',
                          'Publish Go CDN media endpoint over HTTPS',
