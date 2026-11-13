@@ -436,7 +436,7 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if _,err=tx.Exec(ctx,`
-		UPDATE testagram_identity.identity_applications SET status='approved',updated_at=now()
+		UPDATE testagram_identity.identity_applications SET status='approved',status_access_token_expires_at=now()+interval '30 days',updated_at=now()
 		WHERE id=$1::uuid AND status='verified'
 	`,applicationID); err!=nil {
 		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_APPROVAL_FAILED","Application could not be approved",requestID(r)))
