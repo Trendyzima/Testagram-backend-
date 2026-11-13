@@ -95,14 +95,14 @@ func (s *service) threadAttachMedia(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	var visibility, contentType, name, status, namespace, externalMediaID string
+	var visibility, contentType, name, status, namespace, externalMediaID, storageProvider string
 	var size int64
-	err = tx.QueryRow(ctx, `SELECT visibility,content_type,original_name,size_bytes,status,storage_namespace,coalesce(external_media_id::text,'') FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2`, strings.TrimSpace(in.Key), userID).Scan(&visibility, &contentType, &name, &size, &status, &namespace, &externalMediaID)
+	err = tx.QueryRow(ctx, `SELECT visibility,content_type,original_name,size_bytes,status,storage_namespace,coalesce(external_media_id::text,''),storage_provider FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2`, strings.TrimSpace(in.Key), userID).Scan(&visibility, &contentType, &name, &size, &status, &namespace, &externalMediaID, &storageProvider)
 	if err != nil || status != "ready" || visibility != "public" || externalMediaID != "" || size < 1 || size > maxProductPostMediaBytes {
 		writeJSON(w, 404, errorBody("MEDIA_NOT_ATTACHABLE", "Only ready public media owned by this account can be attached", rid))
 		return
 	}
-	mediaURL := publicMediaURLForStorage(strings.TrimSpace(in.Key), userID, namespace)
+	mediaURL := publicMediaURLForStorage(strings.TrimSpace(in.Key), userID, namespace, storageProvider)
 	if mediaURL == "" {
 		writeJSON(w, 503, errorBody("MEDIA_PUBLIC_URL_INVALID", "Media delivery URL is unavailable", rid))
 		return
