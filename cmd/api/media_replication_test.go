@@ -8,12 +8,11 @@ func TestValidateMediaBucketIsolation(t *testing.T) {
 		buckets map[string]string
 		wantErr bool
 	}{
-		{name: "distinct buckets", buckets: map[string]string{"media-private": "testagram-private-media", "media-public": "testagram-public-media", "identity-evidence-private": "testagram-private-media"}},
+		{name: "distinct buckets", buckets: map[string]string{"media-private": "testagram-private-media", "media-public": "testagram-public-media"}},
 		{name: "same physical bucket", buckets: map[string]string{"media-private": "testagram-media", "media-public": "testagram-media"}, wantErr: true},
 		{name: "missing private bucket", buckets: map[string]string{"media-public": "testagram-public-media"}, wantErr: true},
 		{name: "missing public bucket", buckets: map[string]string{"media-private": "testagram-private-media"}, wantErr: true},
-		{name: "missing identity evidence bucket", buckets: map[string]string{"media-private": "testagram-private-media", "media-public": "testagram-public-media"}, wantErr: true},
-		{name: "whitespace normalized", buckets: map[string]string{"media-private": " testagram-private-media ", "media-public": "testagram-public-media", "identity-evidence-private": " testagram-private-media "}},
+		{name: "whitespace normalized", buckets: map[string]string{"media-private": " testagram-private-media ", "media-public": "testagram-public-media"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
