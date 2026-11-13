@@ -134,6 +134,15 @@ func TestValidTVHealthInput(t *testing.T) {
 	}
 }
 
+func TestTVCatalogRouteRequiresAuthorizedWorkflowIdentity(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/internal/tv/catalog", nil)
+	res := httptest.NewRecorder()
+	(&service{}).tvCatalogRead(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
 func TestTVHealthRouteRequiresAuthorizedWorkflowIdentity(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/internal/tv/health", nil)
 	res := httptest.NewRecorder()
