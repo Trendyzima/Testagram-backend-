@@ -119,8 +119,8 @@ migrations=(
   035_wallet_mpesa_topups.sql
   036_iptv_social.sql
   037_post_views.sql
-  038_thread_interactions.sql
-  039_threads_browsing_history.sql
+  038_threads_browsing_history.sql
+  039_thread_interactions.sql
   040_admin_security_controls.sql
   041_identity_registration_pipeline.sql
   042_profile_storage_capacity.sql
