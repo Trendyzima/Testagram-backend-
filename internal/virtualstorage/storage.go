@@ -197,6 +197,19 @@ func (m *Manager) VerifyUpload(ctx context.Context, tenantID, namespace, key, ex
 // actual stored bytes. The provider must stream with a hard byte bound; ETags
 // are not accepted as substitutes for SHA-256.
 func (m *Manager) VerifyUploadChecksum(ctx context.Context, tenantID, namespace, key string, maxBytes int64, expectedSHA256 string) error {
+	sniffer, ok := m.provider.(interface {
+		DetectContentType(context.Context, string, string) (string, error)
+	})
+	if !ok {
+		return errors.New("storage provider does not support evidence content inspection")
+	}
+	detectedType, err := sniffer.DetectContentType(ctx, ns.PhysicalBucket, tenantPrefix(tenantID)+sourceKey)
+	if err != nil {
+		return err
+	}
+	if strings.ToLower(strings.TrimSpace(detectedType)) != contentType {
+		return ErrObjectMismatch
+	}
 	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
 	if len(expectedSHA256) != 64 {
 		return errors.New("expected SHA-256 must be 64 hexadecimal characters")
