@@ -259,6 +259,7 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
 
 
 def main() -> int:
+    global MACHINE_ID
     if not API_KEY or (not MACHINE_ID and not MACHINE_NAME) or not HEALTH_URL or not READY_URL:
         raise WatchdogError("Configure INSTABOX_API_KEY, INSTABOX_MACHINE_NAME (or INSTABOX_MACHINE_ID), TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
     for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL),
@@ -271,7 +272,6 @@ def main() -> int:
     if FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or ACTION_COOLDOWN < 300:
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, >=1s interval and >=300s cooldown")
     api = API()
-    global MACHINE_ID
     MACHINE_ID = resolve_machine_id(api)
     state = load_state()
     machine = machine_snapshot(api)
