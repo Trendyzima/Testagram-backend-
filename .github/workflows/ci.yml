@@ -488,6 +488,7 @@ jobs:
               'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_INTERNAL_TOKEN',
               'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN',
               'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN',
+              'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api ONSPACE_AI_API_KEY',
               'Backend ingress token accepted by Federation',
               'Backend read token rejected by Federation ingress',
               'Federation read token accepted by Backend',
