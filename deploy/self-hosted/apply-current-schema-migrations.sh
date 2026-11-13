@@ -80,6 +80,23 @@ chmod 600 "$backup" "$checksum"
 echo "Verified pre-migration backup: $backup"
 echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
 
+# Existing persistent volumes do not rerun 000_vps.sql from initdb.
+# Bootstrap NOLOGIN privilege groups before migration 035 grants.
+"${DOCKER[@]}" compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<\'SQL\'
+DO $roles$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'testagram_app') THEN
+    EXECUTE 'CREATE ROLE testagram_app NOLOGIN';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role') THEN
+    EXECUTE 'CREATE ROLE service_role NOLOGIN';
+  END IF;
+END
+$roles$;
+SQL
+'
+
 apply_migration() {
   local filename="$1"
   local mounted="/docker-entrypoint-initdb.d/$filename"
