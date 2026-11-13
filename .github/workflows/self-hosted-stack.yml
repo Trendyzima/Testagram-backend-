@@ -13,6 +13,10 @@ on:
       - "docs/platform/**"
       - "scripts/testagram-reconcile.sh"
       - "scripts/install-testagram-autonomy.sh"
+      - "scripts/instabox_watchdog.py"
+      - "tests/test_instabox_watchdog.py"
+      - ".github/workflows/instabox-vps-watchdog.yml"
+      - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
   pull_request:
@@ -29,6 +33,10 @@ on:
       - "scripts/validate-platform-openapi.py"
       - "scripts/testagram-reconcile.sh"
       - "scripts/install-testagram-autonomy.sh"
+      - "scripts/instabox_watchdog.py"
+      - "tests/test_instabox_watchdog.py"
+      - ".github/workflows/instabox-vps-watchdog.yml"
+      - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
 
@@ -140,6 +148,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Validate external Instabox watchdog
+        run: |
+          python3 -m py_compile scripts/instabox_watchdog.py
+          python3 -m unittest discover -s tests -p 'test_instabox_watchdog.py' -v
       - name: Check Bash syntax
         run: |
           bash -n scripts/testagram-reconcile.sh

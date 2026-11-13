@@ -1,0 +1,84 @@
+name: Instabox VPS Watchdog
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Check provider and endpoints without issuing lifecycle actions"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instabox-testagram-vps-watchdog
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate watchdog safety logic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile watchdog
+        run: python3 -m py_compile scripts/instabox_watchdog.py
+      - name: Run watchdog unit tests
+        run: python3 -m unittest discover -s tests -p 'test_instabox_watchdog.py' -v
+
+  watchdog:
+    name: Check and recover Testagram VPS
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore incident cooldown state
+        uses: actions/cache/restore@v4
+        with:
+          path: .watchdog-state.json
+          key: instabox-watchdog-state-${{ github.run_id }}
+          restore-keys: |
+            instabox-watchdog-state-
+      - name: Run external Instabox watchdog
+        env:
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+          INSTABOX_MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
+          INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
+          TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz' }}
+          TESTAGRAM_READINESS_URL: ${{ vars.TESTAGRAM_READINESS_URL || 'https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz' }}
+          WATCHDOG_ALERT_WEBHOOK: ${{ secrets.WATCHDOG_ALERT_WEBHOOK }}
+          WATCHDOG_STATE_FILE: .watchdog-state.json
+          WATCHDOG_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+          WATCHDOG_FAILURES_REQUIRED: "3"
+          WATCHDOG_PROBE_INTERVAL_SECONDS: "15"
+          WATCHDOG_RESTART_COOLDOWN_SECONDS: "1800"
+          WATCHDOG_OPERATION_TIMEOUT_SECONDS: "300"
+        run: python3 scripts/instabox_watchdog.py
+      - name: Ensure cooldown state file exists
+        if: always()
+        run: test -f .watchdog-state.json || printf '{}' > .watchdog-state.json
+      - name: Persist cooldown state for the next scheduled run
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .watchdog-state.json
+          key: instabox-watchdog-state-${{ github.run_id }}
+      - name: Publish watchdog result
+        if: always()
+        run: |
+          {
+            echo "## Testagram VPS watchdog"
+            echo
+            echo "- Provider: Instabox"
+            echo "- Machine: configured through repository variable"
+            echo "- Schedule: every five minutes"
+            echo "- Recovery: bounded start/resume or stop/start"
+            echo "- Cooldown: 30 minutes"
+            echo
+            echo "See the run log for probe results and lifecycle operation IDs."
+          } >> "$GITHUB_STEP_SUMMARY"
