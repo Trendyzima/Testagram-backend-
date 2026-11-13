@@ -11,7 +11,7 @@ private networks created by this stack.
 - Control plane: node/workload inventory and hosting operations.
 - S3-compatible object storage: private and public media buckets.
 - Appwrite-authenticated staff console: server-side PostgreSQL role checks.
-- Caddy, Prometheus, Alertmanager and Grafana.
+- Go CDN media delivery/cache, Caddy, Prometheus, Alertmanager and Grafana.
 
 The base stack creates two stable networks for cross-repository services:
 `testagram-platform` (private database/service traffic) and
