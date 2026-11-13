@@ -37,6 +37,31 @@ services:
       - ../../migrations/20261111_media_replica_ledger.sql:/docker-entrypoint-initdb.d/026_media_replica_ledger.sql:ro
       - ../../migrations/20261112_media_replication_outbox.sql:/docker-entrypoint-initdb.d/027_media_replication_outbox.sql:ro
       - ../../migrations/20261112_fresh_media_owner_keys.sql:/docker-entrypoint-initdb.d/028_fresh_media_owner_keys.sql:ro
+      - ../../migrations/20261106_appwrite_identity_link_audit.sql:/docker-entrypoint-initdb.d/029_appwrite_identity_link_audit.sql:ro
+      - ../../migrations/20261106_social_core.sql:/docker-entrypoint-initdb.d/030_social_core.sql:ro
+      - ../../migrations/20261107_federation_actor_consent.sql:/docker-entrypoint-initdb.d/031_federation_actor_consent.sql:ro
+      - ../../migrations/20261108_communication_core.sql:/docker-entrypoint-initdb.d/032_communication_core.sql:ro
+      - ../../migrations/20261108_testagram_polls.sql:/docker-entrypoint-initdb.d/033_testagram_polls.sql:ro
+      - ../../migrations/20261108_wallet_audio_spaces.sql:/docker-entrypoint-initdb.d/034_wallet_audio_spaces.sql:ro
+      - ../../migrations/20261108_wallet_mpesa_topups.sql:/docker-entrypoint-initdb.d/035_wallet_mpesa_topups.sql:ro
+      - ../../migrations/20261109_iptv_social.sql:/docker-entrypoint-initdb.d/036_iptv_social.sql:ro
+      - ../../migrations/20261109_post_views.sql:/docker-entrypoint-initdb.d/037_post_views.sql:ro
+      - ../../migrations/20261109_thread_interactions.sql:/docker-entrypoint-initdb.d/038_thread_interactions.sql:ro
+      - ../../migrations/20261109_threads_browsing_history.sql:/docker-entrypoint-initdb.d/039_threads_browsing_history.sql:ro
+      - ../../migrations/20261111_admin_security_controls.sql:/docker-entrypoint-initdb.d/040_admin_security_controls.sql:ro
+      - ../../migrations/20261111_identity_registration_pipeline.sql:/docker-entrypoint-initdb.d/041_identity_registration_pipeline.sql:ro
+      - ../../migrations/20261111_profile_storage_capacity.sql:/docker-entrypoint-initdb.d/042_profile_storage_capacity.sql:ro
+      - ../../migrations/20261111_social_post_idempotency.sql:/docker-entrypoint-initdb.d/043_social_post_idempotency.sql:ro
+      - ../../migrations/20261112_federation_remote_follows.sql:/docker-entrypoint-initdb.d/044_federation_remote_follows.sql:ro
+      - ../../migrations/20261112_hashtag_follows.sql:/docker-entrypoint-initdb.d/045_hashtag_follows.sql:ro
+      - ../../migrations/20261112_instabox_avatar_storage.sql:/docker-entrypoint-initdb.d/046_instabox_avatar_storage.sql:ro
+      - ../../migrations/20261112_profile_presentation_fields.sql:/docker-entrypoint-initdb.d/047_profile_presentation_fields.sql:ro
+      - ../../migrations/20261113_identity_idswyft_intake.sql:/docker-entrypoint-initdb.d/048_identity_idswyft_intake.sql:ro
+      - ../../migrations/20261113_identity_registration_hardening.sql:/docker-entrypoint-initdb.d/049_identity_registration_hardening.sql:ro
+      - ../../migrations/20261113_media_upload_checksum.sql:/docker-entrypoint-initdb.d/050_media_upload_checksum.sql:ro
+      - ../../migrations/20261113_native_identity_verification.sql:/docker-entrypoint-initdb.d/051_native_identity_verification.sql:ro
+      - ../../migrations/20261114_native_identity_integrity.sql:/docker-entrypoint-initdb.d/052_native_identity_integrity.sql:ro
+      - ../../migrations/20261114_native_identity_evidence.sql:/docker-entrypoint-initdb.d/053_native_identity_evidence.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
