@@ -115,6 +115,7 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "load_state", return_value={"last_action_at": __import__("time").time()}), \
              patch.object(watchdog, "save_state"), \
              patch.object(watchdog, "notify") as notify, \
+             patch.object(watchdog, "wait_for_service"), \
              patch.object(watchdog, "API_KEY", "test-key"), \
              patch.object(watchdog, "MACHINE_ID", "machine-123"), \
              patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
@@ -130,6 +131,7 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "load_state", return_value={}), \
              patch.object(watchdog, "save_state"), \
              patch.object(watchdog, "notify") as notify, \
+             patch.object(watchdog, "wait_for_service"), \
              patch.object(watchdog, "probe", return_value=(False, "HTTP 503")), \
              patch.object(watchdog.time, "sleep"), \
              patch.object(watchdog, "API_KEY", "test-key"), \
@@ -147,7 +149,8 @@ class WatchdogTests(unittest.TestCase):
         api = FakeAPI()
         with patch.object(watchdog, "RESTART_COOLDOWN", 300), \
              patch.object(watchdog, "DRY_RUN", False), \
-             patch.object(watchdog, "save_state"):
+             patch.object(watchdog, "save_state"), \
+             patch.object(watchdog, "wait_for_service"):
             result = watchdog.restart_running(api, {})
         lifecycle_posts = [call[1].rsplit("/", 1)[-1] for call in api.calls if call[0] == "POST"]
         self.assertEqual(lifecycle_posts, ["stop", "start"])
