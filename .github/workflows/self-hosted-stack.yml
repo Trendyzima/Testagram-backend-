@@ -20,6 +20,7 @@ on:
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
       - ".github/workflows/instabox-deploy.yml"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/cdn-origin-integration.yml"
   pull_request:
     branches: [main]
@@ -42,6 +43,7 @@ on:
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
       - ".github/workflows/instabox-deploy.yml"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/cdn-origin-integration.yml"
 
 permissions:
@@ -152,6 +154,8 @@ jobs:
           import re
           import subprocess
           import yaml
+          ci_workflow_path = pathlib.Path("../../.github/workflows/ci.yml")
+          yaml.safe_load(ci_workflow_path.read_text(encoding="utf-8"))
           workflow_path = pathlib.Path("../../.github/workflows/instabox-deploy.yml")
           with workflow_path.open(encoding="utf-8") as handle:
               workflow = yaml.safe_load(handle)
