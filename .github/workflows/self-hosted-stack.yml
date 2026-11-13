@@ -33,6 +33,10 @@ on:
       - "scripts/validate-platform-openapi.py"
       - "scripts/testagram-reconcile.sh"
       - "scripts/install-testagram-autonomy.sh"
+      - "scripts/instabox_watchdog.py"
+      - "tests/test_instabox_watchdog.py"
+      - ".github/workflows/instabox-vps-watchdog.yml"
+      - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
 
