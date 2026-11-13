@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"os"
 	"strings"
 	"time"
@@ -122,15 +124,15 @@ func (s *service) identityReviewQueue(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Review queue could not be read", requestID(r)))
 			return
 		}
-		downloadURL, err := s.virtualStorage.DownloadURL(ctx, applicationID, applicationID, identityEvidenceNamespace, objectKey)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence access could not be authorized", requestID(r)))
+		if _, ok := identityEvidenceExtension(contentType); !ok {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence metadata is invalid", requestID(r)))
 			return
 		}
+		evidencePath := "/api/admin/identity/sessions/" + sessionID + "/evidence/" + evidenceID
 		items = append(items, map[string]any{
 			"session_id":sessionID,"application_id":applicationID,"email":email,
 			"username":username,"display_name":displayName,"evidence_id":evidenceID,
-			"evidence_url":downloadURL,"content_type":contentType,"size_bytes":size,
+			"evidence_url":evidencePath,"content_type":contentType,"size_bytes":size,
 			"created_at":createdAt.UTC().Format(time.RFC3339),"expires_at":expiresAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -141,6 +143,89 @@ func (s *service) identityReviewQueue(w http.ResponseWriter, r *http.Request) {
 	_ = reviewer
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"items":items,"count":len(items)})
+}
+
+// identityReviewEvidence streams private evidence through the authenticated
+// Backend API. It never returns a provider URL to a browser and never exposes
+// the internal MinIO hostname or a reusable storage capability.
+func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request) {
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "GET required", requestID(r)))
+		return
+	}
+	if _, status, err := s.identityReviewer(r); err != nil {
+		writeJSON(w, status, errorBody("STAFF_ACCESS_DENIED", err.Error(), requestID(r)))
+		return
+	}
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
+	evidenceID := strings.TrimSpace(r.PathValue("evidence_id"))
+	if !identityApplicationIDPattern.MatchString(sessionID) || !identityApplicationIDPattern.MatchString(evidenceID) || s.virtualStorage == nil {
+		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	var applicationID, objectKey, contentType string
+	var size int64
+	err := s.db.QueryRow(ctx, `
+		SELECT a.id::text,e.object_key,e.content_type,e.size_bytes
+		FROM testagram_identity.verification_sessions v
+		JOIN testagram_identity.identity_applications a ON a.id=v.application_id
+		JOIN testagram_identity.verification_evidence e ON e.session_id=v.id
+		WHERE v.id=$1::uuid AND e.id=$2::uuid
+		  AND v.status='manual_review' AND v.expires_at>now()
+		  AND e.status='verified'
+	`, sessionID, evidenceID).Scan(&applicationID, &objectKey, &contentType, &size)
+	if err != nil || size < 1 || size > maxIdentityEvidenceBytes {
+		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
+		return
+	}
+	extension, ok := identityEvidenceExtension(contentType)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
+		return
+	}
+	downloadURL, err := s.virtualStorage.DownloadURL(ctx, applicationID, applicationID, identityEvidenceNamespace, objectKey)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence storage is unavailable", requestID(r)))
+		return
+	}
+	upstreamRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence storage is unavailable", requestID(r)))
+		return
+	}
+	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	upstreamResponse, err := client.Do(upstreamRequest)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence could not be retrieved", requestID(r)))
+		return
+	}
+	defer upstreamResponse.Body.Close()
+	if upstreamResponse.StatusCode != http.StatusOK || (upstreamResponse.ContentLength >= 0 && upstreamResponse.ContentLength != size) {
+		io.Copy(io.Discard, io.LimitReader(upstreamResponse.Body, 4096))
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence storage returned an invalid object", requestID(r)))
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="identity-evidence-`+evidenceID+extension+`"`)
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	if _, err := io.CopyN(w, upstreamResponse.Body, size); err != nil {
+		// Content-Length ensures clients reject a truncated transfer. Do not
+		// append a JSON body after any evidence bytes have been written.
+		return
+	}
 }
 
 func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request) {
