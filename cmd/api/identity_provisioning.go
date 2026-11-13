@@ -215,10 +215,31 @@ func (s *service) identityProvisioningRedeem(w http.ResponseWriter, r *http.Requ
 	}
 	key := sha256.Sum256([]byte(applicationID + ":" + account.ID))
 	if err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_identity.registration_provisioning
-			(application_id,idempotency_key_sha256,appwrite_user_id,canonical_user_id,status,attempts,completed_at,updated_at)
-			VALUES($1::uuid,$2,$3,$4::uuid,'completed',1,now(),now())`,
+		tag, execErr := tx.Exec(ctx, `INSERT INTO testagram_identity.registration_provisioning
+			(application_id,idempotency_key_sha256,appwrite_user_id,canonical_user_id,status,attempts,
+			 completed_at,updated_at,lease_owner,lease_expires_at,reconciliation_required,last_error_code,last_error_class)
+			VALUES($1::uuid,$2,$3,$4::uuid,'completed',1,now(),now(),NULL,NULL,FALSE,'','')
+			ON CONFLICT (application_id) DO UPDATE
+			SET idempotency_key_sha256=EXCLUDED.idempotency_key_sha256,
+			    appwrite_user_id=EXCLUDED.appwrite_user_id,
+			    canonical_user_id=EXCLUDED.canonical_user_id,
+			    status='completed',
+			    attempts=testagram_identity.registration_provisioning.attempts+1,
+			    completed_at=now(),updated_at=now(),
+			    lease_owner=NULL,lease_expires_at=NULL,reconciliation_required=FALSE,
+			    last_error_code='',last_error_class=''
+			WHERE testagram_identity.registration_provisioning.status IN
+			      ('pending','appwrite_created','linked','verification_sent')
+			  AND (testagram_identity.registration_provisioning.appwrite_user_id IS NULL
+			       OR testagram_identity.registration_provisioning.appwrite_user_id=EXCLUDED.appwrite_user_id)
+			  AND (testagram_identity.registration_provisioning.canonical_user_id IS NULL
+			       OR testagram_identity.registration_provisioning.canonical_user_id=EXCLUDED.canonical_user_id)
+			  AND testagram_identity.registration_provisioning.attempts<20`,
 			applicationID, key[:], account.ID, canonicalID)
+		err = execErr
+		if err == nil && tag.RowsAffected() != 1 {
+			err = errors.New("existing provisioning saga is not safely retryable")
+		}
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `UPDATE testagram_identity.identity_approval_tokens
