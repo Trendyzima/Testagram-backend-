@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -82,7 +84,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || (s.dataCentreMedia != nil && s.mediaIntentFactory == nil) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage is not configured on this server", id))
 		return
 	}
@@ -124,13 +126,20 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "File name must be 255 characters or fewer and contain no line breaks", id))
 		return
 	}
-	intent, err := s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+	var intent media.UploadIntent
+	if s.dataCentreMedia != nil {
+		intent, err = s.mediaIntentFactory.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+	} else {
+		intent, err = s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", err.Error(), id))
 		return
 	}
 	storageNamespace, storageProvider := "legacy-media", "default"
-	if s.virtualStorage != nil {
+	if s.dataCentreMedia != nil {
+		storageNamespace, storageProvider = intent.Bucket, "data-centre"
+	} else if s.virtualStorage != nil {
 		storageNamespace = "media-private"
 		if body.Visibility == "public" {
 			storageNamespace = "media-public"
@@ -242,7 +251,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.db == nil || (s.virtualStorage == nil && s.media == nil) {
+	if s.db == nil || (s.virtualStorage == nil && s.media == nil && s.dataCentreMedia == nil) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Bounded upload gateway is unavailable", id))
 		return
 	}
@@ -267,7 +276,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		from testagram_media.upload_intents where object_key=$1`, key).
 		Scan(&ownerID, &contentType, &namespace, &visibility, &maxBytes, &intentStatus, &expiresAt)
 	if err != nil || ownerID != userID || intentStatus != "issued" || !time.Now().Before(expiresAt) || maxBytes < 1 ||
-		(namespace == "legacy-media" && s.media == nil) || (namespace != "legacy-media" && s.virtualStorage == nil) {
+		(namespace == "legacy-media" && s.media == nil) || (namespace != "legacy-media" && s.virtualStorage == nil && s.dataCentreMedia == nil) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
@@ -298,7 +307,8 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 	defer tmp.Close()
-	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, tmp)
+	hasher := sha256.New()
+	n, copyErr := copyBoundedUpload(w, r.Body, maxBytes, io.MultiWriter(tmp, hasher))
 	if copyErr != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(copyErr, &maxErr) {
@@ -319,6 +329,10 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	var target string
 	if namespace == "legacy-media" {
 		target, err = s.media.PresignObjectPut(userID, key, visibility, contentType, 10*time.Minute, time.Now())
+	} else if s.dataCentreMedia != nil {
+		var grant datacentreclient.UploadGrant
+		grant, err = s.dataCentreMedia.CreateUploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
+		target = grant.UploadURL
 	} else {
 		target, err = s.virtualStorage.UploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
 	}
@@ -333,7 +347,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ContentLength = n
 	req.Header.Set("Content-Type", contentType)
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: 30 * time.Minute, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage could not accept the upload", id))
@@ -345,7 +359,8 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_STORAGE_UPLOAD_FAILED", "Object storage rejected the bounded upload", id))
 		return
 	}
-	completed, stateErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploaded', updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading' and expires_at > now()", key, userID)
+	checksumSHA256 := hex.EncodeToString(hasher.Sum(nil))
+	completed, stateErr := s.db.Exec(r.Context(), "update testagram_media.upload_intents set status='uploaded', checksum_sha256=$3, updated_at=now() where object_key=$1 and owner_id=$2 and status='uploading' and expires_at > now()", key, userID, checksumSHA256)
 	if stateErr != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_INTENT_STATE_FAILED", "Object uploaded but intent state could not be saved; stale-upload cleanup will reconcile it", id))
 		return
