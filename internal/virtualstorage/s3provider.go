@@ -148,6 +148,10 @@ func (p *S3Provider) SHA256(ctx context.Context, bucket, key string, maxBytes in
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+func (p *S3Provider) PresignHead(ctx context.Context, bucket, key string, ttl time.Duration) (string, error) {
+	return p.presign(ctx, http.MethodHead, bucket, key, url.Values{}, nil, ttl)
+}
+
 func (p *S3Provider) PresignGet(ctx context.Context, bucket, key string, ttl time.Duration) (string, error) {
 	return p.presign(ctx, http.MethodGet, bucket, key, url.Values{}, nil, ttl)
 }
