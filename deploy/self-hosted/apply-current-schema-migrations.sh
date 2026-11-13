@@ -90,8 +90,8 @@ migrations=(
   045_hashtag_follows.sql
   046_instabox_avatar_storage.sql
   047_profile_presentation_fields.sql
-  048_identity_idswyft_intake.sql
-  049_identity_registration_hardening.sql
+  048_identity_registration_hardening.sql
+  049_identity_idswyft_intake.sql
   050_media_upload_checksum.sql
   051_native_identity_verification.sql
   052_native_identity_integrity.sql
