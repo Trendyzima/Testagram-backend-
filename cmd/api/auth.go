@@ -259,6 +259,16 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		))
 		return true
 	}
+	if action == "login" || action == "forgot-password" || action == "reset-password" {
+		// Appwrite is the sole credential and session provider. These legacy
+		// PostgreSQL-password routes must never become a parallel auth system.
+		writeJSON(w, http.StatusGone, errorBody(
+			"APPWRITE_AUTH_REQUIRED",
+			"Use Appwrite authentication for sign-in and password recovery.",
+			requestID(r),
+		))
+		return true
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 	var in authInput

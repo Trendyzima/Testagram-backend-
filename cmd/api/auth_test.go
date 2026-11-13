@@ -164,3 +164,19 @@ func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyPasswordEndpointsRequireAppwrite(t *testing.T) {
+	handler := (&service{}).routes()
+	for _, path := range []string{
+		"/api/auth/login",
+		"/api/auth/forgot-password",
+		"/api/auth/reset-password",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"user@example.com","password":"example-password","token":"example-token"}`))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), "APPWRITE_AUTH_REQUIRED") {
+			t.Fatalf("POST %s status=%d body=%s; expected Appwrite-only authentication gate", path, rec.Code, rec.Body.String())
+		}
+	}
+}
