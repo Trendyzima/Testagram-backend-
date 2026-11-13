@@ -106,6 +106,14 @@ def notify(message: str, severity: str = "warning") -> None:
     emit(message)
     if not WEBHOOK_URL:
         return
+    if severity == "critical":
+        state = load_state()
+        now = int(time.time())
+        if now - int(state.get("last_critical_alert_at", 0)) < 1800:
+            emit("critical webhook alert suppressed by 30-minute notification cooldown")
+            return
+        state["last_critical_alert_at"] = now
+        save_state(state)
     payload = json.dumps({"text": f"[Testagram VPS {severity}] {message}"}).encode()
     req = urllib.request.Request(WEBHOOK_URL, data=payload,
                                  headers={"Content-Type": "application/json"}, method="POST")
@@ -221,8 +229,11 @@ def main() -> int:
         raise WatchdogError("Configure INSTABOX_API_KEY, INSTABOX_MACHINE_ID, TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
     for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL),
                          ("readiness", READY_URL)):
+
         if urlparse(value).scheme != "https":
             raise WatchdogError(f"{label} URL must use HTTPS")
+    if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
+        raise WatchdogError("Alert webhook URL must use HTTPS")
     if FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or ACTION_COOLDOWN < 300:
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, >=1s interval and >=300s cooldown")
     api = API()
