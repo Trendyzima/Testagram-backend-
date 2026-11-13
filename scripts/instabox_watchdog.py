@@ -238,11 +238,17 @@ def main() -> int:
 
     if machine_state == "stopped":
         result = recover_stopped(api, state)
-        notify(result, "recovery")
+        if result.startswith("started"):
+            notify(result, "recovery")
+        else:
+            emit(result)
         return 0
     if machine_state == "suspended":
         result = recover_suspended(api, state)
-        notify(result, "recovery")
+        if result.startswith("resumed"):
+            notify(result, "recovery")
+        else:
+            emit(result)
         return 0
     if machine_state in ("creating", "starting", "stopping", "suspending", "resuming", "deleting"):
         emit(f"machine lifecycle is already {machine_state}; waiting for next scheduled check")
@@ -253,15 +259,9 @@ def main() -> int:
         raise WatchdogError("Machine is in provider error state; refusing automatic stop/start")
     if machine_state != "running":
         raise WatchdogError(f"Unrecognized machine state {machine_state!r}; refusing action")
-    if desired != "running":
-        emit(f"machine is running but desiredState={desired}; not overriding provider/user intent")
-        return 0
-
-    results = []
     for index in range(FAILURES_REQUIRED):
         health_ok, health_detail = probe(HEALTH_URL)
         ready_ok, ready_detail = probe(READY_URL)
-        results.append((health_ok, ready_ok))
         emit(f"probe {index + 1}/{FAILURES_REQUIRED}: health={health_detail}, readiness={ready_detail}")
         if health_ok and ready_ok:
             state["last_healthy_at"] = int(time.time())
