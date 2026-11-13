@@ -26,8 +26,8 @@ command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
 # to sudo only when the daemon is not accessible without elevation.
 DOCKER=(docker)
 if ! docker info >/dev/null 2>&1; then
-  if command -v sudo >/dev/null && "${DOCKER[@]}" info >/dev/null 2>&1; then
-    DOCKER=("${DOCKER[@]}")
+  if command -v sudo >/dev/null && sudo docker info >/dev/null 2>&1; then
+    DOCKER=(sudo docker)
   else
     echo "Docker is unavailable to the current user, with or without sudo." >&2
     exit 2
