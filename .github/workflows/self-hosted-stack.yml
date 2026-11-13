@@ -111,7 +111,7 @@ jobs:
           env = cdn.get("environment", {})
           image_template = str(cdn.get("image", ""))
           env_example = pathlib.Path(".env.example").read_text(encoding="utf-8")
-          pin = re.search(r"(?m)^TESTAGRAM_CDN_IMAGE=(\\S+)$", env_example)
+          pin = re.search(r"(?m)^TESTAGRAM_CDN_IMAGE=(\S+)$", env_example)
           if "TESTAGRAM_CDN_IMAGE" not in image_template or not pin or "@sha256:" not in pin.group(1):
               raise SystemExit("Go CDN image must be pinned by immutable digest in the Compose environment.")
           for workflow_path in (pathlib.Path("../../.github/workflows/instabox-deploy.yml"), pathlib.Path("../../.github/workflows/self-hosted-stack.yml")):
