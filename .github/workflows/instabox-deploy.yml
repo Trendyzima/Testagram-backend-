@@ -115,6 +115,17 @@ jobs:
         id: remote
         env:
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
+          DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
+          B2_S3_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
+          B2_S3_REGION: ${{ vars.B2_S3_REGION }}
+          B2_S3_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
+          B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+          B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
+          CLOUDFLARE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
+          CLOUDFLARE_R2_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -256,7 +267,7 @@ jobs:
           ensure_random_secret() {
             local key="$1" value
             value="$(read_env_value "$key")"
-            if [[ ! "$value" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
+            if [[ "$value" == REPLACE_WITH_* || ! "$value" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
               value="$(openssl rand -hex 32)"
               write_env_value "$key" "$value"
             fi
@@ -281,6 +292,11 @@ jobs:
           TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9"
           write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
           if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
+          CDN_MEDIA_BASE_URL="$(read_env_value CDN_MEDIA_BASE_URL)"
+          if [[ "$CDN_MEDIA_BASE_URL" != https://* ]]; then
+            echo "::error::CDN_MEDIA_BASE_URL must be HTTPS; refusing an insecure public media origin."
+            exit 1
+          fi
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
             if grep -q '^APPWRITE_PROJECT_ID=' "$BASE_ENV"; then
               sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$BASE_ENV"
@@ -391,13 +407,65 @@ jobs:
           if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
             sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$DC_ENV"
           fi
+          # Copy provider configuration from GitHub Actions vars/secrets when present.
+          # Existing VPS .env values are preserved when a repository value is not supplied.
+          for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+            value="${!key:-}"
+            if [[ -n "$value" ]]; then write_dc_env_value "$key" "$value"; fi
+          done
+          chmod 600 "$DC_ENV"
+
           set -a
           # shellcheck disable=SC1090
           source "$DC_ENV"
           set +a
 
+          # The private media service is enabled only when both independent providers
+          # are fully configured. It remains off otherwise; Backend must not receive a
+          # half-configured URL/token pair.
+          media_enabled=false
+          if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then
+            media_enabled=true
+            for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+              if [[ -z "${!key:-}" ]]; then
+                echo "::error::DATA_CENTRE_MEDIA_ENABLED=true requires complete B2 and R2 configuration; missing $key (value redacted)."
+                exit 1
+              fi
+            done
+            [[ "$B2_S3_ENDPOINT" == https://* && "$CLOUDFLARE_R2_ENDPOINT" == https://* ]] || {
+              echo "::error::B2 and R2 media endpoints must both use HTTPS."
+              exit 1
+            }
+            ensure_random_secret FRESH_DATA_CENTRE_INTERNAL_TOKEN
+            write_env_value DATA_CENTRE_MEDIA_API_URL "http://media:8096"
+            write_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
+            write_dc_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
+            write_dc_env_value MEDIA_DATABASE_NAME "testagram_media"
+            write_dc_env_value MEDIA_DATABASE_URL "postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram_media?sslmode=disable"
+            chmod 600 "$BASE_ENV" "$DC_ENV"
+            set -a
+            # shellcheck disable=SC1090
+            source "$BASE_ENV"
+            # shellcheck disable=SC1090
+            source "$DC_ENV"
+            set +a
+            echo "Data Centre private media profile enabled with B2/R2 configuration (all values redacted)."
+          else
+            existing_media_url="$(read_env_value DATA_CENTRE_MEDIA_API_URL)"
+            existing_media_token="$(read_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN)"
+            if [[ -n "$existing_media_url" || -n "$existing_media_token" ]]; then
+              echo "::error::Backend has a partial Data Centre media client configuration but B2/R2 provider configuration is incomplete."
+              exit 1
+            fi
+            echo "Data Centre private media profile remains disabled: DATA_CENTRE_MEDIA_ENABLED is not true."
+          fi
+          printf '%s\n' "$media_enabled" > "$ROOT/media-enabled.txt"
+
           overlay_status=not_started
           if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" config -q; then
+            if [[ "$media_enabled" == true ]]; then
+              sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" config -q
+            fi
             if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" run --rm migrate; then
               if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" pull algorithm federation-api && sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build --force-recreate algorithm federation-api platform worker video-worker; then
                 overlay_status=core_services_running
@@ -454,7 +522,11 @@ jobs:
           # Verify the actual container Config.Env values without ever printing credentials.
           verify_container_env() {
             local env_file="$1" compose_file="$2" service="$3" key="$4" expected="$5" container actual_env
-            container="$(sudo docker compose --env-file "$env_file" -f "$compose_file" ps -q "$service")"
+            if [[ "$service" == "media" ]]; then
+              container="$(sudo docker compose --profile media --env-file "$env_file" -f "$compose_file" ps -q "$service")"
+            else
+              container="$(sudo docker compose --env-file "$env_file" -f "$compose_file" ps -q "$service")"
+            fi
             if [[ -z "$container" ]]; then
               echo "::error::Cannot verify $key: service $service has no running container."
               return 1
@@ -477,6 +549,59 @@ jobs:
           verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://api:8080"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+
+          if [[ "$media_enabled" == true ]]; then
+            echo "Applying the additive media lifecycle migration to its dedicated database..."
+            sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" run --rm media-migrate
+            sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build --force-recreate media
+            media_container="$(sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q media)"
+            if [[ -z "$media_container" ]]; then
+              echo "::error::Data Centre media service did not create a container."
+              exit 1
+            fi
+            media_ready=false
+            for attempt in $(seq 1 36); do
+              media_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$media_container" 2>/dev/null || echo missing)"
+              if [[ "$media_health" == healthy ]]; then media_ready=true; break; fi
+              if [[ "$media_health" == missing || "$media_health" == exited || "$media_health" == dead || "$media_health" == unhealthy ]]; then break; fi
+              sleep 5
+            done
+            if [[ "$media_ready" != true ]]; then
+              echo "::error::Data Centre media service did not become healthy."
+              sudo docker logs --tail=100 "$media_container" 2>&1 || true
+              exit 1
+            fi
+            # Restart Backend only after the private media service is ready so its
+            # startup validation sees a complete URL/token pair and a reachable peer.
+            sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate api
+            api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+            api_ready=false
+            for attempt in $(seq 1 60); do
+              if sudo docker exec "$api_container" wget -q -O /dev/null http://127.0.0.1:8080/readyz; then api_ready=true; break; fi
+              sleep 5
+            done
+            if [[ "$api_ready" != true ]]; then
+              echo "::error::Backend did not become ready after Data Centre media wiring."
+              sudo docker logs --tail=100 "$api_container" 2>&1 || true
+              exit 1
+            fi
+            verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATA_CENTRE_MEDIA_API_URL "http://media:8096"
+            verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media MEDIA_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media MEDIA_DATABASE_URL "$MEDIA_DATABASE_URL"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_ENDPOINT "$B2_S3_ENDPOINT"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_REGION "$B2_S3_REGION"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_BUCKET "$B2_S3_BUCKET"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_ACCESS_KEY_ID "$B2_S3_ACCESS_KEY_ID"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_SECRET_ACCESS_KEY "$B2_S3_SECRET_ACCESS_KEY"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_ENDPOINT "$CLOUDFLARE_R2_ENDPOINT"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_REGION "$CLOUDFLARE_R2_REGION"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_BUCKET "$CLOUDFLARE_R2_BUCKET"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_ACCESS_KEY_ID "$CLOUDFLARE_R2_ACCESS_KEY_ID"
+            verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_SECRET_ACCESS_KEY "$CLOUDFLARE_R2_SECRET_ACCESS_KEY"
+            sudo docker exec "$api_container" wget -q -O /dev/null http://media:8096/readyz
+            echo "Verified Backend-to-Data-Centre private media readiness and redacted credential mapping."
+          fi
 
           # Exercise both credential directions against the live private service endpoints.
           # Valid Backend -> Federation requests deliberately use an empty payload, so the
@@ -513,7 +638,16 @@ jobs:
           echo "REMOTE_DEPLOY_STARTED"
           REMOTE_OUTER
 
-          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token},timeoutSeconds:90}')"
+          payload="$(jq -nc \
+            --arg cmd "$REMOTE_COMMAND" \
+            --arg appwrite "${APPWRITE_PROJECT_ID:-}" \
+            --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
+            --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
+            --arg b2_endpoint "${B2_S3_ENDPOINT:-}" --arg b2_region "${B2_S3_REGION:-}" --arg b2_bucket "${B2_S3_BUCKET:-}" \
+            --arg b2_access "$B2_S3_ACCESS_KEY_ID" --arg b2_secret "$B2_S3_SECRET_ACCESS_KEY" \
+            --arg r2_endpoint "${CLOUDFLARE_R2_ENDPOINT:-}" --arg r2_region "${CLOUDFLARE_R2_REGION:-}" --arg r2_bucket "${CLOUDFLARE_R2_BUCKET:-}" \
+            --arg r2_access "$CLOUDFLARE_R2_ACCESS_KEY_ID" --arg r2_secret "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
+            '{cmd:$cmd,envs:({APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled} + (if $media_enabled == "true" then {B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret} else {} end)),timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
@@ -566,6 +700,9 @@ jobs:
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
           cmd='set -euo pipefail
           containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
+          if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
+            containers+=(testagram-data-centre-media-1)
+          fi
           for container in "${containers[@]}"; do
             ready=false
             status=missing
