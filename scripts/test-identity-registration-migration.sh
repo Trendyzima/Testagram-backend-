@@ -35,12 +35,14 @@ for migration in \
   migrations/20261110_staff_roles.sql \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
-  migrations/20261113_identity_registration_hardening.sql; do
+  migrations/20261113_identity_registration_hardening.sql \
+  migrations/20261113_identity_idswyft_intake.sql; do
   psql_ci < "$migration"
 done
 
 # Re-apply the new migration to prove idempotent DDL behavior.
 psql_ci < migrations/20261113_identity_registration_hardening.sql
+psql_ci < migrations/20261113_identity_idswyft_intake.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
@@ -65,13 +67,17 @@ BEGIN
   INSERT INTO testagram_identity.identity_applications
     (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
      adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
+     adult_verification_session_id,adult_verification_mode,adult_verification_threshold,
+     adult_verification_result,adult_verification_webhook_received_at,
      evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
-     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id)
+     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id,
+     status_access_token_sha256,status_access_token_expires_at)
   VALUES
     (app_id,'first@example.test','ci_first','CI First',now(),now(),
      'ci-provider','ci-adult-evidence-ref',now(),
+     '123e4567-e89b-42d3-a456-426614174000','age_only',18,'verified',now(),
      'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
-     decode(repeat('2',64),'hex'),action_id);
+     decode(repeat('2',64),'hex'),action_id,decode(repeat('6',64),'hex'),now()+interval '7 days');
 
   -- A token cannot be issued while the ledger is still pending.
   BEGIN
