@@ -78,9 +78,12 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		INSERT INTO testagram_identity.identity_applications
 		  (id, email, username, display_name, adult_confirmed_at, adult_verified_at,
 		   adult_verification_provider, adult_verification_reference, adult_verification_checked_at,
+		   adult_verification_session_id, adult_verification_mode, adult_verification_threshold,
+		   adult_verification_result, adult_verification_webhook_received_at,
 		   evidence_reference, evidence_fingerprint_sha256, terms_version, privacy_version,
 		   terms_accepted_at, privacy_accepted_at, sensitive_action_request_id)
 		VALUES ($1::uuid, $2, $3, $4, now(), now(), 'idswyft', 'idswyft-verification-ci-001', now(),
+		        '223e4567-e89b-42d3-a456-426614174000', 'age_only', 18, 'verified', now(),
 		        'opaque-evidence-reference-ci', $5, $6, $7, now(), now(), $8::uuid)
 	`, applicationID, payload.Email, payload.Username, payload.DisplayName,
 		fingerprint, payload.TermsVersion, payload.PrivacyVersion, requestID)

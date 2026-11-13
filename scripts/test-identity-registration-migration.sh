@@ -35,12 +35,20 @@ for migration in \
   migrations/20261110_staff_roles.sql \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
-  migrations/20261113_identity_registration_hardening.sql; do
+  migrations/20261113_identity_registration_hardening.sql \
+  migrations/20261113_identity_idswyft_intake.sql \
+  migrations/20261113_native_identity_verification.sql \
+  migrations/20261113_native_identity_integrity.sql; do
   psql_ci < "$migration"
 done
 
 # Re-apply the new migration to prove idempotent DDL behavior.
 psql_ci < migrations/20261113_identity_registration_hardening.sql
+psql_ci < migrations/20261113_identity_idswyft_intake.sql
+psql_ci < migrations/20261113_native_identity_verification.sql
+psql_ci < migrations/20261113_native_identity_verification.sql
+psql_ci < migrations/20261113_native_identity_integrity.sql
+psql_ci < migrations/20261113_native_identity_integrity.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
@@ -65,13 +73,17 @@ BEGIN
   INSERT INTO testagram_identity.identity_applications
     (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
      adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
+     adult_verification_session_id,adult_verification_mode,adult_verification_threshold,
+     adult_verification_result,adult_verification_webhook_received_at,
      evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
-     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id)
+     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id,
+     status_access_token_sha256,status_access_token_expires_at)
   VALUES
     (app_id,'first@example.test','ci_first','CI First',now(),now(),
      'ci-provider','ci-adult-evidence-ref',now(),
+     '123e4567-e89b-42d3-a456-426614174000','age_only',18,'verified',now(),
      'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
-     decode(repeat('2',64),'hex'),action_id);
+     decode(repeat('2',64),'hex'),action_id,decode(repeat('6',64),'hex'),now()+interval '7 days');
 
   -- A token cannot be issued while the ledger is still pending.
   BEGIN
@@ -227,6 +239,75 @@ BEGIN
   END;
 END;
 $lease_invariant$;
+SQL
+
+# Exercise native verification session constraints and immutable audit records.
+psql_ci <<'SQL'
+DO $native_identity$
+DECLARE
+  app_id uuid := gen_random_uuid();
+  v_session_id uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO testagram_identity.identity_applications
+    (id,email,username,display_name,adult_confirmed_at,evidence_reference,
+     evidence_fingerprint_sha256,terms_version,privacy_version,
+     terms_accepted_at,privacy_accepted_at)
+  VALUES
+    (app_id,'native@example.test','native_ci','Native CI',now(),
+     'native-pending-reference',decode(repeat('9',64),'hex'),
+     'terms-v1','privacy-v1',now(),now());
+
+  INSERT INTO testagram_identity.verification_sessions
+    (id,application_id,session_token_sha256,purpose,requested_minimum_age,expires_at)
+  VALUES
+    (v_session_id,app_id,decode(repeat('a',64),'hex'),'age_assurance',18,now()+interval '1 day');
+
+  -- Identity assurance must not require an age-threshold result.
+  INSERT INTO testagram_identity.verification_sessions
+    (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
+     evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
+     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_appwrite_user_id)
+  VALUES
+    (gen_random_uuid(),app_id,decode(repeat('b',64),'hex'),'identity_assurance',NULL,'verified',
+     'opaque-identity-evidence',decode(repeat('c',64),'hex'),'document_review','reviewed',
+     NULL,now()+interval '1 day',now(),now(),'ci-reviewer-two');
+
+  INSERT INTO testagram_identity.verification_events
+    (session_id,event_type,actor_type,actor_reference,request_id)
+  VALUES
+    (v_session_id,'session_created','applicant','native-ci','native-session-created');
+
+  INSERT INTO testagram_identity.verification_reviews
+    (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
+  VALUES
+    (v_session_id,'ci-reviewer-one','escalate','needs_second_review','opaque-native-evidence-ref');
+
+  BEGIN
+    UPDATE testagram_identity.verification_events
+    SET actor_reference='tampered' WHERE verification_events.session_id=v_session_id;
+    RAISE EXCEPTION 'verification event update unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'verification event update unexpectedly succeeded' THEN RAISE; END IF;
+  END;
+
+  BEGIN
+    DELETE FROM testagram_identity.verification_reviews
+    WHERE verification_reviews.session_id=v_session_id;
+    RAISE EXCEPTION 'verification review deletion unexpectedly succeeded';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'verification review deletion unexpectedly succeeded' THEN RAISE; END IF;
+  END;
+
+  BEGIN
+    UPDATE testagram_identity.verification_sessions
+    SET status='submitted',submitted_at=now()
+    WHERE id=v_session_id;
+    RAISE EXCEPTION 'evidence-free submission unexpectedly succeeded';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END;
+$native_identity$;
 SQL
 
 # Exercise the Admin Console review handler against this same isolated database.
