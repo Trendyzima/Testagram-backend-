@@ -193,10 +193,10 @@ func TestReplicatorMinIOThreeProviderLifecycle(t *testing.T) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { t.Fatalf("primary upload status=%d", resp.StatusCode) }
 
 	replicator, err := NewReplicator("instabox-vps", providers[0],
-		map[string]string{"media-private":buckets[0],"media-public":buckets[0]},
+		map[string]string{"media-private":buckets[0],"media-public":buckets[0],"identity-evidence-private":buckets[0]},
 		[]ReplicaTarget{
-			{Name:"cloudflare-r2",Provider:providers[1],Buckets:map[string]string{"media-private":buckets[1],"media-public":buckets[1]}},
-			{Name:"backblaze-b2",Provider:providers[2],Buckets:map[string]string{"media-private":buckets[2],"media-public":buckets[2]}},
+			{Name:"cloudflare-r2",Provider:providers[1],Buckets:map[string]string{"media-private":buckets[1],"media-public":buckets[1],"identity-evidence-private":buckets[1]}},
+			{Name:"backblaze-b2",Provider:providers[2],Buckets:map[string]string{"media-private":buckets[2],"media-public":buckets[2],"identity-evidence-private":buckets[2]}},
 		})
 	if err != nil { t.Fatal(err) }
 	results, err := replicator.Replicate(ctx,"user-1","media-private",key,int64(len(payload)),"application/octet-stream",digest)
@@ -214,6 +214,41 @@ func TestReplicatorMinIOThreeProviderLifecycle(t *testing.T) {
 	for i,provider:=range providers {
 		if _,err:=provider.Head(ctx,buckets[i],scopedKey);!errors.Is(err,ErrNotFound) {
 			t.Fatalf("provider %d HEAD after delete=%v, want ErrNotFound",i,err)
+		}
+	}
+
+	// Exercise the dedicated identity-evidence namespace across all three
+	// providers, including independent checksum read-back and deletion.
+	identityKey := "identity/session-ci/evidence.pdf"
+	identityScopedKey := tenantPrefix("application-ci") + identityKey
+	identityPayload := []byte("testagram-private-identity-evidence-fixture")
+	identityDigestBytes := sha256.Sum256(identityPayload)
+	identityDigest := hex.EncodeToString(identityDigestBytes[:])
+	identityPutURL, err := providers[0].PresignPut(ctx, buckets[0], identityScopedKey, "application/pdf", int64(len(identityPayload)), 5*time.Minute)
+	if err != nil { t.Fatal(err) }
+	identityPutReq := mustRequest(t, ctx, http.MethodPut, identityPutURL, bytes.NewReader(identityPayload))
+	identityPutReq.Header.Set("Content-Type", "application/pdf")
+	resp, err = providers[0].do(identityPutReq)
+	if err != nil { t.Fatal(err) }
+	drainAndClose(t, resp)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 { t.Fatalf("identity evidence primary upload status=%d", resp.StatusCode) }
+	identityResults, err := replicator.Replicate(ctx, "application-ci", "identity-evidence-private", identityKey, int64(len(identityPayload)), "application/pdf", identityDigest)
+	if err != nil { t.Fatalf("replicate identity evidence: %v", err) }
+	if len(identityResults) != 3 { t.Fatalf("identity evidence verified placements=%d, want 3", len(identityResults)) }
+	for i, provider := range providers {
+		info, err := provider.Head(ctx, buckets[i], identityScopedKey)
+		if err != nil || info.Size != int64(len(identityPayload)) || info.ContentType != "application/pdf" {
+			t.Fatalf("identity evidence provider %d metadata=%+v err=%v", i, info, err)
+		}
+		got, err := provider.SHA256(ctx, buckets[i], identityScopedKey, int64(len(identityPayload)))
+		if err != nil || got != identityDigest { t.Fatalf("identity evidence provider %d checksum=%q err=%v", i, got, err) }
+	}
+	if err := replicator.Delete(ctx, "application-ci", "identity-evidence-private", identityKey); err != nil {
+		t.Fatalf("delete identity evidence replicas: %v", err)
+	}
+	for i, provider := range providers {
+		if _, err := provider.Head(ctx, buckets[i], identityScopedKey); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("identity evidence provider %d HEAD after delete=%v, want ErrNotFound", i, err)
 		}
 	}
 }
