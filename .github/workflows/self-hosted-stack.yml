@@ -131,6 +131,8 @@ jobs:
               raise SystemExit("Go CDN health probe must target its configured listener.")
           if "CDN_ORIGIN_AUTH_TOKEN" not in env.get("ORIGIN_AUTH_TOKEN", ""):
               raise SystemExit("Go CDN origin credential must be sourced from CDN_ORIGIN_AUTH_TOKEN.")
+          if "CDN_PURGE_TOKEN" not in env.get("PURGE_TOKEN", ""):
+              raise SystemExit("Go CDN purge credential must be sourced from CDN_PURGE_TOKEN.")
           if "ports" in cdn:
               raise SystemExit("Go CDN must not publish a host port in Compose.")
           if "api" not in cdn.get("depends_on", {}):
@@ -141,7 +143,7 @@ jobs:
           if "/healthcheck" not in health:
               raise SystemExit("Go CDN healthcheck must use the scratch-compatible static probe.")
           api_env = services["api"].get("environment", {})
-          for key in ("CDN_ORIGIN_AUTH_TOKEN", "CDN_MEDIA_ASSERTION_SECRET", "CDN_MEDIA_BASE_URL"):
+          for key in ("CDN_ORIGIN_AUTH_TOKEN", "CDN_MEDIA_ASSERTION_SECRET", "CDN_MEDIA_BASE_URL", "CDN_PURGE_URL", "CDN_PURGE_TOKEN"):
               if key not in api_env:
                   raise SystemExit(f"Backend API is missing CDN setting {key}.")
           PY
@@ -158,6 +160,9 @@ jobs:
               if "run" in step:
                   subprocess.run(["bash", "-n"], input=step["run"], text=True, check=True)
           target = next(step for step in steps if step.get("name") == "Configure public CDN URL and restart Backend and Go CDN")
+          deploy_source = workflow_path.read_text(encoding="utf-8")
+          if "ensure_random_secret CDN_PURGE_TOKEN" not in deploy_source or "CDN_PURGE_URL" not in deploy_source:
+              raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
           match = re.search(r"(?m)^\s*cmd='([^']*)'\s*$", target["run"])
           if not match:
               raise SystemExit("Remote CDN configuration command was not found or contains unsafe quote boundaries.")
