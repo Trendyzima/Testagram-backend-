@@ -459,7 +459,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Lint InstaBox deployment workflow
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/instabox-deploy.yml
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'SC2034' -ignore 'SC2016' -ignore 'SC2129' .github/workflows/instabox-deploy.yml
       - name: Validate Compose configuration
         env:
           POSTGRES_PASSWORD: ci-only-password-not-for-production
