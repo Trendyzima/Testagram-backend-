@@ -150,3 +150,27 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 		t.Fatal("Data Centre client followed an untrusted redirect")
 	}
 }
+
+func TestCreateUploadURLRejectsUnsafeOrOverlongGrant(t *testing.T) {
+	for _, tc := range []struct{name, uploadURL string; expiry time.Time}{
+		{"private origin", "https://127.0.0.1/internal", time.Now().Add(10*time.Minute)},
+		{"plaintext", "http://b2.example/object", time.Now().Add(10*time.Minute)},
+		{"overlong expiry", "https://b2.example/object", time.Now().Add(24*time.Hour)},
+		{"expired", "https://b2.example/object", time.Now().Add(-time.Minute)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /internal/v1/media/upload-url", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(UploadGrant{IntentID:"intent-1",UploadURL:tc.uploadURL,ExpiresAt:tc.expiry,MaxBytes:128,Primary:"backblaze_b2"})
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+			client, err := New(server.URL, testToken, nil)
+			if err != nil { t.Fatal(err) }
+			if _, err := client.CreateUploadURL(context.Background(),"user-123","media-public","users/user-123/0123456789abcdef0123456789abcdef","image/jpeg",128); err == nil {
+				t.Fatal("unsafe upload grant accepted")
+			}
+		})
+	}
+}
