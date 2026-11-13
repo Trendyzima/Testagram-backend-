@@ -19,6 +19,8 @@ on:
       - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
+      - ".github/workflows/instabox-deploy.yml"
+      - ".github/workflows/cdn-origin-integration.yml"
   pull_request:
     branches: [main]
     paths:
@@ -39,6 +41,8 @@ on:
       - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
+      - ".github/workflows/instabox-deploy.yml"
+      - ".github/workflows/cdn-origin-integration.yml"
 
 permissions:
   contents: read
