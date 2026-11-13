@@ -10,11 +10,12 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 API_BASE = os.getenv("INSTABOX_API_BASE_URL", "https://api.instabox.sh").rstrip("/")
 API_KEY = os.getenv("INSTABOX_API_KEY", "")
 MACHINE_ID = os.getenv("INSTABOX_MACHINE_ID", "")
+MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagramdb")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
 READY_URL = os.getenv("TESTAGRAM_READINESS_URL", "")
 STATE_FILE = os.getenv("WATCHDOG_STATE_FILE", ".watchdog-state.json")
@@ -139,6 +140,37 @@ def probe(url: str) -> tuple[bool, str]:
         return False, type(exc).__name__
 
 
+def resolve_machine_id(api: API) -> str:
+    if MACHINE_ID:
+        return MACHINE_ID
+    if not MACHINE_NAME:
+        raise WatchdogError("Configure INSTABOX_MACHINE_NAME or INSTABOX_MACHINE_ID")
+    cursor = None
+    matches: list[dict[str, Any]] = []
+    # Resolve by exact name across every page; never guess among duplicates.
+    for _ in range(10):
+        query = {"limit": "100"}
+        if cursor:
+            query["cursor"] = cursor
+        result = api.request("GET", "/v1/machines?" + urlencode(query))
+        page = unwrap(result)
+        machines = page.get("machines")
+        if not isinstance(machines, list):
+            raise WatchdogError("Instabox machine-list response is missing its machines array")
+        matches.extend(item for item in machines
+                       if isinstance(item, dict) and item.get("name") == MACHINE_NAME)
+        cursor = page.get("nextCursor")
+        if not cursor:
+            break
+    else:
+        raise WatchdogError("Instabox machine list exceeded ten pages; refusing ambiguous resolution")
+    if len(matches) != 1 or not matches[0].get("id"):
+        raise WatchdogError(
+            f"Expected exactly one Instabox machine named {MACHINE_NAME!r}; found {len(matches)}"
+        )
+    return str(matches[0]["id"])
+
+
 def machine_snapshot(api: API) -> dict[str, Any]:
     result = api.request("GET", f"/v1/machines/{quote(MACHINE_ID, safe='')}")
     machine = unwrap(result, "machine")
@@ -148,6 +180,8 @@ def machine_snapshot(api: API) -> dict[str, Any]:
         raise WatchdogError("Machine response missing required fields: " + ", ".join(missing))
     if str(machine["id"]) != MACHINE_ID:
         raise WatchdogError("Instabox returned a different machine ID; refusing lifecycle action")
+    if MACHINE_NAME and machine.get("name") != MACHINE_NAME:
+        raise WatchdogError("Instabox machine name changed; refusing lifecycle action")
     return machine
 
 
@@ -225,8 +259,8 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if not API_KEY or not MACHINE_ID or not HEALTH_URL or not READY_URL:
-        raise WatchdogError("Configure INSTABOX_API_KEY, INSTABOX_MACHINE_ID, TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
+    if not API_KEY or (not MACHINE_ID and not MACHINE_NAME) or not HEALTH_URL or not READY_URL:
+        raise WatchdogError("Configure INSTABOX_API_KEY, INSTABOX_MACHINE_NAME (or INSTABOX_MACHINE_ID), TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
     for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL),
                          ("readiness", READY_URL)):
 
@@ -237,6 +271,8 @@ def main() -> int:
     if FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or ACTION_COOLDOWN < 300:
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, >=1s interval and >=300s cooldown")
     api = API()
+    global MACHINE_ID
+    MACHINE_ID = resolve_machine_id(api)
     state = load_state()
     machine = machine_snapshot(api)
     machine_state = machine["state"]
