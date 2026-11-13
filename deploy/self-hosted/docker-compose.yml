@@ -226,6 +226,29 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     networks: [edge, data]
+  # Go edge serves Backend-authorized media paths. It has no public host port;
+  # Caddy routes only canonical media namespaces here; signed MinIO paths remain on media-cache.
+  cdn:
+    image: ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9
+    environment:
+      LISTEN_ADDR: ":8080"
+      ORIGIN_URL: http://api:8080
+      ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
+      PUBLIC_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
+      NODE_ID: ${CDN_NODE_ID:-instabox-primary}
+      CACHE_DIR: /cache
+      MAX_CACHE_BYTES: ${CDN_MAX_CACHE_BYTES:-2147483648}
+      HOT_CACHE_BYTES: ${CDN_HOT_CACHE_BYTES:-268435456}
+    volumes:
+      - ${CDN_CACHE_DIR:-./cdn-cache}:/cache
+    depends_on:
+      api:
+        condition: service_started
+    expose: ["8080"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks: [edge]
 
   caddy:
     image: caddy:2-alpine
@@ -242,7 +265,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [api, media-cache, control-plane, admin-console]
+    depends_on: [api, cdn, media-cache, control-plane, admin-console]
     restart: unless-stopped
     networks: [edge, control-plane]
 
