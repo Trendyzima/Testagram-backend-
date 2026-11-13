@@ -246,7 +246,7 @@ psql_ci <<'SQL'
 DO $native_identity$
 DECLARE
   app_id uuid := gen_random_uuid();
-  session_id uuid := gen_random_uuid();
+  v_session_id uuid := gen_random_uuid();
 BEGIN
   INSERT INTO testagram_identity.identity_applications
     (id,email,username,display_name,adult_confirmed_at,evidence_reference,
@@ -265,16 +265,16 @@ BEGIN
   INSERT INTO testagram_identity.verification_events
     (session_id,event_type,actor_type,actor_reference,request_id)
   VALUES
-    (session_id,'session_created','applicant','native-ci','native-session-created');
+    (v_session_id,'session_created','applicant','native-ci','native-session-created');
 
   INSERT INTO testagram_identity.verification_reviews
     (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
   VALUES
-    (session_id,'ci-reviewer-one','escalate','needs_second_review','opaque-native-evidence-ref');
+    (v_session_id,'ci-reviewer-one','escalate','needs_second_review','opaque-native-evidence-ref');
 
   BEGIN
     UPDATE testagram_identity.verification_events
-    SET actor_reference='tampered' WHERE session_id=session_id;
+    SET actor_reference='tampered' WHERE verification_events.session_id=v_session_id;
     RAISE EXCEPTION 'verification event update unexpectedly succeeded';
   EXCEPTION WHEN raise_exception THEN
     IF SQLERRM = 'verification event update unexpectedly succeeded' THEN RAISE; END IF;
@@ -282,7 +282,7 @@ BEGIN
 
   BEGIN
     DELETE FROM testagram_identity.verification_reviews
-    WHERE verification_reviews.session_id=session_id;
+    WHERE verification_reviews.session_id=v_session_id;
     RAISE EXCEPTION 'verification review deletion unexpectedly succeeded';
   EXCEPTION WHEN raise_exception THEN
     IF SQLERRM = 'verification review deletion unexpectedly succeeded' THEN RAISE; END IF;
@@ -291,7 +291,7 @@ BEGIN
   BEGIN
     UPDATE testagram_identity.verification_sessions
     SET status='submitted',submitted_at=now()
-    WHERE id=session_id;
+    WHERE id=v_session_id;
     RAISE EXCEPTION 'evidence-free submission unexpectedly succeeded';
   EXCEPTION WHEN check_violation THEN
     NULL;
