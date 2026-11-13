@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Check provider and endpoints without issuing lifecycle actions"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -46,6 +52,7 @@ jobs:
           TESTAGRAM_READINESS_URL: ${{ vars.TESTAGRAM_READINESS_URL }}
           WATCHDOG_ALERT_WEBHOOK: ${{ secrets.WATCHDOG_ALERT_WEBHOOK }}
           WATCHDOG_STATE_FILE: .watchdog-state.json
+          WATCHDOG_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
           WATCHDOG_FAILURES_REQUIRED: "3"
           WATCHDOG_PROBE_INTERVAL_SECONDS: "15"
           WATCHDOG_ACTION_COOLDOWN_SECONDS: "1800"
