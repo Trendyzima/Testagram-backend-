@@ -45,7 +45,7 @@ The native backend branch now provides:
 - `POST /api/identity/sessions/{session_id}/evidence/submit`: verifies provider-observed size, content type and SHA-256 before moving the session into manual review.
 - `GET /api/admin/identity/review-queue`: Appwrite-authenticated staff queue with short-lived private evidence URLs.
 - `POST /api/admin/identity/sessions/{session_id}/decision`: requires two matching, distinct staff decisions; self-review is rejected.
-- `POST /api/admin/identity/applications/{application_id}/approve`: connects the two verified reviewers to the existing two-person sensitive-action ledger and issues a 15-minute, single-use approval token only after both approvals.
+- `POST /api/admin/identity/applications/{application_id}/approve`: connects the two verified reviewers to the existing two-person sensitive-action ledger and marks the application approved only after both approvals. It deliberately does not expose a provisioning bearer token to staff.
 
 The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or calls an Idswyft API. The historical intake migration remains in migration history so already-migrated databases are upgraded safely; it is not a runtime dependency.
 
@@ -53,7 +53,7 @@ The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or
 
 1. Run and pass the isolated PostgreSQL migration/invariant workflow with the new evidence metadata migration.
 2. Pass Go formatting, unit, race, vet, build, OpenAPI and container CI on this branch.
-3. Implement approval-token redemption and connect it to the existing Appwrite/canonical-account provisioning saga, including idempotent retries and compensation.
+3. Implement applicant-bound approval-token issuance/redemption and connect it to the existing Appwrite/canonical-account provisioning saga, including idempotent retries and compensation.
 4. Integrate the Flutter applicant journey with native session creation, upload, submit and status polling; integrate the staff review surface.
 5. Exercise real private-bucket upload, checksum verification, short-lived reviewer download, expiry and retention deletion in staging.
 6. Run complete applicant-to-provisioned-account end-to-end and security tests. Public registration remains disabled until these gates pass.
