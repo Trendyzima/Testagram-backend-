@@ -1,5 +1,19 @@
 create extension if not exists pgcrypto;
 
+-- Bootstrap application privilege roles before any later migration references them.
+-- These are NOLOGIN group roles: credentials belong to deployment-managed login
+-- roles, never to a migration or an application default.
+DO $roles$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'testagram_app') THEN
+    CREATE ROLE testagram_app NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role NOLOGIN;
+  END IF;
+END
+$roles$;
+
 create table if not exists public.vps_nodes(id uuid primary key default gen_random_uuid(),name text not null,platform text not null,arch text not null,cpu_cores integer not null default 0 check(cpu_cores>=0),memory_bytes bigint not null default 0 check(memory_bytes>=0),storage_bytes bigint not null default 0 check(storage_bytes>=0),free_bytes bigint not null default 0 check(free_bytes>=0),capabilities jsonb not null default '{}'::jsonb,endpoint text not null,token_hash text not null unique,status text not null default 'online' check(status in('online','draining','offline','quarantined')),last_seen_at timestamptz not null default now(),created_at timestamptz not null default now());
 create index if not exists vps_nodes_scheduler_idx on public.vps_nodes(status,arch,cpu_cores,memory_bytes,free_bytes,last_seen_at);
 create table if not exists public.vps_workloads(id uuid primary key default gen_random_uuid(),owner_id uuid,node_id uuid references public.vps_nodes(id) on delete set null,image text not null,image_digest text,command jsonb not null default '[]'::jsonb,env jsonb not null default '{}'::jsonb,cpu_millis integer not null default 250 check(cpu_millis>0),memory_bytes bigint not null default 268435456 check(memory_bytes>0),volume text,status text not null default 'queued' check(status in('queued','assigned','running','stopped','failed')),created_at timestamptz not null default now(),updated_at timestamptz not null default now());
