@@ -40,7 +40,12 @@ async function api(path, body, method) {
   });
   let data = {};
   try { data = await response.json(); } catch (_) {}
-  if (!response.ok) throw new Error(data.error || data.message || "Request could not be completed.");
+  if (!response.ok) {
+    const detail = data.error;
+    const message = typeof detail === "string" ? detail :
+      (detail && typeof detail.message === "string" ? detail.message : data.message);
+    throw new Error(message || "Request could not be completed.");
+  }
   return data;
 }
 function busy(form, value) {
@@ -79,8 +84,10 @@ function renderDashboard(user) {
   byId("approval-panel").classList.remove("hidden");
   byId("sensitive-request-panel").classList.remove("hidden");
   byId("audit-panel").classList.remove("hidden");
+  byId("identity-review-panel").classList.remove("hidden");
   refreshOverview();
   loadApprovalQueue();
+  loadIdentityReviewQueue();
   loadAuditHistory();
   if (user.role === "owner") loadStaffDirectory();
 }
@@ -428,6 +435,88 @@ byId("sensitive-request-form").addEventListener("submit", async (event) => {
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
 });
+
+async function loadIdentityReviewQueue() {
+  const list = byId("identity-review-list");
+  if (!list) return;
+  list.replaceChildren();
+  try {
+    const data = await api("/api/admin/identity/review-queue");
+    const items = data.items || [];
+    if (!items.length) {
+      const empty = document.createElement("p");
+      empty.className = "field-help";
+      empty.textContent = "No identity applications are waiting for evidence review.";
+      list.appendChild(empty);
+      return;
+    }
+    for (const item of items) {
+      const card = document.createElement("article");
+      card.className = "approval-item";
+      const heading = document.createElement("b");
+      heading.textContent = (item.display_name || "Applicant") + " · @" + (item.username || "unknown");
+      const detail = document.createElement("p");
+      detail.textContent = (item.email || "Email unavailable") + " · " +
+        (item.content_type || "document") + " · " +
+        Number(item.size_bytes || 0).toLocaleString() + " bytes";
+      const created = document.createElement("small");
+      created.textContent = "Submitted " + new Date(item.created_at).toLocaleString() +
+        " · session expires " + new Date(item.expires_at).toLocaleString();
+      const evidence = document.createElement("a");
+      evidence.href = item.evidence_url;
+      evidence.rel = "noreferrer";
+      evidence.textContent = "Download private evidence";
+      evidence.className = "text-button";
+      evidence.setAttribute("download", "");
+      const form = document.createElement("form");
+      form.className = "form compact";
+      const reason = document.createElement("input");
+      reason.required = true;
+      reason.minLength = 2;
+      reason.maxLength = 64;
+      reason.placeholder = "Decision reason code (e.g. document_legible)";
+      form.appendChild(reason);
+      for (const decision of ["verified", "failed", "escalate"]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = decision === "verified" ? "button button-primary" : "button button-secondary";
+        button.textContent = decision === "verified" ? "Verify evidence" :
+          decision === "failed" ? "Reject evidence" : "Escalate";
+        button.addEventListener("click", async () => {
+          if (reason.value.trim().length < 2) {
+            notice("Enter a reason code before recording the review decision.", "error");
+            reason.focus();
+            return;
+          }
+          button.disabled = true;
+          try {
+            const result = await api("/api/admin/identity/sessions/" +
+              encodeURIComponent(item.session_id) + "/decision", {
+                decision,
+                reason_code: reason.value.trim()
+              });
+            notice("Identity review recorded: " + (result.status || decision) + ".", "success");
+            await loadIdentityReviewQueue();
+            await loadApprovalQueue();
+            await loadAuditHistory();
+          } catch (error) {
+            notice(error.message, "error");
+            button.disabled = false;
+          }
+        });
+        form.appendChild(button);
+      }
+      card.append(heading, detail, created, evidence, form);
+      list.appendChild(card);
+    }
+  } catch (error) {
+    const failed = document.createElement("p");
+    failed.className = "field-help";
+    failed.textContent = error.message;
+    list.appendChild(failed);
+  }
+}
+byId("identity-review-refresh").addEventListener("click", loadIdentityReviewQueue);
 
 async function loadAuditHistory() {
   const list = byId("audit-list");
