@@ -241,7 +241,7 @@ func TestDetectEvidenceContentTypeUsesFileSignatures(t *testing.T) {
 		want string
 	}{
 		{"jpeg", []byte{0xff,0xd8,0xff,0xe0}, "image/jpeg"},
-		{"png", []byte("\\x89PNG\\r\\n\\x1a\\nrest"), "image/png"},
+		{"png", []byte("\x89PNG\r\n\x1a\nrest"), "image/png"},
 		{"webp", []byte("RIFF0000WEBPVP8 "), "image/webp"},
 		{"pdf", []byte("%PDF-1.7"), "application/pdf"},
 		{"plain text", []byte("identity evidence"), "text/plain"},
