@@ -527,7 +527,7 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil {
+	if s.media == nil && s.dataCentreMedia == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage is not configured on this server", id))
 		return
 	}
@@ -559,7 +559,9 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var signedURL string
-	if storageNamespace != "legacy-media" {
+	if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+		signedURL, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
+	} else if storageNamespace != "legacy-media" {
 		if s.virtualStorage == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This media object requires the virtual storage provider", id))
 			return
@@ -584,7 +586,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -622,7 +624,11 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		if visibility == "public" {
 			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
 		} else if visibility == "private" {
-			if storageNamespace != "legacy-media" {
+			if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+				var grant datacentreclient.DownloadGrant
+				grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
+				mediaURL = grant.URL
+			} else if storageNamespace != "legacy-media" {
 				mediaURL, err = s.virtualStorage.DownloadURL(r.Context(), userID, userID, storageNamespace, key)
 			} else {
 				mediaURL, err = s.media.PresignPrivateDownload(userID, key, 5*time.Minute, time.Now())
@@ -947,7 +953,7 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorBody("MODERATION_UNAUTHORIZED", "A valid operator moderation token is required", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -1194,7 +1200,7 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -1282,6 +1288,12 @@ func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility
 
 func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
 	if storageNamespace != "" && storageNamespace != "legacy-media" {
+		if s.dataCentreMedia != nil {
+			status, err := s.dataCentreMedia.Delete(ctx, userID, userID, storageNamespace, key)
+			if err != nil { return err }
+			if status != "deleted" { return errors.New("Data Centre media deletion remains pending") }
+			return nil
+		}
 		if s.virtualStorage == nil {
 			return errors.New("virtual storage provider is required for this namespace")
 		}
@@ -1337,7 +1349,7 @@ type mediaCleanupObject struct {
 }
 
 func (s *service) cleanupMediaBatch(ctx context.Context) error {
-	if s.db == nil || s.media == nil {
+	if s.db == nil || (s.media == nil && s.dataCentreMedia == nil) {
 		return nil
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
