@@ -203,6 +203,12 @@ def wait_operation(api: API, result: dict[str, Any], expected: str) -> None:
         current = unwrap(api.request("GET", f"/v1/operations/{quote(str(op_id), safe='')}"), "operation")
         state = current.get("state")
         if state == "succeeded":
+            final_machine = machine_snapshot(api)
+            if final_machine["state"] != expected:
+                raise WatchdogError(
+                    f"Instabox operation {op_id} succeeded but machine state is "
+                    f"{final_machine['state']!r}, expected {expected!r}"
+                )
             return
         if state == "failed":
             error = current.get("error") or {}
