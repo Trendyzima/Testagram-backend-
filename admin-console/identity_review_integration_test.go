@@ -101,7 +101,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin first review transaction: %v", err)
 	}
-	state, err := recordIdentityApplicationReview(ctx, tx, applicationID, reviewerOne, "approved",
+	state, err := recordIdentityApplicationReview(ctx, tx, requestID, applicationID, reviewerOne, "approved",
 		"First reviewer confirms the verified evidence", rawPayload, 1)
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -118,20 +118,25 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	_, err = conn.Exec(ctx, `
 		INSERT INTO testagram_auth.sensitive_action_approvals
 		  (request_id, approver_appwrite_user_id, decision, reason)
-		VALUES ($1::uuid, $2, 'approved', 'Second independent reviewer approval');
+		VALUES ($1::uuid, $2, 'approved', 'Second independent reviewer approval')
+	`, requestID, reviewerTwo)
+	if err != nil {
+		t.Fatalf("insert second approval: %v", err)
+	}
+	_, err = conn.Exec(ctx, `
 		UPDATE testagram_auth.sensitive_action_requests
 		SET status='approved', decided_at=now()
 		WHERE id=$1::uuid
-	`, requestID, reviewerTwo)
+	`, requestID)
 	if err != nil {
-		t.Fatalf("insert second approval and complete request: %v", err)
+		t.Fatalf("complete two-person approval request: %v", err)
 	}
 
 	tx, err = conn.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin second review transaction: %v", err)
 	}
-	state, err = recordIdentityApplicationReview(ctx, tx, applicationID, reviewerTwo, "approved",
+	state, err = recordIdentityApplicationReview(ctx, tx, requestID, applicationID, reviewerTwo, "approved",
 		"Second reviewer independently confirms the evidence", rawPayload, 2)
 	if err != nil {
 		_ = tx.Rollback(ctx)
