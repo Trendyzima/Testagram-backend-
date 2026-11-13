@@ -446,6 +446,7 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
+		if s.dataCentreMedia == nil { http.Error(w, "Data Centre media service unavailable", http.StatusServiceUnavailable); return }
 		var grant datacentreclient.DownloadGrant
 		if r.Method == http.MethodHead {
 			grant, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
@@ -584,6 +585,7 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
+		if s.dataCentreMedia == nil { writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Data Centre media service is unavailable", id)); return }
 		var grant datacentreclient.DownloadGrant
 		grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
 		signedURL = grant.URL
