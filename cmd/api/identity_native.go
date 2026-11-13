@@ -695,7 +695,7 @@ func (s *service) purgeExpiredIdentityEvidence(ctx context.Context) {
 	workCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(workCtx, `
-		SELECT e.id::text,a.id::text,e.object_key
+		SELECT e.id::text,a.id::text,v.id::text,e.object_key,COALESCE(e.staging_object_key,'')
 		FROM testagram_identity.verification_evidence e
 		JOIN testagram_identity.verification_sessions v ON v.id=e.session_id
 		JOIN testagram_identity.identity_applications a ON a.id=v.application_id
@@ -708,11 +708,11 @@ func (s *service) purgeExpiredIdentityEvidence(ctx context.Context) {
 		log.Printf("identity evidence retention scan failed")
 		return
 	}
-	type expiredEvidence struct{ evidenceID, applicationID, objectKey string }
+	type expiredEvidence struct{ evidenceID, applicationID, sessionID, objectKey, stagingObjectKey string }
 	items := make([]expiredEvidence, 0)
 	for rows.Next() {
 		var item expiredEvidence
-		if err := rows.Scan(&item.evidenceID,&item.applicationID,&item.objectKey); err != nil {
+		if err := rows.Scan(&item.evidenceID,&item.applicationID,&item.sessionID,&item.objectKey,&item.stagingObjectKey); err != nil {
 			rows.Close()
 			log.Printf("identity evidence retention result could not be read")
 			return
@@ -725,8 +725,30 @@ func (s *service) purgeExpiredIdentityEvidence(ctx context.Context) {
 		return
 	}
 	for _, item := range items {
-		err := s.virtualStorage.Delete(workCtx,item.applicationID,item.applicationID,identityEvidenceNamespace,item.objectKey)
-		if err != nil && !errors.Is(err,virtualstorage.ErrNotFound) {
+		// Also remove any staging object and deterministic sealed key left by
+		// an interrupted promotion/commit. A late PUT can recreate only staging;
+		// the 30-day retention sweep removes it after its URL has expired.
+		keys := []string{
+			item.objectKey,
+			item.stagingObjectKey,
+			path.Join("identity", item.sessionID, item.evidenceID+".sealed"),
+		}
+		seen := make(map[string]struct{}, len(keys))
+		deleteFailed := false
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			if err := s.virtualStorage.Delete(workCtx,item.applicationID,item.applicationID,identityEvidenceNamespace,key); err != nil && !errors.Is(err,virtualstorage.ErrNotFound) {
+				deleteFailed = true
+				break
+			}
+		}
+		if deleteFailed {
 			log.Printf("identity evidence object deletion failed; will retry")
 			continue
 		}
