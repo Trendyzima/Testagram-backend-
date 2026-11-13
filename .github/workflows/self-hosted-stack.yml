@@ -123,22 +123,46 @@ jobs:
             if [ "$attempt" -eq 40 ]; then docker compose logs postgres; exit 1; fi
             sleep 2
           done
-          result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select
-            to_regclass('public.vps_nodes') is not null
-            and to_regclass('public.vps_workloads') is not null
-            and to_regclass('testagram_hosting.domains') is not null
-            and to_regclass('testagram_hosting.recovery_drills') is not null
-            and to_regclass('testagram_hosting.audit_events') is not null
-            and to_regclass('testagram_identity.identity_applications') is not null
-            and to_regclass('testagram_identity.verification_sessions') is not null
-            and to_regclass('testagram_identity.verification_evidence') is not null
-            and to_regclass('testagram_identity.verification_reviews') is not null
-            and to_regclass('testagram_auth.sensitive_action_requests') is not null
-            and to_regclass('testagram_auth.sensitive_action_approvals') is not null
-            and to_regclass('testagram_auth.staff_role_permissions') is not null
-            and to_regclass('testagram_local.post_create_idempotency') is not null
-            and to_regclass('testagram_local.follows') is not null")
-          test "$result" = "t"
+          # pg_isready can succeed while the official Postgres image is still
+          # running its one-time /docker-entrypoint-initdb.d scripts. Wait for
+          # the actual schema contract, not merely for the temporary init server.
+          schema_sql="SELECT COALESCE(bool_and(to_regclass(name) IS NOT NULL), false)
+            FROM unnest(ARRAY[
+              'public.vps_nodes',
+              'public.vps_workloads',
+              'testagram_hosting.domains',
+              'testagram_hosting.recovery_drills',
+              'testagram_hosting.audit_events',
+              'testagram_identity.identity_applications',
+              'testagram_identity.verification_sessions',
+              'testagram_identity.verification_evidence',
+              'testagram_identity.verification_reviews',
+              'testagram_auth.sensitive_action_requests',
+              'testagram_auth.sensitive_action_approvals',
+              'testagram_auth.staff_role_permissions',
+              'testagram_local.post_create_idempotency',
+              'testagram_local.follows'
+            ]::text[]) AS required(name)"
+          schema_result=""
+          for attempt in $(seq 1 60); do
+            schema_result="$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "$schema_sql" 2>/dev/null || true)"
+            if [ "$schema_result" = "t" ]; then break; fi
+            sleep 2
+          done
+          if [ "$schema_result" != "t" ]; then
+            echo "Fresh PostgreSQL schema did not reach the required migration state."
+            docker compose exec -T postgres psql -U testagram -d testagram -Atc "SELECT name FROM unnest(ARRAY[
+              'public.vps_nodes','public.vps_workloads','testagram_hosting.domains',
+              'testagram_hosting.recovery_drills','testagram_hosting.audit_events',
+              'testagram_identity.identity_applications','testagram_identity.verification_sessions',
+              'testagram_identity.verification_evidence','testagram_identity.verification_reviews',
+              'testagram_auth.sensitive_action_requests','testagram_auth.sensitive_action_approvals',
+              'testagram_auth.staff_role_permissions','testagram_local.post_create_idempotency',
+              'testagram_local.follows'
+            ]::text[]) AS required(name) WHERE to_regclass(name) IS NULL" || true
+            docker compose logs --tail=100 postgres
+            exit 1
+          fi
           # Re-apply the same migrations through the guarded existing-volume
           # runner to prove the backup path and idempotent upgrade behavior.
           bash apply-current-schema-migrations.sh --confirm
