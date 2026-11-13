@@ -1235,6 +1235,7 @@ func main() {
 
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go svc.runIdentityMaintenance(signalCtx)
 	go svc.runMediaJanitor(signalCtx)
 	if mediaReplicator != nil {
 		go runMediaReplicationWorker(signalCtx, db, mediaReplicator)
