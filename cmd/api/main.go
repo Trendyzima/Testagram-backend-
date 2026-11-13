@@ -79,7 +79,6 @@ type service struct {
 	mediaReplicator           *virtualstorage.Replicator
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
-	idswyftWebhookReady       bool
 }
 
 type capabilityRequest struct {
@@ -481,12 +480,17 @@ func (s *service) routes() http.Handler {
 		}
 		_, _ = w.Write([]byte(output.String()))
 	})
-	// Public identity enrollment is a separate, Appwrite-backed review workflow.
+	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/applications", s.identityApplicationCreate)
 	mux.HandleFunc("GET /api/identity/applications/{application_id}", s.identityApplicationStatus)
-	mux.HandleFunc("POST /internal/v1/identity/idswyft-webhook", s.idswyftIdentityWebhook)
+	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}", s.mediaPreflight)
+	mux.HandleFunc("GET /api/identity/sessions/{session_id}", s.identitySessionStatus)
+	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/upload-url", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/upload-url", s.identityEvidenceUploadURL)
+	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/submit", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/submit", s.identityEvidenceSubmit)
 	// Independent authentication routes use Testagram PostgreSQL only; Redis, Upstash and Supabase are not in this request path.
 	for _, action := range []string{"signup", "resend-verification", "verify-email", "login", "forgot-password", "reset-password"} {
 		action := action
@@ -1115,9 +1119,13 @@ func main() {
 			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "image/gif": {}, "image/avif": {},
 			"video/mp4": {}, "video/webm": {},
 		}
+		identityEvidenceTypes := map[string]struct{}{
+			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "application/pdf": {},
+		}
 		virtualStorageManager, err = virtualstorage.New(provider, []virtualstorage.Namespace{
 			{Name: "media-private", PhysicalBucket: env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))), MaxObjectBytes: 500 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
 			{Name: "media-public", PhysicalBucket: env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))), Public: true, MaxObjectBytes: 20 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
+			{Name: "identity-evidence-private", PhysicalBucket: env("IDENTITY_EVIDENCE_PRIVATE_BUCKET", env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media")))), MaxObjectBytes: 15 << 20, AllowedTypes: identityEvidenceTypes, UploadTTL: 5 * time.Minute, DownloadTTL: 5 * time.Minute},
 		})
 		if err != nil {
 			log.Fatalf("configure virtual storage namespaces: %v", err)
@@ -1206,24 +1214,7 @@ func main() {
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
-	if strings.TrimSpace(os.Getenv("IDSWYFT_API_BASE_URL")) != "" &&
-		strings.TrimSpace(os.Getenv("IDSWYFT_API_KEY")) != "" &&
-		strings.TrimSpace(os.Getenv("IDSWYFT_WEBHOOK_SECRET")) != "" &&
-		strings.TrimSpace(os.Getenv("IDSWYFT_VERIFICATION_ORIGIN")) != "" &&
-		strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_API_URL")) != "" &&
-		strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION")) != "" &&
-		strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION")) != "" {
-		webhookCtx, webhookCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if webhookErr := svc.ensureIdswyftWebhook(webhookCtx); webhookErr != nil {
-			log.Printf("identity registration remains disabled: Idswyft webhook readiness check failed")
-		} else {
-			svc.idswyftWebhookReady = true
-			log.Printf("Idswyft age-assurance webhook is registered and verified")
-		}
-		webhookCancel()
-	} else {
-		log.Printf("identity registration remains disabled: Idswyft and registration policy configuration is incomplete")
-	}
+	log.Printf("Testagram-native manual identity verification is available when private evidence storage and registration policy are configured")
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
