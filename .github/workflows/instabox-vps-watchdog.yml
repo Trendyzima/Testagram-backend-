@@ -56,7 +56,7 @@ jobs:
           WATCHDOG_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
           WATCHDOG_FAILURES_REQUIRED: "3"
           WATCHDOG_PROBE_INTERVAL_SECONDS: "15"
-          WATCHDOG_ACTION_COOLDOWN_SECONDS: "1800"
+          WATCHDOG_RESTART_COOLDOWN_SECONDS: "1800"
           WATCHDOG_OPERATION_TIMEOUT_SECONDS: "300"
         run: python3 scripts/instabox_watchdog.py
       - name: Ensure cooldown state file exists
