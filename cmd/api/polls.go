@@ -54,9 +54,9 @@ func (s *service) pollLoad(ctx context.Context, pollID, viewerID string) (pollDT
 	}
 	p.Status = status
 	if p.MediaObjectKey != "" {
-		var visibility, assetStatus, namespace, contentType string
-		if mediaErr := s.db.QueryRow(ctx, "SELECT visibility,status,storage_namespace,content_type FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", p.MediaObjectKey, viewerOwnerID).Scan(&visibility, &assetStatus, &namespace, &contentType); mediaErr == nil && visibility == "public" && assetStatus == "ready" {
-			p.MediaURL = publicMediaURLForStorage(p.MediaObjectKey, viewerOwnerID, namespace)
+		var visibility, assetStatus, namespace, contentType, storageProvider string
+		if mediaErr := s.db.QueryRow(ctx, "SELECT visibility,status,storage_namespace,content_type,storage_provider FROM testagram_media.assets WHERE object_key=$1 AND owner_id=$2", p.MediaObjectKey, viewerOwnerID).Scan(&visibility, &assetStatus, &namespace, &contentType, &storageProvider); mediaErr == nil && visibility == "public" && assetStatus == "ready" {
+			p.MediaURL = publicMediaURLForStorage(p.MediaObjectKey, viewerOwnerID, namespace, storageProvider)
 			p.MediaType = contentType
 		}
 	}
