@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,4 +57,11 @@ func TestIdentityProvisioningRedeemFailsClosedWithoutCredentials(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "PROVISIONING_AUTHORIZATION_INVALID") {
 		t.Fatalf("unexpected response: %s", w.Body.String())
 	}
+}
+
+func subtleTokenCompare(left, right []byte) int {
+	if len(left) == 0 || len(right) == 0 {
+		return 0
+	}
+	return subtle.ConstantTimeCompare(left, right)
 }
