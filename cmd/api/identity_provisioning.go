@@ -48,6 +48,15 @@ func (s *service) identityApplicationProvisioningToken(w http.ResponseWriter, r 
 	}
 	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second)
 	defer cancel()
+	allowed,rateErr:=s.authRateAllowed(ctx,"identity-provisioning-token",applicationID,5)
+	if rateErr!=nil {
+		writeJSON(w,http.StatusServiceUnavailable,errorBody("RATE_LIMIT_UNAVAILABLE","Provisioning authorization is temporarily unavailable",requestID(r)))
+		return
+	}
+	if !allowed {
+		writeJSON(w,http.StatusTooManyRequests,errorBody("RATE_LIMITED","Too many provisioning authorization attempts",requestID(r)))
+		return
+	}
 	tx,err:=s.db.Begin(ctx)
 	if err!=nil {
 		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_STORE_UNAVAILABLE","Provisioning authorization is unavailable",requestID(r)))
