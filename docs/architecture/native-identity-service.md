@@ -35,12 +35,25 @@ Raw document images, selfies, biometric templates and full dates of birth must n
 - Rate limits, request-size limits, no-store responses, idempotency and expiry are mandatory.
 - Fail closed if the database, policy configuration or private evidence service is unavailable.
 
-## Delivery sequence
+## Implemented backend surface
 
-1. Repair and compile the current registration branch.
-2. Add the native session/event/review schema and migration integration tests.
-3. Implement session create/status/evidence-submit APIs and transition tests.
-4. Implement authenticated reviewer APIs with two-person separation.
-5. Wire Flutter registration to Testagram-owned session screens.
-6. Remove Idswyft startup readiness, env vars, callback route and vendor-specific data.
-7. Run migration, security, race, integration and full user-journey tests before enabling registration.
+The native backend branch now provides:
+- `POST /api/identity/applications`: creates an application and a Testagram-owned age-assurance session; returns application and session bearer tokens once.
+- `GET /api/identity/applications/{application_id}`: application-scoped status lookup.
+- `GET /api/identity/sessions/{session_id}`: session status using the session bearer token.
+- `POST /api/identity/sessions/{session_id}/evidence/upload-url`: issues a short-lived PUT URL for an allowlisted document image or PDF in a private object-storage namespace.
+- `POST /api/identity/sessions/{session_id}/evidence/submit`: verifies provider-observed size, content type and SHA-256 before moving the session into manual review.
+- `GET /api/admin/identity/review-queue`: Appwrite-authenticated staff queue with short-lived private evidence URLs.
+- `POST /api/admin/identity/sessions/{session_id}/decision`: requires two matching, distinct staff decisions; self-review is rejected.
+- `POST /api/admin/identity/applications/{application_id}/approve`: connects the two verified reviewers to the existing two-person sensitive-action ledger and issues a 15-minute, single-use approval token only after both approvals.
+
+The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or calls an Idswyft API. The historical intake migration remains in migration history so already-migrated databases are upgraded safely; it is not a runtime dependency.
+
+## Remaining delivery gates
+
+1. Run and pass the isolated PostgreSQL migration/invariant workflow with the new evidence metadata migration.
+2. Pass Go formatting, unit, race, vet, build, OpenAPI and container CI on this branch.
+3. Implement approval-token redemption and connect it to the existing Appwrite/canonical-account provisioning saga, including idempotent retries and compensation.
+4. Integrate the Flutter applicant journey with native session creation, upload, submit and status polling; integrate the staff review surface.
+5. Exercise real private-bucket upload, checksum verification, short-lived reviewer download, expiry and retention deletion in staging.
+6. Run complete applicant-to-provisioned-account end-to-end and security tests. Public registration remains disabled until these gates pass.
