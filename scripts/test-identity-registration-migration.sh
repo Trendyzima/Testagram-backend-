@@ -54,6 +54,19 @@ psql_ci < migrations/20261113_native_identity_evidence.sql
 psql_ci < migrations/20261113_native_identity_evidence.sql
 
 psql_ci <<'SQL'
+DO $owner_identity_review$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_auth.staff_role_permissions
+    WHERE role='owner' AND permission_key='identity.review'
+  ) THEN
+    RAISE EXCEPTION 'platform owner identity-review permission is missing';
+  END IF;
+END;
+$owner_identity_review$;
+SQL
+
+psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
 VALUES ('ci-reviewer-one','administrator'),('ci-reviewer-two','administrator'),('ci-intake-service','operations');
 
