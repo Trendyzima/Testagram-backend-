@@ -38,7 +38,7 @@ for migration in \
   migrations/20261113_identity_registration_hardening.sql \
   migrations/20261113_identity_idswyft_intake.sql \
   migrations/20261113_native_identity_verification.sql \
-  migrations/20261114_native_identity_integrity.sql; do
+  migrations/20261113_native_identity_integrity.sql; do
   psql_ci < "$migration"
 done
 
@@ -47,8 +47,8 @@ psql_ci < migrations/20261113_identity_registration_hardening.sql
 psql_ci < migrations/20261113_identity_idswyft_intake.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
-psql_ci < migrations/20261114_native_identity_integrity.sql
-psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261113_native_identity_integrity.sql
+psql_ci < migrations/20261113_native_identity_integrity.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
