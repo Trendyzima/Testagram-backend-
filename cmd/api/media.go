@@ -86,7 +86,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if (s.media == nil && s.dataCentreMedia == nil) || (s.dataCentreMedia != nil && s.mediaIntentFactory == nil) {
+	if (s.media == nil && s.virtualStorage == nil && s.dataCentreMedia == nil) || (s.freshMediaEnabled && (s.dataCentreMedia == nil || s.mediaIntentFactory == nil)) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage is not configured on this server", id))
 		return
 	}
@@ -129,7 +129,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var intent media.UploadIntent
-	if s.dataCentreMedia != nil {
+	if s.freshMediaEnabled {
 		intent, err = s.mediaIntentFactory.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
 	} else {
 		intent, err = s.media.CreateUploadIntent(userID, body.ContentType, body.Visibility, body.SizeBytes, time.Now())
@@ -139,7 +139,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	storageNamespace, storageProvider := "legacy-media", "default"
-	if s.dataCentreMedia != nil {
+	if s.freshMediaEnabled {
 		storageNamespace, storageProvider = intent.Bucket, "data-centre"
 	} else if s.virtualStorage != nil {
 		storageNamespace = "media-private"
@@ -271,14 +271,14 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_KEY", "A valid upload intent key is required", id))
 		return
 	}
-	var ownerID, contentType, namespace, visibility, intentStatus string
+	var ownerID, contentType, namespace, visibility, intentStatus, storageProvider string
 	var maxBytes int64
 	var expiresAt time.Time
-	err = s.db.QueryRow(r.Context(), `select owner_id, content_type, storage_namespace, visibility, max_bytes, status, expires_at
+	err = s.db.QueryRow(r.Context(), `select owner_id, content_type, storage_namespace, visibility, max_bytes, status, expires_at, storage_provider
 		from testagram_media.upload_intents where object_key=$1`, key).
-		Scan(&ownerID, &contentType, &namespace, &visibility, &maxBytes, &intentStatus, &expiresAt)
+		Scan(&ownerID, &contentType, &namespace, &visibility, &maxBytes, &intentStatus, &expiresAt, &storageProvider)
 	if err != nil || ownerID != userID || intentStatus != "issued" || !time.Now().Before(expiresAt) || maxBytes < 1 ||
-		(namespace == "legacy-media" && s.media == nil) || (namespace != "legacy-media" && s.virtualStorage == nil && s.dataCentreMedia == nil) {
+		(namespace == "legacy-media" && s.media == nil) || (storageProvider == "data-centre" && s.dataCentreMedia == nil) || (namespace != "legacy-media" && storageProvider != "data-centre" && s.virtualStorage == nil) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
@@ -331,7 +331,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	var target string
 	if namespace == "legacy-media" {
 		target, err = s.media.PresignObjectPut(userID, key, visibility, contentType, 10*time.Minute, time.Now())
-	} else if s.dataCentreMedia != nil {
+	} else if storageProvider == "data-centre" {
 		var grant datacentreclient.UploadGrant
 		grant, err = s.dataCentreMedia.CreateUploadURL(r.Context(), userID, namespace, key, contentType, maxBytes)
 		target = grant.UploadURL
