@@ -38,15 +38,37 @@ ALTER TABLE testagram_local.wallet_transactions ADD COLUMN IF NOT EXISTS metadat
 ALTER TABLE testagram_local.wallet_transactions DROP CONSTRAINT IF EXISTS wallet_transactions_kind_check;
 ALTER TABLE testagram_local.wallet_transactions ADD CONSTRAINT wallet_transactions_kind_check
   CHECK (kind IN ('transfer_out','transfer_in','tip_out','tip_in','superchat_out','superchat_in','deposit','withdrawal'));
-ALTER TABLE testagram_local.wallet_transactions ADD CONSTRAINT wallet_transactions_transfer_or_topup_check
-  CHECK ((transfer_id IS NOT NULL AND topup_id IS NULL) OR (transfer_id IS NULL AND topup_id IS NOT NULL));
+DO $constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_constraint
+    WHERE conname = 'wallet_transactions_transfer_or_topup_check'
+      AND conrelid = 'testagram_local.wallet_transactions'::regclass
+  ) THEN
+    ALTER TABLE testagram_local.wallet_transactions
+      ADD CONSTRAINT wallet_transactions_transfer_or_topup_check
+      CHECK ((transfer_id IS NOT NULL AND topup_id IS NULL) OR (transfer_id IS NULL AND topup_id IS NOT NULL));
+  END IF;
+END
+$constraints$;
 CREATE UNIQUE INDEX IF NOT EXISTS testagram_local_wallet_transactions_topup_uidx ON testagram_local.wallet_transactions(user_id,topup_id) WHERE topup_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS testagram_local_wallet_transactions_provider_idx ON testagram_local.wallet_transactions(provider,provider_order_id) WHERE provider_order_id<>'';
 
 ALTER TABLE testagram_local.wallet_ledger_entries ALTER COLUMN transfer_id DROP NOT NULL;
 ALTER TABLE testagram_local.wallet_ledger_entries ADD COLUMN IF NOT EXISTS topup_id UUID REFERENCES testagram_local.wallet_topups(id) ON DELETE RESTRICT;
-ALTER TABLE testagram_local.wallet_ledger_entries ADD CONSTRAINT wallet_ledger_transfer_or_topup_check
-  CHECK ((transfer_id IS NOT NULL AND topup_id IS NULL) OR (transfer_id IS NULL AND topup_id IS NOT NULL));
+DO $constraints$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_constraint
+    WHERE conname = 'wallet_ledger_transfer_or_topup_check'
+      AND conrelid = 'testagram_local.wallet_ledger_entries'::regclass
+  ) THEN
+    ALTER TABLE testagram_local.wallet_ledger_entries
+      ADD CONSTRAINT wallet_ledger_transfer_or_topup_check
+      CHECK ((transfer_id IS NOT NULL AND topup_id IS NULL) OR (transfer_id IS NULL AND topup_id IS NOT NULL));
+  END IF;
+END
+$constraints$;
 CREATE UNIQUE INDEX IF NOT EXISTS testagram_local_wallet_ledger_topup_uidx ON testagram_local.wallet_ledger_entries(topup_id,user_id,direction) WHERE topup_id IS NOT NULL;
 
 -- Keep the migration portable to isolated PostgreSQL instances while
