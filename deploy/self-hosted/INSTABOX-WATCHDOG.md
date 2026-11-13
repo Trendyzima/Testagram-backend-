@@ -11,6 +11,10 @@ The workflow defaults to the previously confirmed machine and API endpoint, so n
 - `TESTAGRAM_HEALTH_URL`: default `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz`
 - `TESTAGRAM_READINESS_URL`: default `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz`
 
+Set this repository **Actions variable**:
+
+- `WATCHDOG_AUTO_RECOVERY_ENABLED`: leave unset or set to `false` during setup. Scheduled runs remain in dry-run mode until you explicitly set it to `true` after installing the restricted API key and confirming the machine and endpoints.
+
 Set this repository **Actions secret**:
 
 - `INSTABOX_API_KEY`: a newly created, restricted Instabox API key scoped to the workspace containing the machine, with only `machines:read` and `machines:write`. Do not reuse the previously saved full-access key; rotate/revoke that key and replace the GitHub secret. Never put credentials in a repository variable, source file, issue, or workflow log.
@@ -21,18 +25,19 @@ Optional secret:
 
 ## Recovery policy
 
-1. Read the exact machine by immutable ID. A mismatched ID or malformed response fails closed.
+1. Resolve the exact machine name to one immutable ID through Instabox's read-only machine list, then read that machine. A missing/duplicate name, mismatched ID or malformed response fails closed.
 2. If stopped, request `POST /v1/machines/{id}/start`.
 3. If suspended, request `POST /v1/machines/{id}/resume`.
 4. If running, probe both `/healthz` and `/readyz` three times, 15 seconds apart. If all probes fail, re-read the machine and confirm it is still running, has no active lifecycle operation, and still has `desiredState=running`. Only then perform a controlled stop followed by start.
-5. Poll each accepted operation until success/failure, with a five-minute bound. Never issue a second lifecycle operation while one is active.
+5. Poll each accepted operation until success/failure, with a five-minute bound, and verify the provider reports the expected final machine state.
+6. After start/resume/restart, wait up to five minutes for both public API health and readiness to return successfully before reporting recovery.
 6. Persist a 30-minute cooldown specifically for disruptive stop/start restarts. Unexpected stopped machines are started again on the next scheduled check if a previous start attempt fails; suspended machines are similarly resumed again. Serialize runs to prevent concurrent restarts.
-7. Never delete, recreate, restore, resize, or alter machine disks. A provider `error` state, deleted machine, active cooldown, API authorization failure, billing restriction, or provider cooldown is surfaced for operator action rather than bypassed.
+8. Never delete, recreate, restore, resize, or alter machine disks. A provider `error` state, deleted machine, active cooldown, API authorization failure, billing restriction, or provider cooldown is surfaced for operator action rather than bypassed.
 
 The watchdog does not automatically override an intentional provider state where `desiredState` is not `running`. To keep a production workload continuously available, configure the Instabox machine's idle auto-suspend and maximum-run policy appropriately in the provider dashboard; the watchdog does not silently change billing or lifecycle policy.
 
 ## Validation and activation
 
-The workflow is activated by merging this change to the default branch. GitHub scheduled workflows have a five-minute minimum interval and may start later under platform load. Run it manually once after setting the required variables and secret; manual runs default to **dry-run mode**, which checks the provider and endpoints without issuing lifecycle actions. Only disable dry-run after confirming the exact machine ID and both URLs. Scheduled runs use automatic recovery.
+The workflow is activated by merging this change to the default branch. GitHub scheduled workflows have a five-minute minimum interval and may start later under platform load. Run it manually once after setting the required secret; manual runs default to **dry-run mode**. Scheduled runs also remain in dry-run mode until `WATCHDOG_AUTO_RECOVERY_ENABLED=true`. Only enable automatic recovery after replacing the old full-access key with the restricted key and confirming the exact machine and healthy endpoints.
 
 Official API reference: https://instabox.sh/docs/api.md
