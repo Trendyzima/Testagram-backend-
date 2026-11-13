@@ -135,6 +135,57 @@ func TestS3ProviderMinIOLifecycle(t *testing.T) {
 		t.Fatalf("LIST mismatch: items=%+v cursor=%q", items, cursor)
 	}
 
+	// Native identity evidence must be promoted to a sealed object key.
+	// The original presigned PUT remains usable for its short TTL, but a later
+	// overwrite of staging must not change what staff reviewers can retrieve.
+	manager, err := New(p, []Namespace{{
+		Name: "identity-evidence-private", PhysicalBucket: bucket,
+		MaxObjectBytes: 15 << 20,
+		AllowedTypes: map[string]struct{}{"text/plain": {}},
+		UploadTTL: 5 * time.Minute, DownloadTTL: 5 * time.Minute,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagingKey := fmt.Sprintf("identity/session/evidence-%d.txt", time.Now().UnixNano())
+	sealedKey := stagingKey + ".sealed"
+	stagingURL, err := manager.UploadURL(ctx, "ci", "identity-evidence-private", stagingKey, "text/plain", int64(len(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagingRequest := mustRequest(t, ctx, http.MethodPut, stagingURL, bytes.NewReader(payload))
+	stagingRequest.Header.Set("Content-Type", "text/plain")
+	stagingResponse, err := p.do(stagingRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainAndClose(t, stagingResponse)
+	if stagingResponse.StatusCode < 200 || stagingResponse.StatusCode >= 300 {
+		t.Fatalf("staging upload returned HTTP %d", stagingResponse.StatusCode)
+	}
+	digestBytes := sha256.Sum256(payload)
+	digest := hex.EncodeToString(digestBytes[:])
+	if err := manager.PromoteUpload(ctx, "ci", "identity-evidence-private", stagingKey, sealedKey,
+		"text/plain", int64(len(payload)), digest); err != nil {
+		t.Fatalf("promote sealed evidence: %v", err)
+	}
+	changedPayload := append([]byte(nil), payload...)
+	changedPayload[0] ^= 0xff
+	replayRequest := mustRequest(t, ctx, http.MethodPut, stagingURL, bytes.NewReader(changedPayload))
+	replayRequest.Header.Set("Content-Type", "text/plain")
+	replayResponse, err := p.do(replayRequest)
+	if err != nil {
+		t.Fatalf("replay still-valid staging URL: %v", err)
+	}
+	drainAndClose(t, replayResponse)
+	if replayResponse.StatusCode < 200 || replayResponse.StatusCode >= 300 {
+		t.Fatalf("staging URL replay returned HTTP %d", replayResponse.StatusCode)
+	}
+	sealedHash, err := p.SHA256(ctx, bucket, tenantPrefix("ci")+sealedKey, int64(len(payload)))
+	if err != nil || sealedHash != digest {
+		t.Fatalf("sealed evidence changed after staging URL replay: hash=%q err=%v", sealedHash, err)
+	}
+
 	if err := p.Delete(ctx, bucket, key); err != nil {
 		t.Fatalf("DELETE uploaded object: %v", err)
 	}
