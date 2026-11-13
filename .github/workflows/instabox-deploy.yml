@@ -422,6 +422,49 @@ jobs:
           verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
           verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
 
+          # Verify the actual container Config.Env values without ever printing credentials.
+          verify_container_env() {
+            local env_file="$1" compose_file="$2" service="$3" key="$4" expected="$5" container actual_env
+            container="$(sudo docker compose --env-file "$env_file" -f "$compose_file" ps -q "$service")"
+            if [[ -z "$container" ]]; then
+              echo "::error::Cannot verify $key: service $service has no running container."
+              return 1
+            fi
+            actual_env="$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container")"
+            if ! grep -Fqx -- "$key=$expected" <<< "$actual_env"; then
+              echo "::error::Runtime environment mismatch for $service/$key (credential value redacted)."
+              return 1
+            fi
+            echo "Verified runtime environment: $service/$key (value redacted)."
+          }
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+          verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_INTERNAL_TOKEN "$FEDERATION_INGRESS_TOKEN"
+          verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+          verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+
+          # Exercise both credential directions against the live private service endpoints.
+          # Valid Backend -> Federation requests deliberately use an empty payload, so the
+          # handler authenticates and then rejects the payload before any outbox write.
+          api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+          federation_container="$(sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q federation-api)"
+          if [[ -z "$api_container" || -z "$federation_container" ]]; then
+            echo "::error::Federation authentication smoke tests require both live containers."
+            exit 1
+          fi
+          expect_http_status() {
+            local container="$1" expected="$2" description="$3" command="$4" output
+            output="$(sudo docker exec "$container" sh -ec "$command" 2>&1 || true)"
+            if ! grep -Eq "HTTP/1\\.[01] $expected([[:space:]]|$)|HTTP/2 $expected([[:space:]]|$)" <<< "$output"; then
+              echo "::error::Federation auth smoke failed for $description; expected HTTP $expected (response redacted)."
+              return 1
+            fi
+            echo "Verified Federation authentication: $description returned HTTP $expected."
+          }
+          expect_http_status "$api_container" 400 "Backend ingress token accepted by Federation" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" --header="Content-Type: application/json" --post-data="{}" http://federation-api:8081/internal/v1/activities'
+          expect_http_status "$api_container" 401 "Backend read token rejected by Federation ingress" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_BACKEND_INTERNAL_TOKEN" --header="Content-Type: application/json" --post-data="{}" http://federation-api:8081/internal/v1/activities'
+          expect_http_status "$api_container" 200 "Federation read token accepted by Backend" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_BACKEND_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8080/internal/v1/federation/readyz'
+          expect_http_status "$api_container" 401 "Federation ingress token rejected by Backend read endpoint" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8080/internal/v1/federation/readyz'
+
           echo "Data Centre overlay status: $overlay_status"
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
           sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
