@@ -56,8 +56,8 @@ services:
       - ../../migrations/20261112_hashtag_follows.sql:/docker-entrypoint-initdb.d/045_hashtag_follows.sql:ro
       - ../../migrations/20261112_instabox_avatar_storage.sql:/docker-entrypoint-initdb.d/046_instabox_avatar_storage.sql:ro
       - ../../migrations/20261112_profile_presentation_fields.sql:/docker-entrypoint-initdb.d/047_profile_presentation_fields.sql:ro
-      - ../../migrations/20261113_identity_idswyft_intake.sql:/docker-entrypoint-initdb.d/048_identity_idswyft_intake.sql:ro
-      - ../../migrations/20261113_identity_registration_hardening.sql:/docker-entrypoint-initdb.d/049_identity_registration_hardening.sql:ro
+      - ../../migrations/20261113_identity_registration_hardening.sql:/docker-entrypoint-initdb.d/048_identity_registration_hardening.sql:ro
+      - ../../migrations/20261113_identity_idswyft_intake.sql:/docker-entrypoint-initdb.d/049_identity_idswyft_intake.sql:ro
       - ../../migrations/20261113_media_upload_checksum.sql:/docker-entrypoint-initdb.d/050_media_upload_checksum.sql:ro
       - ../../migrations/20261113_native_identity_verification.sql:/docker-entrypoint-initdb.d/051_native_identity_verification.sql:ro
       - ../../migrations/20261114_native_identity_integrity.sql:/docker-entrypoint-initdb.d/052_native_identity_integrity.sql:ro
