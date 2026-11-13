@@ -108,7 +108,7 @@ class WatchdogTests(unittest.TestCase):
             "desiredState": "running", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
-             patch.object(watchdog, "load_state", return_value={}), \
+             patch.object(watchdog, "load_state", return_value={"last_action_at": __import__("time").time()}), \
              patch.object(watchdog, "save_state"), \
              patch.object(watchdog, "notify") as notify, \
              patch.object(watchdog, "API_KEY", "test-key"), \
@@ -154,7 +154,7 @@ class WatchdogTests(unittest.TestCase):
         with patch.object(watchdog, "ACTION_COOLDOWN", 1800), \
              patch.object(watchdog, "DRY_RUN", False), \
              patch.object(watchdog, "save_state"):
-            result = watchdog.restart_running(api, {"last_action_at": __import__("time").time()})
+            result = watchdog.restart_running(api, {"last_restart_at": __import__("time").time()})
         self.assertIn("cooldown", result)
         self.assertEqual(api.calls, [])
 
