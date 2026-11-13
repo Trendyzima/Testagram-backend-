@@ -576,8 +576,8 @@ func (s *service) expireIdentitySessions(ctx context.Context) {
 		  WHERE expires_at<=now()
 		    AND status IN ('created','in_progress','submitted','manual_review')
 		  ORDER BY expires_at
-		  FOR UPDATE SKIP LOCKED
 		  LIMIT 100
+		  FOR UPDATE SKIP LOCKED
 		)
 		RETURNING id::text,application_id::text
 	`)
