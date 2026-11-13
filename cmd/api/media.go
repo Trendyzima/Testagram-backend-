@@ -758,11 +758,15 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 	defer cancel()
 	var actualType, etag string
 	var size int64
-	if storageNamespace != "legacy-media" && s.virtualStorage == nil {
+	if storageProvider == "data-centre" && s.dataCentreMedia == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Data Centre media service is unavailable", id))
+		return
+	}
+	if storageProvider != "data-centre" && storageNamespace != "legacy-media" && s.virtualStorage == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "This upload intent requires the virtual storage provider", id))
 		return
 	}
-	if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+	if storageProvider == "data-centre" {
 		if _, verifyErr := s.dataCentreMedia.Verify(ctx, userID, storageNamespace, body.Key, body.ContentType, body.ChecksumSHA256, intentMaxBytes); verifyErr != nil {
 			writeJSON(w, http.StatusBadGateway, errorBody("MEDIA_VERIFY_FAILED", "Data Centre could not queue media verification and replica recovery", id))
 			return
@@ -1047,7 +1051,7 @@ func (s *service) mediaQuarantine(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.deleteMediaObjectWithNamespace(ctx, ownerID, body.Key, visibility, storageNamespace); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, ownerID, body.Key, visibility, storageNamespace, storageProvider); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "quarantine_pending"}, "error": nil, "request_id": id})
 		return
 	}
@@ -1292,7 +1296,7 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	if err := s.deleteMediaObjectWithNamespace(ctx, userID, body.Key, visibility, storageNamespace); err != nil {
+	if err := s.deleteMediaObjectWithNamespace(ctx, userID, body.Key, visibility, storageNamespace, storageProvider); err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deletion_pending"}, "error": nil, "request_id": id})
 		return
 	}
@@ -1316,17 +1320,18 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 
 
 func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility string) error {
-	return s.deleteMediaObjectWithNamespace(ctx, userID, key, visibility, "legacy-media")
+	return s.deleteMediaObjectWithNamespace(ctx, userID, key, visibility, "legacy-media", "default")
 }
 
-func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace string) error {
+func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, key, visibility, storageNamespace, storageProvider string) error {
+	if storageProvider == "data-centre" {
+		if s.dataCentreMedia == nil { return errors.New("Data Centre media service is unavailable") }
+		status, err := s.dataCentreMedia.Delete(ctx, userID, userID, storageNamespace, key)
+		if err != nil { return err }
+		if status != "deleted" { return errors.New("Data Centre media deletion remains pending") }
+		return nil
+	}
 	if storageNamespace != "" && storageNamespace != "legacy-media" {
-		if s.dataCentreMedia != nil {
-			status, err := s.dataCentreMedia.Delete(ctx, userID, userID, storageNamespace, key)
-			if err != nil { return err }
-			if status != "deleted" { return errors.New("Data Centre media deletion remains pending") }
-			return nil
-		}
 		if s.virtualStorage == nil {
 			return errors.New("virtual storage provider is required for this namespace")
 		}
@@ -1378,17 +1383,17 @@ func (s *service) runMediaJanitor(ctx context.Context) {
 }
 
 type mediaCleanupObject struct {
-	key, ownerID, visibility, namespace string
+	key, ownerID, visibility, namespace, provider string
 }
 
 func (s *service) cleanupMediaBatch(ctx context.Context) error {
-	if s.db == nil || (s.media == nil && s.dataCentreMedia == nil) {
+	if s.db == nil || (s.media == nil && s.dataCentreMedia == nil && s.virtualStorage == nil) {
 		return nil
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
-	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace
+	intentRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, storage_namespace, storage_provider
 		from testagram_media.upload_intents
 		where (expires_at <= now() and status in ('issued','uploaded','cleanup_pending')) or (status='uploading' and updated_at <= now() - interval '2 hours')
 		order by expires_at asc limit 50`)
@@ -1398,7 +1403,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var intents []mediaCleanupObject
 	for intentRows.Next() {
 		var item mediaCleanupObject
-		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.namespace); err != nil {
+		if err := intentRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.namespace, &item.provider); err != nil {
 			intentRows.Close()
 			return err
 		}
@@ -1419,7 +1424,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 			// Completion/cancellation may have won the race after selection.
 			continue
 		}
-		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
+		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace, item.provider); err != nil {
 			continue
 		}
 		if _, err := s.db.Exec(batchCtx, `update testagram_media.upload_intents set status='expired', updated_at=now()
@@ -1428,7 +1433,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 		}
 	}
 
-	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status, storage_namespace
+	assetRows, err := s.db.Query(batchCtx, `select object_key, owner_id, visibility, status, storage_namespace, storage_provider
 		from testagram_media.assets where status in ('deletion_pending','quarantine_pending')
 		order by updated_at asc limit 50`)
 	if err != nil {
@@ -1441,7 +1446,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	var assets []pendingMediaObject
 	for assetRows.Next() {
 		var item pendingMediaObject
-		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.namespace); err != nil {
+		if err := assetRows.Scan(&item.key, &item.ownerID, &item.visibility, &item.status, &item.namespace, &item.provider); err != nil {
 			assetRows.Close()
 			return err
 		}
@@ -1453,7 +1458,7 @@ func (s *service) cleanupMediaBatch(ctx context.Context) error {
 	}
 	assetRows.Close()
 	for _, item := range assets {
-		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace); err != nil {
+		if err := s.deleteMediaObjectWithNamespace(batchCtx, item.ownerID, item.key, item.visibility, item.namespace, item.provider); err != nil {
 			continue
 		}
 		if err := s.detachMediaFromPosts(batchCtx, item.key); err != nil {
