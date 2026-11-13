@@ -33,7 +33,7 @@ func (s *service) runIdentityEvidenceRetentionWorker(ctx context.Context) {
 }
 
 func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) error {
-	if s.db == nil || s.virtualStorage == nil {
+	if s.db == nil || s.virtualStorage == nil || s.mediaReplicator == nil {
 		return nil
 	}
 	batchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
@@ -85,12 +85,7 @@ func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) err
 
 	for _, item := range items {
 		deleteCtx, deleteCancel := context.WithTimeout(batchCtx, 12*time.Second)
-		var deleteErr error
-		if s.mediaReplicator != nil {
-			deleteErr = s.mediaReplicator.Delete(deleteCtx, item.applicationID, identityEvidenceNamespace, item.objectKey)
-		} else {
-			deleteErr = s.virtualStorage.Delete(deleteCtx, item.applicationID, item.applicationID, identityEvidenceNamespace, item.objectKey)
-		}
+		deleteErr := s.mediaReplicator.Delete(deleteCtx, item.applicationID, identityEvidenceNamespace, item.objectKey)
 		deleteCancel()
 		if deleteErr != nil {
 			// Do not log object keys or evidence content metadata. Quarantined rows
