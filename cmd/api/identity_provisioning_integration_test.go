@@ -37,6 +37,7 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 	}
 
 	appwriteUserID := "appwrite-user-ci"
+	emailVerified := false
 	appwriteServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/account" {
 			http.NotFound(w, r)
@@ -49,7 +50,7 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"$id": appwriteUserID, "email": "first@example.test",
-			"emailVerification": false, "status": true,
+			"emailVerification": emailVerified, "status": true,
 		})
 	}))
 	defer appwriteServer.Close()
@@ -114,6 +115,22 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		t.Fatalf("canonical provisioning invariants: account=%d mapping=%d saga=%d", accountCount, mappingCount, completedCount)
 	}
 
+	// Email verification is confirmed by Appwrite at the authenticated API
+	// boundary, then synchronized to the canonical identity application.
+	emailVerified = true
+	authRequest := httptest.NewRequest(http.MethodGet, "/api/profile", nil)
+	canonicalID, authStatus, authErr := svc.authenticatedAppwriteUser(authRequest, "identity-ci-jwt")
+	if authErr != nil || authStatus != http.StatusOK || canonicalID != canonicalIDFromResult(t, result) {
+		t.Fatalf("verified Appwrite login canonical=%q status=%d err=%v", canonicalID, authStatus, authErr)
+	}
+	var applicationStatus string
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid", applicationID).Scan(&applicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if applicationStatus != "verified" {
+		t.Fatalf("application status after verified Appwrite login=%q, want verified", applicationStatus)
+	}
+
 	replay := redeem()
 	if replay.Code != http.StatusOK {
 		t.Fatalf("idempotent redemption status=%d body=%s", replay.Code, replay.Body.String())
@@ -131,4 +148,11 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 	if replay.Code != http.StatusConflict {
 		t.Fatalf("different Appwrite identity redemption status=%d, want 409 body=%s", replay.Code, replay.Body.String())
 	}
+}
+
+
+func canonicalUserIDFromResult(t *testing.T, result map[string]any) string {
+	t.Helper()
+	value, _ := result["canonical_user_id"].(string)
+	return value
 }
