@@ -106,6 +106,35 @@ The callback URL must be public HTTPS and registered with the matching Daraja ap
 
 Do not manually delete object bytes or edit asset status rows outside the API/worker lifecycle.
 
+## CDN media delivery
+
+The `media-cache` Compose service is the Go CDN, pinned by immutable digest in
+`TESTAGRAM_CDN_IMAGE`. It listens on private container port 8081 and joins only
+the `edge` bridge shared with Caddy and Backend. It has no Docker host-port
+mapping. The Instabox deployment workflow publishes that service through the
+InstaBox port agent and updates `CDN_MEDIA_BASE_URL` and
+`MEDIA_PUBLIC_BASE_URL` to the returned HTTPS endpoint.
+
+- CDN origin: `http://api:8080`; the CDN cannot read MinIO, B2 or R2 directly.
+- `CDN_ORIGIN_AUTH_TOKEN` authenticates CDN-to-Backend origin requests.
+- `CDN_MEDIA_ASSERTION_SECRET` separately signs short-lived, viewer-bound
+  private-media assertions. Never reuse the origin token as the assertion key.
+- Backend metadata is authoritative: only `ready` + `public` assets may be
+  returned without a viewer assertion. Private responses require a valid
+  viewer-bound assertion and use `private, no-store`; the CDN bypasses shared
+  cache for them.
+- MinIO signing remains on `http://object-storage:9000` inside the Docker
+  network. The separately published MinIO endpoint is retained temporarily
+  only for compatibility with previously issued direct-object URLs; new media
+  URLs must use the Go CDN. Remove that legacy public mapping after stored URL
+  migration is verified.
+- Public CDN cache entries have a bounded shared-cache lifetime. A visibility
+  change or deletion must also be covered by the Backend/CDN purge and
+  tombstone acceptance tests before production activation.
+
+Keep `FRESH_MEDIA_ENABLED=false` until the separate Fresh API media adapter,
+Data Centre ledger reconciliation and real B2/R2 provider acceptance pass.
+
 For the exact B2/R2 secret names, bucket separation requirements, deployment-path differences and manual credential smoke test, see [Media provider credential setup](MEDIA-PROVIDER-SETUP.md). Provider credentials are Backend-owned; do not copy them into the Data Centre repository.
 
 ## Backup and restore
@@ -118,7 +147,7 @@ For the exact B2/R2 secret names, bucket separation requirements, deployment-pat
 
 ## Network and operations
 
-- Publish only Caddy ports 80/443 and explicitly approved control-plane endpoints.
+- In the Docker Compose profile, publish only Caddy ports 80/443 and explicitly approved control-plane endpoints. The Instabox port agent separately publishes the API and Go CDN endpoints; never publish internal container ports directly from Compose.
 - Keep PostgreSQL, object storage administration, Prometheus, Grafana and internal APIs private.
 - `/readyz` checks required PostgreSQL dependencies; `/metrics` exposes API, database and outbox signals.
 - Alert on PostgreSQL saturation, oldest outbox age, failed media deletions, worker lag and storage capacity.
