@@ -141,7 +141,7 @@ func TestS3ProviderMinIOLifecycle(t *testing.T) {
 	manager, err := New(p, []Namespace{{
 		Name: "identity-evidence-private", PhysicalBucket: bucket,
 		MaxObjectBytes: 15 << 20,
-		AllowedTypes: map[string]struct{}{"text/plain": {}},
+		AllowedTypes: map[string]struct{}{"text/plain": {}, "image/jpeg": {}},
 		UploadTTL: 5 * time.Minute, DownloadTTL: 5 * time.Minute,
 	}})
 	if err != nil {
@@ -184,6 +184,28 @@ func TestS3ProviderMinIOLifecycle(t *testing.T) {
 	sealedHash, err := p.SHA256(ctx, bucket, tenantPrefix("ci")+sealedKey, int64(len(payload)))
 	if err != nil || sealedHash != digest {
 		t.Fatalf("sealed evidence changed after staging URL replay: hash=%q err=%v", sealedHash, err)
+	}
+
+	// A client cannot label arbitrary bytes as a supported identity document.
+	spoofKey := fmt.Sprintf("identity/session/spoof-%d.jpg", time.Now().UnixNano())
+	spoofURL, err := manager.UploadURL(ctx, "ci", "identity-evidence-private", spoofKey, "image/jpeg", int64(len(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spoofRequest := mustRequest(t, ctx, http.MethodPut, spoofURL, bytes.NewReader(payload))
+	spoofRequest.Header.Set("Content-Type", "image/jpeg")
+	spoofResponse, err := p.do(spoofRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainAndClose(t, spoofResponse)
+	if spoofResponse.StatusCode < 200 || spoofResponse.StatusCode >= 300 {
+		t.Fatalf("spoof metadata upload returned HTTP %d", spoofResponse.StatusCode)
+	}
+	spoofErr := manager.PromoteUpload(ctx, "ci", "identity-evidence-private", spoofKey, spoofKey+".sealed",
+		"image/jpeg", int64(len(payload)), digest)
+	if !errors.Is(spoofErr, ErrObjectMismatch) {
+		t.Fatalf("spoofed image evidence promotion error=%v, want ErrObjectMismatch", spoofErr)
 	}
 
 	if err := p.Delete(ctx, bucket, key); err != nil {
