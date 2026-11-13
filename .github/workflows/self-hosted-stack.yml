@@ -127,6 +127,8 @@ jobs:
           # running its one-time /docker-entrypoint-initdb.d scripts. Wait for
           # the actual schema contract, not merely for the temporary init server.
           schema_sql="SELECT COALESCE(bool_and(to_regclass(name) IS NOT NULL), false)
+            AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'testagram_app')
+            AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'service_role')
             FROM unnest(ARRAY[
               'public.vps_nodes',
               'public.vps_workloads',
