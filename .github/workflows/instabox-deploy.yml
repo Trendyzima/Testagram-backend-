@@ -449,6 +449,13 @@ jobs:
           verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_INTERNAL_TOKEN "$FEDERATION_INGRESS_TOKEN"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
           verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+          if [[ -n "${ONSPACE_AI_API_KEY:-}" ]]; then
+            # Confirm the moderation credential reached the API container without
+            # ever printing its value into workflow logs.
+            verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api ONSPACE_AI_API_KEY "$ONSPACE_AI_API_KEY"
+          else
+            echo "Post moderation is not configured; publishing remains fail-closed."
+          fi
 
           # Exercise both credential directions against the live private service endpoints.
           # Valid Backend -> Federation requests deliberately use an empty payload, so the
