@@ -73,7 +73,7 @@ done
   sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | tee "$backup" >/dev/null
 test -s "$backup"
 echo "Created pre-migration PostgreSQL backup."
-cat "$backup" | "${DOCKER[@]}" run --rm -i postgres:17-alpine pg_restore --list - >/dev/null
+"${DOCKER[@]}" run --rm -v "$backup:/backup.dump:ro" postgres:17-alpine pg_restore --list /backup.dump >/dev/null
 sha256sum "$backup" > "$checksum"
 chmod 600 "$backup" "$checksum"
 
