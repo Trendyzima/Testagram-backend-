@@ -62,6 +62,12 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
     SELECT to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
        AND to_regclass('\''testagram_identity.verification_evidence'\'') IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema='\''testagram_identity'\''
+           AND table_name='\''verification_evidence'\''
+           AND column_name='\''staging_object_key'\''
+       )
        AND NOT EXISTS (
          SELECT 1 FROM information_schema.columns
          WHERE table_schema='\''testagram_identity'\''
