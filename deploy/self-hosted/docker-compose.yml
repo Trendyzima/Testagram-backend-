@@ -150,6 +150,8 @@ services:
       CDN_MEDIA_ASSERTION_SECRET: ${CDN_MEDIA_ASSERTION_SECRET:?Set CDN_MEDIA_ASSERTION_SECRET in .env}
       CDN_MEDIA_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
       CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
+      CDN_PURGE_URL: ${CDN_PURGE_URL:-http://media-cache:8081/api/cache/purge}
+      CDN_PURGE_TOKEN: ${CDN_PURGE_TOKEN:?Set CDN_PURGE_TOKEN in .env}
       # Private Data Centre media lifecycle; provider credentials stay in Data Centre only.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
@@ -218,6 +220,7 @@ services:
       LISTEN_ADDR: ":8081"
       ORIGIN_URL: "http://api:8080"
       ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:?Set CDN_ORIGIN_AUTH_TOKEN in .env}
+      PURGE_TOKEN: ${CDN_PURGE_TOKEN:?Set CDN_PURGE_TOKEN in .env}
       PUBLIC_BASE_URL: ${CDN_MEDIA_BASE_URL:-https://media.testagram.site}
       HEALTHCHECK_URL: "http://127.0.0.1:8081/readyz"
       MEDIA_URL_PREFIX: "/v1"
