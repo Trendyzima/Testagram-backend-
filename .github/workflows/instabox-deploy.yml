@@ -2,6 +2,12 @@ name: Deploy Testagram to InstaBox
 
 on:
   workflow_dispatch:
+    inputs:
+      apply_backend_schema_migrations:
+        description: "Back up and apply the additive VPS schema migrations before starting the API"
+        required: true
+        default: false
+        type: boolean
   push:
     branches: [main]
 
@@ -118,6 +124,7 @@ jobs:
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
           ONSPACE_AI_API_KEY: ${{ secrets.ONSPACE_AI_API_KEY }}
           APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
+          APPLY_BACKEND_SCHEMA_MIGRATIONS: ${{ inputs.apply_backend_schema_migrations || 'false' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -298,9 +305,15 @@ jobs:
           source "$BASE_ENV"
           set +a
 
-          echo "Starting PostgreSQL, MinIO and the native Go API..."
+          echo "Starting PostgreSQL and MinIO..."
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
+          if [[ "${APPLY_BACKEND_SCHEMA_MIGRATIONS:-false}" == "true" ]]; then
+            echo "Applying explicitly approved Backend schema migrations after a verified backup..."
+            bash "$BACKEND/deploy/self-hosted/apply-current-schema-migrations.sh" --confirm
+          else
+            echo "Persistent Backend schema migrations were not requested; no database schema was changed."
+          fi
           sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
 
           echo "Waiting for Backend readiness..."
@@ -496,7 +509,7 @@ jobs:
           echo "REMOTE_DEPLOY_STARTED"
           REMOTE_OUTER
 
-          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg appwrite_endpoint "$APPWRITE_ENDPOINT" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" --arg onspace_key "${ONSPACE_AI_API_KEY:-}" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,APPWRITE_ENDPOINT:$appwrite_endpoint,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,ONSPACE_AI_API_KEY:$onspace_key},timeoutSeconds:90}')"
+          payload="$(jq -nc --arg cmd "$REMOTE_COMMAND" --arg appwrite "${APPWRITE_PROJECT_ID:-}" --arg appwrite_endpoint "$APPWRITE_ENDPOINT" --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" --arg onspace_key "${ONSPACE_AI_API_KEY:-}" --arg apply_schema_migrations "$APPLY_BACKEND_SCHEMA_MIGRATIONS" '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,APPWRITE_ENDPOINT:$appwrite_endpoint,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,ONSPACE_AI_API_KEY:$onspace_key,APPLY_BACKEND_SCHEMA_MIGRATIONS:$apply_schema_migrations},timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
