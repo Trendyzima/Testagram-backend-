@@ -1146,7 +1146,7 @@ func main() {
 		if !virtualStorageEnabled || primaryVirtualStorageProvider == nil || virtualStorageManager == nil {
 			log.Fatal("MEDIA_REPLICATION_ENABLED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
 		}
-		mediaReplicator, err = configureMediaReplicator(primaryVirtualStorageProvider)
+		mediaReplicator, err = configureIdentityMediaReplicator(primaryVirtualStorageProvider)
 		if err != nil {
 			log.Fatalf("configure durable media replication: %v", err)
 		}
