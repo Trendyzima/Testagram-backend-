@@ -479,6 +479,13 @@ jobs:
           export ADMIN_PUBLIC_URL=https://ops.example.invalid
           export ADMIN_DOMAIN=ops.example.invalid
           docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
+          docker run --rm \
+            -e ACME_EMAIL=ci@example.invalid \
+            -e API_DOMAIN=api.example.invalid \
+            -e MEDIA_DOMAIN=media.example.invalid \
+            -e ADMIN_DOMAIN=ops.example.invalid \
+            -v "$PWD/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
           python - <<'PY'
           from pathlib import Path
           import re
