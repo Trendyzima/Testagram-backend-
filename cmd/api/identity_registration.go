@@ -27,7 +27,66 @@ const (
 	identityAdultThreshold      = 18
 )
 
-var identityApplicationIDPattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}$`)
+var identityApplicationIDPattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	maxIdentityApplicationBody = 16 << 10
+	maxIdswyftWebhookBody       = 64 << 10
+	identityAdultThreshold      = 18
+)
+
+)
+var identityIdempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	maxIdentityApplicationBody = 16 << 10
+	maxIdswyftWebhookBody       = 64 << 10
+	identityAdultThreshold      = 18
+)
+
+)
 
 type identityApplicationInput struct {
 	Email          string `json:"email"`
@@ -107,7 +166,7 @@ func (s *service) startIdswyftAgeSession(ctx context.Context, applicationID stri
 		return "", "", err
 	}
 	allowedOrigin, err := parseConfiguredHTTPSURL(verificationOrigin, false)
-	if err != nil || allowedOrigin.Path != "" {
+	if err != nil || allowedOrigin.Path != "" || baseURL.Path != "" {
 		return "", "", errors.New("Idswyft verification origin must be an HTTPS origin")
 	}
 
@@ -138,11 +197,11 @@ func (s *service) startIdswyftAgeSession(ctx context.Context, applicationID stri
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&result); err != nil {
 		return "", "", errors.New("Idswyft returned an invalid verification response")
 	}
-	if len(result.VerificationID) != 36 || !identityApplicationIDPattern.MatchString(result.VerificationID) {
+	if !result.Success || len(result.VerificationID) != 36 || !identityApplicationIDPattern.MatchString(result.VerificationID) {
 		return "", "", errors.New("Idswyft returned an invalid verification ID")
 	}
 	verificationURL, err := url.Parse(result.VerificationURL)
-	if err != nil || verificationURL.User != nil || verificationURL.RawQuery == "" ||
+	if err != nil || verificationURL.User != nil || verificationURL.Fragment != "" || verificationURL.RawQuery == "" ||
 		verificationURL.Scheme != "https" || !strings.EqualFold(verificationURL.Host, allowedOrigin.Host) ||
 		!strings.EqualFold(verificationURL.Scheme, allowedOrigin.Scheme) {
 		return "", "", errors.New("Idswyft returned a verification URL outside the configured verification origin")
@@ -163,7 +222,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
-	if strings.TrimSpace(os.Getenv("IDSWYFT_API_BASE_URL")) == "" ||
+	if !s.idswyftWebhookReady || strings.TrimSpace(os.Getenv("IDSWYFT_API_BASE_URL")) == "" ||
 		strings.TrimSpace(os.Getenv("IDSWYFT_API_KEY")) == "" ||
 		strings.TrimSpace(os.Getenv("IDSWYFT_VERIFICATION_ORIGIN")) == "" ||
 		strings.TrimSpace(os.Getenv("IDSWYFT_WEBHOOK_SECRET")) == "" {
@@ -178,7 +237,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if len(idempotencyKey) < 32 || len(idempotencyKey) > 128 || strings.ContainsAny(idempotencyKey, " \r\n\t") {
+	if !identityIdempotencyKeyPattern.MatchString(idempotencyKey) {
 		writeJSON(w, http.StatusBadRequest, errorBody("IDEMPOTENCY_KEY_REQUIRED", "A high-entropy Idempotency-Key is required", requestID(r)))
 		return
 	}
@@ -237,12 +296,13 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	var applicationID, applicationStatus, verificationResult string
+	var existingEmail, existingUsername, existingDisplayName, existingTermsVersion, existingPrivacyVersion string
 	err = tx.QueryRow(ctx, `
-		SELECT id::text, status, adult_verification_result
+		SELECT id::text, status, adult_verification_result, email, username, display_name, terms_version, privacy_version
 		FROM testagram_identity.identity_applications
 		WHERE submission_key_sha256=$1
 		FOR UPDATE
-	`, submissionHash).Scan(&applicationID, &applicationStatus, &verificationResult)
+	`, submissionHash).Scan(&applicationID, &applicationStatus, &verificationResult, &existingEmail, &existingUsername, &existingDisplayName, &existingTermsVersion, &existingPrivacyVersion)
 
 	isExisting := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -259,12 +319,14 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 			  (id,email,username,display_name,adult_confirmed_at,evidence_reference,
 			   evidence_fingerprint_sha256,terms_version,privacy_version,
 			   terms_accepted_at,privacy_accepted_at,submission_key_sha256,
-			   status_access_token_sha256,adult_verification_threshold,adult_verification_result)
-			VALUES ($1::uuid,$2,$3,$4,now(),$5,NULL,$6,$7,now(),now(),$8,$9,$10,'pending')
+			   status_access_token_sha256,status_access_token_expires_at,
+			   adult_verification_threshold,adult_verification_mode,adult_verification_result)
+			VALUES ($1::uuid,$2,$3,$4,now(),$5,NULL,$6,$7,now(),now(),$8,$9,
+			        now()+interval '7 days',18,'age_only','pending')
 			ON CONFLICT DO NOTHING
 			RETURNING id::text,status,adult_verification_result
 		`, applicationID, email, username, displayName, "idswyft-session-pending:"+applicationID,
-			termsVersion, privacyVersion, submissionHash, statusTokenHash, identityAdultThreshold).
+			termsVersion, privacyVersion, submissionHash, statusTokenHash).
 			Scan(&applicationID, &applicationStatus, &verificationResult)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Do not reveal whether an email or username is already registered.
@@ -290,7 +352,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	} else {
 		if _, err := tx.Exec(ctx, `
 			UPDATE testagram_identity.identity_applications
-			SET status_access_token_sha256=$2, updated_at=now()
+			SET status_access_token_sha256=$2, status_access_token_expires_at=now()+interval '7 days', updated_at=now()
 			WHERE id=$1::uuid
 		`, applicationID, statusTokenHash); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
@@ -302,6 +364,26 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if isExisting && (existingEmail != email || existingUsername != username ||
+		existingDisplayName != displayName || existingTermsVersion != termsVersion ||
+		existingPrivacyVersion != privacyVersion) {
+		writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used for a different application", requestID(r)))
+		return
+	}
+	if isExisting && applicationStatus == "cancelled" {
+		_, err = s.db.Exec(ctx, `
+			UPDATE testagram_identity.identity_applications
+			SET status='pending', adult_verification_result='pending',
+			    adult_verification_session_id=NULL, adult_verification_webhook_received_at=NULL,
+			    evidence_reference=$2, evidence_fingerprint_sha256=NULL, updated_at=now()
+			WHERE id=$1::uuid AND adult_verified_at IS NULL
+		`, applicationID, "idswyft-session-pending:"+applicationID)
+		if err != nil {
+			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the application is eligible, the next verification step will be sent."})
+			return
+		}
+		applicationStatus, verificationResult = "pending", "pending"
+	}
 	if isExisting && (applicationStatus != "pending" || verificationResult != "pending") {
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"ok": true, "application_id": applicationID, "application_token": applicationToken,
@@ -324,6 +406,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		UPDATE testagram_identity.identity_applications
 		SET adult_verification_session_id=$2,
 		    adult_verification_threshold=$3,
+		    adult_verification_mode='age_only',
 		    adult_verification_result='pending',
 		    evidence_reference=$4,
 		    status='pending',
@@ -370,7 +453,7 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 		SELECT status, adult_verification_result, adult_verification_threshold,
 		       updated_at, status_access_token_sha256
 		FROM testagram_identity.identity_applications
-		WHERE id=$1::uuid
+		WHERE id=$1::uuid AND status_access_token_expires_at>now()
 	`, applicationID).Scan(&status, &verificationStatus, &threshold, &updatedAt, &storedHash)
 	if err != nil || subtle.ConstantTimeCompare(storedHash, authTokenHash(token)) != 1 {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
@@ -440,18 +523,20 @@ func (s *service) idswyftIdentityWebhook(w http.ResponseWriter, r *http.Request)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	var email, username, displayName, termsVersion, privacyVersion, storedSessionID, currentStatus, currentResult, existingRequestID string
+	var email, username, displayName, termsVersion, privacyVersion, storedSessionID, currentStatus, currentResult, existingRequestID, verificationMode string
 	var adultVerified bool
+	var verificationThreshold int
 	err = tx.QueryRow(ctx, `
 		SELECT email, username, display_name, terms_version, privacy_version,
 		       adult_verification_session_id, status, adult_verification_result,
-		       adult_verified_at IS NOT NULL, COALESCE(sensitive_action_request_id::text,'')
+		       adult_verified_at IS NOT NULL, COALESCE(sensitive_action_request_id::text,''),
+		       adult_verification_mode, adult_verification_threshold
 		FROM testagram_identity.identity_applications
 		WHERE id=$1::uuid
 		FOR UPDATE
 	`, event.UserID).Scan(&email, &username, &displayName, &termsVersion, &privacyVersion,
-		&storedSessionID, &currentStatus, &currentResult, &adultVerified, &existingRequestID)
-	if err != nil || storedSessionID != event.VerificationID {
+		&storedSessionID, &currentStatus, &currentResult, &adultVerified, &existingRequestID, &verificationMode, &verificationThreshold)
+	if err != nil || storedSessionID != event.VerificationID || verificationMode != "age_only" || verificationThreshold != identityAdultThreshold {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
 		return
 	}
