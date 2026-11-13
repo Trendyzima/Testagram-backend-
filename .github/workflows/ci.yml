@@ -499,6 +499,9 @@ jobs:
           review = Path("cmd/api/identity_review.go").read_text()
           assert 'uploadPath := "/api/identity/sessions/"' in identity and "s.identityEvidenceUpload" in Path("cmd/api/main.go").read_text(), "identity evidence uploads must use the authenticated Backend proxy"
           assert "s.identityReviewEvidence" in Path("cmd/api/main.go").read_text() and 'Content-Disposition' in review and 'Cache-Control", "private, no-store' in review, "reviewer evidence must be streamed through authenticated no-store API"
+          admin = Path("admin-console/main.go").read_text()
+          assert 'BACKEND_INTERNAL_URL: http://api:8080' in compose and 'POST /account/jwts' in admin and 'handleIdentityReviewQueue' in admin, "staff console must mint reviewer JWTs server-side and proxy through the private Backend network"
+          assert 'loadIdentityReviewQueue' in Path("admin-console/web/app.js").read_text() and 'identity-review-panel' in Path("admin-console/web/index.html").read_text(), "staff console must expose the identity reviewer workflow"
           for check in (
               "DATA_CENTRE_MEDIA_ENABLED",
               "media-migrate",
