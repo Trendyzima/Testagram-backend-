@@ -34,6 +34,7 @@ type homeFeedPost struct {
 	Visibility     string         `json:"visibility"`
 	MediaIDs       []string       `json:"media_ids"`
 	MediaURLs      []string          `json:"media_urls"`
+	MediaContentTypes []string `json:"media_content_types"`
 	MediaAuthHeaders map[string]string `json:"media_auth_headers,omitempty"`
 	IsVideo        bool           `json:"is_video"`
 	IsFollowing    bool           `json:"is_following"`
@@ -375,6 +376,7 @@ WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 	}
 	for i := range posts {
 		posts[i].MediaURLs = []string{}
+		posts[i].MediaContentTypes = []string{}
 		posts[i].MediaAuthHeaders = make(map[string]string)
 		posts[i].IsVideo = false
 		for _, id := range posts[i].MediaIDs {
@@ -401,6 +403,7 @@ WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 			if err != nil { return err }
 			if mediaURL != "" {
 				posts[i].MediaURLs = append(posts[i].MediaURLs, mediaURL)
+				posts[i].MediaContentTypes = append(posts[i].MediaContentTypes, asset.ContentType)
 			}
 			if strings.HasPrefix(strings.ToLower(asset.ContentType), "video/") {
 				posts[i].IsVideo = true
