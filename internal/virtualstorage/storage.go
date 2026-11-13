@@ -23,7 +23,32 @@ var (
 	ErrObjectMismatch    = errors.New("uploaded object does not match declared metadata")
 	ErrChecksumMismatch  = errors.New("uploaded object SHA-256 does not match expected checksum")
 	ErrChecksumUnavailable = errors.New("storage provider cannot calculate a content SHA-256")
-	tenantIDPattern     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	tenantIDPattern     = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}// Package virtualstorage provides logical, tenant-scoped storage namespaces over a
+// replaceable object-store provider. It owns policy and routing, not object bytes.
+package virtualstorage
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"path"
+	"regexp"
+	"strings"
+	"time"
+)
+
+var (
+	ErrInvalidNamespace = errors.New("invalid storage namespace")
+	ErrInvalidKey       = errors.New("invalid object key")
+	ErrForbidden        = errors.New("storage operation forbidden")
+	ErrTooLarge         = errors.New("object exceeds namespace size limit")
+	ErrNotFound         = errors.New("object not found")
+	ErrObjectMismatch    = errors.New("uploaded object does not match declared metadata")
+	ErrChecksumMismatch  = errors.New("uploaded object SHA-256 does not match expected checksum")
+	ErrChecksumUnavailable = errors.New("storage provider cannot calculate a content SHA-256")
+	tenantIDPattern     = )
 	namespacePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 )
 
