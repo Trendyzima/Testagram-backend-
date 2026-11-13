@@ -32,6 +32,8 @@ fi
 pass "Docker daemon is reachable"
 
 section "Compose project inventory"
+declare -A seen_container_ids=()
+container_ids=()
 for pair in "Backend|$BACKEND_COMPOSE|$BACKEND_ENV" "Data Centre|$DC_COMPOSE|$DC_ENV"; do
   IFS='|' read -r label compose_file env_file <<< "$pair"
   if [[ ! -f "$compose_file" ]]; then
@@ -45,11 +47,19 @@ for pair in "Backend|$BACKEND_COMPOSE|$BACKEND_ENV" "Data Centre|$DC_COMPOSE|$DC
   pass "$label Compose and environment files exist"
   if ! sudo docker compose --env-file "$env_file" -f "$compose_file" ps --all; then
     fail "$label Compose inventory could not be read"
+    continue
   fi
+  mapfile -t stack_ids < <(sudo docker compose --env-file "$env_file" -f "$compose_file" ps --all -q)
+  for id in "${stack_ids[@]}"; do
+    [[ -z "$id" ]] && continue
+    if [[ -z "${seen_container_ids[$id]:-}" ]]; then
+      seen_container_ids["$id"]=1
+      container_ids+=("$id")
+    fi
+  done
 done
 
-section "Every Testagram container state"
-mapfile -t container_ids < <(sudo docker ps -aq --filter name=testagram)
+section "Every Backend and Data Centre container state"
 if (( ${#container_ids[@]} == 0 )); then
   fail "No Testagram containers were found"
 else
