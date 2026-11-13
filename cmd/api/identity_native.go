@@ -410,11 +410,6 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	}
 	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
 	objectKey := path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
-	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, input.ContentType, input.SizeBytes)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
-		return
-	}
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_evidence
 		  (id,session_id,object_key,content_type,size_bytes,sha256)
@@ -428,7 +423,6 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	// Do not expose an internal MinIO hostname or a raw object-store capability
 	// to mobile clients. The client uploads to this authenticated API route;
 	// Backend streams the bounded payload to the private object store itself.
-	_ = uploadURL
 	uploadPath := "/api/identity/sessions/" + r.PathValue("session_id") + "/evidence/" + evidenceID + "/upload"
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"evidence_id": evidenceID, "upload_url": uploadPath,
