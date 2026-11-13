@@ -14,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 concurrency:
   group: instabox-testagram-vps-watchdog
@@ -29,7 +28,7 @@ jobs:
       - name: Compile watchdog
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog unit tests
-        run: python3 -m unittest tests.test_instabox_watchdog -v
+        run: python3 -m unittest discover -s tests -p 'test_instabox_watchdog.py' -v
 
   watchdog:
     name: Check and recover Testagram VPS
@@ -59,6 +58,9 @@ jobs:
           WATCHDOG_ACTION_COOLDOWN_SECONDS: "1800"
           WATCHDOG_OPERATION_TIMEOUT_SECONDS: "300"
         run: python3 scripts/instabox_watchdog.py
+      - name: Ensure cooldown state file exists
+        if: always()
+        run: test -f .watchdog-state.json || printf '{}' > .watchdog-state.json
       - name: Persist cooldown state for the next scheduled run
         if: always()
         uses: actions/cache/save@v4
