@@ -230,6 +230,43 @@ func (m *Manager) VerifyUploadChecksum(ctx context.Context, tenantID, namespace,
 	return nil
 }
 
+// PromoteUpload seals a client-uploaded staging object into a new private
+// object key. The provider must stream and checksum the source while copying;
+// a still-valid presigned PUT can then overwrite only the staging key, never
+// the evidence object presented to reviewers.
+func (m *Manager) PromoteUpload(ctx context.Context, tenantID, namespace, sourceKey, destinationKey, contentType string, size int64, expectedSHA256 string) error {
+	ns, err := m.namespace(namespace)
+	if err != nil {
+		return err
+	}
+	if !tenantIDPattern.MatchString(tenantID) || !validKey(sourceKey) || !validKey(destinationKey) || sourceKey == destinationKey {
+		return ErrInvalidKey
+	}
+	if size < 1 || size > ns.MaxObjectBytes {
+		return ErrTooLarge
+	}
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if _, ok := ns.AllowedTypes[contentType]; !ok {
+		return ErrForbidden
+	}
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if len(expectedSHA256) != 64 {
+		return errors.New("expected SHA-256 must be 64 hexadecimal characters")
+	}
+	if _, err := hex.DecodeString(expectedSHA256); err != nil {
+		return errors.New("expected SHA-256 must be 64 hexadecimal characters")
+	}
+	promoter, ok := m.provider.(interface {
+		CopyFromProvider(context.Context, Provider, string, string, string, string, int64, string, string) error
+	})
+	if !ok {
+		return errors.New("storage provider does not support immutable evidence promotion")
+	}
+	prefix := tenantPrefix(tenantID)
+	return promoter.CopyFromProvider(ctx, m.provider, ns.PhysicalBucket, prefix+sourceKey,
+		ns.PhysicalBucket, prefix+destinationKey, size, contentType, expectedSHA256)
+}
+
 // Delete is deliberately owner-scoped, including for public objects. Public
 // readability must never imply public write/delete authority.
 func (m *Manager) Delete(ctx context.Context, requesterTenant, ownerTenant, namespace, key string) error {
