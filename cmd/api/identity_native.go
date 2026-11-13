@@ -52,6 +52,10 @@ type identitySessionAccess struct {
 }
 
 func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Request) {
+	if !strings.EqualFold(env("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "false"), "true") {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("REGISTRATION_DISABLED", "Identity registration is not enabled", requestID(r)))
+		return
+	}
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
 		return
