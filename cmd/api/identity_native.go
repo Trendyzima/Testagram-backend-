@@ -428,7 +428,7 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	var storedSize int64
 	var storedDigest []byte
 	err = s.db.QueryRow(ctx, `
-		SELECT id::text,object_key,content_type,size_bytes,sha256
+		SELECT id::text,COALESCE(staging_object_key,object_key),content_type,size_bytes,sha256
 		FROM testagram_identity.verification_evidence
 		WHERE session_id=$1::uuid AND status='upload_pending'
 		ORDER BY created_at DESC
@@ -453,8 +453,8 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 		objectKey = path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
 		_, err = s.db.Exec(ctx, `
 			INSERT INTO testagram_identity.verification_evidence
-			  (id,session_id,object_key,content_type,size_bytes,sha256)
-			VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)
+			  (id,session_id,object_key,staging_object_key,content_type,size_bytes,sha256)
+			VALUES ($1::uuid,$2::uuid,$3,$3,$4,$5,$6)
 		`, evidenceID, r.PathValue("session_id"), objectKey, input.ContentType, input.SizeBytes, digest)
 		if err != nil {
 			writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "An evidence upload is already reserved for this session; retry the same file", requestID(r)))
@@ -520,10 +520,6 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_UPLOAD_INCOMPLETE", "Evidence upload is incomplete or does not match its declared metadata", requestID(r)))
 		return
 	}
-	if err := s.virtualStorage.VerifyUploadChecksum(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, maxIdentityEvidenceBytes, hex.EncodeToString(digest)); err != nil {
-		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_CHECKSUM_MISMATCH", "Uploaded evidence failed integrity verification", requestID(r)))
-		return
-	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence submission could not be recorded", requestID(r)))
@@ -539,11 +535,22 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusConflict, errorBody("SESSION_NOT_SUBMITTABLE", "Verification session is no longer accepting evidence", requestID(r)))
 		return
 	}
-	if _, err := tx.Exec(ctx, `
+	// Promote the uploaded bytes to a new sealed object key. The applicant's
+	// five-minute presigned PUT remains capable of rewriting only the staging
+	// key; reviewers never receive a URL for that mutable object.
+	finalKey := path.Join("identity", r.PathValue("session_id"), input.EvidenceID+".sealed")
+	if err := s.virtualStorage.PromoteUpload(ctx, access.ApplicationID, identityEvidenceNamespace,
+		objectKey, finalKey, contentType, size, hex.EncodeToString(digest)); err != nil {
+		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_SEAL_FAILED", "Evidence could not be sealed for review", requestID(r)))
+		return
+	}
+	evidenceTag, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.verification_evidence
-		SET status='verified',uploaded_at=now(),verified_at=now()
+		SET object_key=$2,staging_object_key=COALESCE(staging_object_key,$3),
+		    status='verified',uploaded_at=now(),verified_at=now()
 		WHERE id=$1::uuid AND status='upload_pending'
-	`, input.EvidenceID); err != nil {
+	`, input.EvidenceID, finalKey, objectKey)
+	if err != nil || evidenceTag.RowsAffected() != 1 {
 		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_SUBMITTED", "Evidence has already been submitted", requestID(r)))
 		return
 	}
@@ -585,6 +592,11 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	if err := tx.Commit(ctx); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence submission could not be committed", requestID(r)))
 		return
+	}
+	// Best-effort cleanup. A presigned URL may be reused until it expires, so
+	// retention maintenance also removes the staging key after its TTL.
+	if err := s.virtualStorage.Delete(ctx, access.ApplicationID, access.ApplicationID, identityEvidenceNamespace, objectKey); err != nil && !errors.Is(err, virtualstorage.ErrNotFound) {
+		log.Printf("native identity staging evidence cleanup deferred to retention worker")
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "manual_review", "message": "Evidence was securely received and queued for manual review."})
