@@ -102,7 +102,13 @@ func (p *S3Provider) PresignPut(ctx context.Context, bucket, key, contentType st
 	if strings.TrimSpace(contentType) == "" {
 		return "", errors.New("content type is required")
 	}
-	return p.presign(ctx, http.MethodPut, bucket, key, url.Values{}, map[string]string{"content-type": strings.ToLower(strings.TrimSpace(contentType))}, ttl)
+	return p.presign(ctx, http.MethodPut, bucket, key, url.Values{}, map[string]string{
+		"content-type": strings.ToLower(strings.TrimSpace(contentType)),
+		// Pin the declared size into the SigV4 request. The browser or HTTP
+		// client supplies Content-Length automatically; storage rejects a
+		// body whose length differs from the size reserved by the API.
+		"content-length": strconv.FormatInt(maxBytes, 10),
+	}, ttl)
 }
 
 // SHA256 streams the stored object through a bounded reader. It deliberately
