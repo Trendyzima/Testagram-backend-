@@ -21,7 +21,6 @@ jobs:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID || secrets.APPWRITE_PROJECT_ID || '6af01d97002875d6d7bd' }}
-      FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
     steps:
       - name: Resolve and start the InstaBox machine
         id: machine
@@ -114,6 +113,8 @@ jobs:
 
       - name: Start deployment on the machine
         id: remote
+        env:
+          FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
