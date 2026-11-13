@@ -160,7 +160,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	// to handle or trust a provider URL.
 	intent.URL = "/api/media/upload?key=" + url.QueryEscape(intent.Key)
 	if body.Visibility == "public" {
-		intent.PublicURL = publicMediaURLForStorage(intent.Key, userID, storageNamespace)
+		intent.PublicURL = publicMediaURLForStorage(intent.Key, userID, storageNamespace, storageProvider)
 		if intent.PublicURL == "" {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
 			return
@@ -621,7 +621,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, errorBody(code, message, id))
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at, storage_namespace
+	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at, storage_namespace, storage_provider
 		from testagram_media.assets where owner_id=$1 and status='ready'
 		order by created_at desc limit 100`, userID)
 	if err != nil {
@@ -631,10 +631,10 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := make([]map[string]any, 0)
 	for rows.Next() {
-		var key, visibility, contentType, originalName, storageNamespace string
+		var key, visibility, contentType, originalName, storageNamespace, storageProvider string
 		var sizeBytes int64
 		var createdAt time.Time
-		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt, &storageNamespace); err != nil {
+		if err := rows.Scan(&key, &visibility, &contentType, &originalName, &sizeBytes, &createdAt, &storageNamespace, &storageProvider); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not read media assets", id))
 			return
 		}
@@ -644,7 +644,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if visibility == "public" {
-			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace)
+			mediaURL = publicMediaURLForStorage(key, userID, storageNamespace, storageProvider)
 		} else if visibility == "private" {
 			if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
 				var grant datacentreclient.DownloadGrant
@@ -923,7 +923,7 @@ if body.ChecksumSHA256 == "" { writeJSON(w, http.StatusUnprocessableEntity, erro
 		asset.MediaType = "video"
 	}
 	if body.Visibility == "public" {
-		asset.PublicURL = publicMediaURLForStorage(body.Key, userID, storageNamespace)
+		asset.PublicURL = publicMediaURLForStorage(body.Key, userID, storageNamespace, storageProvider)
 		if asset.PublicURL == "" {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
 			return
@@ -1109,11 +1109,11 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var visibility, contentType, originalName, assetStatus, storageNamespace string
+	var visibility, contentType, originalName, assetStatus, storageNamespace, storageProvider string
 	var sizeBytes int64
-	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, storage_namespace
+	err = tx.QueryRow(ctx, `select visibility, content_type, original_name, size_bytes, status, storage_namespace, storage_provider
 		from testagram_media.assets where object_key=$1 and owner_id=$2 for update`, body.Key, userID).
-		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &storageNamespace)
+		Scan(&visibility, &contentType, &originalName, &sizeBytes, &assetStatus, &storageNamespace, &storageProvider)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Media asset was not found for this account", id))
 		return
@@ -1183,11 +1183,11 @@ func productPostMediaType(contentType string) (string, bool) {
 	}
 }
 
-func publicMediaURLForStorage(key, ownerID, storageNamespace string) string {
-	if storageNamespace == "legacy-media" || storageNamespace == "" {
+func publicMediaURLForStorage(key, ownerID, storageNamespace, storageProvider string) string {
+	if storageNamespace == "legacy-media" || storageNamespace == "" || storageProvider == "data-centre" {
 		return publicMediaURL(key)
 	}
-	// Virtual-storage objects are physically stored below the tenant prefix.
+	// Legacy virtual-storage objects are physically stored below the tenant prefix.
 	return publicMediaURL("tenants/" + ownerID + "/" + strings.TrimLeft(key, "/"))
 }
 
