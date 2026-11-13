@@ -119,6 +119,10 @@ InstaBox port agent and updates `CDN_MEDIA_BASE_URL` and
 - `CDN_ORIGIN_AUTH_TOKEN` authenticates CDN-to-Backend origin requests.
 - `CDN_MEDIA_ASSERTION_SECRET` separately signs short-lived, viewer-bound
   private-media assertions. Never reuse the origin token as the assertion key.
+- `CDN_PURGE_TOKEN` is a third independent credential for the private
+  `POST /api/cache/purge` endpoint. The Backend API purge client/retry path is
+  still a separate acceptance gate; provisioning this token alone does not
+  make deletion or visibility revocation immediately invalidate cached bytes.
 - Backend metadata is authoritative: only `ready` + `public` assets may be
   returned without a viewer assertion. Private responses require a valid
   viewer-bound assertion and use `private, no-store`; the CDN bypasses shared
