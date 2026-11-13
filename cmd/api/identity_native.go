@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"path"
 	"regexp"
@@ -422,11 +425,95 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	// Do not expose an internal MinIO hostname or a raw object-store capability
+	// to mobile clients. The client uploads to this authenticated API route;
+	// Backend streams the bounded payload to the private object store itself.
+	_ = uploadURL
+	uploadPath := "/api/identity/sessions/" + r.PathValue("session_id") + "/evidence/" + evidenceID + "/upload"
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"evidence_id": evidenceID, "upload_url": uploadURL,
+		"evidence_id": evidenceID, "upload_url": uploadPath,
 		"method": http.MethodPut, "content_type": input.ContentType,
 		"size_bytes": input.SizeBytes, "expires_in_seconds": 300,
 	})
+}
+
+func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request) {
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
+		return
+	}
+	if r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "PUT required", requestID(r)))
+		return
+	}
+	access, err := s.identitySessionAccess(r)
+	if err != nil || (access.Status != "in_progress" && access.Status != "created") {
+		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
+		return
+	}
+	evidenceID := strings.TrimSpace(r.PathValue("evidence_id"))
+	if !identityApplicationIDPattern.MatchString(evidenceID) || s.virtualStorage == nil {
+		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	var objectKey, contentType string
+	var size int64
+	var expectedDigest []byte
+	err = s.db.QueryRow(ctx, `
+		SELECT object_key,content_type,size_bytes,sha256
+		FROM testagram_identity.verification_evidence
+		WHERE id=$1::uuid AND session_id=$2::uuid AND status='upload_pending'
+	`, evidenceID, r.PathValue("session_id")).Scan(&objectKey, &contentType, &size, &expectedDigest)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
+		return
+	}
+	if r.ContentLength != size || strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))) != contentType {
+		writeJSON(w, http.StatusBadRequest, errorBody("EVIDENCE_METADATA_MISMATCH", "Upload size and content type must match the reserved evidence metadata", requestID(r)))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxIdentityEvidenceBytes)
+	defer r.Body.Close()
+	payload, err := io.ReadAll(r.Body)
+	if err != nil || int64(len(payload)) != size {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("EVIDENCE_SIZE_MISMATCH", "Evidence upload is incomplete or exceeds its reserved size", requestID(r)))
+		return
+	}
+	actualDigest := sha256.Sum256(payload)
+	if len(expectedDigest) != sha256.Size || subtle.ConstantTimeCompare(actualDigest[:], expectedDigest) != 1 {
+		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_CHECKSUM_MISMATCH", "Evidence upload failed its SHA-256 integrity check", requestID(r)))
+		return
+	}
+	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, contentType, size)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
+		return
+	}
+	upstreamRequest, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(payload))
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence upload could not be forwarded", requestID(r)))
+		return
+	}
+	upstreamRequest.Header.Set("Content-Type", contentType)
+	upstreamRequest.ContentLength = size
+	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	upstreamResponse, err := client.Do(upstreamRequest)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence could not be stored", requestID(r)))
+		return
+	}
+	io.Copy(io.Discard, io.LimitReader(upstreamResponse.Body, 4096))
+	upstreamResponse.Body.Close()
+	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_REJECTED", "Private storage rejected the evidence upload", requestID(r)))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request) {
