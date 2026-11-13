@@ -445,7 +445,7 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var signedURL string
-	if storageNamespace != "legacy-media" && s.dataCentreMedia != nil {
+	if storageProvider == "data-centre" {
 		if r.Method == http.MethodHead {
 			signedURL, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
 		} else {
@@ -639,7 +639,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mediaURL := ""
-		if storageNamespace != "legacy-media" && s.virtualStorage == nil && s.dataCentreMedia == nil {
+		if storageProvider == "data-centre" && s.dataCentreMedia == nil || storageProvider != "data-centre" && storageNamespace != "legacy-media" && s.virtualStorage == nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("VIRTUAL_STORAGE_NOT_CONFIGURED", "Some media objects require the virtual storage provider", id))
 			return
 		}
@@ -739,7 +739,7 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 	}
 	var maxBytes int64
 	var ok bool
-	if s.dataCentreMedia != nil { maxBytes, ok = s.mediaIntentFactory.MaxBytesForContentType(body.ContentType) } else { maxBytes, ok = s.media.MaxBytesForContentType(body.ContentType) }
+	if storageProvider == "data-centre" { maxBytes, ok = s.mediaIntentFactory.MaxBytesForContentType(body.ContentType) } else { maxBytes, ok = s.media.MaxBytesForContentType(body.ContentType) }
 	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
@@ -749,7 +749,7 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 		return
 	}
 	verifyTimeout := 8 * time.Second
-	if s.dataCentreMedia != nil { verifyTimeout = 25 * time.Second }
+	if storageProvider == "data-centre" { verifyTimeout = 25 * time.Second }
 	ctx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
 	defer cancel()
 	var actualType, etag string
