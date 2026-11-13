@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"time"
@@ -243,4 +245,31 @@ func (s *service) identityProvisioningRedeem(w http.ResponseWriter, r *http.Requ
 		"status": "provisioned", "canonical_user_id": canonicalID,
 		"email_verification_required": !account.EmailVerification,
 	})
+}
+
+
+// identityApplicationApproveSafe prevents a short-lived provisioning bearer
+// from being returned to staff clients. The applicant obtains a fresh token
+// through the application-token protected provisioning-token endpoint.
+func (s *service) identityApplicationApproveSafe(w http.ResponseWriter, r *http.Request) {
+	recorder := httptest.NewRecorder()
+	s.identityApplicationApprove(recorder, r)
+	for key, values := range recorder.Header() {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	if recorder.Code != http.StatusOK {
+		w.WriteHeader(recorder.Code)
+		_, _ = w.Write(recorder.Body.Bytes())
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorBody("IDENTITY_RESPONSE_INVALID", "Approval response could not be finalized", requestID(r)))
+		return
+	}
+	delete(payload, "approval_token")
+	delete(payload, "jti")
+	writeJSON(w, recorder.Code, payload)
 }
