@@ -101,15 +101,22 @@ jobs:
         working-directory: deploy/self-hosted
         run: |
           python - <<'PY'
+          import pathlib
+          import re
           import yaml
           with open("docker-compose.yml", encoding="utf-8") as handle:
               compose = yaml.safe_load(handle)
           services = compose["services"]
           cdn = services["media-cache"]
           env = cdn.get("environment", {})
-          image = cdn.get("image", "")
-          if "@sha256:" not in image:
-              raise SystemExit("Go CDN image must be pinned by immutable digest.")
+          image_template = str(cdn.get("image", ""))
+          env_example = pathlib.Path(".env.example").read_text(encoding="utf-8")
+          pin = re.search(r"(?m)^TESTAGRAM_CDN_IMAGE=(\\S+)$", env_example)
+          if "TESTAGRAM_CDN_IMAGE" not in image_template or not pin or "@sha256:" not in pin.group(1):
+              raise SystemExit("Go CDN image must be pinned by immutable digest in the Compose environment.")
+          for workflow_path in (pathlib.Path("../../.github/workflows/instabox-deploy.yml"), pathlib.Path("../../.github/workflows/self-hosted-stack.yml")):
+              if pin.group(1) not in workflow_path.read_text(encoding="utf-8"):
+                  raise SystemExit(f"CDN image pin differs from {workflow_path.name}.")
           if env.get("LISTEN_ADDR") != ":8081":
               raise SystemExit("Go CDN must listen on the Caddy/Instabox internal port 8081.")
           if env.get("ORIGIN_URL") != "http://api:8080":
