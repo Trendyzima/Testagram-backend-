@@ -51,6 +51,7 @@ DECLARE
   app_id uuid := gen_random_uuid();
   action_id uuid := gen_random_uuid();
   provisioning_id uuid;
+  premature_token_rejected boolean := FALSE;
 BEGIN
   INSERT INTO testagram_auth.sensitive_action_requests
     (id,action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
@@ -73,8 +74,6 @@ BEGIN
      decode(repeat('2',64),'hex'),action_id);
 
   -- A token cannot be issued while the ledger is still pending.
-  DECLARE
-    premature_token_rejected BOOLEAN := FALSE;
   BEGIN
     BEGIN
       INSERT INTO testagram_identity.identity_approval_tokens
