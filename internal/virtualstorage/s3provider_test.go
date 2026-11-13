@@ -232,3 +232,25 @@ func TestS3ProviderPresignsMethodCorrectHEAD(t *testing.T) {
 	if headURL.Query().Get("X-Amz-Signature") == "" || getURL.Query().Get("X-Amz-Signature") == "" { t.Fatal("missing SigV4 signature") }
 	if headURL.Query().Get("X-Amz-Signature") == getURL.Query().Get("X-Amz-Signature") { t.Fatal("HEAD and GET must have distinct method-bound signatures") }
 }
+
+
+func TestDetectEvidenceContentTypeUsesFileSignatures(t *testing.T) {
+	cases := []struct {
+		name string
+		prefix []byte
+		want string
+	}{
+		{"jpeg", []byte{0xff,0xd8,0xff,0xe0}, "image/jpeg"},
+		{"png", []byte("\\x89PNG\\r\\n\\x1a\\nrest"), "image/png"},
+		{"webp", []byte("RIFF0000WEBPVP8 "), "image/webp"},
+		{"pdf", []byte("%PDF-1.7"), "application/pdf"},
+		{"plain text", []byte("identity evidence"), "text/plain"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := detectEvidenceContentType(tc.prefix); got != tc.want {
+				t.Fatalf("detectEvidenceContentType()=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
