@@ -37,6 +37,14 @@ services:
       - ../../migrations/20261111_media_replica_ledger.sql:/docker-entrypoint-initdb.d/026_media_replica_ledger.sql:ro
       - ../../migrations/20261112_media_replication_outbox.sql:/docker-entrypoint-initdb.d/027_media_replication_outbox.sql:ro
       - ../../migrations/20261112_fresh_media_owner_keys.sql:/docker-entrypoint-initdb.d/028_fresh_media_owner_keys.sql:ro
+      - ../../migrations/20261111_admin_security_controls.sql:/docker-entrypoint-initdb.d/029_admin_security_controls.sql:ro
+      - ../../migrations/20261111_identity_registration_pipeline.sql:/docker-entrypoint-initdb.d/030_identity_registration_pipeline.sql:ro
+      - ../../migrations/20261113_identity_registration_hardening.sql:/docker-entrypoint-initdb.d/031_identity_registration_hardening.sql:ro
+      - ../../migrations/20261113_identity_idswyft_intake.sql:/docker-entrypoint-initdb.d/032_identity_legacy_intake.sql:ro
+      - ../../migrations/20261113_native_identity_verification.sql:/docker-entrypoint-initdb.d/033_native_identity_verification.sql:ro
+      - ../../migrations/20261113_native_identity_integrity.sql:/docker-entrypoint-initdb.d/034_native_identity_integrity.sql:ro
+      - ../../migrations/20261113_native_identity_evidence.sql:/docker-entrypoint-initdb.d/035_native_identity_evidence.sql:ro
+      - ../../migrations/20261113_native_identity_vendor_neutral.sql:/docker-entrypoint-initdb.d/036_native_identity_vendor_neutral.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
