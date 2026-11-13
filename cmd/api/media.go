@@ -661,7 +661,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.media == nil || s.db == nil {
+	if (s.media == nil && s.dataCentreMedia == nil) || s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Media storage or metadata database is unavailable", id))
 		return
 	}
@@ -679,12 +679,12 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
 		return
 	}
-	var intentOwner, intentVisibility, intentType, intentName, intentStatus, storageNamespace, storageProvider string
+	var intentOwner, intentVisibility, intentType, intentName, intentStatus, storageNamespace, storageProvider, intentChecksum string
 	var intentMaxBytes int64
 	var intentExpires time.Time
-	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider
+	err = s.db.QueryRow(r.Context(), `select owner_id, visibility, content_type, original_name, max_bytes, expires_at, status, storage_namespace, storage_provider, coalesce(checksum_sha256, '')
 		from testagram_media.upload_intents where object_key=$1`, body.Key).
-		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider)
+		Scan(&intentOwner, &intentVisibility, &intentType, &intentName, &intentMaxBytes, &intentExpires, &intentStatus, &storageNamespace, &storageProvider, &intentChecksum)
 	if err != nil || intentOwner != userID ||
 		(time.Now().After(intentExpires) && intentStatus != "completed") ||
 		(storageNamespace == "legacy-media" && intentStatus != "issued" && intentStatus != "uploaded" && intentStatus != "completed") ||
@@ -699,11 +699,19 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		body.ContentType = intentType
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
+body.ChecksumSHA256 = strings.ToLower(strings.TrimSpace(body.ChecksumSHA256))
+intentChecksum = strings.ToLower(strings.TrimSpace(intentChecksum))
+if body.ChecksumSHA256 == "" { body.ChecksumSHA256 = intentChecksum } else if intentChecksum != "" && body.ChecksumSHA256 != intentChecksum {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_CHECKSUM_MISMATCH", "Client checksum does not match the server-computed upload checksum", id)); return
+	}
+if body.ChecksumSHA256 == "" { writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISSING", "The upload gateway has not recorded a server-computed checksum", id)); return }
 	if intentVisibility != body.Visibility || intentType != body.ContentType {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
 		return
 	}
-	maxBytes, ok := s.media.MaxBytesForContentType(body.ContentType)
+	var maxBytes int64
+	var ok bool
+	if s.dataCentreMedia != nil { maxBytes, ok = s.mediaIntentFactory.MaxBytesForContentType(body.ContentType) } else { maxBytes, ok = s.media.MaxBytesForContentType(body.ContentType) }
 	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
@@ -712,7 +720,9 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_INTENT_INVALID", "Stored upload limit is invalid", id))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	verifyTimeout := 8 * time.Second
+	if s.dataCentreMedia != nil { verifyTimeout = 25 * time.Second }
+	ctx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
 	defer cancel()
 	var actualType, etag string
 	var size int64
