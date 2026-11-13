@@ -120,7 +120,7 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 	emailVerified = true
 	authRequest := httptest.NewRequest(http.MethodGet, "/api/profile", nil)
 	canonicalID, authStatus, authErr := svc.authenticatedAppwriteUser(authRequest, "identity-ci-jwt")
-	if authErr != nil || authStatus != http.StatusOK || canonicalID != canonicalIDFromResult(t, result) {
+	if authErr != nil || authStatus != http.StatusOK || canonicalID != canonicalUserIDFromResult(t, result) {
 		t.Fatalf("verified Appwrite login canonical=%q status=%d err=%v", canonicalID, authStatus, authErr)
 	}
 	var applicationStatus string
