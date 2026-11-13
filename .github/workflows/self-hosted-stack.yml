@@ -91,6 +91,10 @@ jobs:
               raise SystemExit("Go CDN must listen on the Caddy/Instabox internal port 8081.")
           if env.get("ORIGIN_URL") != "http://api:8080":
               raise SystemExit("Go CDN must use the canonical private Backend origin.")
+          if env.get("CACHE_DIR") != "/cache" or not any(str(volume).endswith(":/cache") for volume in cdn.get("volumes", [])):
+              raise SystemExit("Go CDN cache must use the image-owned writable /cache path.")
+          if env.get("HEALTHCHECK_URL") != "http://127.0.0.1:8081/readyz":
+              raise SystemExit("Go CDN health probe must target its configured listener.")
           if "CDN_ORIGIN_AUTH_TOKEN" not in env.get("ORIGIN_AUTH_TOKEN", ""):
               raise SystemExit("Go CDN origin credential must be sourced from CDN_ORIGIN_AUTH_TOKEN.")
           if "ports" in cdn:
