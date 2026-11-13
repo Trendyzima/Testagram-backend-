@@ -53,6 +53,14 @@ class WatchdogTests(unittest.TestCase):
              self.assertRaisesRegex(watchdog.WatchdogError, "found 2"):
             watchdog.resolve_machine_id(ListAPI())
 
+    def test_wait_for_service_requires_both_health_and_readiness(self):
+        with patch.object(watchdog, "probe", side_effect=[
+            (False, "HTTP 503"), (True, "HTTP 200"),
+            (True, "HTTP 200"), (True, "HTTP 200")
+        ]) as probe, patch.object(watchdog.time, "sleep"):
+            watchdog.wait_for_service()
+        self.assertEqual(probe.call_count, 4)
+
     def test_machine_snapshot_rejects_wrong_machine_id(self):
         api = FakeAPI({"id": "another-machine", "state": "running", "desiredState": "running"})
         with self.assertRaisesRegex(watchdog.WatchdogError, "different machine ID"):
