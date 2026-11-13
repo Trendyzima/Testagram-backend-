@@ -143,7 +143,12 @@ jobs:
               'testagram_auth.sensitive_action_approvals',
               'testagram_auth.staff_role_permissions',
               'testagram_local.post_create_idempotency',
-              'testagram_local.follows'
+              'testagram_local.follows',
+              'testagram_local.threads',
+              'testagram_local.browsing_history',
+              'testagram_local.thread_likes',
+              'testagram_local.thread_reposts',
+              'testagram_local.thread_bookmarks'
             ]::text[]) AS required(name)"
           schema_result=""
           for attempt in $(seq 1 60); do
@@ -160,7 +165,12 @@ jobs:
               'testagram_identity.verification_evidence','testagram_identity.verification_reviews',
               'testagram_auth.sensitive_action_requests','testagram_auth.sensitive_action_approvals',
               'testagram_auth.staff_role_permissions','testagram_local.post_create_idempotency',
-              'testagram_local.follows'
+              'testagram_local.follows',
+              'testagram_local.threads',
+              'testagram_local.browsing_history',
+              'testagram_local.thread_likes',
+              'testagram_local.thread_reposts',
+              'testagram_local.thread_bookmarks'
             ]::text[]) AS required(name) WHERE to_regclass(name) IS NULL" || true
             docker compose logs --tail=100 postgres
             exit 1
