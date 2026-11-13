@@ -70,6 +70,7 @@ type service struct {
 	media                     *media.Signer
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
+	freshMediaEnabled         bool
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
 	cdnOriginAuthToken        string
@@ -1036,25 +1037,20 @@ func main() {
 	var dataCentreMedia *datacentreclient.Client
 	var mediaIntentFactory *media.IntentFactory
 	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
-	if freshMediaEnabled {
-		dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
-		dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
-		if dataCentreURL == "" || dataCentreToken == "" {
-			log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN; Backend must not receive B2/R2 credentials")
-		}
+	dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
+	dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
+	if dataCentreURL != "" || dataCentreToken != "" {
+		if dataCentreURL == "" || dataCentreToken == "" { log.Fatal("DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN must be configured together") }
 		dataCentreMedia, err = datacentreclient.New(dataCentreURL, dataCentreToken, &http.Client{Timeout: 10 * time.Second})
-		if err != nil || dataCentreMedia == nil {
-			log.Fatalf("configure private Data Centre media client: %v", err)
-		}
-		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{
-			MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 45 * time.Minute,
-		})
-		if err != nil {
-			log.Fatalf("configure Data Centre media upload policy: %v", err)
-		}
-		log.Printf("private Data Centre media lifecycle integration enabled")
+		if err != nil || dataCentreMedia == nil { log.Fatalf("configure private Data Centre media client: %v", err) }
+	}
+	if freshMediaEnabled {
+		if dataCentreMedia == nil { log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN") }
+		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 45 * time.Minute})
+		if err != nil { log.Fatalf("configure Data Centre media upload policy: %v", err) }
+		log.Printf("private Data Centre media lifecycle enabled for new uploads")
 	} else {
-		log.Printf("fresh media lifecycle disabled by FRESH_MEDIA_ENABLED=false")
+		log.Printf("fresh Data Centre media uploads disabled by FRESH_MEDIA_ENABLED=false; existing Data Centre assets remain readable/deletable when the client is configured")
 	}
 	var cdnMediaAssertions *mediaassertion.Issuer
 	cdnAssertionSecret := env("CDN_MEDIA_ASSERTION_SECRET", "")
@@ -1189,7 +1185,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
+		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
