@@ -593,6 +593,7 @@ func (s *service) routes() http.Handler {
 		mux.Handle("POST /internal/replication/events", s.replicationReceiver)
 	}
 	mux.HandleFunc("GET /internal/cdn/v1/{key...}", s.mediaCDNOrigin)
+	mux.HandleFunc("HEAD /internal/cdn/v1/{key...}", s.mediaCDNOrigin)
 	mux.HandleFunc("OPTIONS /api/media/cdn-download-url", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/cdn-download-url", s.mediaCDNDownloadURL)
 	mux.HandleFunc("OPTIONS /api/media/private-download-url", s.mediaPreflight)
@@ -680,7 +681,7 @@ func normalizedRoute(path string) string {
 		"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email", "/api/auth/login", "/api/auth/forgot-password", "/api/auth/reset-password", "/api/me/profile",
 		"/api/media/upload-intent", "/api/media/upload", "/api/media/complete",
 		"/api/media/delete", "/api/media/attach", "/api/media/private-download-url",
-		"/api/media/list", "/internal/media/quarantine", "/internal/replication/events":
+		"/api/media/list", "/api/media/cdn-download-url", "/internal/media/quarantine", "/internal/cdn/v1/{key...}", "/internal/replication/events":
 		return path
 	default:
 		return "unmatched"
