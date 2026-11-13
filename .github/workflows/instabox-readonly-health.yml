@@ -1,0 +1,68 @@
+name: Instabox read-only health inspection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instabox-readonly-health
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Inspect existing Instabox containers without changing them
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
+      INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Inspect the existing machine and run read-only diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.instabox.sh"
+          if [[ -z "${INSTABOX_API_KEY:-}" ]]; then
+            echo "::error::Missing TESTAGRAM_DB_API repository secret."
+            exit 1
+          fi
+
+          machine_id="${INSTABOX_MACHINE_ID:-}"
+          if [[ -z "$machine_id" ]]; then
+            machines="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
+              -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
+            mapfile -t matches < <(jq -r '[.machines[]? | select(.name == "testagram") | .id] | unique | .[]' <<<"$machines")
+            if (( ${#matches[@]} != 1 )); then
+              echo "::error::Expected exactly one existing machine named testagram; found ${#matches[@]}. Set INSTABOX_MACHINE_ID explicitly."
+              exit 1
+            fi
+            machine_id="${matches[0]}"
+          fi
+
+          machine="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
+            -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
+          state="$(jq -r '.state // empty' <<<"$machine")"
+          echo "Instabox machine state: ${state:-unknown}"
+          if [[ "$state" != "running" ]]; then
+            echo "::error::Machine is not running. This workflow will not start, restart or recreate it."
+            exit 1
+          fi
+
+          script_b64="$(base64 -w0 scripts/instabox-readonly-health.sh)"
+          cmd="printf '%s' '$script_b64' | base64 -d | bash"
+          payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:240}')"
+          result="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS -X POST \
+            -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$payload" "$API/v1/machines/$machine_id/exec")"
+          code="$(jq -r '.exitCode // 1' <<<"$result")"
+          jq -r '.stdout // empty' <<<"$result"
+          if [[ "$code" != "0" ]]; then
+            echo "::error::Read-only Instabox health inspection reported failures."
+            jq -r '.stderr // empty' <<<"$result"
+            exit 1
+          fi
+          echo "Read-only inspection completed. No containers or machine state were changed."
