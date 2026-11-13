@@ -137,5 +137,20 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("Appwrite identity could not be mapped to the Testagram account")
 	}
+	if account.EmailVerification {
+		// Promote a newly verified Appwrite identity from the pending-email
+		// state only after the authenticated Account endpoint confirms it.
+		if _, err := s.db.Exec(ctx, `
+			UPDATE testagram_identity.identity_applications a
+			SET status='verified',updated_at=now()
+			FROM testagram_identity.registration_provisioning p
+			WHERE p.application_id=a.id
+			  AND p.appwrite_user_id=$1
+			  AND p.status='completed'
+			  AND a.status='verification_pending'
+		`, account.ID); err != nil {
+			return "", http.StatusServiceUnavailable, errors.New("verified Appwrite identity state could not be synchronized")
+		}
+	}
 	return canonicalID, http.StatusOK, nil
 }

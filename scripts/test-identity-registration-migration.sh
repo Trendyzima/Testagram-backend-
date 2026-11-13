@@ -38,8 +38,8 @@ for migration in \
   migrations/20261113_identity_registration_hardening.sql \
   migrations/20261113_identity_idswyft_intake.sql \
   migrations/20261113_native_identity_verification.sql \
-  migrations/20261113_native_identity_integrity.sql \
-  migrations/20261113_native_identity_evidence.sql; do
+  migrations/20261114_native_identity_integrity.sql \
+  migrations/20261114_native_identity_evidence.sql; do
   psql_ci < "$migration"
 done
 
@@ -48,10 +48,10 @@ psql_ci < migrations/20261113_identity_registration_hardening.sql
 psql_ci < migrations/20261113_identity_idswyft_intake.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
-psql_ci < migrations/20261113_native_identity_integrity.sql
-psql_ci < migrations/20261113_native_identity_integrity.sql
-psql_ci < migrations/20261113_native_identity_evidence.sql
-psql_ci < migrations/20261113_native_identity_evidence.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261114_native_identity_evidence.sql
+psql_ci < migrations/20261114_native_identity_evidence.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
@@ -312,6 +312,68 @@ BEGIN
 END;
 $native_identity$;
 SQL
+
+# Exercise the evidence retention state machine used by the storage worker.
+psql_ci <<'SQL'
+DO $evidence_retention$
+DECLARE
+  app_id uuid := gen_random_uuid();
+  session_id uuid := gen_random_uuid();
+  evidence_id uuid := gen_random_uuid();
+BEGIN
+  INSERT INTO testagram_identity.identity_applications
+    (id,email,username,display_name,adult_confirmed_at,evidence_reference,
+     evidence_fingerprint_sha256,terms_version,privacy_version,
+     terms_accepted_at,privacy_accepted_at)
+  VALUES
+    (app_id,'retention@example.test','retention_ci','Retention CI',now(),
+     'native-retention-reference',decode(repeat('d',64),'hex'),
+     'terms-v1','privacy-v1',now(),now());
+
+  INSERT INTO testagram_identity.verification_sessions
+    (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,expires_at)
+  VALUES
+    (session_id,app_id,decode(repeat('e',64),'hex'),'age_assurance',18,'in_progress',now()+interval '1 day');
+
+  INSERT INTO testagram_identity.verification_evidence
+    (id,session_id,object_key,content_type,size_bytes,sha256,status,retention_until)
+  VALUES
+    (evidence_id,session_id,'identity/ci/evidence.pdf','application/pdf',10,
+     decode(repeat('f',64),'hex'),'upload_pending',now()-interval '1 minute');
+
+  UPDATE testagram_identity.verification_evidence
+  SET status='quarantined',uploaded_at=now(),verified_at=NULL
+  WHERE id=evidence_id;
+
+  UPDATE testagram_identity.verification_evidence
+  SET status='deleted',verified_at=NULL
+  WHERE id=evidence_id AND status='quarantined';
+
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_identity.verification_evidence
+    WHERE id=evidence_id AND status='deleted'
+      AND uploaded_at IS NOT NULL AND verified_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'expired evidence did not reach the terminal deleted state';
+  END IF;
+END;
+$evidence_retention$;
+SQL
+
+# Provide the canonical account table needed by the API provisioning integration.
+psql_ci <<'SQL'
+CREATE SCHEMA IF NOT EXISTS testagram_local;
+CREATE TABLE IF NOT EXISTS testagram_local.accounts (
+  user_id UUID PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+SQL
+
+# Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestNativeIdentityProvisioningTokenAndRedeemIntegration$' -count=1
 
 # Exercise the Admin Console review handler against this same isolated database.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1

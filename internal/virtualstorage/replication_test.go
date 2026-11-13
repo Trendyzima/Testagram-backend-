@@ -190,3 +190,59 @@ func TestReplicatorReconcilesOnlyMissingOrDriftedCopies(t *testing.T) {
 		t.Fatalf("B2 checksum after repair=%s, want %s",got,digest)
 	}
 }
+
+
+func TestReplicatorSupportsPrivateIdentityEvidenceNamespace(t *testing.T) {
+	primary := newReplicaTestStore()
+	r2 := newReplicaTestStore()
+	b2 := newReplicaTestStore()
+	const digest = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	key := "identity/session-1/evidence.pdf"
+	scopedKey := tenantPrefix("application-1") + key
+	payloadInfo := ObjectInfo{Key: scopedKey, Size: 64, ContentType: "application/pdf"}
+	primary.objects[replicaTestKey("vps-identity", scopedKey)] = replicaTestObject{info: payloadInfo, hash: digest}
+
+	replicator, err := NewReplicator("instabox-vps", primary,
+		map[string]string{
+			"media-private": "vps-private",
+			"media-public": "vps-public",
+			"identity-evidence-private": "vps-identity",
+		},
+		[]ReplicaTarget{
+			{Name: "cloudflare-r2", Provider: r2, Buckets: map[string]string{
+				"media-private": "r2-private", "media-public": "r2-public",
+				"identity-evidence-private": "r2-identity",
+			}},
+			{Name: "backblaze-b2", Provider: b2, Buckets: map[string]string{
+				"media-private": "b2-private", "media-public": "b2-public",
+				"identity-evidence-private": "b2-identity",
+			}},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := replicator.Replicate(context.Background(), "application-1", "identity-evidence-private", key, 64, "application/pdf", digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("verified placements=%d, want 3", len(results))
+	}
+	if _, ok := r2.objects[replicaTestKey("r2-identity", scopedKey)]; !ok {
+		t.Fatal("identity evidence was not replicated to R2")
+	}
+	if _, ok := b2.objects[replicaTestKey("b2-identity", scopedKey)]; !ok {
+		t.Fatal("identity evidence was not replicated to B2")
+	}
+	if err := replicator.Delete(context.Background(), "application-1", "identity-evidence-private", key); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		store *replicaTestStore
+		bucket string
+	}{{primary, "vps-identity"}, {r2, "r2-identity"}, {b2, "b2-identity"}} {
+		if _, ok := item.store.objects[replicaTestKey(item.bucket, scopedKey)]; ok {
+			t.Fatalf("identity evidence remains in %s after deletion", item.bucket)
+		}
+	}
+}

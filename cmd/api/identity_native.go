@@ -64,8 +64,8 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return
 	}
-	if s.db == nil || s.virtualStorage == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification and private evidence storage are not configured", requestID(r)))
+	if s.db == nil || s.virtualStorage == nil || s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification requires PostgreSQL, private evidence storage and verified VPS/R2/B2 replication", requestID(r)))
 		return
 	}
 	termsVersion := strings.TrimSpace(env("TESTAGRAM_TERMS_VERSION", ""))
@@ -450,7 +450,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_EVIDENCE_REFERENCE", "Evidence reference is invalid", requestID(r)))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	var objectKey, contentType string
 	var size int64
@@ -470,6 +470,14 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	}
 	if err := s.virtualStorage.VerifyUploadChecksum(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, maxIdentityEvidenceBytes, hex.EncodeToString(digest)); err != nil {
 		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_CHECKSUM_MISMATCH", "Uploaded evidence failed integrity verification", requestID(r)))
+		return
+	}
+	if s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("EVIDENCE_REPLICATION_UNAVAILABLE", "Identity evidence cannot be accepted until all three private storage providers are configured", requestID(r)))
+		return
+	}
+	if _, err := s.mediaReplicator.Replicate(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, size, contentType, hex.EncodeToString(digest)); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("EVIDENCE_REPLICATION_INCOMPLETE", "Evidence was received but could not be verified across all private storage providers. Retry submission.", requestID(r)))
 		return
 	}
 	tx, err := s.db.Begin(ctx)

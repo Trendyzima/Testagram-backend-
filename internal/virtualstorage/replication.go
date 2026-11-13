@@ -52,8 +52,17 @@ func NewReplicator(primaryName string, primary Provider, primaryBuckets map[stri
 	if !ok {
 		return nil, errors.New("primary media provider must support SHA-256 read-back")
 	}
-	if len(primaryBuckets) != 2 || strings.TrimSpace(primaryBuckets["media-private"]) == "" || strings.TrimSpace(primaryBuckets["media-public"]) == "" {
+	if len(primaryBuckets) < 2 || strings.TrimSpace(primaryBuckets["media-private"]) == "" || strings.TrimSpace(primaryBuckets["media-public"]) == "" {
 		return nil, errors.New("primary private and public media buckets are required")
+	}
+	normalizedPrimaryBuckets := make(map[string]string, len(primaryBuckets))
+	for namespace, bucket := range primaryBuckets {
+		namespace = strings.TrimSpace(namespace)
+		bucket = strings.TrimSpace(bucket)
+		if !namespacePattern.MatchString(namespace) || bucket == "" {
+			return nil, errors.New("primary storage namespace and bucket mappings must be valid")
+		}
+		normalizedPrimaryBuckets[namespace] = bucket
 	}
 	if len(targets) != 2 {
 		return nil, errors.New("exactly two independent media replica targets are required")
@@ -61,10 +70,7 @@ func NewReplicator(primaryName string, primary Provider, primaryBuckets map[stri
 	r := &Replicator{
 		primaryName: primaryName,
 		primary: checksummer,
-		primaryBuckets: map[string]string{
-			"media-private": strings.TrimSpace(primaryBuckets["media-private"]),
-			"media-public": strings.TrimSpace(primaryBuckets["media-public"]),
-		},
+		primaryBuckets: normalizedPrimaryBuckets,
 	}
 	seen := map[string]struct{}{strings.ToLower(primaryName): {}}
 	for _, target := range targets {
@@ -84,8 +90,16 @@ func NewReplicator(primaryName string, primary Provider, primaryBuckets map[stri
 		if !ok {
 			return nil, fmt.Errorf("replica provider %q does not support SHA-256 reconciliation", name)
 		}
-		if strings.TrimSpace(target.Buckets["media-private"]) == "" || strings.TrimSpace(target.Buckets["media-public"]) == "" {
-			return nil, fmt.Errorf("replica provider %q requires private and public bucket mappings", name)
+		if len(target.Buckets) != len(normalizedPrimaryBuckets) {
+			return nil, fmt.Errorf("replica provider %q must map every configured storage namespace", name)
+		}
+		normalizedTargetBuckets := make(map[string]string, len(target.Buckets))
+		for namespace := range normalizedPrimaryBuckets {
+			bucket := strings.TrimSpace(target.Buckets[namespace])
+			if bucket == "" {
+				return nil, fmt.Errorf("replica provider %q is missing storage namespace %q", name, namespace)
+			}
+			normalizedTargetBuckets[namespace] = bucket
 		}
 		r.targets = append(r.targets, struct {
 			name string
@@ -96,10 +110,7 @@ func NewReplicator(primaryName string, primary Provider, primaryBuckets map[stri
 			name: name,
 			provider: copier,
 			checksum: targetChecksum,
-			buckets: map[string]string{
-				"media-private": strings.TrimSpace(target.Buckets["media-private"]),
-				"media-public": strings.TrimSpace(target.Buckets["media-public"]),
-			},
+			buckets: normalizedTargetBuckets,
 		})
 	}
 	return r, nil

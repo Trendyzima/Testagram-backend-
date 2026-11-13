@@ -483,6 +483,10 @@ func (s *service) routes() http.Handler {
 	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
+	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}/provisioning-token", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/applications/{application_id}/provisioning-token", s.identityProvisioningToken)
+	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}/redeem", s.mediaPreflight)
+	mux.HandleFunc("POST /api/identity/applications/{application_id}/redeem", s.identityProvisioningRedeem)
 	mux.HandleFunc("POST /api/identity/applications", s.identityApplicationCreate)
 	mux.HandleFunc("GET /api/identity/applications/{application_id}", s.identityApplicationStatus)
 	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}", s.mediaPreflight)
@@ -496,7 +500,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/decision", s.mediaPreflight)
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", s.identityReviewDecision)
 	mux.HandleFunc("OPTIONS /api/admin/identity/applications/{application_id}/approve", s.mediaPreflight)
-	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", s.identityApplicationApprove)
+	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", s.identityApplicationApproveSafe)
 	// Independent authentication routes use Testagram PostgreSQL only; Redis, Upstash and Supabase are not in this request path.
 	for _, action := range []string{"signup", "resend-verification", "verify-email", "login", "forgot-password", "reset-password"} {
 		action := action
@@ -721,7 +725,7 @@ func (s *service) cors(w http.ResponseWriter, r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key, x-application-token, x-request-id, accept")
+	w.Header().Set("Access-Control-Allow-Headers", "authorization, content-type, idempotency-key, x-application-token, x-verification-session-token, x-identity-approval-token, x-identity-approval-jti, x-request-id, accept")
 	w.Header().Set("Access-Control-Max-Age", "600")
 	if origin == "" {
 		return true // non-browser clients do not use CORS
@@ -1142,7 +1146,7 @@ func main() {
 		if !virtualStorageEnabled || primaryVirtualStorageProvider == nil || virtualStorageManager == nil {
 			log.Fatal("MEDIA_REPLICATION_ENABLED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
 		}
-		mediaReplicator, err = configureMediaReplicator(primaryVirtualStorageProvider)
+		mediaReplicator, err = configureIdentityMediaReplicator(primaryVirtualStorageProvider)
 		if err != nil {
 			log.Fatalf("configure durable media replication: %v", err)
 		}
@@ -1243,6 +1247,7 @@ func main() {
 		go federationWorker.Run(signalCtx)
 	}
 	go svc.runStorageDeletionWorker(signalCtx)
+	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
 	if replicationApplyEnabled {
 		if replicationStore == nil {
 			log.Fatal("REPLICATION_APPLY_ENABLED requires replication configuration and database access")
