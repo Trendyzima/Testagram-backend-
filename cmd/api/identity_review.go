@@ -482,5 +482,5 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.Header().Set("Cache-Control","no-store")
-	writeJSON(w,http.StatusOK,map[string]any{"status":"approved","provisioning":"authorized","message":"Applicant may now request a short-lived provisioning authorization."})
+	writeJSON(w,http.StatusOK,map[string]any{"status":"approved","approval_token":token,"expires_in_seconds":900,"provisioning":"authorized"})
 }
