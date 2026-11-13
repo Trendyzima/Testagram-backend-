@@ -19,6 +19,9 @@ on:
       - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
+      - ".github/workflows/instabox-deploy.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/cdn-origin-integration.yml"
   pull_request:
     branches: [main]
     paths:
@@ -39,6 +42,9 @@ on:
       - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
       - "deploy/self-hosted/AUTONOMY.md"
       - ".github/workflows/self-hosted-stack.yml"
+      - ".github/workflows/instabox-deploy.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/cdn-origin-integration.yml"
 
 permissions:
   contents: read
@@ -52,6 +58,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Verify pinned Go CDN image, scratch healthcheck and writable cache volume
+        env:
+          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9
+        run: |
+          set -euo pipefail
+          docker pull "$TESTAGRAM_CDN_IMAGE"
+          docker volume create testagram-cdn-cache-ci >/dev/null
+          cleanup() {
+            docker rm -f testagram-cdn-ci >/dev/null 2>&1 || true
+            docker volume rm testagram-cdn-cache-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name testagram-cdn-ci --read-only --tmpfs /tmp \
+            -v testagram-cdn-cache-ci:/cache \
+            -e ORIGIN_URL=http://127.0.0.1:1 \
+            -e ORIGIN_AUTH_TOKEN=ci-only-origin-token-not-for-production \
+            "$TESTAGRAM_CDN_IMAGE"
+          for attempt in $(seq 1 30); do
+            state="$(docker inspect --format '{{.State.Health.Status}}' testagram-cdn-ci)"
+            if [[ "$state" == "healthy" ]]; then break; fi
+            if [[ "$state" == "unhealthy" ]]; then docker logs testagram-cdn-ci; exit 1; fi
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' testagram-cdn-ci)" = "healthy"
+          docker exec testagram-cdn-ci /healthcheck
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.10"
@@ -72,12 +103,77 @@ jobs:
       - name: Validate Compose model
         working-directory: deploy/self-hosted
         run: docker compose config --quiet
-      - name: Validate media edge abuse limits and Nginx syntax
+      - name: Validate pinned Go CDN and private Backend origin wiring
         working-directory: deploy/self-hosted
         run: |
-          grep -q 'limit_req zone=media_per_ip burst=60 nodelay' nginx-media-cache.conf
-          grep -q 'limit_conn media_conn_per_ip 50' nginx-media-cache.conf
-          docker run --rm --add-host object-storage:127.0.0.1 -v "$PWD/nginx-media-cache.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.28-alpine nginx -t
+          python - <<'PY'
+          import pathlib
+          import re
+          import yaml
+          with open("docker-compose.yml", encoding="utf-8") as handle:
+              compose = yaml.safe_load(handle)
+          services = compose["services"]
+          cdn = services["media-cache"]
+          env = cdn.get("environment", {})
+          image_template = str(cdn.get("image", ""))
+          env_example = pathlib.Path(".env.example").read_text(encoding="utf-8")
+          pin = re.search(r"(?m)^TESTAGRAM_CDN_IMAGE=(\S+)$", env_example)
+          if "TESTAGRAM_CDN_IMAGE" not in image_template or not pin or "@sha256:" not in pin.group(1):
+              raise SystemExit("Go CDN image must be pinned by immutable digest in the Compose environment.")
+          for workflow_path in (pathlib.Path("../../.github/workflows/instabox-deploy.yml"), pathlib.Path("../../.github/workflows/self-hosted-stack.yml")):
+              if pin.group(1) not in workflow_path.read_text(encoding="utf-8"):
+                  raise SystemExit(f"CDN image pin differs from {workflow_path.name}.")
+          if env.get("LISTEN_ADDR") != ":8081":
+              raise SystemExit("Go CDN must listen on the Caddy/Instabox internal port 8081.")
+          if env.get("ORIGIN_URL") != "http://api:8080":
+              raise SystemExit("Go CDN must use the canonical private Backend origin.")
+          if env.get("CACHE_DIR") != "/cache" or not any(str(volume).endswith(":/cache") for volume in cdn.get("volumes", [])):
+              raise SystemExit("Go CDN cache must use the image-owned writable /cache path.")
+          if env.get("HEALTHCHECK_URL") != "http://127.0.0.1:8081/readyz":
+              raise SystemExit("Go CDN health probe must target its configured listener.")
+          if "CDN_ORIGIN_AUTH_TOKEN" not in env.get("ORIGIN_AUTH_TOKEN", ""):
+              raise SystemExit("Go CDN origin credential must be sourced from CDN_ORIGIN_AUTH_TOKEN.")
+          if "CDN_PURGE_TOKEN" not in env.get("PURGE_TOKEN", ""):
+              raise SystemExit("Go CDN purge credential must be sourced from CDN_PURGE_TOKEN.")
+          if "ports" in cdn:
+              raise SystemExit("Go CDN must not publish a host port in Compose.")
+          if "api" not in cdn.get("depends_on", {}):
+              raise SystemExit("Go CDN must depend on the Backend API service.")
+          if "edge" not in cdn.get("networks", []):
+              raise SystemExit("Go CDN must share only the private edge bridge with Caddy and Backend.")
+          health = cdn.get("healthcheck", {}).get("test", [])
+          if "/healthcheck" not in health:
+              raise SystemExit("Go CDN healthcheck must use the scratch-compatible static probe.")
+          api_env = services["api"].get("environment", {})
+          for key in ("CDN_ORIGIN_AUTH_TOKEN", "CDN_MEDIA_ASSERTION_SECRET", "CDN_MEDIA_BASE_URL", "CDN_PURGE_URL", "CDN_PURGE_TOKEN"):
+              if key not in api_env:
+                  raise SystemExit(f"Backend API is missing CDN setting {key}.")
+          PY
+          python - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          import yaml
+          ci_workflow_path = pathlib.Path("../../.github/workflows/ci.yml")
+          yaml.safe_load(ci_workflow_path.read_text(encoding="utf-8"))
+          workflow_path = pathlib.Path("../../.github/workflows/instabox-deploy.yml")
+          with workflow_path.open(encoding="utf-8") as handle:
+              workflow = yaml.safe_load(handle)
+          steps = workflow["jobs"]["deploy"]["steps"]
+          for step in steps:
+              if "run" in step:
+                  subprocess.run(["bash", "-n"], input=step["run"], text=True, check=True)
+          target = next(step for step in steps if step.get("name") == "Configure public CDN URL and restart Backend and Go CDN")
+          deploy_source = workflow_path.read_text(encoding="utf-8")
+          if "ensure_random_secret CDN_PURGE_TOKEN" not in deploy_source or "CDN_PURGE_URL" not in deploy_source:
+              raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
+          if deploy_source.index('host_arch="$(uname -m)"') > deploy_source.index('up -d postgres'):
+              raise SystemExit("Instabox must reject an unsupported CDN host architecture before changing services.")
+          match = re.search(r"(?m)^\s*cmd='([^']*)'\s*$", target["run"])
+          if not match:
+              raise SystemExit("Remote CDN configuration command was not found or contains unsafe quote boundaries.")
+          subprocess.run(["bash", "-n"], input=match.group(1), text=True, check=True)
+          PY
       - name: Check public ports are limited to HTTPS edge
         working-directory: deploy/self-hosted
         run: |

@@ -470,6 +470,11 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
           FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
           FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
+          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9
+          CDN_ORIGIN_AUTH_TOKEN: ci-only-cdn-origin-token-not-for-production-32-chars
+          CDN_MEDIA_ASSERTION_SECRET: ci-only-cdn-assertion-secret-not-for-production-32
+          CDN_PURGE_TOKEN: ci-only-cdn-purge-token-not-for-production-32
+          CDN_MEDIA_BASE_URL: https://media.example.invalid
         run: |
           export ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           export ADMIN_PUBLIC_URL=https://ops.example.invalid
@@ -512,6 +517,21 @@ jobs:
               raise SystemExit("Deployment must verify the exact running Algorithm and Federation image tags")
           if '::error::Data Centre deployment did not reach an accepted core-services state' not in deploy:
               raise SystemExit("Deployment must fail when Data Centre image rollout does not reach an accepted state")
+          if "ensure_random_secret CDN_ORIGIN_AUTH_TOKEN" not in deploy or "ensure_random_secret CDN_MEDIA_ASSERTION_SECRET" not in deploy or "ensure_random_secret CDN_PURGE_TOKEN" not in deploy:
+              raise SystemExit("Instabox deployment must generate independent CDN origin, viewer-assertion and purge secrets on the VPS")
+          if "pull media-cache" not in deploy or "verify_running_image" in deploy and "Go CDN image digest mismatch" not in deploy:
+              raise SystemExit("Instabox deployment must pull and verify the immutable Go CDN image")
+          if "x86_64|amd64" not in deploy:
+              raise SystemExit("Instabox deployment must fail closed on unsupported CDN host architectures")
+          for marker in ('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_ORIGIN_AUTH_TOKEN',
+                         'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_AUTH_TOKEN',
+                         'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_PURGE_TOKEN',
+                         'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_PURGE_URL',
+                         'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache PURGE_TOKEN',
+                         'Publish Go CDN media endpoint over HTTPS',
+                         'CDN_URL/v1'):
+              if marker not in deploy:
+                  raise SystemExit(f"Instabox deployment is missing Go CDN wiring: {marker}")
           PY
           docker build -f admin-console/Dockerfile -t testagram-admin-console-ci .
           docker build -f deploy/self-hosted/minio-tools/Dockerfile -t testagram-minio-tools-ci deploy/self-hosted/minio-tools

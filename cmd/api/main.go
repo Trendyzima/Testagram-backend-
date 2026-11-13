@@ -74,6 +74,7 @@ type service struct {
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
 	cdnOriginAuthToken        string
+	cdnPurger                 *cdnPurger
 	freshMediaInternalToken   string
 	virtualStorage            *virtualstorage.Manager
 	mediaReplicator           *virtualstorage.Replicator
@@ -1085,6 +1086,13 @@ func main() {
 	cdnAssertionSecret := env("CDN_MEDIA_ASSERTION_SECRET", "")
 	cdnMediaBaseURL := strings.TrimRight(env("CDN_MEDIA_BASE_URL", ""), "/")
 	cdnOriginAuthToken := env("CDN_ORIGIN_AUTH_TOKEN", "")
+	cdnPurger, purgeConfigErr := newCDNPurger(env("CDN_PURGE_URL", ""), env("CDN_PURGE_TOKEN", ""))
+	if purgeConfigErr != nil {
+		log.Fatalf("configure CDN cache invalidation: %v", purgeConfigErr)
+	}
+	if cdnMediaBaseURL != "" && cdnPurger == nil {
+		log.Fatal("CDN_MEDIA_BASE_URL requires CDN_PURGE_URL and CDN_PURGE_TOKEN so deletion and moderation can invalidate cached media")
+	}
 	freshMediaInternalToken := env("FRESH_MEDIA_INTERNAL_TOKEN", "")
 	if freshMediaInternalToken != "" && len(freshMediaInternalToken) < 32 {
 		log.Fatal("FRESH_MEDIA_INTERNAL_TOKEN must contain at least 32 bytes")
@@ -1219,7 +1227,7 @@ func main() {
 	svc := &service{
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
 		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
-		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken,
+		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
