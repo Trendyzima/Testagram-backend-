@@ -73,6 +73,8 @@ requires an explicit confirmation phrase, applies migrations 022 and 024, and ve
 and checksums in the same database. Never edit an already-applied migration;
 add a new forward-only migration instead.
 
+For an existing self-hosted PostgreSQL volume, the new `docker-entrypoint-initdb.d` mounts do not run automatically. After updating the Compose file, run `./apply-native-identity-migrations.sh`. It creates and verifies a custom-format backup, requires the explicit `APPLY-NATIVE-IDENTITY` confirmation, applies the ordered identity migrations, and verifies the native session/evidence tables and removal of the legacy webhook-only column. It preserves the named PostgreSQL data volume. Do not enable public registration until the backend provisioning routes and Flutter flow are deployed and staging-tested.
+
 ## Testagram Wallet and M-Pesa
 
 The native wallet is KES-only at launch. It supports internal wallet transfers and Safaricom STK Push deposits. A top-up is credited only after the public callback is checked against Safaricom's STK query API and the Backend commits the wallet ledger entry.
