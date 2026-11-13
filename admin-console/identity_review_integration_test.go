@@ -53,7 +53,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		Username: "identity_review_ci",
 		DisplayName: "Identity Review CI",
 		EvidenceFingerprintSHA256: hex.EncodeToString(fingerprint),
-		EvidenceAuditReference: "idswyft-audit-reference-ci-001",
+		EvidenceAuditReference: "testagram_manual-audit-reference-ci-001",
 		TermsVersion: "terms-ci-v1",
 		PrivacyVersion: "privacy-ci-v1",
 	}
@@ -82,7 +82,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		   adult_verification_result, adult_verification_webhook_received_at,
 		   evidence_reference, evidence_fingerprint_sha256, terms_version, privacy_version,
 		   terms_accepted_at, privacy_accepted_at, sensitive_action_request_id)
-		VALUES ($1::uuid, $2, $3, $4, now(), now(), 'idswyft', 'idswyft-verification-ci-001', now(),
+		VALUES ($1::uuid, $2, $3, $4, now(), now(), 'testagram_manual', 'testagram_manual-verification-ci-001', now(),
 		        '223e4567-e89b-42d3-a456-426614174000', 'age_only', 18, 'verified', now(),
 		        'opaque-evidence-reference-ci', $5, $6, $7, now(), now(), $8::uuid)
 	`, applicationID, payload.Email, payload.Username, payload.DisplayName,
