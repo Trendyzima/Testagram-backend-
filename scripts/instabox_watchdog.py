@@ -291,8 +291,10 @@ def main() -> int:
             raise WatchdogError(f"{label} URL must use HTTPS")
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
-    if FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or RESTART_COOLDOWN < 300:
-        raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, >=1s interval and >=300s cooldown")
+    if (FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
+            or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1
+            or RESTART_COOLDOWN < 300):
+        raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, positive timeouts/intervals and >=300s restart cooldown")
     api = API()
     MACHINE_ID = resolve_machine_id(api)
     state = load_state()
