@@ -25,6 +25,7 @@ PROBE_INTERVAL = int(os.getenv("WATCHDOG_PROBE_INTERVAL_SECONDS", "15"))
 PROBE_TIMEOUT = int(os.getenv("WATCHDOG_PROBE_TIMEOUT_SECONDS", "10"))
 RESTART_COOLDOWN = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "1800"))
 OPERATION_TIMEOUT = int(os.getenv("WATCHDOG_OPERATION_TIMEOUT_SECONDS", "300"))
+RECOVERY_HEALTH_TIMEOUT = int(os.getenv("WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS", "300"))
 DRY_RUN = os.getenv("WATCHDOG_DRY_RUN", "false").lower() == "true"
 
 
@@ -171,6 +172,22 @@ def resolve_machine_id(api: API) -> str:
     return str(matches[0]["id"])
 
 
+def wait_for_service() -> None:
+    deadline = time.monotonic() + RECOVERY_HEALTH_TIMEOUT
+    while True:
+        health_ok, health_detail = probe(HEALTH_URL)
+        ready_ok, ready_detail = probe(READY_URL)
+        if health_ok and ready_ok:
+            emit(f"recovery verified: health={health_detail}, readiness={ready_detail}")
+            return
+        if time.monotonic() >= deadline:
+            raise WatchdogError(
+                f"Machine lifecycle completed but Testagram did not become healthy "
+                f"within {RECOVERY_HEALTH_TIMEOUT}s (health={health_detail}, readiness={ready_detail})"
+            )
+        time.sleep(PROBE_INTERVAL)
+
+
 def machine_snapshot(api: API) -> dict[str, Any]:
     result = api.request("GET", f"/v1/machines/{quote(MACHINE_ID, safe='')}")
     machine = unwrap(result, "machine")
@@ -234,7 +251,8 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
     state.update(last_action_at=now, last_action="start")
     save_state(state)
     lifecycle(api, "start")
-    return "started stopped machine; operation completed"
+    wait_for_service()
+    return "started stopped machine; API health and readiness verified"
 
 
 def recover_suspended(api: API, state: dict[str, Any]) -> str:
@@ -244,7 +262,8 @@ def recover_suspended(api: API, state: dict[str, Any]) -> str:
     state.update(last_action_at=now, last_action="resume")
     save_state(state)
     lifecycle(api, "resume")
-    return "resumed suspended machine; operation completed"
+    wait_for_service()
+    return "resumed suspended machine; API health and readiness verified"
 
 
 def restart_running(api: API, state: dict[str, Any]) -> str:
@@ -257,7 +276,8 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
     save_state(state)
     lifecycle(api, "stop")
     lifecycle(api, "start")
-    return "power-cycled machine using stop/start; both operations completed"
+    wait_for_service()
+    return "power-cycled machine using stop/start; API health and readiness verified"
 
 
 def main() -> int:
