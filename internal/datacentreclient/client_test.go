@@ -88,6 +88,26 @@ func TestClientCallsPrivateMediaLifecycleWithBearerAndVersionHeaders(t *testing.
 	}
 }
 
+func TestProviderURLsMustBePublicHTTPSOrigins(t *testing.T) {
+	for _, raw := range []string{
+		"https://b2.example/object?X-Amz-Signature=abc",
+		"https://r2.example/object",
+	} {
+		if !validProviderURL(raw) { t.Fatalf("valid provider URL rejected: %s", raw) }
+	}
+	for _, raw := range []string{
+		"http://b2.example/object",
+		"https://127.0.0.1/object",
+		"https://10.0.0.2/object",
+		"https://localhost/object",
+		"https://media.internal/object",
+		"https://b2.example:8080/object",
+		"https://user:pass@b2.example/object",
+	} {
+		if validProviderURL(raw) { t.Fatalf("unsafe provider URL accepted: %s", raw) }
+	}
+}
+
 func TestNewRejectsPublicHTTPAndShortToken(t *testing.T) {
 	if _, err := New("http://example.com", testToken, nil); err == nil {
 		t.Fatal("public HTTP Data Centre endpoint was accepted")
