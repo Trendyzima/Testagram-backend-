@@ -53,7 +53,9 @@ jobs:
           TESTAGRAM_READINESS_URL: ${{ vars.TESTAGRAM_READINESS_URL || 'https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz' }}
           WATCHDOG_ALERT_WEBHOOK: ${{ secrets.WATCHDOG_ALERT_WEBHOOK }}
           WATCHDOG_STATE_FILE: .watchdog-state.json
-          WATCHDOG_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+          # Scheduled recovery remains disabled until a restricted Instabox key is installed
+          # and the operator explicitly enables the repository variable.
+          WATCHDOG_DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true' }}
           WATCHDOG_FAILURES_REQUIRED: "3"
           WATCHDOG_PROBE_INTERVAL_SECONDS: "15"
           WATCHDOG_RESTART_COOLDOWN_SECONDS: "1800"
