@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
 	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
@@ -67,6 +68,8 @@ type service struct {
 	federationPublicBaseURL   string
 	upstream                  *http.Client
 	media                     *media.Signer
+	mediaIntentFactory        *media.IntentFactory
+	dataCentreMedia           *datacentreclient.Client
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
 	cdnOriginAuthToken        string
@@ -1013,6 +1016,29 @@ func main() {
 		}
 		log.Printf("S3-compatible media upload and private download signing enabled")
 	}
+	var dataCentreMedia *datacentreclient.Client
+	var mediaIntentFactory *media.IntentFactory
+	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
+	if freshMediaEnabled {
+		dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
+		dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
+		if dataCentreURL == "" || dataCentreToken == "" {
+			log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN; Backend must not receive B2/R2 credentials")
+		}
+		dataCentreMedia, err = datacentreclient.New(dataCentreURL, dataCentreToken, &http.Client{Timeout: 10 * time.Second})
+		if err != nil || dataCentreMedia == nil {
+			log.Fatalf("configure private Data Centre media client: %v", err)
+		}
+		mediaIntentFactory, err = media.NewIntentFactory(media.IntentConfig{
+			MaxImageBytes: 25 << 20, MaxVideoBytes: 500 << 20, UploadTTL: 45 * time.Minute,
+		})
+		if err != nil {
+			log.Fatalf("configure Data Centre media upload policy: %v", err)
+		}
+		log.Printf("private Data Centre media lifecycle integration enabled")
+	} else {
+		log.Printf("fresh media lifecycle disabled by FRESH_MEDIA_ENABLED=false")
+	}
 	var cdnMediaAssertions *mediaassertion.Issuer
 	cdnAssertionSecret := env("CDN_MEDIA_ASSERTION_SECRET", "")
 	cdnMediaBaseURL := strings.TrimRight(env("CDN_MEDIA_BASE_URL", ""), "/")
@@ -1143,7 +1169,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
+		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
