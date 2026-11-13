@@ -1,13 +1,6 @@
 name: Instabox VPS Watchdog
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "scripts/instabox_watchdog.py"
-      - "tests/test_instabox_watchdog.py"
-      - ".github/workflows/instabox-vps-watchdog.yml"
-      - "deploy/self-hosted/INSTABOX-WATCHDOG.md"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
