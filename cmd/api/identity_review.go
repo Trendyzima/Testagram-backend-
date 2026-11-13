@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 )
 
 type identityReviewDecisionInput struct {
