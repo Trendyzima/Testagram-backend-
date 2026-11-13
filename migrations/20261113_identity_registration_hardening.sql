@@ -157,6 +157,7 @@ DECLARE
   v_application RECORD;
   v_approved_count INTEGER;
   v_total_approved_count INTEGER;
+  v_review_count INTEGER;
 BEGIN
   SELECT id, email, username, display_name, evidence_fingerprint_sha256,
          terms_version, privacy_version, status, sensitive_action_request_id,
@@ -225,6 +226,20 @@ BEGIN
 
   IF v_approved_count <> 2 OR v_total_approved_count <> 2 THEN
     RAISE EXCEPTION 'two distinct recorded approvals are required before token issuance';
+  END IF;
+
+  SELECT count(DISTINCT reviewer_appwrite_user_id)
+    INTO v_review_count
+  FROM testagram_identity.identity_application_reviews
+  WHERE application_id = NEW.application_id
+    AND decision = 'approved'
+    AND reviewer_appwrite_user_id IN (
+      NEW.first_approver_appwrite_user_id,
+      NEW.second_approver_appwrite_user_id
+    );
+
+  IF v_review_count <> 2 THEN
+    RAISE EXCEPTION 'identity review records must match both independent approval-ledger reviewers';
   END IF;
 
   RETURN NEW;
