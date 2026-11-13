@@ -65,6 +65,14 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'platform owner identity-review permission is missing';
   END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_applications'
+      AND column_name='adult_verification_webhook_received_at'
+  ) THEN
+    RAISE EXCEPTION 'legacy webhook-only identity column remains in the native schema';
+  END IF;
 END;
 $owner_identity_review$;
 SQL
@@ -93,14 +101,14 @@ BEGIN
     (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
      adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
      adult_verification_session_id,adult_verification_mode,adult_verification_threshold,
-     adult_verification_result,adult_verification_webhook_received_at,
+     adult_verification_result,
      evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
      terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id,
      status_access_token_sha256,status_access_token_expires_at)
   VALUES
     (app_id,'first@example.test','ci_first','CI First',now(),now(),
-     'ci-provider','ci-adult-evidence-ref',now(),
-     '123e4567-e89b-42d3-a456-426614174000','age_only',18,'verified',now(),
+     'testagram_manual','ci-adult-evidence-ref',now(),
+     '123e4567-e89b-42d3-a456-426614174000','age_only',18,'verified',
      'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
      decode(repeat('2',64),'hex'),action_id,decode(repeat('6',64),'hex'),now()+interval '7 days');
 
