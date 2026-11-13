@@ -17,13 +17,16 @@ func TestCDNPurgerAcceptsPurgedAndNotCached(t *testing.T) {
 			token := strings.Repeat("p", 32)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost {
-					t.Fatalf("method=%s, want POST", r.Method)
+					http.Error(w, "wrong method", http.StatusMethodNotAllowed)
+					return
 				}
 				if got := r.Header.Get("Authorization"); got != "Bearer "+token {
-					t.Fatalf("authorization header mismatch")
+					http.Error(w, "wrong authorization", http.StatusUnauthorized)
+					return
 				}
 				if got := r.URL.Query().Get("path"); got != "users/owner/key with space.webp" {
-					t.Fatalf("path query=%q", got)
+					http.Error(w, "wrong path", http.StatusBadRequest)
+					return
 				}
 				w.WriteHeader(status)
 			}))
