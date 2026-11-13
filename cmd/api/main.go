@@ -483,6 +483,7 @@ func (s *service) routes() http.Handler {
 	})
 	// Public identity enrollment is a separate, Appwrite-backed review workflow.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
+	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
 	mux.HandleFunc("POST /api/identity/applications", s.identityApplicationCreate)
 	mux.HandleFunc("GET /api/identity/applications/{application_id}", s.identityApplicationStatus)
 	mux.HandleFunc("POST /internal/v1/identity/idswyft-webhook", s.idswyftIdentityWebhook)
@@ -1209,7 +1210,9 @@ func main() {
 		strings.TrimSpace(os.Getenv("IDSWYFT_API_KEY")) != "" &&
 		strings.TrimSpace(os.Getenv("IDSWYFT_WEBHOOK_SECRET")) != "" &&
 		strings.TrimSpace(os.Getenv("IDSWYFT_VERIFICATION_ORIGIN")) != "" &&
-		strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_API_URL")) != "" {
+		strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_API_URL")) != "" &&
+		strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION")) != "" &&
+		strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION")) != "" {
 		webhookCtx, webhookCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if webhookErr := svc.ensureIdswyftWebhook(webhookCtx); webhookErr != nil {
 			log.Printf("identity registration remains disabled: Idswyft webhook readiness check failed")
