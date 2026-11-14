@@ -29,6 +29,8 @@ jobs:
       APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
       APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID || secrets.APPWRITE_PROJECT_ID || '6af01d97002875d6d7bd' }}
     steps:
+      - name: Check out deployment scripts
+        uses: actions/checkout@v4
       - name: Resolve and start the InstaBox machine
         id: machine
         shell: bash
@@ -144,6 +146,10 @@ jobs:
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
         shell: bash
+        env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
+        run: bash scripts/start-instabox-deployment.sh
+
         run: |
           set -euo pipefail
           API="https://api.instabox.sh"
