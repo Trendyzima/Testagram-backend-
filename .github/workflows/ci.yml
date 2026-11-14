@@ -252,7 +252,15 @@ jobs:
           INSERT INTO testagram_media.assets
             (object_key,owner_id,visibility,content_type,size_bytes,status,storage_namespace,storage_provider,checksum_sha256)
           VALUES
-            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'ready','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'replication_pending','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','instabox-vps','ci-primary',1234,repeat('a',64),'verified',now()),
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','cloudflare-r2','ci-r2',1234,repeat('a',64),'verified',now()),
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','backblaze-b2','ci-b2',1234,repeat('a',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
           DO $media_replication_enqueue$
           BEGIN
             IF NOT EXISTS (
@@ -262,7 +270,7 @@ jobs:
                 AND checksum_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
                 AND status='pending'
             ) THEN
-              RAISE EXCEPTION 'Verified virtual-storage media insert did not enqueue a durable replication job';
+              RAISE EXCEPTION 'Fully verified virtual-storage media did not enqueue a durable replication job';
             END IF;
           END $media_replication_enqueue$;
 
