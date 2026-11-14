@@ -211,12 +211,12 @@ func writeAppwriteAuthFailure(w http.ResponseWriter, status int, cause error, re
 	case status == http.StatusForbidden:
 		code = "AUTH_FORBIDDEN"
 		message = "This authenticated account is not authorized to access this resource"
-	case status >= 500:
-		code = "AUTH_BACKEND_UNAVAILABLE"
-		message = "Authentication service is temporarily unavailable"
 	case status == http.StatusBadGateway:
 		code = "AUTH_PROVIDER_INVALID"
 		message = "Authentication provider returned an invalid account identity"
+	case status >= 500:
+		code = "AUTH_BACKEND_UNAVAILABLE"
+		message = "Authentication service is temporarily unavailable"
 	}
 	writeJSON(w, status, errorBody(code, message, requestID))
 }
