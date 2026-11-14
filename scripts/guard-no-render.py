@@ -8,7 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN_PATHS = {"render.yaml", "render.yml", "render.toml", "render.json", ".render"}
 FORBIDDEN = re.compile(
-    r"render\\.com|render\\.yaml|render\\.yml|render deploy|render blueprint|"
+    r"render\.com|render\.yaml|render\.yml|render deploy|render blueprint|"
     r"RENDER_API_KEY|RENDER_SERVICE_ID|RENDER_DEPLOY_HOOK",
     re.IGNORECASE,
 )
@@ -23,7 +23,7 @@ EXEMPT = {
 
 tracked = subprocess.run(
     ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True
-).stdout.decode().split("\\0")
+).stdout.decode().split("\0")
 violations = []
 for raw in filter(None, tracked):
     path = Path(raw)
@@ -42,7 +42,8 @@ for raw in filter(None, tracked):
     root_deploy_metadata = path.parent == Path(".") and (
         normalized.startswith("docker-compose")
         or normalized.startswith("compose.")
-        or normalized.startswith("Dockerfile")\n        or normalized in {"Makefile"}
+        or normalized.startswith("Dockerfile")
+        or normalized == "Makefile"
     )
     if not (in_operational_root or root_deploy_metadata):
         continue
@@ -58,6 +59,6 @@ for raw in filter(None, tracked):
 
 if violations:
     print("Retired hosting configuration detected:")
-    print("\\n".join(f" - {item}" for item in violations))
+    print("\n".join(f" - {item}" for item in violations))
     sys.exit(1)
 print("Instabox-only deployment guard passed; no retired hosting artifacts found.")
