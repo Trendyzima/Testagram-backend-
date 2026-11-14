@@ -9,7 +9,7 @@ The workflow defaults to the previously confirmed machine and API endpoint, so n
 - `INSTABOX_MACHINE_NAME`: exact machine display name (default: `testagramdb`). The watchdog resolves it to an immutable ID through the read-only machine-list API and refuses to act if the match is missing or ambiguous.
 - `INSTABOX_MACHINE_ID`: exact immutable machine ID, if you prefer pinning the resource directly. When supplied, the script also verifies the configured name against the returned machine.
 - `TESTAGRAM_HEALTH_URL`: default `https://api.testagram.site/healthz`
-- `TESTAGRAM_READINESS_URL`: default `https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz`
+- `TESTAGRAM_READINESS_URL`: default `https://api.testagram.site/readyz`
 
 Set this repository **Actions variable**:
 
