@@ -312,7 +312,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		INSERT INTO testagram_auth.admin_security_audit
 		  (actor_appwrite_user_id, action, target_reference, request_id, metadata)
 		VALUES ($1, $2, $3, $4::uuid,
-		        jsonb_build_object('action_type', $5, 'decision', $6, 'approval_count', $7))
+		        jsonb_build_object('action_type', $5::text, 'decision', $6::text, 'approval_count', $7::integer))
 	`, approverID, "sensitive_action."+decision, targetReference, requestID, actionType, decision, approvalCount)
 	if err != nil {
 		return "", "", 0, err
