@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard the public/private readiness contract between Caddy and deploy smoke."""
+"""Guard the Backend origin smoke and the post-origin gateway handoff."""
 
 from pathlib import Path
 
@@ -8,25 +8,30 @@ workflow = Path(".github/workflows/instabox-deploy.yml").read_text()
 
 assert "@internal_observability path /metrics /readyz" in caddy
 assert "respond @internal_observability 404" in caddy, (
-    "Public readiness and metrics routes must remain hidden by Caddy"
+    "Canonical Caddy must keep readiness and metrics private"
+)
+assert "handle /healthz" in caddy, (
+    "Canonical Caddy must route the explicit Backend liveness endpoint"
 )
 assert "http://127.0.0.1:8080/readyz" in workflow, (
     "Deployment must verify Backend readiness from inside the container"
 )
 
-canonical_start = workflow.index('ready_status=000', workflow.index("CANONICAL_API_URL"))
-canonical_end = workflow.index('exit 1', canonical_start)
-canonical_smoke = workflow[canonical_start:canonical_end]
+# The Backend deploy must verify the newly published origin directly. It must
+# not wait for the public Worker gateway, which is deployed in the next stage.
+assert "Verify public API health and readiness" in workflow
+assert '"$URL/healthz"' in workflow
+assert "x-testagram-service" in workflow
+assert '.ok == true and .service == "testagram-api"' in workflow
+assert '"$URL/readyz"' in workflow
+assert "https://api.testagram.site" not in workflow
+assert "https://media.testagram.site" not in workflow
+assert "CANONICAL_API_URL" not in workflow
 
-assert 'ready_status" == "404"' in canonical_smoke, (
-    "Canonical public smoke must expect the intentionally hidden /readyz route"
-)
-assert 'health_status" == "200"' in canonical_smoke
-assert 'catalog_status" == "401"' in canonical_smoke
-assert 'grep -qx \'ok\' "$tmp/health"' in canonical_smoke
-assert 'grep -qx \'ready\' "$tmp/ready"' not in canonical_smoke, (
-    "Do not require the private readiness body over the public hostname"
-)
-assert "Expected public /healthz=200, hidden /readyz=404" in canonical_smoke
+assert "Canonical hostname verification handoff" in workflow
+assert "Cloudflare gateway workflow performs the final public" in workflow
 
-print("Canonical deployment smoke contract passed: public liveness, private readiness and OIDC-protected catalogue are distinct.")
+print(
+    "Backend origin smoke contract passed: direct API/CDN readiness is verified "
+    "before the Cloudflare gateway performs canonical public-host verification."
+)
