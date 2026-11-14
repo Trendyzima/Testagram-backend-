@@ -249,10 +249,6 @@ func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
 	}
-	if s.db == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", id))
-		return
-	}
 	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 || len(parts[1]) > 8192 {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "A valid Appwrite session is required", id))
@@ -269,6 +265,10 @@ func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Req
 		input.TermsVersion != termsVersion || input.PrivacyVersion != privacyVersion ||
 		termsVersion == "" || privacyVersion == "" {
 		writeJSON(w, http.StatusBadRequest, errorBody("REGISTRATION_CONSENT_REQUIRED", "Confirm your age and accept the current Terms and Privacy Notice", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", id))
 		return
 	}
 
