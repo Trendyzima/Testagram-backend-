@@ -26,6 +26,7 @@ jobs:
     env:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+      APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
       APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID || secrets.APPWRITE_PROJECT_ID || '6af01d97002875d6d7bd' }}
     steps:
       - name: Resolve and start the InstaBox machine
@@ -261,7 +262,7 @@ jobs:
           B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=
           B2_S3_ACCESS_KEY_ID=
           B2_S3_SECRET_ACCESS_KEY=
-          APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
+          APPWRITE_ENDPOINT=${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
           APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-}
           ALGORITHM_URL=http://algorithm:8092
           ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
@@ -323,6 +324,7 @@ jobs:
           # Private identity evidence is stored in a dedicated MinIO bucket.
           # Registration and three-provider replication remain fail-closed until
           # a separate staging acceptance and explicit operator activation.
+          write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"
           write_env_value VIRTUAL_STORAGE_ENABLED true
           write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-private
           write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
@@ -768,6 +770,7 @@ jobs:
 
           payload="$(jq -nc \
             --arg cmd "$REMOTE_COMMAND" \
+            --arg appwrite_endpoint "$APPWRITE_ENDPOINT" \
             --arg appwrite "${APPWRITE_PROJECT_ID:-}" \
             --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
             --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
@@ -781,7 +784,7 @@ jobs:
             --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
             --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
             --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-            '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+            '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
