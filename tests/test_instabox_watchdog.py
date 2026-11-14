@@ -85,22 +85,27 @@ class WatchdogTests(unittest.TestCase):
 
     def test_readiness_404_never_stops_or_starts_running_machine(self):
         api = FakeAPI()
+
         def configured_probe(url):
             if url.endswith("/healthz"):
                 return True, "HTTP 200"
             raise watchdog.ProbeConfigurationError(
                 "readiness endpoint returned HTTP 404; refusing automatic lifecycle action"
             )
-        with patch.object(watchdog, "API", return_value=api), \\
-             patch.object(watchdog, "load_state", return_value={}), \\
-             patch.object(watchdog, "notify") as notify, \\
-             patch.object(watchdog, "probe", side_effect=configured_probe), \\
-             patch.object(watchdog, "API_KEY", "test-key"), \\
-             patch.object(watchdog, "MACHINE_ID", "machine-123"), \\
-             patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"), \\
-             patch.object(watchdog, "READY_URL", "https://api.example.test/readyz"):
+
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "notify") as notify,
+            patch.object(watchdog, "probe", side_effect=configured_probe),
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+            patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"),
+            patch.object(watchdog, "READY_URL", "https://api.example.test/readyz"),
+        ):
             with self.assertRaises(watchdog.ProbeConfigurationError):
                 watchdog.main()
+
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
         notify.assert_not_called()
 
