@@ -70,6 +70,7 @@ apply_migration 042_native_identity_evidence.sql
 apply_migration 043_native_identity_integrity.sql
 apply_migration 044_identity_evidence_access_audit.sql
 apply_migration 045_native_identity_status_access.sql
+apply_migration 047_appwrite_registration_consents.sql
 apply_migration 047_appwrite_registration_consent.sql
 
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
@@ -89,5 +90,5 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   "' | grep -qx t
 
 echo "Native identity schema, reviewer evidence-access audit, and Appwrite self-service consent ledger verified."
-echo "Registration remains disabled. Do not enable it until B2/R2 lifecycle and end-to-end staging acceptance pass."
+echo "Appwrite self-service registration consent schema is installed. High-assurance identity applications remain separately gated by their approval and storage acceptance controls."
 echo "Retain backup until restore verification and release acceptance are complete."
