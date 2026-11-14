@@ -501,7 +501,7 @@ jobs:
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
-          assert "envs:(" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
+          assert "envs:{" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
           assert "DATA_CENTRE_MEDIA_ENABLED:$media_enabled" in deploy and 'if $media_enabled == "true" then' in deploy, "media provider credentials must be forwarded only after explicit media activation"
           compose = Path("deploy/self-hosted/docker-compose.yml").read_text()
           minio_init = Path("deploy/self-hosted/minio-tools/init.sh").read_text()
