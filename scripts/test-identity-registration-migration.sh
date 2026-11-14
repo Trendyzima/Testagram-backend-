@@ -39,7 +39,7 @@ for migration in \
   migrations/20261113_native_identity_verification.sql \
   migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
-  migrations/20261115_identity_evidence_access_audit.sql \\
+  migrations/20261115_identity_evidence_access_audit.sql \
   migrations/20261115_native_identity_status_access.sql; do
   psql_ci < "$migration"
 done
