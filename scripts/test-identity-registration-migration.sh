@@ -409,7 +409,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.accounts (
 SQL
 
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair)$' -count=1
 
 # Exercise the Admin Console review handler against this same isolated database.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
