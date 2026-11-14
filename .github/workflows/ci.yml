@@ -502,9 +502,11 @@ jobs:
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
           assert "envs:{" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
-          media_activation_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then')
-          provider_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET')
-          assert "DATA_CENTRE_MEDIA_ENABLED:$media_enabled" in deploy and provider_credential_copy > media_activation_gate and 'b2_access=""' in deploy and 'r2_access=""' in deploy and '--arg b2_access "$b2_access"' in deploy and '--arg r2_access "$r2_access"' in deploy, "B2/R2 credentials must be transferred only after explicit media activation"
+          dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then')
+          dc_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', dc_media_gate)
+          backend_media_gate = deploy.index('if [[ "$(read_env_value MEDIA_REPLICATION_ENABLED)" == "true" ]]; then')
+          backend_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', backend_media_gate)
+          assert "DATA_CENTRE_MEDIA_ENABLED:$media_enabled" in deploy and "MEDIA_REPLICATION_ENABLED:$media_replication_enabled" in deploy and 'write_env_value MEDIA_REPLICATION_ENABLED "$MEDIA_REPLICATION_ENABLED"' in deploy and dc_credential_copy > dc_media_gate and backend_credential_copy > backend_media_gate and 'b2_access=""' in deploy and 'r2_access=""' in deploy and '--arg b2_access "$b2_access"' in deploy and '--arg r2_access "$r2_access"' in deploy, "B2/R2 credentials must be transferred only after their independent explicit activation gates"
           compose = Path("deploy/self-hosted/docker-compose.yml").read_text()
           minio_init = Path("deploy/self-hosted/minio-tools/init.sh").read_text()
           assert 'write_env_value FRESH_MEDIA_ENABLED "$media_enabled"' in deploy and "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" in compose, "deployment activation must reach the Backend runtime feature gate"
