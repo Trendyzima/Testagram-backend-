@@ -25,6 +25,8 @@ jobs:
         with:
           go-version: "1.26.11"
           cache: true
+      - name: Validate production deployment shell syntax
+        run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh
       - name: Resolve and verify Go modules
         run: |
           go mod tidy
@@ -43,8 +45,6 @@ jobs:
           python scripts/validate-fresh-openapi.py
       - name: Lint every GitHub Actions workflow
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -color -ignore 'SC2034' -ignore 'SC2016' -ignore 'SC2129'
-      - name: Validate production deployment shell syntax
-        run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh
       - name: Validate public/private deployment readiness contract
         run: python scripts/validate-canonical-deploy-smoke.py
       - name: Enforce Instabox-only deployment policy
