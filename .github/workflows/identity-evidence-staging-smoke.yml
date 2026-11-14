@@ -73,13 +73,16 @@ jobs:
               echo "::error::$provider must use three distinct private, public and identity-evidence staging buckets."
               exit 1
             fi
-            case "$identity_bucket" in
-              *staging*|*smoke*) ;;
-              *) echo "::error::$provider identity bucket name must clearly identify a staging/smoke bucket."; exit 1 ;;
-            esac
-            case "${!name}" in
+            for bucket in "$private_bucket" "$public_bucket" "$identity_bucket"; do
+              case "$bucket" in
+                *staging*|*smoke*) ;;
+                *) echo "::error::$provider bucket names must clearly identify staging/smoke resources."; exit 1 ;;
+              esac
+            done
+            endpoint_name="IDENTITY_SMOKE_${provider}_ENDPOINT"
+            case "${!endpoint_name}" in
               https://*) ;;
-              *) echo "::error::$name must use HTTPS."; exit 1 ;;
+              *) echo "::error::$endpoint_name must use HTTPS."; exit 1 ;;
             esac
           done
           echo "All three providers have dedicated, distinct staging bucket mappings; secret values remain redacted."
