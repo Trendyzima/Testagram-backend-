@@ -236,15 +236,19 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 // account before email verification. Canonical product identity is provisioned
 // later, only after Appwrite confirms the email address.
 type appwriteRegistrationConsentRequest struct {
-	AgeConfirmed   bool   `json:"age_confirmed"`
-	TermsAccepted  bool   `json:"terms_accepted"`
-	PrivacyAccepted bool  `json:"privacy_accepted"`
-	TermsVersion   string `json:"terms_version"`
-	PrivacyVersion string `json:"privacy_version"`
+	AgeConfirmed    bool   `json:"age_confirmed"`
+	TermsAccepted   bool   `json:"terms_accepted"`
+	PrivacyAccepted bool   `json:"privacy_accepted"`
+	TermsVersion    string `json:"terms_version"`
+	PrivacyVersion  string `json:"privacy_version"`
 }
 
 func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", id))
+		return
+	}
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
 		return
@@ -281,6 +285,15 @@ func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Req
 		writeJSON(w, status, errorBody("APPWRITE_SESSION_INVALID", "Appwrite could not verify this registration session", id))
 		return
 	}
+	allowed, err := s.authRateAllowed(ctx, "registration-consent-ip", authClientIP(r), 12)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", id))
+		return
+	}
+	if !allowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts. Try again later.", id))
+		return
+	}
 	email, err := authEmail(account.Email)
 	if err != nil || !validAppwriteUserID(account.ID) {
 		writeJSON(w, http.StatusBadGateway, errorBody("APPWRITE_ACCOUNT_INVALID", "Appwrite returned an invalid account identity", id))
@@ -301,7 +314,7 @@ func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Req
 			INSERT INTO testagram_identity.appwrite_registration_consents
 				(appwrite_user_id,email,consent_type,policy_version,accepted_at,request_id)
 			VALUES($1,$2,$3,$4,now(),$5)
-			ON CONFLICT (appwrite_user_id,consent_type,policy_version) DO NOTHING
+			ON CONFLICT (appwrite_user_id,consent_type,policy_version,email) DO NOTHING
 		`, account.ID, email, consent.kind, consent.version, id)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("CONSENT_STORE_UNAVAILABLE", "Registration consent could not be saved", id))
