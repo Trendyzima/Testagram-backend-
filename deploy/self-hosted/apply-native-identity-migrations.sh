@@ -16,6 +16,12 @@ command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
 docker compose --env-file "$env_file" -f "$compose_file" config -q
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+native_identity_ready="$(docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass($testagram_identity.identity_applications$) IS NOT NULL AND to_regclass($testagram_identity.identity_application_reviews$) IS NOT NULL AND to_regclass($testagram_identity.identity_approval_tokens$) IS NOT NULL AND to_regclass($testagram_identity.verification_sessions$) IS NOT NULL AND to_regclass($testagram_identity.verification_evidence$) IS NOT NULL AND to_regclass($testagram_identity.verification_events$) IS NOT NULL AND to_regclass($testagram_auth.sensitive_action_requests$) IS NOT NULL AND to_regclass($testagram_auth.sensitive_action_approvals$) IS NOT NULL AND to_regclass($testagram_auth.admin_security_audit$) IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=$testagram_identity$ AND table_name=$identity_applications$ AND column_name=$status_access_token_sha256$)"')"
+if [[ "$native_identity_ready" == "t" ]]; then
+  echo "Native identity schema is already complete; no migration or backup is required."
+  exit 0
+fi
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
