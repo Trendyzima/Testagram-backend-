@@ -141,3 +141,41 @@ func TestAppwriteDefaultUsernameHandlesInvalidLocalPart(t *testing.T) {
 		t.Fatalf("generated username is invalid: %q", username)
 	}
 }
+
+
+func TestFetchAppwriteAccountAllowsUnverifiedSessionForConsentOnlyFlow(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"$id":"user_pending","email":"pending@example.test","emailVerification":false,"status":true}`))
+	}))
+	defer server.Close()
+	account, status, err := fetchAppwriteAccount(context.Background(), server.Client(), server.URL, "test-project", "pending-session-token")
+	if err != nil || status != http.StatusOK || account.EmailVerification {
+		t.Fatalf("unverified consent session status=%d account=%+v err=%v", status, account, err)
+	}
+}
+
+func TestAppwriteRegistrationConsentRequiresBearerSession(t *testing.T) {
+	t.Setenv("TESTAGRAM_TERMS_VERSION", "2026-11-11")
+	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "2026-11-11")
+	service := &service{}
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/registration-consent", strings.NewReader(`{"age_confirmed":true,"terms_accepted":true,"privacy_accepted":true,"terms_version":"2026-11-11","privacy_version":"2026-11-11"}`))
+	response := httptest.NewRecorder()
+	service.appwriteRegistrationConsent(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s; expected missing session rejection", response.Code, response.Body.String())
+	}
+}
+
+func TestAppwriteRegistrationConsentRejectsUnacceptedPolicyBeforeDatabase(t *testing.T) {
+	t.Setenv("TESTAGRAM_TERMS_VERSION", "2026-11-11")
+	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "2026-11-11")
+	service := &service{}
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/registration-consent", strings.NewReader(`{"age_confirmed":true,"terms_accepted":false,"privacy_accepted":true,"terms_version":"2026-11-11","privacy_version":"2026-11-11"}`))
+	request.Header.Set("Authorization", "Bearer valid-session-token")
+	response := httptest.NewRecorder()
+	service.appwriteRegistrationConsent(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s; expected explicit consent rejection", response.Code, response.Body.String())
+	}
+}
