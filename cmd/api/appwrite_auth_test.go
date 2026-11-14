@@ -203,7 +203,6 @@ func TestAuthenticatedAppwriteUserRequiresConsentAndLinksCanonicalAccount(t *tes
 
 	appwriteID := "ci-appwrite-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	email := appwriteID + "@example.test"
-	var canonicalID string
 	defer func() {
 		var linked string
 		_ = pool.QueryRow(context.Background(), `
@@ -265,7 +264,6 @@ func TestAuthenticatedAppwriteUserRequiresConsentAndLinksCanonicalAccount(t *tes
 	if err != nil || status != http.StatusOK || secondID != firstID {
 		t.Fatalf("repeat provisioning must be idempotent: first=%q second=%q status=%d err=%v", firstID, secondID, status, err)
 	}
-	canonicalID = firstID
 	var mappings int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1
