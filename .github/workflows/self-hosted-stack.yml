@@ -169,7 +169,7 @@ jobs:
               raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
           if deploy_source.index('host_arch="$(uname -m)"') > deploy_source.index('up -d postgres'):
               raise SystemExit("Instabox must reject an unsupported CDN host architecture before changing services.")
-          match = re.search(r"(?m)^\s*cmd='([^']*)'\s*$", target["run"])
+          match = re.search(r"(?m)^\s*cmd='(.*)'\s*$", target["run"])
           if not match:
               raise SystemExit("Remote CDN configuration command was not found or contains unsafe quote boundaries.")
           subprocess.run(["bash", "-n"], input=match.group(1), text=True, check=True)
