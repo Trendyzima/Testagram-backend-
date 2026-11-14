@@ -10,8 +10,12 @@ if [[ "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" == "true" ]]; then
   [[ -n "$TESTAGRAM_TERMS_VERSION" && ${#TESTAGRAM_TERMS_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_TERMS_VERSION (1-64 characters)."; exit 1; }
   [[ -n "$TESTAGRAM_PRIVACY_VERSION" && ${#TESTAGRAM_PRIVACY_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_PRIVACY_VERSION (1-64 characters)."; exit 1; }
 fi
-if [[ -z "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ]]; then
-  echo "::error::Missing FEDERATION_BACKEND_INTERNAL_TOKEN repository secret."
+# Create an ephemeral, cryptographically strong service credential when no
+# operator-provided value is supplied. It is transferred over the authenticated
+# InstaBox control-plane request and persisted for both services on the VPS.
+FEDERATION_BACKEND_INTERNAL_TOKEN="${FEDERATION_BACKEND_INTERNAL_TOKEN:-$(openssl rand -hex 32)}"
+if [[ ${#FEDERATION_BACKEND_INTERNAL_TOKEN} -lt 64 ]]; then
+  echo "::error::Federation service credential must contain at least 256 bits."
   exit 1
 fi
 
