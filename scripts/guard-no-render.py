@@ -42,7 +42,7 @@ for raw in filter(None, tracked):
     root_deploy_metadata = path.parent == Path(".") and (
         normalized.startswith("docker-compose")
         or normalized.startswith("compose.")
-        or normalized in {"Dockerfile.render", "Makefile"}
+        or normalized.startswith("Dockerfile")\n        or normalized in {"Makefile"}
     )
     if not (in_operational_root or root_deploy_metadata):
         continue
