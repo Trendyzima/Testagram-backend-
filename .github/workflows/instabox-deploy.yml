@@ -973,6 +973,36 @@ jobs:
           echo "::error::The API or public MinIO endpoint did not pass health checks."
           exit 1
 
+      - name: Verify canonical API origin and private TV route registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANONICAL_API_URL="${{ vars.TESTAGRAM_API_URL || 'https://api.testagram.site' }}"
+          if [[ "$CANONICAL_API_URL" != https://* ]]; then
+            echo "::error::TESTAGRAM_API_URL must be an HTTPS origin."
+            exit 1
+          fi
+          CANONICAL_API_URL="${CANONICAL_API_URL%/}"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          health_status=000
+          ready_status=000
+          catalog_status=000
+          for attempt in $(seq 1 12); do
+            health_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/health" -w '%{http_code}' "$CANONICAL_API_URL/healthz" || true)"
+            ready_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/ready" -w '%{http_code}' "$CANONICAL_API_URL/readyz" || true)"
+            catalog_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/catalog" -w '%{http_code}' "$CANONICAL_API_URL/internal/tv/catalog" || true)"
+            if [[ "$health_status" == "200" && "$ready_status" == "200" && "$catalog_status" == "401" ]] &&
+               grep -qx 'ok' "$tmp/health" &&
+               grep -qx 'ready' "$tmp/ready"; then
+              echo "Canonical API origin resolves to the deployed Backend; health/readiness passed and the private TV route correctly rejects unauthenticated access."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Canonical API origin is not wired to the deployed Backend. Expected /healthz=200, /readyz=200 and unauthenticated /internal/tv/catalog=401; observed $health_status, $ready_status and $catalog_status."
+          exit 1
+
       - name: Deployment summary
         if: always()
         shell: bash
