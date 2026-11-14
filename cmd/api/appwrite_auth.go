@@ -168,7 +168,7 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 		return "", http.StatusForbidden, errors.New("identity review and two-person account approval are required before accessing Testagram")
 	}
 	if err != nil {
-		return "", http.StatusServiceUnavailable, errors.New("approved Testagram account mapping could not be verified")
+		return "", http.StatusServiceUnavailable, fmt.Errorf("approved Testagram account mapping could not be verified: %w", err)
 	}
 	if accountStatus != "active" {
 		return "", http.StatusForbidden, errors.New("Testagram account is not active")
