@@ -20,6 +20,9 @@ func TestHealthz(t *testing.T) {
 	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"ok":true,"service":"testagram-api"}` {
 		t.Fatalf("healthz: status=%d body=%q", w.Code, w.Body.String())
 	}
+	if got := w.Header().Get("X-Testagram-Service"); got != "testagram-api" {
+		t.Fatalf("healthz service header = %q, want testagram-api", got)
+	}
 }
 
 func TestPublicReplicationProjectionValidatesIdentityAndRequiresDatabase(t *testing.T) {
