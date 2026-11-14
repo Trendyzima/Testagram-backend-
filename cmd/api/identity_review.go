@@ -163,7 +163,7 @@ func fetchIdentityEvidenceBytes(ctx context.Context, rawURL string, size int64, 
 	if err != nil {
 		return nil, errors.New("could not create private evidence request")
 	}
-	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
 	response, err := client.Do(request)
@@ -212,7 +212,7 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
 	var applicationID, objectKey, contentType, expectedSHA256 string
 	var size int64
@@ -253,7 +253,7 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 		err = primaryErr
 	}
 	if err != nil {
-		restoreCtx, restoreCancel := context.WithTimeout(ctx, 20*time.Second)
+		restoreCtx, restoreCancel := context.WithTimeout(ctx, 25*time.Second)
 		restoreErr := s.mediaReplicator.RestorePrimary(restoreCtx, applicationID, identityEvidenceNamespace, objectKey, size, contentType, expectedSHA256)
 		restoreCancel()
 		if restoreErr == nil {
