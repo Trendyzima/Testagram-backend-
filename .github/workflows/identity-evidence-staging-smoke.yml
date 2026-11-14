@@ -1,0 +1,101 @@
+name: Identity evidence B2/R2 staging lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging_bucket_writes:
+        description: Confirm this run may PUT, overwrite, restore and DELETE objects only in dedicated staging buckets
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-identity-evidence-staging-lifecycle
+  cancel-in-progress: false
+
+jobs:
+  lifecycle:
+    if: inputs.confirm_staging_bucket_writes == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: identity-evidence-staging
+    env:
+      TESTAGRAM_LIVE_IDENTITY_EVIDENCE_REPLICATION: "true"
+      IDENTITY_SMOKE_PRIMARY_ENDPOINT: ${{ vars.IDENTITY_SMOKE_PRIMARY_ENDPOINT }}
+      IDENTITY_SMOKE_PRIMARY_REGION: ${{ vars.IDENTITY_SMOKE_PRIMARY_REGION }}
+      IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID: ${{ secrets.IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID }}
+      IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY: ${{ secrets.IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY }}
+      IDENTITY_SMOKE_PRIMARY_PRIVATE_BUCKET: ${{ vars.IDENTITY_SMOKE_PRIMARY_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_PRIMARY_PUBLIC_BUCKET: ${{ vars.IDENTITY_SMOKE_PRIMARY_PUBLIC_BUCKET }}
+      IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET: ${{ vars.IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET }}
+      IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_R2_ENDPOINT }}
+      IDENTITY_SMOKE_R2_REGION: ${{ vars.IDENTITY_SMOKE_R2_REGION }}
+      IDENTITY_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.IDENTITY_SMOKE_R2_ACCESS_KEY_ID }}
+      IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY }}
+      IDENTITY_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_PUBLIC_BUCKET }}
+      IDENTITY_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_IDENTITY_BUCKET }}
+      IDENTITY_SMOKE_B2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_B2_ENDPOINT }}
+      IDENTITY_SMOKE_B2_REGION: ${{ vars.IDENTITY_SMOKE_B2_REGION }}
+      IDENTITY_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.IDENTITY_SMOKE_B2_ACCESS_KEY_ID }}
+      IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY }}
+      IDENTITY_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_PUBLIC_BUCKET }}
+      IDENTITY_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_IDENTITY_BUCKET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.3"
+          cache: true
+      - name: Validate isolated staging configuration without printing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for provider in PRIMARY R2 B2; do
+            for suffix in ENDPOINT REGION ACCESS_KEY_ID SECRET_ACCESS_KEY PRIVATE_BUCKET PUBLIC_BUCKET IDENTITY_BUCKET; do
+              name="IDENTITY_SMOKE_${provider}_${suffix}"
+              if [[ -z "${!name:-}" ]]; then
+                echo "::error::Missing required staging configuration: $name (value redacted)."
+                exit 1
+              fi
+            done
+            private_name="IDENTITY_SMOKE_${provider}_PRIVATE_BUCKET"
+            public_name="IDENTITY_SMOKE_${provider}_PUBLIC_BUCKET"
+            identity_name="IDENTITY_SMOKE_${provider}_IDENTITY_BUCKET"
+            private_bucket="${!private_name}"
+            public_bucket="${!public_name}"
+            identity_bucket="${!identity_name}"
+            if [[ "$private_bucket" == "$public_bucket" || "$identity_bucket" == "$private_bucket" || "$identity_bucket" == "$public_bucket" ]]; then
+              echo "::error::$provider must use three distinct private, public and identity-evidence staging buckets."
+              exit 1
+            fi
+            case "$identity_bucket" in
+              *staging*|*smoke*) ;;
+              *) echo "::error::$provider identity bucket name must clearly identify a staging/smoke bucket."; exit 1 ;;
+            esac
+            case "${!name}" in
+              https://*) ;;
+              *) echo "::error::$name must use HTTPS."; exit 1 ;;
+            esac
+          done
+          echo "All three providers have dedicated, distinct staging bucket mappings; secret values remain redacted."
+      - name: Run live MinIO/B2/R2 replication, restore, drift repair and deletion
+        shell: bash
+        run: go test -v ./internal/virtualstorage -run '^TestLiveIdentityEvidenceReplicationLifecycle$' -count=1
+      - name: Record staging acceptance
+        if: success()
+        run: |
+          {
+            echo "### Identity evidence provider lifecycle"
+            echo "- MinIO primary write/read/hash: passed"
+            echo "- B2 and R2 independent replication/read-back/hash: passed"
+            echo "- Missing primary restore from verified replica: passed"
+            echo "- Missing replica reconciliation: passed"
+            echo "- Same-size checksum drift repair: passed"
+            echo "- Delete from all three providers and verify 404: passed"
+            echo "- Dedicated private/public/identity bucket separation: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
