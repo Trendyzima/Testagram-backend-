@@ -68,6 +68,7 @@ SET status='replication_pending', updated_at=now()
 WHERE a.status='ready'
   AND a.storage_namespace IN ('media-private','media-public')
   AND a.storage_provider IS NOT NULL
+  AND a.storage_provider <> 'data-centre'
   AND a.checksum_sha256 ~ '^[0-9a-f]{64}$'
   AND (
     SELECT count(DISTINCT r.provider)
