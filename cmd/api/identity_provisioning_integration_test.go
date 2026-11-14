@@ -160,17 +160,31 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		return recorder
 	}
 
-	first := redeem()
-	if first.Code != http.StatusOK {
-		t.Fatalf("first redemption status=%d body=%s", first.Code, first.Body.String())
+	// Race two requests with the same one-time authorization. Exactly one
+	// transaction may create the canonical mapping; the concurrent retry must
+	// resolve to that same account rather than create a duplicate.
+	redemptions := make(chan *httptest.ResponseRecorder, 2)
+	go func() { redemptions <- redeem() }()
+	go func() { redemptions <- redeem() }()
+	first, second := <-redemptions, <-redemptions
+	for _, response := range []*httptest.ResponseRecorder{first, second} {
+		if response.Code != http.StatusOK {
+			t.Fatalf("concurrent redemption status=%d body=%s", response.Code, response.Body.String())
+		}
 	}
-	var result map[string]any
+	var result, concurrentResult map[string]any
 	if err := json.Unmarshal(first.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
+	if err := json.Unmarshal(second.Body.Bytes(), &concurrentResult); err != nil {
+		t.Fatal(err)
+	}
 	canonicalID, _ := result["canonical_user_id"].(string)
-	if canonicalID == "" || result["email_verification_required"] != !emailVerified {
-		t.Fatalf("unexpected provisioning result: %#v", result)
+	concurrentCanonicalID, _ := concurrentResult["canonical_user_id"].(string)
+	if canonicalID == "" || concurrentCanonicalID != canonicalID ||
+		result["email_verification_required"] != !emailVerified ||
+		concurrentResult["email_verification_required"] != !emailVerified {
+		t.Fatalf("concurrent redemption did not resolve one canonical account: first=%#v second=%#v", result, concurrentResult)
 	}
 
 	expectedEmailVerified := emailVerified
