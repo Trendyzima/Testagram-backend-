@@ -448,3 +448,233 @@ func TestIdentityApprovalRejectsExpiredSensitiveActionRequest(t *testing.T) {
 			applicationStatus, requestStatus, approvalCount, tokenCount)
 	}
 }
+
+
+func TestIdentityReviewerHonorsRevocationAndPermissionOverrides(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for PostgreSQL reviewer authorization integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const reviewerID = "ci-reviewer-permission"
+	const reviewerEmail = "reviewer-permission@example.test"
+	const project = "identity-permission-ci-project"
+	const jwt = "identity-permission-ci-jwt"
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,access_revoked_at)
+		VALUES ($1,'administrator',NULL)
+		ON CONFLICT (appwrite_user_id) DO UPDATE
+		SET role='administrator',access_revoked_at=NULL
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		DELETE FROM testagram_auth.staff_permission_overrides
+		WHERE appwrite_user_id=$1 AND permission_key='identity.review'
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/account" ||
+			r.Header.Get("X-Appwrite-Project") != project ||
+			r.Header.Get("X-Appwrite-JWT") != jwt {
+			http.Error(w, "invalid test Appwrite request", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"$id": reviewerID, "email": reviewerEmail,
+			"emailVerification": true, "status": true,
+		})
+	}))
+	defer server.Close()
+	t.Setenv("APPWRITE_ENDPOINT", server.URL+"/v1")
+	t.Setenv("APPWRITE_PROJECT_ID", project)
+
+	svc := &service{db: db, upstream: server.Client()}
+	authorize := func() (int, error) {
+		account, status, err := svc.identityReviewer(
+			httptest.NewRequest(http.MethodGet, "/api/admin/identity/review-queue", nil),
+		)
+		if err == nil && account.ID != reviewerID {
+			t.Fatalf("reviewer identity=%q, want %q", account.ID, reviewerID)
+		}
+		return status, err
+	}
+
+	if status, err := authorize(); status != http.StatusOK || err != nil {
+		t.Fatalf("active administrator reviewer status=%d err=%v; want 200", status, err)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
+		WHERE appwrite_user_id=$1
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := authorize(); status != http.StatusForbidden || err == nil {
+		t.Fatalf("revoked reviewer status=%d err=%v; want 403", status, err)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.staff_roles SET access_revoked_at=NULL
+		WHERE appwrite_user_id=$1
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_permission_overrides
+		  (appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id)
+		VALUES ($1,'identity.review',FALSE,'Explicit CI denial','ci-reviewer-one')
+		ON CONFLICT (appwrite_user_id,permission_key) DO UPDATE
+		SET granted=FALSE,reason=EXCLUDED.reason,changed_by_appwrite_user_id=EXCLUDED.changed_by_appwrite_user_id
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := authorize(); status != http.StatusForbidden || err == nil {
+		t.Fatalf("explicit deny override status=%d err=%v; want 403", status, err)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.staff_roles SET role='support'
+		WHERE appwrite_user_id=$1
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.staff_permission_overrides
+		SET granted=TRUE,reason='Explicit CI grant'
+		WHERE appwrite_user_id=$1 AND permission_key='identity.review'
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := authorize(); status != http.StatusOK || err != nil {
+		t.Fatalf("explicit grant override status=%d err=%v; want 200", status, err)
+	}
+}
+
+func TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for PostgreSQL reviewer separation integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const reviewerID = "ci-reviewer-three"
+	const reviewerEmail = "reviewer-three@example.test"
+	const applicantEmail = "reviewer-mismatch@example.test"
+	const project = "identity-mismatch-ci-project"
+	const jwt = "identity-mismatch-ci-jwt"
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,access_revoked_at)
+		VALUES ($1,'administrator',NULL)
+		ON CONFLICT (appwrite_user_id) DO UPDATE
+		SET role='administrator',access_revoked_at=NULL
+	`, reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	var applicationID, requestID string
+	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := strings.Repeat("b", 64)
+	payload, err := json.Marshal(map[string]any{
+		"application_id": applicationID,
+		"email": applicantEmail,
+		"username": "review_mismatch",
+		"display_name": "Reviewer Mismatch",
+		"evidence_fingerprint_sha256": fingerprint,
+		"terms_version": "terms-v1",
+		"privacy_version": "privacy-v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_requests
+		  (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256,required_approvals,status,expires_at)
+		VALUES ('identity.approve','ci-intake-service',$1,
+		        'Reviewer separation integration fixture',$2::jsonb,repeat('c',64),2,'pending',now()+interval '1 hour')
+		RETURNING id::text
+	`, applicationID, string(payload)).Scan(&requestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_identity.identity_applications
+		  (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
+		   adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
+		   evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
+		   terms_accepted_at,privacy_accepted_at,status,sensitive_action_request_id)
+		VALUES ($1::uuid,$2,'review_mismatch','Reviewer Mismatch',now(),now(),
+		        'testagram_manual','review-mismatch-adult-ref',now(),
+		        'opaque-review-mismatch-evidence',decode($3,'hex'),'terms-v1','privacy-v1',
+		        now(),now(),'verified',$4::uuid)
+	`, applicationID, applicantEmail, fingerprint, requestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_identity.identity_application_reviews
+		  (application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference)
+		VALUES ($1::uuid,'ci-reviewer-one','approved','First independent evidence review','mismatch-audit-01'),
+		       ($1::uuid,'ci-reviewer-two','approved','Second independent evidence review','mismatch-audit-02')
+	`, applicationID); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/account" ||
+			r.Header.Get("X-Appwrite-Project") != project ||
+			r.Header.Get("X-Appwrite-JWT") != jwt {
+			http.Error(w, "invalid test Appwrite request", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"$id": reviewerID, "email": reviewerEmail,
+			"emailVerification": true, "status": true,
+		})
+	}))
+	defer server.Close()
+	t.Setenv("APPWRITE_ENDPOINT", server.URL+"/v1")
+	t.Setenv("APPWRITE_PROJECT_ID", project)
+
+	svc := &service{db: db, upstream: server.Client()}
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/admin/identity/applications/"+applicationID+"/approve",
+		strings.NewReader(`{"reason":"Attempt by a non-reviewer to approve this application"}`))
+	req.SetPathValue("application_id", applicationID)
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	response := httptest.NewRecorder()
+	svc.identityApplicationApprove(response, req)
+	if response.Code != http.StatusForbidden ||
+		!strings.Contains(response.Body.String(), "APPROVAL_REVIEWER_MISMATCH") {
+		t.Fatalf("non-reviewer approval status=%d body=%s; want 403 reviewer mismatch", response.Code, response.Body.String())
+	}
+
+	var approvalCount, tokenCount int
+	var applicationStatus string
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.sensitive_action_approvals WHERE request_id=$1::uuid", requestID).Scan(&approvalCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.identity_approval_tokens WHERE application_id=$1::uuid", applicationID).Scan(&tokenCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid", applicationID).Scan(&applicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if approvalCount != 0 || tokenCount != 0 || applicationStatus != "verified" {
+		t.Fatalf("non-reviewer changed approval state: approvals=%d tokens=%d application=%q",
+			approvalCount, tokenCount, applicationStatus)
+	}
+}
