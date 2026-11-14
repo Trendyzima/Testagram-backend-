@@ -182,6 +182,10 @@ ensure_random_secret FEDERATION_INGRESS_TOKEN
 # Registration and three-provider replication remain fail-closed until
 # a separate staging acceptance and explicit operator activation.
 write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"
+for key in APPWRITE_API_KEY ONSPACE_AI_API_KEY ONSPACE_AI_BASE_URL MEDIA_MODERATION_TOKEN MPESA_ENV MPESA_SHORTCODE MPESA_PASSKEY MPESA_CONSUMER_KEY MPESA_CONSUMER_SECRET MPESA_CALLBACK_URL ADMIN_SERVICE_AUTH_KEY; do
+  value="${!key:-}"
+  if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
+done
 write_env_value VIRTUAL_STORAGE_ENABLED true
 write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-private
 write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
@@ -635,13 +639,20 @@ payload="$(jq -nc \
   --arg identity_registration_enabled "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" \
   --arg terms_version "$TESTAGRAM_TERMS_VERSION" \
   --arg privacy_version "$TESTAGRAM_PRIVACY_VERSION" \
+  --arg appwrite_api_key "${APPWRITE_API_KEY:-}" \
+  --arg onspace_key "${ONSPACE_AI_API_KEY:-}" --arg onspace_base "${ONSPACE_AI_BASE_URL:-}" \
+  --arg moderation_token "${MEDIA_MODERATION_TOKEN:-}" \
+  --arg mpesa_env "${MPESA_ENV:-}" --arg mpesa_shortcode "${MPESA_SHORTCODE:-}" \
+  --arg mpesa_passkey "${MPESA_PASSKEY:-}" --arg mpesa_consumer_key "${MPESA_CONSUMER_KEY:-}" \
+  --arg mpesa_consumer_secret "${MPESA_CONSUMER_SECRET:-}" --arg mpesa_callback "${MPESA_CALLBACK_URL:-}" \
+  --arg admin_service_key "${ADMIN_SERVICE_AUTH_KEY:-}" \
   --arg b2_endpoint "$b2_endpoint" --arg b2_region "$b2_region" --arg b2_bucket "$b2_bucket" \
   --arg b2_private "$b2_private" --arg b2_public "$b2_public" --arg b2_identity "$b2_identity" \
   --arg b2_access "$b2_access" --arg b2_secret "$b2_secret" \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,ONSPACE_AI_API_KEY:$onspace_key,ONSPACE_AI_BASE_URL:$onspace_base,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \
