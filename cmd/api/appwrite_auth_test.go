@@ -4,9 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestFetchAppwriteAccountSendsProjectAndSessionJWT(t *testing.T) {
@@ -177,5 +181,95 @@ func TestAppwriteRegistrationConsentRejectsUnacceptedPolicyBeforeDatabase(t *tes
 	service.appwriteRegistrationConsent(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s; expected explicit consent rejection", response.Code, response.Body.String())
+	}
+}
+
+
+func TestAuthenticatedAppwriteUserRequiresConsentAndLinksCanonicalAccount(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect PostgreSQL: %v", err)
+	}
+	defer pool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping PostgreSQL: %v", err)
+	}
+
+	appwriteID := "ci-appwrite-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	email := appwriteID + "@example.test"
+	var canonicalID string
+	defer func() {
+		var linked string
+		_ = pool.QueryRow(context.Background(), `
+			SELECT canonical_user_id::text
+			FROM testagram_identity.appwrite_accounts
+			WHERE appwrite_user_id=$1
+		`, appwriteID).Scan(&linked)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1`, appwriteID)
+		if linked != "" {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid`, linked)
+		}
+		_, _ = pool.Exec(context.Background(), `DELETE FROM testagram_identity.appwrite_registration_consents WHERE appwrite_user_id=$1`, appwriteID)
+	}()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/account" {
+			t.Errorf("Appwrite path = %q", r.URL.Path)
+		}
+		if r.Header.Get("X-Appwrite-Project") != "integration-project" ||
+			r.Header.Get("X-Appwrite-JWT") != "integration-session-jwt" {
+			t.Errorf("Appwrite project/session headers were not forwarded")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"$id":"` + appwriteID + `","email":"` + email + `","name":"CI Appwrite User","emailVerification":true,"status":true}`))
+	}))
+	defer server.Close()
+	t.Setenv("APPWRITE_ENDPOINT", server.URL)
+	t.Setenv("APPWRITE_PROJECT_ID", "integration-project")
+	t.Setenv("TESTAGRAM_TERMS_VERSION", "2026-11-11")
+	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "2026-11-11")
+
+	svc := &service{db: pool, upstream: server.Client()}
+	request := httptest.NewRequest(http.MethodGet, "/api/me/profile", nil)
+	firstID, status, err := svc.authenticatedAppwriteUser(request, "integration-session-jwt")
+	if status != http.StatusForbidden || err == nil || !strings.Contains(err.Error(), "registration consent") {
+		t.Fatalf("unconsented account status=%d canonical=%q err=%v; expected consent gate", status, firstID, err)
+	}
+
+	for _, consent := range []struct{ kind, version string }{
+		{"age_confirmation", "age-v1"},
+		{"terms", "2026-11-11"},
+		{"privacy", "2026-11-11"},
+	} {
+		_, err := pool.Exec(ctx, `
+			INSERT INTO testagram_identity.appwrite_registration_consents
+			  (appwrite_user_id,email,consent_type,policy_version,accepted_at,request_id)
+			VALUES($1,$2,$3,$4,now(),'ci-appwrite-flow')
+		`, appwriteID, email, consent.kind, consent.version)
+		if err != nil {
+			t.Fatalf("insert %s consent: %v", consent.kind, err)
+		}
+	}
+
+	firstID, status, err = svc.authenticatedAppwriteUser(request, "integration-session-jwt")
+	if err != nil || status != http.StatusOK || firstID == "" {
+		t.Fatalf("consented account provisioning status=%d canonical=%q err=%v", status, firstID, err)
+	}
+	secondID, status, err := svc.authenticatedAppwriteUser(request, "integration-session-jwt")
+	if err != nil || status != http.StatusOK || secondID != firstID {
+		t.Fatalf("repeat provisioning must be idempotent: first=%q second=%q status=%d err=%v", firstID, secondID, status, err)
+	}
+	canonicalID = firstID
+	var mappings int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1
+	`, appwriteID).Scan(&mappings); err != nil || mappings != 1 {
+		t.Fatalf("canonical mapping count=%d err=%v", mappings, err)
 	}
 }
