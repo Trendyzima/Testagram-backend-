@@ -18,7 +18,7 @@ jobs:
     env:
       INSTABOX_READONLY_API_KEY: ${{ secrets.INSTABOX_READONLY_API_KEY }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
-      INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagram' }}
+      INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
     steps:
       - name: Validate dedicated inspection credentials
         shell: bash
