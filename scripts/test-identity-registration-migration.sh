@@ -53,8 +53,9 @@ psql_ci < migrations/20261114_native_identity_evidence.sql
 psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
-psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci < migrations/20261115_native_identity_status_access.sql
+psql_ci < migrations/20261115_native_identity_status_access.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
