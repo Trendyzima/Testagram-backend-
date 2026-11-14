@@ -340,62 +340,12 @@ jobs:
           echo "::error::The published API or Go CDN did not pass HTTPS health/readiness checks."
           exit 1
 
-      - name: Verify canonical API origin and private TV route registration
+      - name: Canonical hostname verification handoff
         shell: bash
         run: |
-          set -euo pipefail
-          CANONICAL_API_URL="${{ vars.TESTAGRAM_API_URL || 'https://api.testagram.site' }}"
-          if [[ "$CANONICAL_API_URL" != https://* ]]; then
-            echo "::error::TESTAGRAM_API_URL must be an HTTPS origin."
-            exit 1
-          fi
-          CANONICAL_API_URL="${CANONICAL_API_URL%/}"
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          health_status=000
-          ready_status=000
-          catalog_status=000
-          for attempt in $(seq 1 12); do
-            health_status="$(curl -sS --connect-timeout 5 --max-time 10 -D "$tmp/health.headers" -o "$tmp/health" -w '%{http_code}' "$CANONICAL_API_URL/healthz" || true)"
-            # Caddy deliberately hides dependency readiness from the public internet.
-            # The deploy script already checks /readyz from inside the API container.
-            ready_status="$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$CANONICAL_API_URL/readyz" || true)"
-            catalog_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/catalog" -w '%{http_code}' "$CANONICAL_API_URL/internal/tv/catalog" || true)"
-            if [[ "$health_status" == "200" && "$ready_status" == "404" && "$catalog_status" == "401" ]] &&
-               grep -Eiq '^x-testagram-service:[[:space:]]*testagram-api[[:space:]]*$' "$tmp/health.headers" &&
-               jq -e '.ok == true and .service == "testagram-api"' "$tmp/health" >/dev/null; then
-              echo "Canonical API hostname is serving the Testagram Backend liveness contract; private readiness remains hidden (404) and the internal TV catalogue rejects unauthenticated access (401)."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::Canonical API origin is not wired to the deployed Backend or exposes an unexpected route. Expected public /healthz=200, hidden /readyz=404 and unauthenticated /internal/tv/catalog=401; observed $health_status, $ready_status and $catalog_status."
-          exit 1
-
-      - name: Verify canonical media hostname serves the pinned Go CDN
-        shell: bash
-        run: |
-          set -euo pipefail
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          for attempt in $(seq 1 18); do
-            status="$(curl -sS --connect-timeout 5 --max-time 15 -D "$tmp/headers" -o "$tmp/health.json" -w '%{http_code}' "https://media.testagram.site/healthz?release_probe=$GITHUB_RUN_ID" || true)"
-            ready="$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp/ready" -w '%{http_code}' "https://media.testagram.site/readyz?release_probe=$GITHUB_RUN_ID" || true)"
-            if [[ "$status" == "200" && "$ready" == "200" ]] &&
-               grep -Eiq '^x-testagram-cdn:[[:space:]]*testagram-edge[[:space:]]*$' "$tmp/headers" &&
-               grep -Eiq '^x-testagram-cdn-version:[[:space:]]*2026-11-13-backend-origin-hardened-v1[[:space:]]*$' "$tmp/headers" &&
-               jq -e '.ok == true and .service == "testagram-cdn"' "$tmp/health.json" >/dev/null &&
-               grep -qx 'ready' "$tmp/ready"; then
-              private_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp/private" -w '%{http_code}' "https://media.testagram.site/v1/users/cdn-smoke/0123456789abcdef0123456789abcdef" || true)"
-              case "$private_status" in 401|403|404) ;; *) echo "::error::Canonical CDN exposed an unauthenticated private-media path (HTTP $private_status)"; cat "$tmp/private"; exit 1 ;; esac
-              echo "media.testagram.site is serving the canonical Go CDN; readiness and private-media denial passed."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::media.testagram.site is not routed to the canonical Go CDN. Observed health=$status readiness=$ready."
-          cat "$tmp/health.json" "$tmp/ready" 2>/dev/null || true
-          exit 1
+          echo "Backend and Go CDN published origins passed direct health/readiness checks."
+          echo "Run the CDN repository's Restore canonical Testagram API and Go CDN host routing workflow with the API URL and Go CDN URL from this deployment summary."
+          echo "That workflow is the final public-host release gate and verifies API liveness, hidden readiness/metrics, Go CDN version/readiness, and private-media denial."
 
       - name: Deployment summary
         if: always()
