@@ -55,6 +55,7 @@ services:
       - ../../migrations/20261115_identity_evidence_access_audit.sql:/docker-entrypoint-initdb.d/044_identity_evidence_access_audit.sql:ro
       - ../../migrations/20261115_native_identity_status_access.sql:/docker-entrypoint-initdb.d/045_native_identity_status_access.sql:ro
       - ../../migrations/20261114_media_replication_publication_gate.sql:/docker-entrypoint-initdb.d/046_media_replication_publication_gate.sql:ro
+      - ../../migrations/20261114_appwrite_registration_consent.sql:/docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -137,8 +138,8 @@ services:
     environment:
       LISTEN_ADDR: ":8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
       ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       FEDERATION_INTERNAL_URL: ${FEDERATION_INTERNAL_URL:-http://federation-api:8081}
@@ -197,8 +198,8 @@ services:
       MEDIA_REPLICATION_ENABLED: ${MEDIA_REPLICATION_ENABLED:-false}
       IDENTITY_EVIDENCE_PRIVATE_BUCKET: ${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}
       TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}
-      TESTAGRAM_TERMS_VERSION: ${TESTAGRAM_TERMS_VERSION:-}
-      TESTAGRAM_PRIVACY_VERSION: ${TESTAGRAM_PRIVACY_VERSION:-}
+      TESTAGRAM_TERMS_VERSION: ${TESTAGRAM_TERMS_VERSION:-2026-11-11}
+      TESTAGRAM_PRIVACY_VERSION: ${TESTAGRAM_PRIVACY_VERSION:-2026-11-11}
       MPESA_ENV: ${MPESA_ENV:-sandbox}
       MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
       MPESA_PASSKEY: ${MPESA_PASSKEY:-}
