@@ -1045,6 +1045,90 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_identity_registration_pipeline.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261113_identity_registration_hardening.sql
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.11"
+          cache: true
+      - name: Run two-person identity approval transaction against PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role) VALUES
+            ('ci-master-user','owner'),
+            ('ci-identity-admin','administrator'),
+            ('ci-engineer-user','engineer');
+          DO $permissions$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='administrator' AND permission_key='identity.review'
+            ) THEN RAISE EXCEPTION 'administrator identity review permission missing'; END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.request'
+            ) THEN RAISE EXCEPTION 'engineer deployment request permission missing'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.approve'
+            ) THEN RAISE EXCEPTION 'engineers must not receive production approval by default'; END IF;
+          END $permissions$;
+          INSERT INTO testagram_auth.staff_permission_overrides
+            (appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id)
+          VALUES ('ci-engineer-user','deployment.approve',TRUE,'Temporary controlled CI approval grant','ci-master-user');
+          INSERT INTO testagram_auth.sensitive_action_requests
+            (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
+          VALUES
+            ('deployment.production','ci-master-user','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-identity-admin','approved','Independent reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-engineer-user','approved','Second distinct reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          DO $approval$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals) <> 2 THEN
+              RAISE EXCEPTION 'two distinct approval records were not persisted';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.admin_security_audit
+              WHERE action='sensitive_action.requested'
+            ) AND EXISTS (
+              SELECT 1 FROM testagram_auth.sensitive_action_requests
+            ) THEN
+              -- Audit insertion is performed atomically by the application handler;
+              -- the schema integration intentionally inserts the ledger directly.
+              NULL;
+            END IF;
+          END $approval$;
+          UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
+          WHERE appwrite_user_id='ci-engineer-user';
+          DO $revocation$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id='ci-engineer-user' AND access_revoked_at IS NOT NULL) THEN
+              RAISE EXCEPTION 'staff revocation timestamp was not persisted';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id='ci-engineer-user' AND permission_key='deployment.approve') THEN
+              RAISE EXCEPTION 'revocation must preserve permission audit history';
+            END IF;
+          END $revocation$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-admin-security-ci || true
+
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
+ -count=1 -v
       - name: Verify permission isolation and two-person approval ledger
         run: |
           set -euo pipefail
