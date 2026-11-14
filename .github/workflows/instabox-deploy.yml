@@ -990,17 +990,18 @@ jobs:
           catalog_status=000
           for attempt in $(seq 1 12); do
             health_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/health" -w '%{http_code}' "$CANONICAL_API_URL/healthz" || true)"
-            ready_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/ready" -w '%{http_code}' "$CANONICAL_API_URL/readyz" || true)"
+            # Caddy deliberately hides dependency readiness from the public internet.
+            # The deploy script already checks /readyz from inside the API container.
+            ready_status="$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$CANONICAL_API_URL/readyz" || true)"
             catalog_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/catalog" -w '%{http_code}' "$CANONICAL_API_URL/internal/tv/catalog" || true)"
-            if [[ "$health_status" == "200" && "$ready_status" == "200" && "$catalog_status" == "401" ]] &&
-               grep -qx 'ok' "$tmp/health" &&
-               grep -qx 'ready' "$tmp/ready"; then
-              echo "Canonical API origin resolves to the deployed Backend; health/readiness passed and the private TV route correctly rejects unauthenticated access."
+            if [[ "$health_status" == "200" && "$ready_status" == "404" && "$catalog_status" == "401" ]] &&
+               grep -qx 'ok' "$tmp/health"; then
+              echo "Canonical API liveness passed; private readiness remains hidden (404) and the internal TV catalogue correctly rejects unauthenticated access (401). Container readiness was verified privately during deployment."
               exit 0
             fi
             sleep 10
           done
-          echo "::error::Canonical API origin is not wired to the deployed Backend. Expected /healthz=200, /readyz=200 and unauthenticated /internal/tv/catalog=401; observed $health_status, $ready_status and $catalog_status."
+          echo "::error::Canonical API origin is not wired to the deployed Backend or exposes an unexpected route. Expected public /healthz=200, hidden /readyz=404 and unauthenticated /internal/tv/catalog=401; observed $health_status, $ready_status and $catalog_status."
           exit 1
 
       - name: Deployment summary
