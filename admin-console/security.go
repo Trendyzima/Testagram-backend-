@@ -239,7 +239,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	return nextStatus, nil
 }
 
-func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, approverID, decision, reason string) (string, string, int, error) {
+func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, decision, reason string) (string, string, int, error) {
 	var actionType, requesterID, requestStatus, targetReference string
 	var payload []byte
 	err := tx.QueryRow(ctx, `
@@ -250,6 +250,9 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ap
 	`, requestID).Scan(&actionType, &requesterID, &requestStatus, &targetReference, &payload)
 	if err != nil || requestStatus != "pending" {
 		return "", "", 0, errors.New("approval request is missing, expired or no longer pending")
+	}
+	if actionType != expectedAction || requesterID != expectedRequester {
+		return "", "", 0, errors.New("approval request changed after authorization")
 	}
 	if approverID == requesterID {
 		return "", "", 0, errors.New("requester cannot approve their own sensitive action")
@@ -386,7 +389,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	state, applicationState, count, err := recordSensitiveActionDecision(ctx, tx, id, approver.ID, input.Decision, input.Reason)
+	state, applicationState, count, err := recordSensitiveActionDecision(ctx, tx, id, action, requester, approver.ID, input.Decision, input.Reason)
 	if err == nil {
 		err = tx.Commit(ctx)
 	}
