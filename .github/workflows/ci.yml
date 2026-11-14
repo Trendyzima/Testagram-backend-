@@ -511,8 +511,12 @@ jobs:
           assert "workflow_dispatch:" in trigger and "push:" not in trigger, "production deployment must never run automatically on push"
           assert "confirm_production_deploy" in trigger and "inputs.confirm_production_deploy == true" in deploy, "production deployment must require an explicit confirmation input"
           assert "github.ref == 'refs/heads/main'" in deploy and "environment: production" in deploy, "production deployment must be restricted to main and the production environment"
+          deploy_workflow = deploy
           deploy_script = Path("scripts/start-instabox-deployment.sh").read_text()
-          assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" not in deploy, "deployment must not require a manually configured Federation read secret"
+          # Deployment implementation lives in the extracted script; validate
+          # workflow policy and implementation as one logical deployment unit.
+          deploy = deploy_workflow + "\n" + deploy_script
+          assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" not in deploy_workflow, "deployment must not require a manually configured Federation read secret"
           assert 'FEDERATION_BACKEND_INTERNAL_TOKEN="${FEDERATION_BACKEND_INTERNAL_TOKEN:-$(openssl rand -hex 32)}"' in deploy_script, "deployment must generate a strong Federation service credential when none is supplied"
           assert "envs:{" in deploy_script and "APPWRITE_PROJECT_ID:$appwrite" in deploy_script and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy_script, "deployment must forward the generated Federation service credential to the VPS environment"
           dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then')
@@ -528,7 +532,7 @@ jobs:
           assert f"TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: {identity_flag_expression}" in deploy and "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}" in deploy and 'write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"' in deploy, "identity registration must remain fail-closed by default and explicitly configurable"
           assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in compose and "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in minio_init and 'mc anonymous set none "local/$identity_bucket"' in minio_init, "identity evidence must use a dedicated private MinIO bucket"
           assert "CLOUDFLARE_R2_SECRET_ACCESS_KEY" in compose and "B2_S3_SECRET_ACCESS_KEY" in compose, "three-provider replication credentials must reach Backend only through environment mapping"
-          deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
+          deploy = deploy_workflow + "\n" + deploy_script
           assert "B2_S3_PUBLIC_BUCKET" in deploy and "CLOUDFLARE_R2_PUBLIC_BUCKET" in deploy and 'MEDIA_REPLICATION_ENABLED' in deploy, "deployment must wire distinct provider buckets and keep replication explicitly gated"
           assert "MEDIA_REPLICATION_ENABLED=true requires complete B2/R2 settings" in deploy, "deployment must reject incomplete replication activation"
           assert 'write_dc_env_value DATA_CENTRE_MEDIA_ENABLED "$media_enabled"' in deploy and 'write_dc_env_value COMPOSE_PROFILES media' in deploy, "Data Centre media profile activation must persist across later Compose operations"
