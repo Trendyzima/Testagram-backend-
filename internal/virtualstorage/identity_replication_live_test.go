@@ -97,6 +97,7 @@ func TestLiveIdentityEvidenceReplicationLifecycle(t *testing.T) {
 		if buckets["media-private"] == "" || buckets["media-public"] == "" ||
 			buckets["media-private"] == buckets["media-public"] ||
 			buckets["identity-evidence-private"] == "" ||
+			buckets["identity-evidence-private"] == buckets["media-private"] ||
 			buckets["identity-evidence-private"] == buckets["media-public"] {
 			t.Fatalf("%s bucket mapping violates private/public/identity isolation", name)
 		}
