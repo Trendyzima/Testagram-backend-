@@ -25,8 +25,14 @@ assert "x-testagram-service" in workflow
 assert '.ok == true and .service == "testagram-api"' in workflow
 assert '"$URL/readyz"' in workflow
 assert "https://api.testagram.site" not in workflow
-assert "https://media.testagram.site" not in workflow
 assert "CANONICAL_API_URL" not in workflow
+assert 'PUBLIC_CDN_URL="https://media.testagram.site"' in workflow
+assert 'upsert_env CDN_MEDIA_BASE_URL "$PUBLIC_CDN_URL"' in workflow
+assert 'upsert_env MEDIA_PUBLIC_BASE_URL "$PUBLIC_CDN_URL/v1"' in workflow
+assert 'check_env "$api_container" CDN_MEDIA_BASE_URL "$PUBLIC_CDN_URL"' in workflow
+assert 'check_env "$api_container" MEDIA_PUBLIC_BASE_URL "$PUBLIC_CDN_URL/v1"' in workflow
+assert 'curl -fsS "$CDN_ORIGIN/healthz"' in workflow
+assert 'curl -fsS "$CDN_ORIGIN/readyz"' in workflow
 
 assert "Canonical hostname verification handoff" in workflow
 assert "Cloudflare gateway workflow performs the final public" in workflow
