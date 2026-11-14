@@ -1,0 +1,107 @@
+name: Instabox VPS R2 B2 media lifecycle staging acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging_object_writes:
+        description: Confirm this run may write, corrupt, restore and delete temporary objects in dedicated staging buckets only.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-instabox-r2-b2-media-staging
+  cancel-in-progress: false
+
+jobs:
+  live-media-lifecycle:
+    if: inputs.confirm_staging_object_writes == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: media-staging
+    env:
+      TESTAGRAM_LIVE_MEDIA_REPLICATION: "true"
+      MEDIA_SMOKE_INSTABOX_ENDPOINT: ${{ vars.MEDIA_SMOKE_INSTABOX_ENDPOINT }}
+      MEDIA_SMOKE_INSTABOX_REGION: ${{ vars.MEDIA_SMOKE_INSTABOX_REGION }}
+      MEDIA_SMOKE_INSTABOX_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_INSTABOX_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_INSTABOX_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_INSTABOX_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET }}
+      MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.MEDIA_SMOKE_R2_ENDPOINT }}
+      MEDIA_SMOKE_R2_REGION: ${{ vars.MEDIA_SMOKE_R2_REGION }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_R2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_R2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PUBLIC_BUCKET }}
+      MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_R2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_B2_ENDPOINT: ${{ vars.MEDIA_SMOKE_B2_ENDPOINT }}
+      MEDIA_SMOKE_B2_REGION: ${{ vars.MEDIA_SMOKE_B2_REGION }}
+      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_B2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_B2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PUBLIC_BUCKET }}
+      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_B2_IDENTITY_BUCKET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.11"
+          cache: true
+      - name: Validate dedicated staging provider configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for provider in INSTABOX R2 B2; do
+            for suffix in ENDPOINT REGION ACCESS_KEY_ID SECRET_ACCESS_KEY PRIVATE_BUCKET PUBLIC_BUCKET IDENTITY_BUCKET; do
+              name="MEDIA_SMOKE_${provider}_${suffix}"
+              if [[ -z "${!name:-}" ]]; then
+                echo "::error::Missing staging configuration: $name (value redacted)."
+                exit 1
+              fi
+            done
+            endpoint_name="MEDIA_SMOKE_${provider}_ENDPOINT"
+            [[ "${!endpoint_name}" == https://* ]] || {
+              echo "::error::$endpoint_name must use HTTPS."
+              exit 1
+            }
+            private_name="MEDIA_SMOKE_${provider}_PRIVATE_BUCKET"
+            public_name="MEDIA_SMOKE_${provider}_PUBLIC_BUCKET"
+            identity_name="MEDIA_SMOKE_${provider}_IDENTITY_BUCKET"
+            private_bucket="${!private_name}"
+            public_bucket="${!public_name}"
+            identity_bucket="${!identity_name}"
+            [[ "$private_bucket" != "$public_bucket" && "$private_bucket" != "$identity_bucket" && "$public_bucket" != "$identity_bucket" ]] || {
+              echo "::error::$provider requires three distinct private/public/identity buckets."
+              exit 1
+            }
+            for bucket in "$private_bucket" "$public_bucket" "$identity_bucket"; do
+              [[ "$bucket" == *staging* || "$bucket" == *smoke* ]] || {
+                echo "::error::$provider bucket names must explicitly identify staging/smoke resources."
+                exit 1
+              }
+              if [[ "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]]; then
+                echo "::error::Production bucket names are forbidden."
+                exit 1
+              fi
+            done
+          done
+          echo "All three providers have isolated staging endpoints and bucket namespaces; secret values remain redacted."
+      - name: Run independent SHA-256 read-back, missing-copy repair, corruption repair and deletion
+        run: go test -count=1 -v ./internal/virtualstorage -run '^TestLiveMediaReplicationLifecycle$'
+      - name: Record live media acceptance
+        if: success()
+        run: |
+          {
+            echo "### Instabox VPS / Cloudflare R2 / Backblaze B2 media acceptance"
+            echo "- Separate private, public and identity-evidence buckets on each provider: passed"
+            echo "- Independent byte-level SHA-256 read-back on all three providers: passed"
+            echo "- Restore missing Instabox primary from verified replica: passed"
+            echo "- Recreate missing R2 replica: passed"
+            echo "- Repair same-size B2 checksum drift: passed"
+            echo "- Delete and verify object absence on all three providers: passed"
+            echo "- This test validates provider lifecycle only; it does not enable production media flags or prove CDN delivery."
+          } >> "$GITHUB_STEP_SUMMARY"
