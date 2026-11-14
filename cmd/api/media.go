@@ -92,11 +92,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
+		writeAppwriteAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaUploadIntentRequest
@@ -259,11 +255,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
+		writeAppwriteAuthFailure(w, status, err, id)
 		return
 	}
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
@@ -558,11 +550,7 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
+		writeAppwriteAuthFailure(w, status, err, id)
 		return
 	}
 	var body privateMediaDownloadRequest
@@ -620,11 +608,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
+		writeAppwriteAuthFailure(w, status, err, id)
 		return
 	}
 	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at, storage_namespace, storage_provider
@@ -701,11 +685,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
+		writeAppwriteAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaCompleteRequest
@@ -1109,11 +1089,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
+		writeAppwriteAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaAttachRequest
@@ -1263,11 +1239,7 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, id))
+		writeAppwriteAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaDeleteRequest
