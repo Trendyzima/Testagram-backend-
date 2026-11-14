@@ -396,7 +396,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 		if err==nil {
 			_,err=tx.Exec(ctx,`
 				UPDATE testagram_identity.identity_applications
-				SET adult_verification_result='failed',status='rejected',updated_at=now()
+				SET status='rejected',updated_at=now()
 				WHERE id=$1::uuid
 			`,applicationID)
 		}
@@ -467,7 +467,6 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 			UPDATE testagram_identity.identity_applications
 			SET adult_verified_at=now(),adult_verification_provider='testagram_manual',
 			    adult_verification_reference=$2,adult_verification_checked_at=now(),
-			    adult_verification_webhook_received_at=now(),adult_verification_result='verified',
 			    status='verified',sensitive_action_request_id=$3::uuid,updated_at=now()
 			WHERE id=$1::uuid
 		`,applicationID,evidenceRef,approvalRequestID)
