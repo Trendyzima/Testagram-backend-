@@ -17,6 +17,10 @@ This is the shared communication contract for six runtime repositories. `testagr
 | `the-algorithm` | Stateless feed ordering over an already-authorized bounded candidate set | Private Backend ranking API only |
 | `testagram-api` (control plane; not a runtime) | OpenAPI, private contracts, event schemas, SDKs, source pins and cross-repository compatibility CI | No runtime requests, product data or authorization decisions |
 
+## Deployment authority (mandatory)
+
+Instabox VPS, operated through the Data Centre control plane, is the sole supported deployment target for all Testagram runtime services. Render is retired and prohibited: no Render manifests, services, URLs, credentials, deployment workflows, previews, failover or fallback may be introduced. The Backend repository enforces this with `scripts/guard-no-render.py` in CI. The Backend public product API runtime is `cmd/api`; deploy its reviewed immutable image through the Instabox VPS Compose/control-plane path only. A future hosting change requires an explicit cross-repository architecture decision in this contract; no repository may independently add a hosting provider.
+
 ## Canonical request paths
 
 ### Flutter -> Backend
