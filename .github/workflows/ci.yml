@@ -542,6 +542,9 @@ jobs:
           live_replication = Path("internal/virtualstorage/identity_replication_live_test.go").read_text()
           provider_smoke = Path(".github/workflows/media-provider-smoke.yml").read_text()
           assert "TestLiveIdentityEvidenceReplicationLifecycle" in live_replication and "TestLiveIdentityEvidenceReplicationLifecycle" in provider_smoke and "confirm_live_provider_writes" in provider_smoke, "identity evidence must have an explicit, gated live MinIO/B2/R2 lifecycle acceptance test"
+          identity_smoke_workflow = Path(".github/workflows/identity-evidence-staging-smoke.yml").read_text()
+          assert "workflow_dispatch:" in identity_smoke_workflow and "confirm_staging_bucket_writes" in identity_smoke_workflow and "TESTAGRAM_LIVE_IDENTITY_EVIDENCE_REPLICATION: \"true\"" in identity_smoke_workflow, "identity provider lifecycle must be manual and explicitly write-confirmed"
+          assert "IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET" in identity_smoke_workflow and "IDENTITY_SMOKE_R2_IDENTITY_BUCKET" in identity_smoke_workflow and "IDENTITY_SMOKE_B2_IDENTITY_BUCKET" in identity_smoke_workflow and "three distinct private, public and identity-evidence staging buckets" in identity_smoke_workflow, "identity evidence smoke must use dedicated staging buckets on all providers"
           replica = Path("internal/virtualstorage/replication.go").read_text()
           reviewer_evidence = Path("cmd/api/identity_review.go").read_text()
           reviewer_tests = Path("cmd/api/identity_review_evidence_test.go").read_text()
