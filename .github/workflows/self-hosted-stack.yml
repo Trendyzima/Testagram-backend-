@@ -222,11 +222,19 @@ jobs:
         working-directory: deploy/self-hosted
         run: |
           docker compose up -d postgres
+          ready=false
+          # The official Postgres image starts a temporary server while it runs
+          # docker-entrypoint-initdb.d, then restarts the final server. A bare
+          # pg_isready can observe that temporary server just before shutdown.
           for attempt in $(seq 1 40); do
-            if docker compose exec -T postgres pg_isready -U testagram -d testagram; then break; fi
-            if [ "$attempt" -eq 40 ]; then docker compose logs postgres; exit 1; fi
+            if docker compose exec -T postgres pg_isready -U testagram -d testagram >/dev/null 2>&1 &&
+              docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "SELECT 1" >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
             sleep 2
           done
+          if [ "$ready" != true ]; then docker compose logs postgres; exit 1; fi
           result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null and to_regclass('testagram_hosting.audit_events') is not null")
           test "$result" = "t"
           docker compose down -v
