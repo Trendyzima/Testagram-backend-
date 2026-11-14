@@ -86,7 +86,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, testagram_media
-AS $
+AS $guard$
 DECLARE
   verified_count INTEGER;
 BEGIN
@@ -110,7 +110,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$;
+$guard$;
 
 DROP TRIGGER IF EXISTS media_replication_publication_guard ON testagram_media.assets;
 CREATE TRIGGER media_replication_publication_guard
