@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type appwriteRegistrationConsentInput struct {
@@ -131,5 +128,3 @@ func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Req
 	})
 }
 
-var _ = errors.Is
-var _ = pgx.ErrNoRows
