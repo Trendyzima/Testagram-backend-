@@ -196,8 +196,9 @@ jobs:
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
-          cmd='set -euo pipefail
-          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
+          cmd="$(cat <<'REMOTE_HEALTH_CHECK'
+          set -euo pipefail
+          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-control-plane-1 testagram-self-hosted-api-1 testagram-self-hosted-admin-console-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-self-hosted-caddy-1 testagram-self-hosted-node-exporter-1 testagram-self-hosted-prometheus-1 testagram-self-hosted-alertmanager-1 testagram-self-hosted-grafana-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
           if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
             containers+=(testagram-data-centre-media-1)
           fi
@@ -205,7 +206,7 @@ jobs:
             ready=false
             status=missing
             for attempt in $(seq 1 36); do
-              status="$(sudo docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" "$container" 2>/dev/null || echo missing)"
+              status="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || echo missing)"
               if [[ "$status" == healthy || "$status" == running ]]; then ready=true; break; fi
               if [[ "$status" == missing || "$status" == exited || "$status" == dead || "$status" == unhealthy ]]; then break; fi
               sleep 5
@@ -215,7 +216,24 @@ jobs:
               sudo docker logs --tail=100 "$container" 2>&1 || true
               exit 1
             fi
-          done'
+          done
+          minio_id="$(sudo docker ps -q --filter name=testagram-self-hosted-object-storage-1 | head -n 1)"
+          if [[ -z "$minio_id" ]]; then
+            echo "MinIO container is missing." >&2
+            exit 1
+          fi
+          bindings="$(sudo docker inspect --format '{{json .HostConfig.PortBindings}}' "$minio_id")"
+          if ! jq -e '."9000/tcp" | length == 1 and .[0].HostIp == "127.0.0.1"' <<<"$bindings" >/dev/null; then
+            echo "MinIO S3 port 9000 is not restricted to the VPS loopback interface." >&2
+            exit 1
+          fi
+          if jq -e '."9001/tcp" // [] | length > 0' <<<"$bindings" >/dev/null; then
+            echo "MinIO console port 9001 must not be published on the VPS host." >&2
+            exit 1
+          fi
+          echo "MinIO verified private: S3 bound only to 127.0.0.1; console unpublished."
+          REMOTE_HEALTH_CHECK
+          )"
           payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:180}')"
           result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" -d "$payload" \
@@ -255,27 +273,6 @@ jobs:
           echo "api_url=$url" >> "$GITHUB_OUTPUT"
           echo "Testagram API URL: $url"
 
-      - name: Publish MinIO media endpoint over HTTPS
-        id: publish_media
-        shell: bash
-        run: |
-          set -euo pipefail
-          API="https://api.instabox.sh"
-          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
-          body='{"port":9000,"name":"testagram-media","protocol":"http","access":"public"}'
-          published="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
-            -H "X-API-Key: $INSTABOX_API_KEY" \
-            -H "Content-Type: application/json" -d "$body" \
-            "$API/v1/machines/$MACHINE_ID/ports")"
-          url="$(jq -r '.url // empty' <<<"$published")"
-          if [[ -z "$url" ]]; then
-            echo "::error::InstaBox did not return a public HTTPS URL for MinIO port 9000."
-            jq -c '.error // .' <<<"$published"
-            exit 1
-          fi
-          echo "media_url=$url" >> "$GITHUB_OUTPUT"
-          echo "MinIO media URL: $url"
-
       - name: Publish Go CDN media endpoint over HTTPS
         id: publish_cdn
         shell: bash
@@ -303,10 +300,9 @@ jobs:
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
-          MEDIA_URL="${{ steps.publish_media.outputs.media_url }}"
           CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
           cmd='set -euo pipefail; ROOT=/data/home/testagram; BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"; upsert_env(){ key="$1"; value="$2"; if grep -q "^${key}=" "$BASE_ENV"; then sed -i "s|^${key}=.*|${key}=${value}|" "$BASE_ENV"; else printf "%s=%s\n" "$key" "$value" >> "$BASE_ENV"; fi; }; CDN_URL="${CDN_URL%/}"; upsert_env MINIO_PUBLIC_ENDPOINT "http://object-storage:9000"; upsert_env CDN_MEDIA_BASE_URL "$CDN_URL"; upsert_env MEDIA_PUBLIC_BASE_URL "$CDN_URL/v1"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" up -d --force-recreate media-cache api; for attempt in $(seq 1 36); do if sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /healthcheck && sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz; then break; fi; sleep 5; done; cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q media-cache)"; api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q api)"; check_env(){ container="$1"; key="$2"; expected="$3"; if ! sudo docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$container" | grep -Fqx -- "$key=$expected"; then echo "Runtime env mismatch: $key" >&2; exit 1; fi; }; expected_purge="$(sed -n "s/^CDN_PURGE_TOKEN=//p" "$BASE_ENV" | tail -n 1)"; check_env "$cdn_container" PUBLIC_BASE_URL "$CDN_URL"; check_env "$cdn_container" PURGE_TOKEN "$expected_purge"; check_env "$api_container" CDN_MEDIA_BASE_URL "$CDN_URL"; check_env "$api_container" MEDIA_PUBLIC_BASE_URL "$CDN_URL/v1"; check_env "$api_container" CDN_PURGE_URL "http://media-cache:8081/api/cache/purge"; check_env "$api_container" CDN_PURGE_TOKEN "$expected_purge"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /healthcheck; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz'
-          payload="$(jq -nc --arg cmd "$cmd" --arg media "$MEDIA_URL" --arg cdn "$CDN_URL" '{cmd:$cmd,envs:{MEDIA_URL:$media,CDN_URL:$cdn},timeoutSeconds:240}')"
+          payload="$(jq -nc --arg cmd "$cmd" --arg cdn "$CDN_URL" '{cmd:$cmd,envs:{CDN_URL:$cdn},timeoutSeconds:240}')"
           result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" -d "$payload" \
             "$API/v1/machines/$MACHINE_ID/exec")"
@@ -316,25 +312,24 @@ jobs:
             jq -r '.stderr // empty' <<<"$result"
             exit 1
           fi
-          echo "Backend now uses the public MinIO endpoint."
+          echo "Backend and CDN runtime configuration verified against the published HTTPS CDN origin."
 
       - name: Verify public API health and readiness
         shell: bash
         run: |
           set -euo pipefail
           URL="${{ steps.publish.outputs.api_url }}"
-          MEDIA_URL="${{ steps.publish_media.outputs.media_url }}"
           CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
           for attempt in $(seq 1 30); do
-            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null && curl -fsS "$MEDIA_URL/minio/health/live" >/dev/null && curl -fsS "$CDN_URL/healthz" >/tmp/cdn-health.json && curl -fsS "$CDN_URL/readyz" >/tmp/cdn-ready.txt && grep -q '"service":"testagram-cdn"' /tmp/cdn-health.json && grep -qx 'ready' /tmp/cdn-ready.txt; then
+            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null && curl -fsS "$CDN_URL/healthz" >/tmp/cdn-health.json && curl -fsS "$CDN_URL/readyz" >/tmp/cdn-ready.txt && grep -q '"service":"testagram-cdn"' /tmp/cdn-health.json && grep -qx 'ready' /tmp/cdn-ready.txt; then
               private_status="$(curl -sS -o /dev/null -w '%{http_code}' "$CDN_URL/v1/users/cdn-smoke/0123456789abcdef0123456789abcdef")"
               case "$private_status" in 401|403|404) ;; *) echo "::error::Unauthenticated media request returned unsafe HTTP $private_status"; exit 1 ;; esac
-              echo "Testagram API, MinIO and the pinned Go CDN are reachable; CDN readiness and unauthenticated media denial passed."
+              echo "Testagram API and pinned Go CDN are reachable; MinIO remains private behind the backend/CDN and unauthenticated media denial passed."
               exit 0
             fi
             sleep 10
           done
-          echo "::error::The API or public MinIO endpoint did not pass health checks."
+          echo "::error::The published API or Go CDN did not pass HTTPS health/readiness checks."
           exit 1
 
       - name: Verify canonical API origin and private TV route registration
