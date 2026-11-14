@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS testagram_identity.appwrite_registration_consents (
   request_id TEXT NOT NULL DEFAULT ''
     CHECK (length(request_id) <= 128),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (appwrite_user_id, consent_type, policy_version)
+  UNIQUE (appwrite_user_id, consent_type, policy_version, email)
 );
 
 CREATE INDEX IF NOT EXISTS appwrite_registration_consents_user_idx
