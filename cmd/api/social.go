@@ -80,11 +80,7 @@ func (s *service) socialAuth(w http.ResponseWriter, r *http.Request) (string, st
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
-		if status >= 500 {
-			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody(code, message, requestID))
+		writeAppwriteAuthFailure(w, status, err, requestID)
 		return "", requestID, false
 	}
 	if !socialUUIDPattern.MatchString(userID) {
