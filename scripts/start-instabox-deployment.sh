@@ -273,6 +273,18 @@ set -a
 source "$BASE_ENV"
 set +a
 
+# Account login and post publishing are both production-critical. Fail the
+# deployment rather than leave users with an apparently healthy but unusable
+# registration or posting path.
+if [[ -z "${APPWRITE_PROJECT_ID:-}" ]]; then
+  echo "::error::APPWRITE_PROJECT_ID is required for Appwrite registration and login."
+  exit 1
+fi
+if [[ -z "${ONSPACE_AI_API_KEY:-}" ]]; then
+  echo "::error::ONSPACE_AI_API_KEY is required; Backend post publishing remains fail-closed without moderation."
+  exit 1
+fi
+
 echo "Starting PostgreSQL, MinIO and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
