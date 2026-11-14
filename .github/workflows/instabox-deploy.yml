@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: false
+      confirm_native_identity_migrations:
+        description: "Authorize additive native identity PostgreSQL migrations only if the live schema preflight finds them incomplete"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -127,6 +132,7 @@ jobs:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           MEDIA_REPLICATION_ENABLED: ${{ vars.MEDIA_REPLICATION_ENABLED || 'false' }}
           TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED || 'false' }}
+          CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ inputs.confirm_native_identity_migrations == true && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
           APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
