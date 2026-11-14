@@ -36,22 +36,23 @@ for migration in \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
   migrations/20261113_identity_registration_hardening.sql \
-  migrations/20261113_identity_idswyft_intake.sql \
   migrations/20261113_native_identity_verification.sql \
+  migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
-  migrations/20261114_native_identity_evidence.sql; do
+  migrations/20261115_identity_evidence_access_audit.sql; do
   psql_ci < "$migration"
 done
 
 # Re-apply the new migration to prove idempotent DDL behavior.
 psql_ci < migrations/20261113_identity_registration_hardening.sql
-psql_ci < migrations/20261113_identity_idswyft_intake.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
-psql_ci < migrations/20261114_native_identity_integrity.sql
-psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261114_native_identity_evidence.sql
 psql_ci < migrations/20261114_native_identity_evidence.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
@@ -278,7 +279,16 @@ BEGIN
   INSERT INTO testagram_identity.verification_events
     (session_id,event_type,actor_type,actor_reference,request_id)
   VALUES
-    (v_session_id,'session_created','applicant','native-ci','native-session-created');
+    (v_session_id,'session_created','applicant','native-ci','native-session-created'),
+    (v_session_id,'evidence_access_attempted','reviewer','ci-reviewer-one','native-evidence-read');
+
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_identity.verification_events
+    WHERE session_id=v_session_id AND event_type='evidence_access_attempted'
+      AND actor_type='reviewer' AND actor_reference='ci-reviewer-one'
+  ) THEN
+    RAISE EXCEPTION 'reviewer evidence-access audit event was not persisted';
+  END IF;
 
   INSERT INTO testagram_identity.verification_reviews
     (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
@@ -384,4 +394,4 @@ if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tam
   exit 1
 fi
 
-echo "Identity registration hardening migration and invariants passed."
+echo "Native identity migrations, evidence-access audit and registration invariants passed."
