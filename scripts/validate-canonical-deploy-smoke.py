@@ -23,7 +23,8 @@ assert 'ready_status" == "404"' in canonical_smoke, (
 )
 assert 'health_status" == "200"' in canonical_smoke
 assert 'catalog_status" == "401"' in canonical_smoke
-assert 'grep -qx \'ok\' "$tmp/health"' in canonical_smoke
+assert 'x-testagram-service:[[:space:]]*testagram-api' in canonical_smoke
+assert "jq -e '.ok == true and .service == \"testagram-api\"' \"$tmp/health\" >/dev/null" in canonical_smoke
 assert 'grep -qx \'ready\' "$tmp/ready"' not in canonical_smoke, (
     "Do not require the private readiness body over the public hostname"
 )
