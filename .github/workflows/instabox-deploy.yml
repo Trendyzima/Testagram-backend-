@@ -349,6 +349,12 @@ jobs:
               echo "::error::R2 private and public buckets must be distinct."
               exit 1
             }
+          else
+            # Do not leave old provider credentials mounted in the Backend
+            # container after replication is disabled.
+            for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+              write_env_value "$key" ""
+            done
           fi
           ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
           ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
@@ -527,13 +533,17 @@ jobs:
             set +a
             echo "Data Centre private media profile enabled with B2/R2 configuration (all values redacted)."
           else
-            existing_media_url="$(read_env_value DATA_CENTRE_MEDIA_API_URL)"
-            existing_media_token="$(read_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN)"
-            if [[ -n "$existing_media_url" || -n "$existing_media_token" ]]; then
-              echo "::error::Backend has a partial Data Centre media client configuration but B2/R2 provider configuration is incomplete."
-              exit 1
-            fi
-            echo "Data Centre private media profile remains disabled: DATA_CENTRE_MEDIA_ENABLED is not true."
+            # Explicitly remove stale Data Centre provider/client secrets when
+            # the private media profile is switched off.
+            for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+              write_dc_env_value "$key" ""
+            done
+            write_dc_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN ""
+            write_dc_env_value MEDIA_DATABASE_NAME ""
+            write_dc_env_value MEDIA_DATABASE_URL ""
+            write_env_value DATA_CENTRE_MEDIA_API_URL ""
+            write_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN ""
+            echo "Data Centre private media profile remains disabled; stale provider/client credentials cleared."
           fi
           printf '%s\n' "$media_enabled" > "$ROOT/media-enabled.txt"
           # Persist the profile gate so later read-only Compose inspections and
