@@ -124,7 +124,6 @@ jobs:
         id: remote
         env:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
-          FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           MEDIA_REPLICATION_ENABLED: ${{ vars.MEDIA_REPLICATION_ENABLED || 'false' }}
           TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED || 'false' }}
