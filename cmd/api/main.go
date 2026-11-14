@@ -427,9 +427,16 @@ func sortedStatusCodes(statuses map[int]uint64) []int {
 func (s *service) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		// Liveness is deliberately independent of PostgreSQL readiness. The
+		// public health identity lets release checks distinguish this Backend
+		// from a stale Worker, proxy fallback, or unrelated service.
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Testagram-Service", "testagram-api")
+		w.Header().Set("X-Testagram-Health-Contract", "v1")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
+		_, _ = w.Write([]byte("{\\"ok\\":true,\\"service\\":\\"testagram-api\\"}\\n"))
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if s.db == nil {
