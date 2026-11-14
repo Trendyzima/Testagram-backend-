@@ -692,3 +692,173 @@ func TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair(t *testing.
 			approvalCount, tokenCount, applicationStatus)
 	}
 }
+
+
+func TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for PostgreSQL identity concurrency integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const project = "identity-concurrency-ci-project"
+	const reviewerOneJWT = "identity-concurrency-reviewer-one-jwt"
+	const reviewerTwoJWT = "identity-concurrency-reviewer-two-jwt"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/account" || r.Header.Get("X-Appwrite-Project") != project {
+			http.Error(w, "invalid test Appwrite request", http.StatusUnauthorized)
+			return
+		}
+		var id, email string
+		switch r.Header.Get("X-Appwrite-JWT") {
+		case reviewerOneJWT:
+			id, email = "ci-reviewer-one", "reviewer-one@example.test"
+		case reviewerTwoJWT:
+			id, email = "ci-reviewer-two", "reviewer-two@example.test"
+		default:
+			http.Error(w, "invalid test Appwrite JWT", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"$id": id, "email": email, "emailVerification": true, "status": true,
+		})
+	}))
+	defer server.Close()
+	t.Setenv("APPWRITE_ENDPOINT", server.URL+"/v1")
+	t.Setenv("APPWRITE_PROJECT_ID", project)
+	svc := &service{db: db, upstream: server.Client()}
+
+	createFixture := func(email, username, fingerprint string) (string, string) {
+		t.Helper()
+		var applicationID, requestID string
+		if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
+			t.Fatal(err)
+		}
+		payload, err := json.Marshal(map[string]any{
+			"application_id": applicationID,
+			"email": email,
+			"username": username,
+			"display_name": "Concurrent Review",
+			"evidence_fingerprint_sha256": fingerprint,
+			"terms_version": "terms-v1",
+			"privacy_version": "privacy-v1",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(ctx, `
+			INSERT INTO testagram_auth.sensitive_action_requests
+			  (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256,required_approvals,status,expires_at)
+			VALUES ('identity.approve','ci-intake-service',$1,
+			        'Concurrent identity approval integration fixture',$2::jsonb,repeat('a',64),2,'pending',now()+interval '1 hour')
+			RETURNING id::text
+		`, applicationID, string(payload)).Scan(&requestID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_identity.identity_applications
+			  (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
+			   adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
+			   evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
+			   terms_accepted_at,privacy_accepted_at,status,sensitive_action_request_id)
+			VALUES ($1::uuid,$2,$3,'Concurrent Review',now(),now(),
+			        'testagram_manual','concurrent-adult-ref',now(),
+			        'opaque-concurrent-evidence-ref',decode($4,'hex'),'terms-v1','privacy-v1',
+			        now(),now(),'verified',$5::uuid)
+		`, applicationID, email, username, fingerprint, requestID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_identity.identity_application_reviews
+			  (application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference)
+			VALUES ($1::uuid,'ci-reviewer-one','approved','First independent evidence review','concurrent-audit-01'),
+			       ($1::uuid,'ci-reviewer-two','approved','Second independent evidence review','concurrent-audit-02')
+		`, applicationID); err != nil {
+			t.Fatal(err)
+		}
+		return applicationID, requestID
+	}
+	approve := func(applicationID, jwt string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/admin/identity/applications/"+applicationID+"/approve",
+			strings.NewReader(`{"reason":"Concurrent independent approval decision"}`))
+		req.SetPathValue("application_id", applicationID)
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		response := httptest.NewRecorder()
+		svc.identityApplicationApprove(response, req)
+		return response
+	}
+
+	// Two distinct reviewers racing on one application must serialize into
+	// one pending response and one final approval/token issuance.
+	applicationID, requestID := createFixture(
+		"concurrent-review@example.test", "concurrent_review", strings.Repeat("e", 64),
+	)
+	results := make(chan *httptest.ResponseRecorder, 2)
+	go func() { results <- approve(applicationID, reviewerOneJWT) }()
+	go func() { results <- approve(applicationID, reviewerTwoJWT) }()
+	first, second := <-results, <-results
+	statuses := map[int]int{first.Code: 1}
+	statuses[second.Code]++
+	if statuses[http.StatusAccepted] != 1 || statuses[http.StatusOK] != 1 {
+		t.Fatalf("concurrent distinct reviewers returned statuses %d and %d; want one 202 and one 200: %s | %s",
+			first.Code, second.Code, first.Body.String(), second.Body.String())
+	}
+	var approvals, tokens int
+	var applicationStatus, requestStatus string
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.sensitive_action_approvals WHERE request_id=$1::uuid AND decision='approved'", requestID).Scan(&approvals); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.identity_approval_tokens WHERE application_id=$1::uuid", applicationID).Scan(&tokens); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid", applicationID).Scan(&applicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid", requestID).Scan(&requestStatus); err != nil {
+		t.Fatal(err)
+	}
+	if approvals != 2 || tokens != 1 || applicationStatus != "approved" || requestStatus != "approved" {
+		t.Fatalf("distinct-reviewer race state: approvals=%d tokens=%d application=%q request=%q",
+			approvals, tokens, applicationStatus, requestStatus)
+	}
+
+	// Two simultaneous requests from the same reviewer must not count as two
+	// independent approvals or mint a token.
+	duplicateApplicationID, duplicateRequestID := createFixture(
+		"duplicate-review@example.test", "duplicate_review", strings.Repeat("0", 64),
+	)
+	duplicateResults := make(chan *httptest.ResponseRecorder, 2)
+	go func() { duplicateResults <- approve(duplicateApplicationID, reviewerOneJWT) }()
+	go func() { duplicateResults <- approve(duplicateApplicationID, reviewerOneJWT) }()
+	duplicateFirst, duplicateSecond := <-duplicateResults, <-duplicateResults
+	duplicateStatuses := map[int]int{duplicateFirst.Code: 1}
+	duplicateStatuses[duplicateSecond.Code]++
+	if duplicateStatuses[http.StatusAccepted] != 1 || duplicateStatuses[http.StatusConflict] != 1 {
+		t.Fatalf("duplicate reviewer race returned statuses %d and %d; want one 202 and one 409: %s | %s",
+			duplicateFirst.Code, duplicateSecond.Code, duplicateFirst.Body.String(), duplicateSecond.Body.String())
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.sensitive_action_approvals WHERE request_id=$1::uuid", duplicateRequestID).Scan(&approvals); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.identity_approval_tokens WHERE application_id=$1::uuid", duplicateApplicationID).Scan(&tokens); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid", duplicateApplicationID).Scan(&applicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid", duplicateRequestID).Scan(&requestStatus); err != nil {
+		t.Fatal(err)
+	}
+	if approvals != 1 || tokens != 0 || applicationStatus != "verified" || requestStatus != "pending" {
+		t.Fatalf("duplicate-reviewer race state: approvals=%d tokens=%d application=%q request=%q",
+			approvals, tokens, applicationStatus, requestStatus)
+	}
+}
