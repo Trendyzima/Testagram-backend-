@@ -532,6 +532,9 @@ jobs:
           apply_identity = Path("deploy/self-hosted/apply-native-identity-migrations.sh").read_text()
           assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval"
           assert "identityEvidenceMatchesContentType" in identity and "evidence_access_attempted" in review, "identity evidence requires file-signature validation and audited reviewer access"
+          live_replication = Path("internal/virtualstorage/identity_replication_live_test.go").read_text()
+          provider_smoke = Path(".github/workflows/media-provider-smoke.yml").read_text()
+          assert "TestLiveIdentityEvidenceReplicationLifecycle" in live_replication and "TestLiveIdentityEvidenceReplicationLifecycle" in provider_smoke and "confirm_live_provider_writes" in provider_smoke, "identity evidence must have an explicit, gated live MinIO/B2/R2 lifecycle acceptance test"
           admin = Path("admin-console/main.go").read_text()
           assert 'BACKEND_INTERNAL_URL: http://api:8080' in compose and '"/account/jwts"' in admin and 'handleIdentityReviewQueue' in admin, "staff console must mint reviewer JWTs server-side and proxy through the private Backend network"
           assert 'loadIdentityReviewQueue' in Path("admin-console/web/app.js").read_text() and 'identity-review-panel' in Path("admin-console/web/index.html").read_text(), "staff console must expose the identity reviewer workflow"
