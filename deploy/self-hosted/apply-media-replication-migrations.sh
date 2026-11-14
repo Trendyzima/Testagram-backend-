@@ -22,7 +22,7 @@ docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine pg_restore --list
 
 echo "Verified pre-migration backup: $backup"
 echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
-read -r -p "Type APPLY-MEDIA-REPLICATION to apply the additive ledger/outbox migrations: " confirm
+read -r -p "Type APPLY-MEDIA-REPLICATION to apply the ledger, outbox and three-provider publication-gate migrations: " confirm
 if [[ "$confirm" != "APPLY-MEDIA-REPLICATION" ]]; then
   echo "Cancelled. Backup retained; no migrations were applied."
   exit 0
