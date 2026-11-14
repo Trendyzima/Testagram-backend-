@@ -34,10 +34,19 @@ chmod 600 "$backup" "$checksum"
 
 echo "Verified pre-migration backup: $backup"
 echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
-read -r -p "Type APPLY-NATIVE-IDENTITY-MIGRATIONS to continue: " confirm
-if [[ "$confirm" != "APPLY-NATIVE-IDENTITY-MIGRATIONS" ]]; then
-  echo "Cancelled. Backup retained; no migrations were applied."
-  exit 0
+confirm="${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}"
+if [[ "$confirm" == "APPLY-NATIVE-IDENTITY-MIGRATIONS" ]]; then
+  echo "Native identity migration explicitly authorized by the production deployment input."
+elif [[ -t 0 ]]; then
+  read -r -p "Type APPLY-NATIVE-IDENTITY-MIGRATIONS to continue: " confirm
+  if [[ "$confirm" != "APPLY-NATIVE-IDENTITY-MIGRATIONS" ]]; then
+    echo "Cancelled. Backup retained; no migrations were applied."
+    exit 1
+  fi
+else
+  echo "Non-interactive migration requires CONFIRM_NATIVE_IDENTITY_MIGRATIONS=APPLY-NATIVE-IDENTITY-MIGRATIONS." >&2
+  echo "Backup retained; no migrations were applied." >&2
+  exit 1
 fi
 
 # Reconcile the Postgres service with the updated read-only migration mounts.
