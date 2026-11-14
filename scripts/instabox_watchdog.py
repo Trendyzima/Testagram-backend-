@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import quote, urlencode, urlparse
 
 API_BASE = os.getenv("INSTABOX_API_BASE_URL", "https://api.instabox.sh").rstrip("/")
-API_KEY = os.getenv("INSTABOX_API_KEY", "")
+API_KEY = os.getenv("INSTABOX_WATCHDOG_API_KEY", "")
 MACHINE_ID = os.getenv("INSTABOX_MACHINE_ID", "")
 MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagramdb")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
