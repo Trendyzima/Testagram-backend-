@@ -470,6 +470,7 @@ func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request)
 		SELECT object_key,content_type,size_bytes,sha256
 		FROM testagram_identity.verification_evidence
 		WHERE id=$1::uuid AND session_id=$2::uuid AND status='upload_pending'
+		  AND created_at > now()-interval '5 minutes'
 	`, evidenceID, r.PathValue("session_id")).Scan(&objectKey, &contentType, &size, &expectedDigest)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
@@ -539,6 +540,10 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
 		return
 	}
+	if s.virtualStorage == nil || s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	defer r.Body.Close()
 	var input identityEvidenceSubmitInput
@@ -555,6 +560,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		SELECT object_key,content_type,size_bytes,sha256
 		FROM testagram_identity.verification_evidence
 		WHERE id=$1::uuid AND session_id=$2::uuid AND status='upload_pending'
+		  AND created_at > now()-interval '5 minutes'
 	`, input.EvidenceID, r.PathValue("session_id")).Scan(&objectKey, &contentType, &size, &digest)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
