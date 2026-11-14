@@ -52,6 +52,8 @@ jobs:
 
             (
               set -euo pipefail
+              # ShellCheck cannot see EXIT-trap invocation; this cleanup runs on every subshell exit.
+              # shellcheck disable=SC2329
               cleanup() {
                 AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
                   aws --endpoint-url "$endpoint" --region "$region" s3api delete-object \
