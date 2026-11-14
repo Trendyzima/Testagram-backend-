@@ -62,6 +62,53 @@ class WatchdogTests(unittest.TestCase):
             watchdog.wait_for_service()
         self.assertEqual(probe.call_count, 4)
 
+    def test_probe_404_is_a_configuration_error_not_an_outage(self):
+        error = watchdog.urllib.error.HTTPError(
+            "https://api.example.test/readyz", 404, "Not Found", {}, None
+        )
+        with patch.object(watchdog.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaisesRegex(
+                watchdog.ProbeConfigurationError,
+                "HTTP 404.*refusing automatic lifecycle action",
+            ):
+                watchdog.probe("https://api.example.test/readyz")
+
+    def test_probe_503_remains_a_service_failure(self):
+        error = watchdog.urllib.error.HTTPError(
+            "https://api.example.test/readyz", 503, "Unavailable", {}, None
+        )
+        with patch.object(watchdog.urllib.request, "urlopen", side_effect=error):
+            self.assertEqual(
+                watchdog.probe("https://api.example.test/readyz"),
+                (False, "HTTP 503"),
+            )
+
+    def test_readiness_404_never_stops_or_starts_running_machine(self):
+        api = FakeAPI()
+
+        def configured_probe(url):
+            if url.endswith("/healthz"):
+                return True, "HTTP 200"
+            raise watchdog.ProbeConfigurationError(
+                "readiness endpoint returned HTTP 404; refusing automatic lifecycle action"
+            )
+
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "notify") as notify,
+            patch.object(watchdog, "probe", side_effect=configured_probe),
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+            patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"),
+            patch.object(watchdog, "READY_URL", "https://api.example.test/readyz"),
+        ):
+            with self.assertRaises(watchdog.ProbeConfigurationError):
+                watchdog.main()
+
+        self.assertFalse(any(call[0] == "POST" for call in api.calls))
+        notify.assert_not_called()
+
     def test_machine_snapshot_rejects_wrong_machine_id(self):
         api = FakeAPI({"id": "another-machine", "state": "running", "desiredState": "running"})
         with self.assertRaisesRegex(watchdog.WatchdogError, "different machine ID"):

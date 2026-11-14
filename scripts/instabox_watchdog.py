@@ -33,6 +33,11 @@ class WatchdogError(RuntimeError):
     pass
 
 
+class ProbeConfigurationError(WatchdogError):
+    """A 4xx health response indicates a bad probe contract, not an outage."""
+
+
+
 @dataclass
 class API:
     base: str = API_BASE
@@ -136,6 +141,14 @@ def probe(url: str) -> tuple[bool, str]:
                 return True, f"HTTP {response.status}"
             return False, f"HTTP {response.status}"
     except urllib.error.HTTPError as exc:
+        # A 4xx response is an endpoint, routing, or authorization problem.
+        # Never interpret it as machine failure: an enabled watchdog must not
+        # stop/start a healthy VPS because its probe URL is wrong or blocked.
+        if 400 <= exc.code < 500:
+            raise ProbeConfigurationError(
+                f"Health probe {urlparse(url).path or '/'} returned HTTP {exc.code}; "
+                "refusing automatic lifecycle action until the probe contract is corrected"
+            ) from exc
         return False, f"HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError) as exc:
         return False, type(exc).__name__
