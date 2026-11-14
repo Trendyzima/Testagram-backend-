@@ -436,7 +436,7 @@ func (s *service) routes() http.Handler {
 		w.Header().Set("X-Testagram-Service", "testagram-api")
 		w.Header().Set("X-Testagram-Health-Contract", "v1")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{\\"ok\\":true,\\"service\\":\\"testagram-api\\"}\\n"))
+		_, _ = w.Write([]byte("{\"ok\":true,\"service\":\"testagram-api\"}\n"))
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if s.db == nil {
