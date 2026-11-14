@@ -9,12 +9,13 @@ func TestValidateIdentityEvidenceBucketIsolation(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "identity evidence may share private physical bucket",
+			name: "identity evidence cannot share private physical bucket",
 			buckets: map[string]string{
 				"media-private": "private-media",
 				"media-public": "public-media",
 				"identity-evidence-private": "private-media",
 			},
+			wantErr: true,
 		},
 		{
 			name: "dedicated identity evidence bucket",
