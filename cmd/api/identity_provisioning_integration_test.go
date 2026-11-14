@@ -250,7 +250,7 @@ func TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval(t *testing.T)
 		t.Fatal(err)
 	}
 
-	appwriteID := "appwrite-unapproved-ci-" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	appwriteID := "unapproved-" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
 	email := appwriteID + "@example.test"
 	jwt := "unapproved-appwrite-session-jwt"
 	project := "identity-gate-ci-project"
