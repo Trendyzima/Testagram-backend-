@@ -315,3 +315,135 @@ func TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval(t *testing.T)
 		t.Fatalf("unapproved login created account state: mappings=%d canonical_accounts=%d", mappings, canonicalAccounts)
 	}
 }
+
+
+// TestIdentityApprovalRejectsExpiredSensitiveActionRequest proves that the
+// identity-specific approval handler cannot bypass the expiry enforced by the
+// general sensitive-action approval path.
+func TestIdentityApprovalRejectsExpiredSensitiveActionRequest(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for PostgreSQL identity approval integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	const applicantEmail = "expired-approval@example.test"
+	const reviewerOne = "ci-reviewer-one"
+	const reviewerTwo = "ci-reviewer-two"
+	const reviewerEmail = "reviewer-one@example.test"
+	const project = "identity-expiry-ci-project"
+	const jwt = "identity-expiry-ci-jwt"
+
+	var applicationID, requestID string
+	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := strings.Repeat("d", 64)
+	payload := map[string]any{
+		"application_id": applicationID,
+		"email": applicantEmail,
+		"username": "expired_ci",
+		"display_name": "Expired Approval",
+		"evidence_fingerprint_sha256": fingerprint,
+		"terms_version": "terms-v1",
+		"privacy_version": "privacy-v1",
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_requests
+		  (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256,required_approvals,status,expires_at)
+		VALUES ('identity.approve','ci-intake-service',$1,
+		        'Expired identity approval integration fixture',$2::jsonb,repeat('a',64),2,'pending',now()-interval '1 minute')
+		RETURNING id::text
+	`, applicationID, string(payloadJSON)).Scan(&requestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_identity.identity_applications
+		  (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
+		   adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
+		   evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
+		   terms_accepted_at,privacy_accepted_at,status,sensitive_action_request_id)
+		VALUES ($1::uuid,$2,'expired_ci','Expired Approval',now(),now(),
+		        'testagram_manual','expired-ci-adult-ref',now(),
+		        'opaque-expired-evidence-ref',decode($3,'hex'),'terms-v1','privacy-v1',
+		        now(),now(),'verified',$4::uuid)
+	`, applicationID, applicantEmail, fingerprint, requestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_identity.identity_application_reviews
+		  (application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference)
+		VALUES ($1::uuid,$2,'approved','First independent evidence review','expired-audit-ref-01'),
+		       ($1::uuid,$3,'approved','Second independent evidence review','expired-audit-ref-02')
+	`, applicationID, reviewerOne, reviewerTwo); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the first approval already being recorded before the request
+	// expires. The second reviewer must not be able to finalize it afterwards.
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_approvals
+		  (request_id,approver_appwrite_user_id,decision,reason)
+		VALUES ($1::uuid,$2,'approved','First approval before expiry')
+	`, requestID, reviewerTwo); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/account" ||
+			r.Header.Get("X-Appwrite-Project") != project ||
+			r.Header.Get("X-Appwrite-JWT") != jwt {
+			http.Error(w, "invalid test Appwrite request", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"$id": reviewerOne, "email": reviewerEmail,
+			"emailVerification": true, "status": true,
+		})
+	}))
+	defer server.Close()
+	t.Setenv("APPWRITE_ENDPOINT", server.URL+"/v1")
+	t.Setenv("APPWRITE_PROJECT_ID", project)
+
+	svc := &service{db: db, upstream: server.Client()}
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/admin/identity/applications/"+applicationID+"/approve",
+		strings.NewReader(`{"reason":"Second reviewer approval after expiry"}`))
+	req.SetPathValue("application_id", applicationID)
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	response := httptest.NewRecorder()
+	svc.identityApplicationApprove(response, req)
+	if response.Code != http.StatusConflict ||
+		!strings.Contains(response.Body.String(), "APPROVAL_REQUEST_EXPIRED_OR_INVALID") {
+		t.Fatalf("expired approval status=%d body=%s; want explicit conflict", response.Code, response.Body.String())
+	}
+
+	var applicationStatus, requestStatus string
+	var approvalCount, tokenCount int
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid", applicationID).Scan(&applicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_auth.sensitive_action_requests WHERE id=$1::uuid", requestID).Scan(&requestStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.sensitive_action_approvals WHERE request_id=$1::uuid", requestID).Scan(&approvalCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.identity_approval_tokens WHERE application_id=$1::uuid", applicationID).Scan(&tokenCount); err != nil {
+		t.Fatal(err)
+	}
+	if applicationStatus != "verified" || requestStatus != "pending" || approvalCount != 1 || tokenCount != 0 {
+		t.Fatalf("expired approval mutated state: application=%q request=%q approvals=%d tokens=%d",
+			applicationStatus, requestStatus, approvalCount, tokenCount)
+	}
+}
