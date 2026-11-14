@@ -78,13 +78,12 @@ BEGIN
     (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
      adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
      evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
-     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id,
-     status_access_token_sha256,status_access_token_expires_at)
+     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id)
   VALUES
     (app_id,'first@example.test','ci_first','CI First',now(),now(),
      'testagram_manual','ci-adult-evidence-ref',now(),
      'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
-     decode(repeat('2',64),'hex'),action_id,decode(repeat('6',64),'hex'),now()+interval '7 days');
+     decode(repeat('2',64),'hex'),action_id);
 
   -- A token cannot be issued while the ledger is still pending.
   BEGIN
