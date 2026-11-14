@@ -51,6 +51,7 @@ jobs:
           from pathlib import Path
           script = Path("scripts/instabox-readonly-health.sh").read_text()
           workflow = Path(".github/workflows/instabox-readonly-health.yml").read_text()
+          assert "secrets.INSTABOX_READONLY_API_KEY" in workflow and "secrets.INSTABOX_API_KEY" not in workflow, "read-only inspector must use a dedicated least-privilege key"
           for forbidden in ("docker compose up", "docker restart", "docker stop", "docker rm", "docker pull", "volume rm"):
               assert forbidden not in script, f"read-only inspector contains a mutating command: {forbidden}"
           assert "workflow_dispatch:" in workflow and "/v1/machines/$MACHINE_ID/exec" in workflow, "health inspection must be manual and use the read-only diagnostic command"
