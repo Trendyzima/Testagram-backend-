@@ -157,7 +157,8 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "GET required", requestID(r)))
 		return
 	}
-	if _, status, err := s.identityReviewer(r); err != nil {
+	reviewer, status, err := s.identityReviewer(r)
+	if err != nil {
 		writeJSON(w, status, errorBody("STAFF_ACCESS_DENIED", err.Error(), requestID(r)))
 		return
 	}
@@ -182,6 +183,17 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 	`, sessionID, evidenceID).Scan(&applicationID, &objectKey, &contentType, &size)
 	if err != nil || size < 1 || size > maxIdentityEvidenceBytes {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
+		return
+	}
+	// Audit the reviewer access attempt before any private evidence bytes are fetched.
+	// Fail closed if the append-only audit record cannot be committed.
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO testagram_identity.verification_events
+		  (session_id,event_type,actor_type,actor_reference,request_id,metadata)
+		VALUES ($1::uuid,'evidence_access_attempted','reviewer',$2,$3,
+		        jsonb_build_object('evidence_id',$4,'content_type',$5,'size_bytes',$6))
+	`, sessionID, reviewer.ID, requestID(r), evidenceID, contentType, size); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Evidence access could not be audited", requestID(r)))
 		return
 	}
 	extension, ok := identityEvidenceExtension(contentType)
