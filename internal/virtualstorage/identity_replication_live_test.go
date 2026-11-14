@@ -147,6 +147,20 @@ func TestLiveIdentityEvidenceReplicationLifecycle(t *testing.T) {
 		}
 	}
 
+	// Simulate primary loss and restore it only from a checksum-verified replica.
+	if err := primary.Delete(ctx, primaryBuckets["identity-evidence-private"], scopedKey); err != nil {
+		t.Fatalf("simulate primary object loss: %v", err)
+	}
+	if _, err := primary.Head(ctx, primaryBuckets["identity-evidence-private"], scopedKey); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("primary loss simulation HEAD error=%v, want not found", err)
+	}
+	if err := replicator.RestorePrimary(ctx, tenantID, "identity-evidence-private", objectKey, int64(len(payload)), "application/pdf", digest); err != nil {
+		t.Fatalf("restore missing primary identity evidence from verified replica: %v", err)
+	}
+	if actual, err := primary.SHA256(ctx, primaryBuckets["identity-evidence-private"], scopedKey, int64(len(payload))); err != nil || actual != digest {
+		t.Fatalf("restored primary checksum=%q err=%v, want %s", actual, err, digest)
+	}
+
 	// Simulate loss of one replica and require the same Replicate path to restore it.
 	if err := r2.Delete(ctx, r2Buckets["identity-evidence-private"], scopedKey); err != nil {
 		t.Fatalf("simulate R2 replica loss: %v", err)
