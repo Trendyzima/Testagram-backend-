@@ -102,11 +102,7 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	userID, status, authErr := s.authenticatedMediaUser(r)
 	if authErr != nil {
-		message := "A valid authenticated session is required"
-		if status >= 500 {
-			message = "Authentication service is temporarily unavailable"
-		}
-		writeJSON(w, status, errorBody("AUTH_REQUIRED", message, requestID))
+		writeAppwriteAuthFailure(w, status, authErr, requestID)
 		return
 	}
 	if s.db == nil {
