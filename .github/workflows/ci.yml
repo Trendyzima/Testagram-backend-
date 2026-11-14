@@ -1095,7 +1095,8 @@ jobs:
           FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
           DO $approval$
           BEGIN
-            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals) <> 2 THEN
+            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals
+                WHERE request_id=(SELECT id FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001')) <> 2 THEN
               RAISE EXCEPTION 'two distinct approval records were not persisted';
             END IF;
             IF NOT EXISTS (
