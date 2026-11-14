@@ -123,116 +123,75 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if endpoint == "" || projectID == "" {
 		return "", http.StatusServiceUnavailable, errors.New("Appwrite authentication is not configured")
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	account, status, err := fetchAppwriteAccount(ctx, s.upstream, endpoint, projectID, jwt)
 	if err != nil {
 		return "", status, err
 	}
-	// Email verification is a server-side authorization gate. A valid Appwrite
-	// session alone must not unlock Testagram product APIs while the address is
-	// still unverified; the client-side gate is only a usability measure.
 	if !account.EmailVerification {
 		return "", http.StatusForbidden, errors.New("email verification is required before accessing Testagram")
 	}
 	if s.db == nil {
 		return "", http.StatusServiceUnavailable, errors.New("identity database is unavailable")
 	}
-	var canonicalID string
-	email := strings.ToLower(strings.TrimSpace(account.Email))
-	if len(email) > 254 || strings.ContainsAny(email, "\r\n") {
-		return "", http.StatusBadGateway, errors.New("Appwrite returned an invalid email address")
+	email, err := authEmail(account.Email)
+	if err != nil || !validAppwriteUserID(account.ID) {
+		return "", http.StatusBadGateway, errors.New("Appwrite returned an invalid account identity")
 	}
-	// First verified Appwrite sign-in provisions a canonical Testagram profile
-	// atomically. Existing users are never matched by email: only an existing
-	// Appwrite ID mapping can resume an established account and its content.
-	if _, err := authEmail(email); err != nil {
-		return "", http.StatusBadGateway, errors.New("Appwrite returned an invalid email address")
-	}
+
+	// Appwrite proves credentials, but it is not the authority for Testagram
+	// account creation. Only the canonical mapping created by the approved
+	// two-person identity-provisioning transaction may unlock product APIs.
+	// In particular, never auto-create a canonical account from a first login.
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("Testagram identity store is unavailable")
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "appwrite:"+account.ID); err != nil {
-		return "", http.StatusServiceUnavailable, errors.New("Testagram identity lock is unavailable")
-	}
-	var alreadyLinked bool
-	if err = tx.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1)
-	`, account.ID).Scan(&alreadyLinked); err != nil {
-		return "", http.StatusServiceUnavailable, errors.New("Testagram identity mapping could not be checked")
-	}
-	if !alreadyLinked {
-		termsVersion := strings.TrimSpace(env("TESTAGRAM_TERMS_VERSION", "2026-11-11"))
-		privacyVersion := strings.TrimSpace(env("TESTAGRAM_PRIVACY_VERSION", "2026-11-11"))
-		var consentCount int
-		err = tx.QueryRow(ctx, `
-			SELECT count(DISTINCT consent_type)
-			FROM testagram_identity.appwrite_registration_consents
-			WHERE appwrite_user_id=$1 AND email=$2
-			  AND (consent_type='age_confirmation' AND policy_version='age-v1'
-			    OR consent_type='terms' AND policy_version=$3
-			    OR consent_type='privacy' AND policy_version=$4)
-		`, account.ID, email, termsVersion, privacyVersion).Scan(&consentCount)
-		if err != nil {
-			return "", http.StatusServiceUnavailable, errors.New("registration consent store is unavailable")
-		}
-		if consentCount != 3 {
-			return "", http.StatusForbidden, errors.New("registration consent is required before Testagram account provisioning")
-		}
-	}
+
+	var canonicalID, applicationID, applicationStatus string
 	err = tx.QueryRow(ctx, `
-		UPDATE testagram_identity.appwrite_accounts
-		SET email=$2,email_verified=$3,last_seen_at=now(),updated_at=now()
-		WHERE appwrite_user_id=$1
-		RETURNING canonical_user_id::text`, account.ID, email, account.EmailVerification).Scan(&canonicalID)
+		SELECT a.canonical_user_id::text,p.application_id::text,ia.status
+		FROM testagram_identity.appwrite_accounts a
+		JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
+		JOIN testagram_identity.registration_provisioning p
+		  ON p.appwrite_user_id=a.appwrite_user_id
+		 AND p.canonical_user_id=a.canonical_user_id
+		 AND p.status='completed'
+		JOIN testagram_identity.identity_applications ia ON ia.id=p.application_id
+		WHERE a.appwrite_user_id=$1 AND lower(a.email)=lower($2)
+		  AND ia.status IN ('verification_pending','verified')
+		FOR UPDATE OF a,p,ia
+	`, account.ID, email).Scan(&canonicalID, &applicationID, &applicationStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
-		username := appwriteDefaultUsername(email, account.ID)
-		displayName := strings.TrimSpace(account.Name)
-		if len(displayName) > 80 {
-			displayName = displayName[:80]
-		}
-		if displayName == "" {
-			displayName = username
-		}
-		err = tx.QueryRow(ctx, `
-			INSERT INTO testagram_local.accounts(user_id,username,display_name)
-			VALUES(gen_random_uuid(),$1,$2)
-			RETURNING user_id::text`, username, displayName).Scan(&canonicalID)
-		if err == nil {
-			_, err = tx.Exec(ctx, `
-				INSERT INTO testagram_identity.appwrite_accounts
-				  (appwrite_user_id,canonical_user_id,email,email_verified,linked_at,last_seen_at,updated_at)
-				VALUES($1,$2::uuid,$3,$4,now(),now(),now())`, account.ID, canonicalID, email, account.EmailVerification)
-		}
+		return "", http.StatusForbidden, errors.New("identity review and two-person account approval are required before accessing Testagram")
 	}
 	if err != nil {
-		return "", http.StatusServiceUnavailable, errors.New("Appwrite identity could not be provisioned as a Testagram account")
+		return "", http.StatusServiceUnavailable, errors.New("approved Testagram account mapping could not be verified")
+	}
+
+	if _, err = tx.Exec(ctx, `
+		UPDATE testagram_identity.appwrite_accounts
+		SET email_verified=true,last_seen_at=now(),updated_at=now()
+		WHERE appwrite_user_id=$1 AND canonical_user_id=$2::uuid
+	`, account.ID, canonicalID); err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("verified Appwrite account state could not be synchronized")
+	}
+	if applicationStatus == "verification_pending" {
+		if _, err = tx.Exec(ctx, `
+			UPDATE testagram_identity.identity_applications
+			SET status='verified',updated_at=now()
+			WHERE id=$1::uuid AND status='verification_pending'
+		`, applicationID); err != nil {
+			return "", http.StatusServiceUnavailable, errors.New("identity verification state could not be synchronized")
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return "", http.StatusServiceUnavailable, errors.New("Testagram account provisioning could not be committed")
-	}
-	if account.EmailVerification {
-		// Promote a newly verified Appwrite identity from the pending-email
-		// state only after the authenticated Account endpoint confirms it.
-		if _, err := s.db.Exec(ctx, `
-			UPDATE testagram_identity.identity_applications a
-			SET status='verified',updated_at=now()
-			FROM testagram_identity.registration_provisioning p
-			WHERE p.application_id=a.id
-			  AND p.appwrite_user_id=$1
-			  AND p.status='completed'
-			  AND a.status='verification_pending'
-		`, account.ID); err != nil {
-			return "", http.StatusServiceUnavailable, errors.New("verified Appwrite identity state could not be synchronized")
-		}
+		return "", http.StatusServiceUnavailable, errors.New("Testagram account authorization could not be committed")
 	}
 	return canonicalID, http.StatusOK, nil
 }
-
-
-
 
 type appwriteRegistrationConsentRequest struct {
 	AgeConfirmed    bool   `json:"age_confirmed"`
@@ -242,10 +201,6 @@ type appwriteRegistrationConsentRequest struct {
 	PrivacyVersion  string `json:"privacy_version"`
 }
 
-// appwriteRegistrationConsent records age and current policy declarations
-// against an Appwrite account session. It intentionally permits an
-// unverified email at this stage; product access remains gated by the verified
-// Appwrite session and the durable consent ledger.
 func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	if r.Method != http.MethodPost {
