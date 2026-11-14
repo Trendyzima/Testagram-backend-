@@ -14,9 +14,10 @@ func validateIdentityEvidenceBucketIsolation(provider string, buckets map[string
 		return err
 	}
 	identityBucket := strings.TrimSpace(buckets["identity-evidence-private"])
+	privateBucket := strings.TrimSpace(buckets["media-private"])
 	publicBucket := strings.TrimSpace(buckets["media-public"])
-	if identityBucket == "" || identityBucket == publicBucket {
-		return fmt.Errorf("%s identity evidence bucket must be configured and must not be public", provider)
+	if identityBucket == "" || identityBucket == privateBucket || identityBucket == publicBucket {
+		return fmt.Errorf("%s identity evidence bucket must be dedicated and distinct from private/public media buckets", provider)
 	}
 	return nil
 }
@@ -41,27 +42,19 @@ func configureIdentityMediaReplicator(primary *virtualstorage.S3Provider) (*virt
 		"media-private": env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))),
 		"media-public":  env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
 	}
-	primaryBuckets["identity-evidence-private"] = env("IDENTITY_EVIDENCE_PRIVATE_BUCKET", primaryBuckets["media-private"])
+	primaryBuckets["identity-evidence-private"] = strings.TrimSpace(os.Getenv("IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
 
 	r2Buckets := map[string]string{
 		"media-private": replicaBucket("CLOUDFLARE_R2", "private", "CLOUDFLARE_R2_BUCKET"),
 		"media-public":  replicaBucket("CLOUDFLARE_R2", "public", "CLOUDFLARE_R2_BUCKET"),
 	}
-	r2IdentityBucket := strings.TrimSpace(os.Getenv("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
-	if r2IdentityBucket == "" {
-		r2IdentityBucket = r2Buckets["media-private"]
-	}
-	r2Buckets["identity-evidence-private"] = r2IdentityBucket
+	r2Buckets["identity-evidence-private"] = strings.TrimSpace(os.Getenv("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
 
 	b2Buckets := map[string]string{
 		"media-private": replicaBucket("B2_S3", "private", "B2_S3_BUCKET"),
 		"media-public":  replicaBucket("B2_S3", "public", "B2_S3_BUCKET"),
 	}
-	b2IdentityBucket := strings.TrimSpace(os.Getenv("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
-	if b2IdentityBucket == "" {
-		b2IdentityBucket = b2Buckets["media-private"]
-	}
-	b2Buckets["identity-evidence-private"] = b2IdentityBucket
+	b2Buckets["identity-evidence-private"] = strings.TrimSpace(os.Getenv("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
 
 	for provider, buckets := range map[string]map[string]string{
 		"instabox-vps":  primaryBuckets,
