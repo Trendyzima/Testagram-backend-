@@ -28,8 +28,11 @@ func replicaTestKey(bucket, key string) string { return bucket + "/" + key }
 func (s *replicaTestStore) PresignPut(context.Context, string, string, string, int64, time.Duration) (string, error) {
 	return "", errors.New("not used")
 }
-func (s *replicaTestStore) PresignGet(context.Context, string, string, time.Duration) (string, error) {
-	return "", errors.New("not used")
+func (s *replicaTestStore) PresignGet(_ context.Context, bucket, key string, _ time.Duration) (string, error) {
+	if _, ok := s.objects[replicaTestKey(bucket, key)]; !ok {
+		return "", ErrNotFound
+	}
+	return "https://replica.example/" + bucket + "/" + key, nil
 }
 func (s *replicaTestStore) Head(_ context.Context, bucket, key string) (ObjectInfo, error) {
 	obj, ok := s.objects[replicaTestKey(bucket, key)]
@@ -244,5 +247,79 @@ func TestReplicatorSupportsPrivateIdentityEvidenceNamespace(t *testing.T) {
 		if _, ok := item.store.objects[replicaTestKey(item.bucket, scopedKey)]; ok {
 			t.Fatalf("identity evidence remains in %s after deletion", item.bucket)
 		}
+	}
+}
+
+func TestReplicatorRestoresMissingPrimaryFromChecksumVerifiedReplica(t *testing.T) {
+	primary := newReplicaTestStore()
+	r2 := newReplicaTestStore()
+	b2 := newReplicaTestStore()
+	const digest = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	tenant := "application-restore"
+	key := "identity/evidence.pdf"
+	scoped := tenantPrefix(tenant) + key
+	info := ObjectInfo{Key: scoped, Size: 64, ContentType: "application/pdf"}
+	r2.objects[replicaTestKey("r2-identity", scoped)] = replicaTestObject{info: info, hash: digest}
+	b2.objects[replicaTestKey("b2-identity", scoped)] = replicaTestObject{info: info, hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
+
+	replicator, err := NewReplicator("instabox-vps", primary,
+		map[string]string{
+			"media-private": "vps-private", "media-public": "vps-public",
+			"identity-evidence-private": "vps-identity",
+		},
+		[]ReplicaTarget{
+			{Name: "cloudflare-r2", Provider: r2, Buckets: map[string]string{
+				"media-private": "r2-private", "media-public": "r2-public", "identity-evidence-private": "r2-identity",
+			}},
+			{Name: "backblaze-b2", Provider: b2, Buckets: map[string]string{
+				"media-private": "b2-private", "media-public": "b2-public", "identity-evidence-private": "b2-identity",
+			}},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replicator.RestorePrimary(context.Background(), tenant, "identity-evidence-private", key, 64, "application/pdf", digest); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := primary.SHA256(context.Background(), "vps-identity", scoped, 64)
+	if err != nil || restored != digest {
+		t.Fatalf("restored primary digest=%q err=%v, want %s", restored, err, digest)
+	}
+}
+
+func TestReplicatorReturnsOnlyChecksumVerifiedPrivateReplicaURLs(t *testing.T) {
+	primary := newReplicaTestStore()
+	r2 := newReplicaTestStore()
+	b2 := newReplicaTestStore()
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tenant := "application-review"
+	key := "identity/evidence.pdf"
+	scoped := tenantPrefix(tenant) + key
+	info := ObjectInfo{Key: scoped, Size: 64, ContentType: "application/pdf"}
+	r2.objects[replicaTestKey("r2-identity", scoped)] = replicaTestObject{info: info, hash: digest}
+	b2.objects[replicaTestKey("b2-identity", scoped)] = replicaTestObject{info: info, hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+
+	replicator, err := NewReplicator("instabox-vps", primary,
+		map[string]string{
+			"media-private": "vps-private", "media-public": "vps-public",
+			"identity-evidence-private": "vps-identity",
+		},
+		[]ReplicaTarget{
+			{Name: "cloudflare-r2", Provider: r2, Buckets: map[string]string{
+				"media-private": "r2-private", "media-public": "r2-public", "identity-evidence-private": "r2-identity",
+			}},
+			{Name: "backblaze-b2", Provider: b2, Buckets: map[string]string{
+				"media-private": "b2-private", "media-public": "b2-public", "identity-evidence-private": "b2-identity",
+			}},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	urls, err := replicator.ReplicaDownloadURLs(context.Background(), tenant, "identity-evidence-private", key, 64, "application/pdf", digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(urls) != 1 || urls[0].Provider != "cloudflare-r2" {
+		t.Fatalf("verified replica downloads=%+v, want only checksum-valid R2", urls)
 	}
 }
