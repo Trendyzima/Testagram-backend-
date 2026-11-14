@@ -169,10 +169,9 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 			  (id,email,username,display_name,adult_confirmed_at,evidence_reference,
 			   evidence_fingerprint_sha256,terms_version,privacy_version,terms_accepted_at,
 			   privacy_accepted_at,submission_key_sha256,status_access_token_sha256,
-			   status_access_token_expires_at,adult_verification_threshold,
-			   adult_verification_mode,adult_verification_result,status)
+			   status_access_token_expires_at,status)
 			VALUES ($1::uuid,$2,$3,$4,now(),$5,NULL,$6,$7,now(),now(),$8,$9,
-			        now()+interval '7 days',18,'age_only','pending','verification_pending')
+			        now()+interval '7 days','verification_pending')
 		`, applicationID, email, username, displayName, "native-session-pending:"+applicationID,
 			termsVersion, privacyVersion, submissionHash, applicationTokenHash)
 		if err != nil {
@@ -233,9 +232,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
-		SET adult_verification_session_id=$2,adult_verification_threshold=18,
-		    adult_verification_mode='age_only',adult_verification_result='pending',
-		    evidence_reference=$3,status='verification_pending',updated_at=now()
+		SET evidence_reference=$3,status='verification_pending',updated_at=now()
 		WHERE id=$1::uuid
 	`, applicationID, sessionID, "native-session-pending:"+sessionID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification session could not be linked", requestID(r)))
@@ -276,10 +273,16 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 	var updatedAt time.Time
 	var storedHash []byte
 	err := s.db.QueryRow(ctx, `
-		SELECT status,adult_verification_result,adult_verification_threshold,updated_at,
-		       status_access_token_sha256,COALESCE(adult_verification_session_id,'')
-		FROM testagram_identity.identity_applications
-		WHERE id=$1::uuid AND status_access_token_expires_at>now()
+		SELECT a.status,COALESCE(v.status,'pending'),COALESCE(v.requested_minimum_age,18),a.updated_at,
+		       a.status_access_token_sha256,COALESCE(v.id::text,'')
+		FROM testagram_identity.identity_applications a
+		LEFT JOIN LATERAL (
+		  SELECT id,status,requested_minimum_age
+		  FROM testagram_identity.verification_sessions
+		  WHERE application_id=a.id AND purpose='age_assurance'
+		  ORDER BY created_at DESC LIMIT 1
+		) v ON true
+		WHERE a.id=$1::uuid AND a.status_access_token_expires_at>now()
 	`, applicationID).Scan(&status, &verificationStatus, &threshold, &updatedAt, &storedHash, &sessionID)
 	if err != nil || subtle.ConstantTimeCompare(storedHash, authTokenHash(token)) != 1 {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
@@ -618,7 +621,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
 		SET evidence_reference=$2,evidence_fingerprint_sha256=$3,
-		    adult_verification_result='manual_review',status='under_review',updated_at=now()
+		    status='under_review',updated_at=now()
 		WHERE id=$1::uuid
 	`, access.ApplicationID, evidenceRef, digest); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence submission could not be committed", requestID(r)))
