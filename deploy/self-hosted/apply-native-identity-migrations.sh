@@ -106,7 +106,7 @@ chmod 600 "$backup" "$checksum"
 # server; pg_restore --list alone only proves the archive table of contents.
 cleanup_restore_test() {
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-    sh -ec 'dropdb --if-exists -U "$POSTGRES_USER" "$1"; rm -f "$2"' sh "$verify_db" "$container_backup" >/dev/null 2>&1 || true
+    sh -ec 'dropdb --if-exists -U "$POSTGRES_USER" "$1" || true; rm -f "$2"' sh "$verify_db" "$container_backup" >/dev/null 2>&1 || true
 }
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'createdb -U "$POSTGRES_USER" "$1"' sh "$verify_db"
