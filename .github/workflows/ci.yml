@@ -441,9 +441,17 @@ jobs:
           VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000001');
           UPDATE testagram_local.posts SET views_count=views_count+1 WHERE id='00000000-0000-4000-8000-000000000003';
           INSERT INTO testagram_media.assets
-            (object_key,owner_id,visibility,content_type,size_bytes,status,original_name,storage_namespace)
+            (object_key,owner_id,visibility,content_type,size_bytes,status,original_name,storage_namespace,storage_provider,checksum_sha256)
           VALUES ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef',
-                  '00000000-0000-4000-8000-000000000001','public','image/jpeg',1024,'ready','thread.jpg','media-public');
+                  '00000000-0000-4000-8000-000000000001','public','image/jpeg',1024,'replication_pending','thread.jpg','media-public','s3-default',repeat('d',64));
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','instabox-vps','ci-primary',1024,repeat('d',64),'verified',now()),
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','cloudflare-r2','ci-r2',1024,repeat('d',64),'verified',now()),
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','backblaze-b2','ci-b2',1024,repeat('d',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef';
           INSERT INTO testagram_local.polls(author_id,question,media_object_key)
           VALUES ('00000000-0000-4000-8000-000000000001','Which option should we choose?',
                   'users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef');
