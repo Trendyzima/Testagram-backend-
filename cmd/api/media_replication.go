@@ -163,6 +163,38 @@ func claimMediaReplicationJobs(ctx context.Context, db *pgxpool.Pool, limit int)
 	return jobs, nil
 }
 
+func validateMediaReplicaResults(job mediaReplicationJob, results []virtualstorage.ReplicaResult) error {
+	if job.Operation != "replicate" {
+		return errors.New("replica results can only complete a replication job")
+	}
+	if len(results) != 3 {
+		return fmt.Errorf("verified media placements=%d, want exactly 3", len(results))
+	}
+	required := map[string]bool{
+		"instabox-vps": false,
+		"cloudflare-r2": false,
+		"backblaze-b2": false,
+	}
+	for _, result := range results {
+		provider := strings.ToLower(strings.TrimSpace(result.Provider))
+		seen, ok := required[provider]
+		if !ok || seen {
+			return fmt.Errorf("unexpected or duplicate media replica provider %q", provider)
+		}
+		if strings.TrimSpace(result.Bucket) == "" || result.Size != job.SizeBytes ||
+			!strings.EqualFold(strings.TrimSpace(result.SHA256), strings.TrimSpace(job.Checksum)) {
+			return fmt.Errorf("media replica %q does not match the expected bucket, size and SHA-256", provider)
+		}
+		required[provider] = true
+	}
+	for provider, verified := range required {
+		if !verified {
+			return fmt.Errorf("required media replica %q is not verified", provider)
+		}
+	}
+	return nil
+}
+
 func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job mediaReplicationJob, results []virtualstorage.ReplicaResult) error {
 	tx, err := db.Begin(ctx)
 	if err != nil {
@@ -180,6 +212,9 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 			return fmt.Errorf("record deleted media placements: %w", err)
 		}
 	} else {
+		if err := validateMediaReplicaResults(job, results); err != nil {
+			return err
+		}
 		for _, result := range results {
 			_, err = tx.Exec(ctx, `
 				INSERT INTO testagram_media.storage_replicas
@@ -200,6 +235,46 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 				return fmt.Errorf("write verified replica placement: %w", err)
 			}
 		}
+
+		// The placement ledger must contain all three independently verified copies
+		// before the asset can transition from replication_pending to ready.
+		var verifiedCount int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(DISTINCT provider)
+			FROM testagram_media.storage_replicas
+			WHERE object_key=$1 AND state='verified' AND verified_at >= now() - interval '24 hours'
+			  AND object_size_bytes=$2 AND checksum_sha256=$3
+			  AND provider IN ('instabox-vps','cloudflare-r2','backblaze-b2')
+		`, job.ObjectKey, job.SizeBytes, strings.ToLower(job.Checksum)).Scan(&verifiedCount); err != nil {
+			return fmt.Errorf("verify durable media replica ledger: %w", err)
+		}
+		if verifiedCount != 3 {
+			return fmt.Errorf("durable media replica ledger has %d verified providers, want 3", verifiedCount)
+		}
+
+		var assetStatus string
+		if err := tx.QueryRow(ctx, `
+			SELECT status FROM testagram_media.assets
+			WHERE object_key=$1 AND size_bytes=$2 AND checksum_sha256=$3
+			FOR UPDATE
+		`, job.ObjectKey, job.SizeBytes, strings.ToLower(job.Checksum)).Scan(&assetStatus); err != nil {
+			return fmt.Errorf("load asset before publication transition: %w", err)
+		}
+		if assetStatus == "replication_pending" {
+			tag, err := tx.Exec(ctx, `
+				UPDATE testagram_media.assets SET status='ready', updated_at=now()
+				WHERE object_key=$1 AND status='replication_pending'
+				  AND size_bytes=$2 AND checksum_sha256=$3
+			`, job.ObjectKey, job.SizeBytes, strings.ToLower(job.Checksum))
+			if err != nil {
+				return fmt.Errorf("mark fully replicated media ready: %w", err)
+			}
+			if tag.RowsAffected() != 1 {
+				return errors.New("media asset did not transition from replication_pending to ready")
+			}
+		} else if assetStatus != "ready" {
+			return fmt.Errorf("media asset cannot be published from state %q", assetStatus)
+		}
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -217,8 +292,8 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 	return tx.Commit(ctx)
 }
 
-// Reconciliation checks every expected placement at least once per day. Replicate
-// performs HEAD and SHA-256 checks and repairs only missing or drifted copies.
+// Reconciliation repairs missing or drifted copies and requeues pending assets
+// whose prior replication job reached dead-letter state.
 func enqueueMediaReplicaReconciliation(ctx context.Context, db *pgxpool.Pool) error {
 	_, err := db.Exec(ctx, `
 		INSERT INTO testagram_media.media_replication_outbox
@@ -227,16 +302,19 @@ func enqueueMediaReplicaReconciliation(ctx context.Context, db *pgxpool.Pool) er
 		SELECT a.object_key, 'replicate', a.owner_id, a.storage_namespace,
 		       a.content_type, a.size_bytes, lower(a.checksum_sha256), 'pending'
 		FROM testagram_media.assets a
-		WHERE a.status = 'ready'
+		WHERE a.status IN ('ready','replication_pending')
 		  AND a.storage_namespace IN ('media-private', 'media-public')
 		  AND a.checksum_sha256 ~ '^[0-9a-f]{64}$'
-		  AND EXISTS (
-		    SELECT 1
-		    FROM (VALUES ('instabox-vps'), ('cloudflare-r2'), ('backblaze-b2')) AS required(provider)
-		    LEFT JOIN testagram_media.storage_replicas r
-		      ON r.object_key = a.object_key AND r.provider = required.provider
-		    WHERE r.object_key IS NULL OR r.state <> 'verified' OR r.verified_at IS NULL
-		       OR r.verified_at < now() - interval '24 hours'
+		  AND (
+		    a.status = 'replication_pending'
+		    OR EXISTS (
+		      SELECT 1
+		      FROM (VALUES ('instabox-vps'), ('cloudflare-r2'), ('backblaze-b2')) AS required(provider)
+		      LEFT JOIN testagram_media.storage_replicas r
+		        ON r.object_key = a.object_key AND r.provider = required.provider
+		      WHERE r.object_key IS NULL OR r.state <> 'verified' OR r.verified_at IS NULL
+		         OR r.verified_at < now() - interval '24 hours'
+		    )
 		  )
 		ON CONFLICT (object_key) DO UPDATE SET
 		  status = 'pending', attempts = 0, available_at = now(),

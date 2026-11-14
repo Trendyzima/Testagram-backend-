@@ -22,7 +22,7 @@ docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine pg_restore --list
 
 echo "Verified pre-migration backup: $backup"
 echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
-read -r -p "Type APPLY-MEDIA-REPLICATION to apply the additive ledger/outbox migrations: " confirm
+read -r -p "Type APPLY-MEDIA-REPLICATION to apply the ledger, outbox and three-provider publication-gate migrations: " confirm
 if [[ "$confirm" != "APPLY-MEDIA-REPLICATION" ]]; then
   echo "Cancelled. Backup retained; no migrations were applied."
   exit 0
@@ -35,8 +35,10 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/028_fresh_media_owner_keys.sql'
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_media.media_replication_outbox'\'') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='\''media_replication_enqueue_after_asset_write'\'' AND NOT tgisinternal)"' \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/046_media_replication_publication_gate.sql'
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_media.media_replication_outbox'\'') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='\''media_replication_enqueue_after_asset_write'\'' AND NOT tgisinternal) AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='\''media_replication_enqueue_pending_asset'\'' AND NOT tgisinternal) AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='\''media_replication_publication_guard'\'' AND NOT tgisinternal)"' \
   | grep -qx t
 
-echo "Media replication ledger and transactional outbox applied and verified."
+echo "Media replication ledger, transactional outbox and three-provider publication gate applied and verified."
 echo "Replication remains disabled until independent R2/B2 credentials and object-origin regression tests are configured."

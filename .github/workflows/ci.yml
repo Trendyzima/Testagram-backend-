@@ -218,7 +218,8 @@ jobs:
             migrations/20261112_federation_remote_follows.sql \
             migrations/20261111_media_replica_ledger.sql \
             migrations/20261112_media_replication_outbox.sql \
-            migrations/20261112_fresh_media_owner_keys.sql; do
+            migrations/20261112_fresh_media_owner_keys.sql \
+            migrations/20261114_media_replication_publication_gate.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify durable media replication queue schema
@@ -236,14 +237,30 @@ jobs:
               SELECT 1 FROM pg_trigger
               WHERE tgname='media_replication_enqueue_after_asset_write'
                 AND NOT tgisinternal
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_trigger
+              WHERE tgname='media_replication_enqueue_pending_asset'
+                AND NOT tgisinternal
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_trigger
+              WHERE tgname='media_replication_publication_guard'
+                AND NOT tgisinternal
             ) THEN
-              RAISE EXCEPTION 'Canonical media completion does not enqueue replication';
+              RAISE EXCEPTION 'Canonical media replication enqueue/publication guards are incomplete';
             END IF;
           END $media_replication_schema$;
           INSERT INTO testagram_media.assets
             (object_key,owner_id,visibility,content_type,size_bytes,status,storage_namespace,storage_provider,checksum_sha256)
           VALUES
-            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'ready','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'replication_pending','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','instabox-vps','ci-primary',1234,repeat('a',64),'verified',now()),
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','cloudflare-r2','ci-r2',1234,repeat('a',64),'verified',now()),
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','backblaze-b2','ci-b2',1234,repeat('a',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
           DO $media_replication_enqueue$
           BEGIN
             IF NOT EXISTS (
@@ -253,9 +270,61 @@ jobs:
                 AND checksum_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
                 AND status='pending'
             ) THEN
-              RAISE EXCEPTION 'Verified virtual-storage media insert did not enqueue a durable replication job';
+              RAISE EXCEPTION 'Fully verified virtual-storage media did not enqueue a durable replication job';
             END IF;
           END $media_replication_enqueue$;
+
+          INSERT INTO testagram_media.assets
+            (object_key,owner_id,visibility,content_type,size_bytes,status,storage_namespace,storage_provider,checksum_sha256)
+          VALUES
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','ci-media-owner','public','image/webp',1234,'replication_pending','media-public','s3-default',repeat('c',64));
+          DO $pending_media_gate$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_media.media_replication_outbox
+              WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+                AND operation='replicate' AND status='pending'
+                AND checksum_sha256=repeat('c',64)
+            ) THEN
+              RAISE EXCEPTION 'replication_pending asset did not enqueue its durable copy job';
+            END IF;
+          END $pending_media_gate$;
+
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','instabox-vps','ci-primary',1234,repeat('c',64),'verified',now()),
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','cloudflare-r2','ci-r2',1234,repeat('c',64),'verified',now());
+
+          DO $reject_incomplete_replication$
+          BEGIN
+            BEGIN
+              UPDATE testagram_media.assets SET status='ready'
+              WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+              RAISE EXCEPTION 'asset became ready with only two verified providers';
+            EXCEPTION WHEN check_violation THEN
+              NULL;
+            END;
+            IF (SELECT status FROM testagram_media.assets
+                WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') <> 'replication_pending' THEN
+              RAISE EXCEPTION 'asset left replication_pending without three providers';
+            END IF;
+          END $reject_incomplete_replication$;
+
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','backblaze-b2','ci-b2',1234,repeat('c',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+          DO $accept_complete_replication$
+          BEGIN
+            IF (SELECT status FROM testagram_media.assets
+                WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') <> 'ready' THEN
+              RAISE EXCEPTION 'asset did not become ready after all three verified provider copies';
+            END IF;
+          END $accept_complete_replication$;
+
           UPDATE testagram_media.assets SET status='deleted'
           WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
           DO $media_replication_delete$
@@ -372,9 +441,17 @@ jobs:
           VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000001');
           UPDATE testagram_local.posts SET views_count=views_count+1 WHERE id='00000000-0000-4000-8000-000000000003';
           INSERT INTO testagram_media.assets
-            (object_key,owner_id,visibility,content_type,size_bytes,status,original_name,storage_namespace)
+            (object_key,owner_id,visibility,content_type,size_bytes,status,original_name,storage_namespace,storage_provider,checksum_sha256)
           VALUES ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef',
-                  '00000000-0000-4000-8000-000000000001','public','image/jpeg',1024,'ready','thread.jpg','media-public');
+                  '00000000-0000-4000-8000-000000000001','public','image/jpeg',1024,'replication_pending','thread.jpg','media-public','s3-default',repeat('d',64));
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','instabox-vps','ci-primary',1024,repeat('d',64),'verified',now()),
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','cloudflare-r2','ci-r2',1024,repeat('d',64),'verified',now()),
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','backblaze-b2','ci-b2',1024,repeat('d',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef';
           INSERT INTO testagram_local.polls(author_id,question,media_object_key)
           VALUES ('00000000-0000-4000-8000-000000000001','Which option should we choose?',
                   'users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef');

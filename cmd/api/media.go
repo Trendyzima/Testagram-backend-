@@ -726,6 +726,10 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Upload intent is missing, expired, or does not belong to this account", id))
 		return
 	}
+	if storageNamespace != "legacy-media" && storageProvider != "data-centre" && s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_REPLICATION_NOT_CONFIGURED", "Three-provider media verification is not configured; this asset cannot be published", id))
+		return
+	}
 	if strings.TrimSpace(body.Visibility) == "" {
 		body.Visibility = intentVisibility
 	}
@@ -905,12 +909,18 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 		// Persist only the digest, never a signed URL or provider credentials.
 		checksumForMetadata = strings.ToLower(strings.TrimSpace(body.ChecksumSHA256))
 	}
+	assetInitialStatus := "ready"
+	if storageNamespace != "legacy-media" && storageProvider != "data-centre" {
+		// The database outbox starts replication, but the asset is not publishable
+		// until the worker has read back and verified all three independent copies.
+		assetInitialStatus = "replication_pending"
+	}
 	err = s.db.QueryRow(r.Context(), `insert into testagram_media.assets
 		(object_key, owner_id, visibility, content_type, original_name, size_bytes, etag, status, storage_namespace, storage_provider, checksum_sha256)
-		values ($1,$2,$3,$4,$5,$6,$7,'ready',$8,$9,$10)
+		values ($1,$2,$3,$4,$5,$6,$7,$11,$8,$9,$10)
 		on conflict (object_key) do nothing
 		returning object_key, visibility, content_type, original_name, size_bytes, etag, status, created_at`,
-		body.Key, userID, body.Visibility, actualType, intentName, size, etag, storageNamespace, storageProvider, checksumForMetadata).
+		body.Key, userID, body.Visibility, actualType, intentName, size, etag, storageNamespace, storageProvider, checksumForMetadata, assetInitialStatus).
 		Scan(&asset.Key, &asset.Visibility, &asset.ContentType, &asset.OriginalName, &asset.SizeBytes, &asset.ETag, &asset.Status, &asset.CreatedAt)
 	if err != nil {
 		var ownerID string
@@ -921,7 +931,8 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Could not persist media metadata", id))
 			return
 		}
-		if ownerID != userID || asset.Status != "ready" || asset.Visibility != body.Visibility || asset.ContentType != actualType || asset.SizeBytes != size {
+		if ownerID != userID || (asset.Status != "ready" && asset.Status != "replication_pending") ||
+			asset.Visibility != body.Visibility || asset.ContentType != actualType || asset.SizeBytes != size {
 			writeJSON(w, http.StatusConflict, errorBody("MEDIA_KEY_CONFLICT", "Media key already exists with different ownership or metadata", id))
 			return
 		}
@@ -938,6 +949,13 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_PUBLIC_URL_INVALID", "Public media delivery URL is not configured", id))
 			return
 		}
+	}
+	if asset.Status == "replication_pending" {
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "data": map[string]any{
+			"key": body.Key, "status": "replication_pending", "retry_after_ms": 1000,
+		}, "error": nil, "request_id": id})
+		return
 	}
 	if _, err := s.db.Exec(ctx, `update testagram_media.upload_intents set status='completed', updated_at=now()
 		where object_key=$1 and owner_id=$2 and status in ('issued','uploaded','completed')`, body.Key, userID); err != nil {
