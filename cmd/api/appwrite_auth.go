@@ -162,7 +162,7 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 		JOIN testagram_identity.identity_applications ia ON ia.id=p.application_id
 		WHERE a.appwrite_user_id=$1 AND lower(a.email)=lower($2)
 		  AND ia.status IN ('verification_pending','verified')
-		FOR UPDATE OF a,p,ia,u
+		FOR UPDATE OF a,p,ia
 	`, account.ID, email).Scan(&canonicalID, &applicationID, &applicationStatus, &accountStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", http.StatusForbidden, errors.New("identity review and two-person account approval are required before accessing Testagram")
