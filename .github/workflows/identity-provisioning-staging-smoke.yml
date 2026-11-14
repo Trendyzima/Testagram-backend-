@@ -1,0 +1,77 @@
+name: Live Appwrite identity provisioning staging acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_one_time_identity_link:
+        description: Confirm this run may consume one pre-approved staging application and create its canonical account link
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-live-appwrite-identity-staging
+  cancel-in-progress: false
+
+jobs:
+  identity-provisioning:
+    if: inputs.confirm_one_time_identity_link == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: identity-provisioning-staging
+    env:
+      TESTAGRAM_LIVE_APPWRITE_IDENTITY: "true"
+      TEST_DATABASE_URL: ${{ secrets.TESTAGRAM_STAGING_IDENTITY_DATABASE_URL }}
+      APPWRITE_ENDPOINT: ${{ vars.APPWRITE_STAGING_ENDPOINT }}
+      APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_STAGING_PROJECT_ID }}
+      APPWRITE_STAGING_USER_JWT: ${{ secrets.APPWRITE_STAGING_USER_JWT }}
+      APPWRITE_STAGING_USER_ID: ${{ vars.APPWRITE_STAGING_USER_ID }}
+      APPWRITE_STAGING_USER_EMAIL: ${{ vars.APPWRITE_STAGING_USER_EMAIL }}
+      APPWRITE_STAGING_APPLICATION_ID: ${{ vars.APPWRITE_STAGING_APPLICATION_ID }}
+      APPWRITE_STAGING_APPLICATION_TOKEN: ${{ secrets.APPWRITE_STAGING_APPLICATION_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.11"
+          cache: true
+      - name: Validate dedicated staging configuration without printing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in TEST_DATABASE_URL APPWRITE_ENDPOINT APPWRITE_PROJECT_ID APPWRITE_STAGING_USER_JWT APPWRITE_STAGING_USER_ID APPWRITE_STAGING_USER_EMAIL APPWRITE_STAGING_APPLICATION_ID APPWRITE_STAGING_APPLICATION_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required identity staging configuration: $name (value redacted)."
+              exit 1
+            fi
+          done
+          [[ "$APPWRITE_ENDPOINT" == https://* && "$APPWRITE_ENDPOINT" == */v1 ]] || {
+            echo "::error::APPWRITE_ENDPOINT must be the HTTPS /v1 staging endpoint."
+            exit 1
+          }
+          [[ "$APPWRITE_STAGING_USER_EMAIL" == "$(printf '%s' "$APPWRITE_STAGING_USER_EMAIL" | tr '[:upper:]' '[:lower:]')" ]] || {
+            echo "::error::APPWRITE_STAGING_USER_EMAIL must be lowercase."
+            exit 1
+          }
+          [[ "$APPWRITE_STAGING_APPLICATION_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+            echo "::error::APPWRITE_STAGING_APPLICATION_ID must be a UUID."
+            exit 1
+          }
+          echo "Dedicated staging inputs are present; values remain redacted."
+      - name: Verify two-person approval, live Appwrite session, canonical link and replay safety
+        run: go test ./cmd/api -run '^TestNativeIdentityProvisioningTokenAndRedeemIntegration$' -count=1 -v
+      - name: Record live staging acceptance
+        if: success()
+        run: |
+          {
+            echo "### Live Appwrite identity provisioning"
+            echo "- Precondition: application has two distinct approved reviewer records: passed"
+            echo "- Live Appwrite JWT / project / account email validation: passed"
+            echo "- Canonical PostgreSQL account and Appwrite mapping: passed"
+            echo "- Email-verified session synchronization: passed"
+            echo "- Same-identity redemption replay returns the same canonical UUID: passed"
+            echo "- This one-time application is now consumed; use a fresh approved staging application for the next run."
+          } >> "$GITHUB_STEP_SUMMARY"

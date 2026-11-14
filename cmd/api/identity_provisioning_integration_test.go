@@ -18,6 +18,14 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is required for PostgreSQL identity provisioning integration")
 	}
+	liveAppwrite := strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_LIVE_APPWRITE_IDENTITY")), "true")
+	requiredEnv := func(name string) string {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value == "" {
+			t.Fatalf("%s is required for live Appwrite identity acceptance", name)
+		}
+		return value
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -27,37 +35,101 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 	}
 	defer db.Close()
 
-	var applicationID string
-	if err := db.QueryRow(ctx, "SELECT id::text FROM testagram_identity.identity_applications WHERE email='first@example.test' AND status='approved'").Scan(&applicationID); err != nil {
-		t.Fatalf("load approved identity fixture: %v", err)
+	var applicationID, applicationEmail, username, applicationStatus string
+	var applicationToken, appwriteUserID, appwriteEmail, appwriteJWT, appwriteProjectID string
+	var emailVerified bool
+	var appwriteServer *httptest.Server
+	var upstream *http.Client
+
+	if liveAppwrite {
+		applicationID = requiredEnv("APPWRITE_STAGING_APPLICATION_ID")
+		applicationToken = requiredEnv("APPWRITE_STAGING_APPLICATION_TOKEN")
+		appwriteUserID = requiredEnv("APPWRITE_STAGING_USER_ID")
+		appwriteEmail = strings.ToLower(requiredEnv("APPWRITE_STAGING_USER_EMAIL"))
+		appwriteJWT = requiredEnv("APPWRITE_STAGING_USER_JWT")
+		appwriteProjectID = requiredEnv("APPWRITE_PROJECT_ID")
+		endpoint := requiredEnv("APPWRITE_ENDPOINT")
+		if !strings.HasPrefix(endpoint, "https://") || !strings.HasSuffix(strings.TrimRight(endpoint, "/"), "/v1") {
+			t.Fatal("APPWRITE_ENDPOINT must be an HTTPS Appwrite /v1 endpoint")
+		}
+		if len(applicationToken) < 32 || len(appwriteJWT) < 32 || !validAppwriteUserID(appwriteUserID) {
+			t.Fatal("live Appwrite identity credentials are incomplete")
+		}
+		t.Setenv("APPWRITE_ENDPOINT", strings.TrimRight(endpoint, "/"))
+		t.Setenv("APPWRITE_PROJECT_ID", appwriteProjectID)
+		emailVerified = true
+		upstream = &http.Client{Timeout: 15 * time.Second}
+
+		var requestStatus string
+		var reviewCount, approvalLedgerCount, approvalTokenCount int
+		err := db.QueryRow(ctx, `
+			SELECT a.email, a.username, a.status, sar.status,
+			       (SELECT count(DISTINCT r.reviewer_appwrite_user_id) FROM testagram_identity.identity_application_reviews r
+			        WHERE r.application_id=a.id AND r.decision='approved'),
+			       (SELECT count(DISTINCT sa.approver_appwrite_user_id) FROM testagram_auth.sensitive_action_approvals sa
+			        WHERE sa.request_id=sar.id AND sa.decision='approved'),
+			       (SELECT count(*) FROM testagram_identity.identity_approval_tokens tok
+			        WHERE tok.application_id=a.id AND tok.consumed_at IS NULL
+			          AND tok.first_approver_appwrite_user_id <> tok.second_approver_appwrite_user_id)
+			FROM testagram_identity.identity_applications a
+			JOIN testagram_auth.sensitive_action_requests sar
+			  ON sar.id=a.sensitive_action_request_id
+			WHERE a.id=$1::uuid
+		`, applicationID).Scan(&applicationEmail, &username, &applicationStatus, &requestStatus, &reviewCount, &approvalLedgerCount, &approvalTokenCount)
+		if err != nil {
+			t.Fatalf("load dedicated pre-approved staging application: %v", err)
+		}
+		if applicationStatus != "approved" || requestStatus != "approved" || reviewCount != 2 || approvalLedgerCount != 2 || approvalTokenCount != 1 {
+			t.Fatalf("staging application is not ready for provisioning: application=%q request=%q reviews=%d approval_ledger=%d unconsumed_tokens=%d; want approved/approved/2/2/1",
+				applicationStatus, requestStatus, reviewCount, approvalLedgerCount, approvalTokenCount)
+		}
+		if applicationEmail != appwriteEmail {
+			t.Fatalf("staging Appwrite email %q does not match approved application email %q", appwriteEmail, applicationEmail)
+		}
+	} else {
+		if err := db.QueryRow(ctx, `
+			SELECT id::text, email, username, status
+			FROM testagram_identity.identity_applications
+			WHERE email='first@example.test' AND status='approved'
+		`).Scan(&applicationID, &applicationEmail, &username, &applicationStatus); err != nil {
+			t.Fatalf("load approved identity fixture: %v", err)
+		}
+		applicationToken = strings.Repeat("a", 43)
+		appwriteUserID = "appwrite-user-ci"
+		appwriteEmail = "first@example.test"
+		appwriteJWT = "identity-ci-jwt"
+		appwriteProjectID = "identity-ci-project"
+		emailVerified = false
+		appwriteServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/account" {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Header.Get("X-Appwrite-Project") != appwriteProjectID || r.Header.Get("X-Appwrite-JWT") != appwriteJWT {
+				http.Error(w, "invalid test credentials", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"$id": appwriteUserID, "email": appwriteEmail,
+				"emailVerification": emailVerified, "status": true,
+			})
+		}))
+		defer appwriteServer.Close()
+		t.Setenv("APPWRITE_ENDPOINT", appwriteServer.URL+"/v1")
+		t.Setenv("APPWRITE_PROJECT_ID", appwriteProjectID)
+		upstream = appwriteServer.Client()
 	}
-	applicationToken := strings.Repeat("a", 43)
-	if _, err := db.Exec(ctx, "UPDATE testagram_identity.identity_applications SET status_access_token_sha256=$2,status_access_token_expires_at=now()+interval '7 days' WHERE id=$1::uuid", applicationID, authTokenHash(applicationToken)); err != nil {
+
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_identity.identity_applications
+		SET status_access_token_sha256=$2,status_access_token_expires_at=now()+interval '7 days'
+		WHERE id=$1::uuid
+	`, applicationID, authTokenHash(applicationToken)); err != nil {
 		t.Fatal(err)
 	}
 
-	appwriteUserID := "appwrite-user-ci"
-	emailVerified := false
-	appwriteServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Header.Get("X-Appwrite-Project") != "identity-ci-project" || r.Header.Get("X-Appwrite-JWT") != "identity-ci-jwt" {
-			http.Error(w, "invalid test credentials", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"$id": appwriteUserID, "email": "first@example.test",
-			"emailVerification": emailVerified, "status": true,
-		})
-	}))
-	defer appwriteServer.Close()
-	t.Setenv("APPWRITE_ENDPOINT", appwriteServer.URL+"/v1")
-	t.Setenv("APPWRITE_PROJECT_ID", "identity-ci-project")
-
-	svc := &service{db: db, upstream: appwriteServer.Client()}
+	svc := &service{db: db, upstream: upstream}
 	tokenRequest := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/provisioning-token", nil)
 	tokenRequest.SetPathValue("application_id", applicationID)
 	tokenRequest.Header.Set("X-Application-Token", applicationToken)
@@ -82,7 +154,7 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		req.Header.Set("X-Application-Token", applicationToken)
 		req.Header.Set("X-Identity-Approval-Token", approvalToken)
 		req.Header.Set("X-Identity-Approval-JTI", jti)
-		req.Header.Set("Authorization", "Bearer identity-ci-jwt")
+		req.Header.Set("Authorization", "Bearer "+appwriteJWT)
 		recorder := httptest.NewRecorder()
 		svc.identityProvisioningRedeem(recorder, req)
 		return recorder
@@ -97,15 +169,16 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	canonicalID, _ := result["canonical_user_id"].(string)
-	if canonicalID == "" || result["email_verification_required"] != true {
+	if canonicalID == "" || result["email_verification_required"] != !emailVerified {
 		t.Fatalf("unexpected provisioning result: %#v", result)
 	}
 
+	expectedEmailVerified := emailVerified
 	var accountCount, mappingCount, completedCount int
-	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE user_id=$1::uuid AND username='ci_first'", canonicalID).Scan(&accountCount); err != nil {
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE user_id=$1::uuid AND username=$2", canonicalID, username).Scan(&accountCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1 AND canonical_user_id=$2::uuid AND email_verified=FALSE", appwriteUserID, canonicalID).Scan(&mappingCount); err != nil {
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1 AND canonical_user_id=$2::uuid AND email_verified=$3", appwriteUserID, canonicalID, expectedEmailVerified).Scan(&mappingCount); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.registration_provisioning WHERE application_id=$1::uuid AND status='completed' AND appwrite_user_id=$2 AND canonical_user_id=$3::uuid", applicationID, appwriteUserID, canonicalID).Scan(&completedCount); err != nil {
@@ -117,18 +190,20 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 
 	// Email verification is confirmed by Appwrite at the authenticated API
 	// boundary, then synchronized to the canonical identity application.
-	emailVerified = true
-	authRequest := httptest.NewRequest(http.MethodGet, "/api/profile", nil)
-	canonicalID, authStatus, authErr := svc.authenticatedAppwriteUser(authRequest, "identity-ci-jwt")
-	if authErr != nil || authStatus != http.StatusOK || canonicalID != canonicalUserIDFromResult(t, result) {
-		t.Fatalf("verified Appwrite login canonical=%q status=%d err=%v", canonicalID, authStatus, authErr)
+	if !liveAppwrite {
+		emailVerified = true
 	}
-	var applicationStatus string
-	if err := db.QueryRow(ctx, "SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid", applicationID).Scan(&applicationStatus); err != nil {
+	authRequest := httptest.NewRequest(http.MethodGet, "/api/profile", nil)
+	authenticatedCanonicalID, authStatus, authErr := svc.authenticatedAppwriteUser(authRequest, appwriteJWT)
+	if authErr != nil || authStatus != http.StatusOK || authenticatedCanonicalID != canonicalUserIDFromResult(t, result) {
+		t.Fatalf("verified Appwrite login canonical=%q status=%d err=%v", authenticatedCanonicalID, authStatus, authErr)
+	}
+	var applicationStatusAfterLogin string
+	if err := db.QueryRow(ctx, "SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid", applicationID).Scan(&applicationStatusAfterLogin); err != nil {
 		t.Fatal(err)
 	}
-	if applicationStatus != "verified" {
-		t.Fatalf("application status after verified Appwrite login=%q, want verified", applicationStatus)
+	if applicationStatusAfterLogin != "verified" {
+		t.Fatalf("application status after verified Appwrite login=%q, want verified", applicationStatusAfterLogin)
 	}
 
 	replay := redeem()
@@ -139,17 +214,18 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 	if err := json.Unmarshal(replay.Body.Bytes(), &replayResult); err != nil {
 		t.Fatal(err)
 	}
-	if replayResult["idempotent_replay"] != true || replayResult["canonical_user_id"] != canonicalID {
+	if replayResult["idempotent_replay"] != true || replayResult["canonical_user_id"] != authenticatedCanonicalID {
 		t.Fatalf("redemption retry did not return the same canonical account: %#v", replayResult)
 	}
 
-	appwriteUserID = "different-appwrite-user"
-	replay = redeem()
-	if replay.Code != http.StatusConflict {
-		t.Fatalf("different Appwrite identity redemption status=%d, want 409 body=%s", replay.Code, replay.Body.String())
+	if !liveAppwrite {
+		appwriteUserID = "different-appwrite-user"
+		replay = redeem()
+		if replay.Code != http.StatusConflict {
+			t.Fatalf("different Appwrite identity redemption status=%d, want 409 body=%s", replay.Code, replay.Body.String())
+		}
 	}
 }
-
 
 func canonicalUserIDFromResult(t *testing.T, result map[string]any) string {
 	t.Helper()

@@ -43,16 +43,15 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		t.Fatalf("generate test IDs: %v", err)
 	}
 
-	fingerprint := make([]byte, 32)
-	for i := range fingerprint {
-		fingerprint[i] = byte(i + 1)
-	}
+	fingerprint := sha256.Sum256([]byte("identity-review:" + applicationID))
+	username := "identity_review_ci_" + applicationID[:8]
+	email := "identity-review-" + applicationID[:8] + "@example.test"
 	payload := identityReviewSnapshot{
 		ApplicationID: applicationID,
-		Email: "identity-review@example.test",
-		Username: "identity_review_ci",
+		Email: email,
+		Username: username,
 		DisplayName: "Identity Review CI",
-		EvidenceFingerprintSHA256: hex.EncodeToString(fingerprint),
+		EvidenceFingerprintSHA256: hex.EncodeToString(fingerprint[:]),
 		EvidenceAuditReference: "testagram_manual-audit-reference-ci-001",
 		TermsVersion: "terms-ci-v1",
 		PrivacyVersion: "privacy-ci-v1",
@@ -80,89 +79,85 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		   adult_verification_provider, adult_verification_reference, adult_verification_checked_at,
 		   evidence_reference, evidence_fingerprint_sha256, terms_version, privacy_version,
 		   terms_accepted_at, privacy_accepted_at, sensitive_action_request_id)
-		VALUES ($1::uuid, $2, $3, $4, now(), now(), 'testagram_manual', 'testagram_manual-verification-ci-001', now(),
+		VALUES ($1::uuid, $2, $3, $4, now(), now(), 'testagram_manual', 'testagram_manual-verification-' || $3, now(),
 		        'opaque-evidence-reference-ci', $5, $6, $7, now(), now(), $8::uuid)
 	`, applicationID, payload.Email, payload.Username, payload.DisplayName,
-		fingerprint, payload.TermsVersion, payload.PrivacyVersion, requestID)
+		fingerprint[:], payload.TermsVersion, payload.PrivacyVersion, requestID)
 	if err != nil {
 		t.Fatalf("insert verified identity application: %v", err)
 	}
 
-	_, err = conn.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals
-		  (request_id, approver_appwrite_user_id, decision, reason)
-		VALUES ($1::uuid, $2, 'approved', 'First independent reviewer approval')
-	`, requestID, reviewerOne)
-	if err != nil {
-		t.Fatalf("insert first approval: %v", err)
-	}
-
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		t.Fatalf("begin first review transaction: %v", err)
+		t.Fatalf("begin requester self-approval transaction: %v", err)
 	}
-	state, err := recordIdentityApplicationReview(ctx, tx, requestID, applicationID, reviewerOne, "approved",
-		"First reviewer confirms the verified evidence", rawPayload, 1)
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, requester, "approved", "Requester must not approve own request"); err == nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal("requester was allowed to approve their own identity application")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin first reviewer transaction: %v", err)
+	}
+	state, applicationState, approvalCount, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, reviewerOne, "approved", "First independent reviewer approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("record first identity review: %v", err)
+		t.Fatalf("record first two-person decision: %v", err)
 	}
-	if state != "under_review" {
+	if state != "pending" || applicationState != "under_review" || approvalCount != 1 {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("first approval state = %q, want under_review", state)
+		t.Fatalf("first decision state=%q application=%q approvals=%d; want pending/under_review/1", state, applicationState, approvalCount)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit first identity review: %v", err)
-	}
-
-	_, err = conn.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals
-		  (request_id, approver_appwrite_user_id, decision, reason)
-		VALUES ($1::uuid, $2, 'approved', 'Second independent reviewer approval')
-	`, requestID, reviewerTwo)
-	if err != nil {
-		t.Fatalf("insert second approval: %v", err)
-	}
-	_, err = conn.Exec(ctx, `
-		UPDATE testagram_auth.sensitive_action_requests
-		SET status='approved', decided_at=now()
-		WHERE id=$1::uuid
-	`, requestID)
-	if err != nil {
-		t.Fatalf("complete two-person approval request: %v", err)
+		t.Fatalf("commit first reviewer decision: %v", err)
 	}
 
 	tx, err = conn.Begin(ctx)
 	if err != nil {
-		t.Fatalf("begin second review transaction: %v", err)
+		t.Fatalf("begin duplicate reviewer transaction: %v", err)
 	}
-	state, err = recordIdentityApplicationReview(ctx, tx, requestID, applicationID, reviewerTwo, "approved",
-		"Second reviewer independently confirms the evidence", rawPayload, 2)
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, reviewerOne, "approved", "Duplicate first reviewer decision"); err == nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal("same reviewer was counted twice")
+	}
+	_ = tx.Rollback(ctx)
+
+	tx, err = conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin second reviewer transaction: %v", err)
+	}
+	state, applicationState, approvalCount, err = recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, reviewerTwo, "approved", "Second independent reviewer approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("record second identity review: %v", err)
+		t.Fatalf("record second two-person decision: %v", err)
 	}
-	if state != "approved" {
+	if state != "approved" || applicationState != "approved" || approvalCount != 2 {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("second approval state = %q, want approved", state)
+		t.Fatalf("second decision state=%q application=%q approvals=%d; want approved/approved/2", state, applicationState, approvalCount)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit second identity review: %v", err)
+		t.Fatalf("commit second reviewer decision: %v", err)
 	}
 
-	var finalStatus string
-	var reviewCount int
+	var finalStatus, requestStatus string
+	var reviewCount, approvalCountFinal int
 	err = conn.QueryRow(ctx, `
-		SELECT a.status,
+		SELECT a.status, sar.status,
 		       (SELECT count(*) FROM testagram_identity.identity_application_reviews r
-		        WHERE r.application_id=a.id AND r.decision='approved')
+		        WHERE r.application_id=a.id AND r.decision='approved'),
+		       (SELECT count(DISTINCT approver_appwrite_user_id) FROM testagram_auth.sensitive_action_approvals sa
+		        WHERE sa.request_id=sar.id AND sa.decision='approved')
 		FROM testagram_identity.identity_applications a
+		JOIN testagram_auth.sensitive_action_requests sar ON sar.id=a.sensitive_action_request_id
 		WHERE a.id=$1::uuid
-	`, applicationID).Scan(&finalStatus, &reviewCount)
+	`, applicationID).Scan(&finalStatus, &requestStatus, &reviewCount, &approvalCountFinal)
 	if err != nil {
-		t.Fatalf("read final application state: %v", err)
+		t.Fatalf("read final application and approval state: %v", err)
 	}
-	if finalStatus != "approved" || reviewCount != 2 {
-		t.Fatalf("final state=%q review_count=%d; want approved and 2", finalStatus, reviewCount)
+	if finalStatus != "approved" || requestStatus != "approved" || reviewCount != 2 || approvalCountFinal != 2 {
+		t.Fatalf("final application=%q request=%q reviews=%d approvals=%d; want approved/approved/2/2",
+			finalStatus, requestStatus, reviewCount, approvalCountFinal)
 	}
 }

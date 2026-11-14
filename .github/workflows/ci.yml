@@ -1113,7 +1113,7 @@ jobs:
           done
           docker logs testagram-admin-security-ci
           exit 1
-      - name: Apply staff and security migrations
+      - name: Apply staff, security and identity migrations
         run: |
           set -euo pipefail
           docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto'
@@ -1122,6 +1122,16 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_identity_registration_pipeline.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261113_identity_registration_hardening.sql
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.11"
+          cache: true
+      - name: Run two-person identity approval transaction against PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1 -v
       - name: Verify permission isolation and two-person approval ledger
         run: |
           set -euo pipefail
@@ -1162,7 +1172,8 @@ jobs:
           FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
           DO $approval$
           BEGIN
-            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals) <> 2 THEN
+            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals
+                WHERE request_id=(SELECT id FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001')) <> 2 THEN
               RAISE EXCEPTION 'two distinct approval records were not persisted';
             END IF;
             IF NOT EXISTS (
