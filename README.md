@@ -40,6 +40,10 @@ Requirements: Go version declared by `go.mod`, PostgreSQL 17+, and Appwrite proj
 3. Run `go test ./...` from the repository root and `go test ./...` from `services/platform`.
 4. Start the API with `go run ./cmd/api`.
 
+## Deployment authority
+
+**Instabox VPS is the only supported deployment target. Render is retired and prohibited.** CI enforces this with `scripts/guard-no-render.py`; do not add retired-host manifests, workflows, URLs, credentials or fallback hosting.
+
 ## Self-hosted deployment
 
 See [deploy/self-hosted](deploy/self-hosted/README.md). The stack uses PostgreSQL,
