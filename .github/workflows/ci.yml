@@ -218,7 +218,8 @@ jobs:
             migrations/20261112_federation_remote_follows.sql \
             migrations/20261111_media_replica_ledger.sql \
             migrations/20261112_media_replication_outbox.sql \
-            migrations/20261112_fresh_media_owner_keys.sql; do
+            migrations/20261112_fresh_media_owner_keys.sql \
+            migrations/20261114_media_replication_publication_gate.sql; do
             docker exec -i testagram-social-schema-ci psql -U postgres -v ON_ERROR_STOP=1 < "$migration"
           done
       - name: Verify durable media replication queue schema
@@ -236,14 +237,30 @@ jobs:
               SELECT 1 FROM pg_trigger
               WHERE tgname='media_replication_enqueue_after_asset_write'
                 AND NOT tgisinternal
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_trigger
+              WHERE tgname='media_replication_enqueue_pending_asset'
+                AND NOT tgisinternal
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_trigger
+              WHERE tgname='media_replication_publication_guard'
+                AND NOT tgisinternal
             ) THEN
-              RAISE EXCEPTION 'Canonical media completion does not enqueue replication';
+              RAISE EXCEPTION 'Canonical media replication enqueue/publication guards are incomplete';
             END IF;
           END $media_replication_schema$;
           INSERT INTO testagram_media.assets
             (object_key,owner_id,visibility,content_type,size_bytes,status,storage_namespace,storage_provider,checksum_sha256)
           VALUES
-            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'ready','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ci-media-owner','private','image/webp',1234,'replication_pending','media-private','s3-default','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','instabox-vps','ci-primary',1234,repeat('a',64),'verified',now()),
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','cloudflare-r2','ci-r2',1234,repeat('a',64),'verified',now()),
+            ('users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','backblaze-b2','ci-b2',1234,repeat('a',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
           DO $media_replication_enqueue$
           BEGIN
             IF NOT EXISTS (
@@ -253,9 +270,61 @@ jobs:
                 AND checksum_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
                 AND status='pending'
             ) THEN
-              RAISE EXCEPTION 'Verified virtual-storage media insert did not enqueue a durable replication job';
+              RAISE EXCEPTION 'Fully verified virtual-storage media did not enqueue a durable replication job';
             END IF;
           END $media_replication_enqueue$;
+
+          INSERT INTO testagram_media.assets
+            (object_key,owner_id,visibility,content_type,size_bytes,status,storage_namespace,storage_provider,checksum_sha256)
+          VALUES
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','ci-media-owner','public','image/webp',1234,'replication_pending','media-public','s3-default',repeat('c',64));
+          DO $pending_media_gate$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_media.media_replication_outbox
+              WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+                AND operation='replicate' AND status='pending'
+                AND checksum_sha256=repeat('c',64)
+            ) THEN
+              RAISE EXCEPTION 'replication_pending asset did not enqueue its durable copy job';
+            END IF;
+          END $pending_media_gate$;
+
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','instabox-vps','ci-primary',1234,repeat('c',64),'verified',now()),
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','cloudflare-r2','ci-r2',1234,repeat('c',64),'verified',now());
+
+          DO $reject_incomplete_replication$
+          BEGIN
+            BEGIN
+              UPDATE testagram_media.assets SET status='ready'
+              WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+              RAISE EXCEPTION 'asset became ready with only two verified providers';
+            EXCEPTION WHEN check_violation THEN
+              NULL;
+            END;
+            IF (SELECT status FROM testagram_media.assets
+                WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') <> 'replication_pending' THEN
+              RAISE EXCEPTION 'asset left replication_pending without three providers';
+            END IF;
+          END $reject_incomplete_replication$;
+
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','backblaze-b2','ci-b2',1234,repeat('c',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+          DO $accept_complete_replication$
+          BEGIN
+            IF (SELECT status FROM testagram_media.assets
+                WHERE object_key='users/ci-media-owner/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') <> 'ready' THEN
+              RAISE EXCEPTION 'asset did not become ready after all three verified provider copies';
+            END IF;
+          END $accept_complete_replication$;
+
           UPDATE testagram_media.assets SET status='deleted'
           WHERE object_key='users/ci-media-owner/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
           DO $media_replication_delete$
@@ -372,9 +441,17 @@ jobs:
           VALUES ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000001');
           UPDATE testagram_local.posts SET views_count=views_count+1 WHERE id='00000000-0000-4000-8000-000000000003';
           INSERT INTO testagram_media.assets
-            (object_key,owner_id,visibility,content_type,size_bytes,status,original_name,storage_namespace)
+            (object_key,owner_id,visibility,content_type,size_bytes,status,original_name,storage_namespace,storage_provider,checksum_sha256)
           VALUES ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef',
-                  '00000000-0000-4000-8000-000000000001','public','image/jpeg',1024,'ready','thread.jpg','media-public');
+                  '00000000-0000-4000-8000-000000000001','public','image/jpeg',1024,'replication_pending','thread.jpg','media-public','s3-default',repeat('d',64));
+          INSERT INTO testagram_media.storage_replicas
+            (object_key,provider,bucket,object_size_bytes,checksum_sha256,state,verified_at)
+          VALUES
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','instabox-vps','ci-primary',1024,repeat('d',64),'verified',now()),
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','cloudflare-r2','ci-r2',1024,repeat('d',64),'verified',now()),
+            ('users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef','backblaze-b2','ci-b2',1024,repeat('d',64),'verified',now());
+          UPDATE testagram_media.assets SET status='ready'
+          WHERE object_key='users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef';
           INSERT INTO testagram_local.polls(author_id,question,media_object_key)
           VALUES ('00000000-0000-4000-8000-000000000001','Which option should we choose?',
                   'users/00000000-0000-4000-8000-000000000001/0123456789abcdef0123456789abcdef');
@@ -1054,8 +1131,7 @@ jobs:
       - name: Run two-person identity approval transaction against PostgreSQL
         env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
-        run: go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1 -v
-      - name: Verify permission isolation and two-person approval ledger
+        run: go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration
         run: |
           set -euo pipefail
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
@@ -1125,3 +1201,83 @@ jobs:
       - name: Stop isolated PostgreSQL
         if: always()
         run: docker stop testagram-admin-security-ci || true
+
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
+ -count=1 -v
+      - name: Verify permission isolation and two-person approval ledger
+        run: |
+          set -euo pipefail
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role) VALUES
+            ('ci-master-user','owner'),
+            ('ci-identity-admin','administrator'),
+            ('ci-engineer-user','engineer');
+          DO $permissions$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='administrator' AND permission_key='identity.review'
+            ) THEN RAISE EXCEPTION 'administrator identity review permission missing'; END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.request'
+            ) THEN RAISE EXCEPTION 'engineer deployment request permission missing'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='deployment.approve'
+            ) THEN RAISE EXCEPTION 'engineers must not receive production approval by default'; END IF;
+          END $permissions$;
+          INSERT INTO testagram_auth.staff_permission_overrides
+            (appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id)
+          VALUES ('ci-engineer-user','deployment.approve',TRUE,'Temporary controlled CI approval grant','ci-master-user');
+          INSERT INTO testagram_auth.sensitive_action_requests
+            (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
+          VALUES
+            ('deployment.production','ci-master-user','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-identity-admin','approved','Independent reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          INSERT INTO testagram_auth.sensitive_action_approvals
+            (request_id,approver_appwrite_user_id,decision,reason)
+          SELECT id,'ci-engineer-user','approved','Second distinct reviewer approves CI request'
+          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+          DO $approval$
+          BEGIN
+            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals) <> 2 THEN
+              RAISE EXCEPTION 'two distinct approval records were not persisted';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.admin_security_audit
+              WHERE action='sensitive_action.requested'
+            ) AND EXISTS (
+              SELECT 1 FROM testagram_auth.sensitive_action_requests
+            ) THEN
+              -- Audit insertion is performed atomically by the application handler;
+              -- the schema integration intentionally inserts the ledger directly.
+              NULL;
+            END IF;
+          END $approval$;
+          UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
+          WHERE appwrite_user_id='ci-engineer-user';
+          DO $revocation$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id='ci-engineer-user' AND access_revoked_at IS NOT NULL) THEN
+              RAISE EXCEPTION 'staff revocation timestamp was not persisted';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id='ci-engineer-user' AND permission_key='deployment.approve') THEN
+              RAISE EXCEPTION 'revocation must preserve permission audit history';
+            END IF;
+          END $revocation$;
+          SQL
+      - name: Stop isolated PostgreSQL
+        if: always()
+        run: docker stop testagram-admin-security-ci || true
+
+      - name: Stop isolated MinIO services
+        if: always()
+        run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
