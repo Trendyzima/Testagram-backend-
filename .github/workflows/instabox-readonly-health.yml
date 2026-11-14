@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+      INSTABOX_READONLY_API_KEY: ${{ secrets.INSTABOX_READONLY_API_KEY }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagram' }}
     steps:
@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${INSTABOX_API_KEY:-}" || { echo "::error::Missing dedicated INSTABOX_API_KEY. Do not substitute a broad deployment key."; exit 1; }
+          test -n "${INSTABOX_READONLY_API_KEY:-}" || { echo "::error::Missing dedicated INSTABOX_READONLY_API_KEY. Do not substitute a broad deployment key."; exit 1; }
 
       - name: Resolve and read machine state (GET only)
         id: machine
@@ -33,7 +33,7 @@ jobs:
           set -euo pipefail
           if [[ -z "${INSTABOX_MACHINE_ID:-}" ]]; then
             curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
-              -H "X-API-Key: $INSTABOX_API_KEY" \
+              -H "X-API-Key: $INSTABOX_READONLY_API_KEY" \
               "https://api.instabox.sh/v1/machines?limit=100" > machines.json
             INSTABOX_MACHINE_ID="$(jq -r --arg name "$INSTABOX_MACHINE_NAME" '([.machines[] | select(.name == $name)][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' machines.json)"
           fi
@@ -42,7 +42,7 @@ jobs:
             exit 1
           fi
           curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
-            -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "X-API-Key: $INSTABOX_READONLY_API_KEY" \
             "https://api.instabox.sh/v1/machines/$INSTABOX_MACHINE_ID" > machine.json
           state="$(jq -r '.state // "unknown"' machine.json)"
           ready="$(jq -r '.runtime.ready // false' machine.json)"
@@ -104,7 +104,7 @@ jobs:
           '
           payload="$(jq -nc --arg cmd "$command" '{cmd:$cmd,timeoutSeconds:240}')"
           response="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
-            -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
+            -X POST -H "X-API-Key: $INSTABOX_READONLY_API_KEY" \
             -H "Content-Type: application/json" -d "$payload" \
             "https://api.instabox.sh/v1/machines/$MACHINE_ID/exec")"
           exit_code="$(jq -r '.exitCode // 1' <<<"$response")"
