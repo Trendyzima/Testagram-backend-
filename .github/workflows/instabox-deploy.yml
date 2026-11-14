@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: false
+      confirm_native_identity_migrations:
+        description: "Explicitly authorize additive native identity PostgreSQL migrations after a verified backup"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ jobs:
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
       APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID || secrets.APPWRITE_PROJECT_ID || '6af01d97002875d6d7bd' }}
+      CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ inputs.confirm_native_identity_migrations == true && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
