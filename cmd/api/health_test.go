@@ -22,6 +22,12 @@ func TestHealthzIdentifiesCanonicalBackend(t *testing.T) {
 	if got := rec.Header().Get("X-Testagram-Health-Contract"); got != "v1" {
 		t.Fatalf("X-Testagram-Health-Contract = %q, want v1", got)
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want application/json; charset=utf-8", got)
+	}
 	var body struct {
 		OK      bool   `json:"ok"`
 		Service string `json:"service"`
