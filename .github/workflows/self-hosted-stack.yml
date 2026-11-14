@@ -120,9 +120,9 @@ jobs:
           pin = re.search(r"(?m)^TESTAGRAM_CDN_IMAGE=(\S+)$", env_example)
           if "TESTAGRAM_CDN_IMAGE" not in image_template or not pin or "@sha256:" not in pin.group(1):
               raise SystemExit("Go CDN image must be pinned by immutable digest in the Compose environment.")
-          for workflow_path in (pathlib.Path("../../.github/workflows/instabox-deploy.yml"), pathlib.Path("../../.github/workflows/self-hosted-stack.yml")):
-              if pin.group(1) not in workflow_path.read_text(encoding="utf-8"):
-                  raise SystemExit(f"CDN image pin differs from {workflow_path.name}.")
+          for source_path in (pathlib.Path("../../scripts/start-instabox-deployment.sh"), pathlib.Path("../../.github/workflows/self-hosted-stack.yml")):
+              if pin.group(1) not in source_path.read_text(encoding="utf-8"):
+                  raise SystemExit(f"CDN image pin differs from {source_path.name}.")
           if env.get("LISTEN_ADDR") != ":8081":
               raise SystemExit("Go CDN must listen on the Caddy/Instabox internal port 8081.")
           if env.get("ORIGIN_URL") != "http://api:8080":
@@ -164,7 +164,9 @@ jobs:
               if "run" in step:
                   subprocess.run(["bash", "-n"], input=step["run"], text=True, check=True)
           target = next(step for step in steps if step.get("name") == "Configure public CDN URL and restart Backend and Go CDN")
-          deploy_source = workflow_path.read_text(encoding="utf-8")
+          deploy_script_path = pathlib.Path("../../scripts/start-instabox-deployment.sh")
+          deploy_source = deploy_script_path.read_text(encoding="utf-8")
+          subprocess.run(["bash", "-n", str(deploy_script_path)], check=True)
           if "ensure_random_secret CDN_PURGE_TOKEN" not in deploy_source or "CDN_PURGE_URL" not in deploy_source:
               raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
           if deploy_source.index('host_arch="$(uname -m)"') > deploy_source.index('up -d postgres'):
