@@ -2,9 +2,6 @@ name: Read-only InstaBox production health inspection
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - ops/readonly-instabox-health-inspection-20261114
 
 permissions:
   contents: read
