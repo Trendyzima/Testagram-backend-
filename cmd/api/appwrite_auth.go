@@ -193,6 +193,14 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	return canonicalID, http.StatusOK, nil
 }
 
+type appwriteRegistrationConsentRequest struct {
+	AgeConfirmed    bool   `json:"age_confirmed"`
+	TermsAccepted   bool   `json:"terms_accepted"`
+	PrivacyAccepted bool   `json:"privacy_accepted"`
+	TermsVersion    string `json:"terms_version"`
+	PrivacyVersion  string `json:"privacy_version"`
+}
+
 func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	if r.Method != http.MethodPost {
