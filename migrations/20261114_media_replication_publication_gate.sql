@@ -1,5 +1,6 @@
 -- Do not expose virtual-storage media until all three independent providers
--- have been read back and verified against the authoritative size and SHA-256.
+-- have fresh (under 24 hours) read-back evidence matching authoritative size and SHA-256.
+-- The database guard enforces the same invariant even for direct SQL writers.
 BEGIN;
 
 ALTER TABLE testagram_media.assets
