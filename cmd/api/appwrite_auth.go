@@ -150,9 +150,9 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	var canonicalID, applicationID, applicationStatus string
+	var canonicalID, applicationID, applicationStatus, accountStatus string
 	err = tx.QueryRow(ctx, `
-		SELECT a.canonical_user_id::text,p.application_id::text,ia.status
+		SELECT a.canonical_user_id::text,p.application_id::text,ia.status,u.account_status
 		FROM testagram_identity.appwrite_accounts a
 		JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
 		JOIN testagram_identity.registration_provisioning p
@@ -162,13 +162,16 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 		JOIN testagram_identity.identity_applications ia ON ia.id=p.application_id
 		WHERE a.appwrite_user_id=$1 AND lower(a.email)=lower($2)
 		  AND ia.status IN ('verification_pending','verified')
-		FOR UPDATE OF a,p,ia
-	`, account.ID, email).Scan(&canonicalID, &applicationID, &applicationStatus)
+		FOR UPDATE OF a,p,ia,u
+	`, account.ID, email).Scan(&canonicalID, &applicationID, &applicationStatus, &accountStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", http.StatusForbidden, errors.New("identity review and two-person account approval are required before accessing Testagram")
 	}
 	if err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("approved Testagram account mapping could not be verified")
+	}
+	if accountStatus != "active" {
+		return "", http.StatusForbidden, errors.New("Testagram account is not active")
 	}
 
 	if _, err = tx.Exec(ctx, `
