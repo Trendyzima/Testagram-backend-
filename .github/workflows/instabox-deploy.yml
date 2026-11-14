@@ -2,8 +2,12 @@ name: Deploy Testagram to InstaBox
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
+    inputs:
+      confirm_production_deploy:
+        description: "Explicitly confirm a production deployment to InstaBox"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,8 +18,10 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_production_deploy == true
     name: Deploy backend and private services
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 55
     env:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
