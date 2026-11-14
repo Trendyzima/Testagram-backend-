@@ -196,42 +196,44 @@ jobs:
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
-          cmd='set -euo pipefail
-          containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
-          if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
-            containers+=(testagram-data-centre-media-1)
-          fi
-          for container in "${containers[@]}"; do
-            ready=false
-            status=missing
-            for attempt in $(seq 1 36); do
-              status="$(sudo docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" "$container" 2>/dev/null || echo missing)"
-              if [[ "$status" == healthy || "$status" == running ]]; then ready=true; break; fi
-              if [[ "$status" == missing || "$status" == exited || "$status" == dead || "$status" == unhealthy ]]; then break; fi
-              sleep 5
-            done
-            echo "$container: $status"
-            if [[ "$ready" != true ]]; then
-              sudo docker logs --tail=100 "$container" 2>&1 || true
-              exit 1
-            fi
-          done
-          minio_id="$(sudo docker ps -q --filter name=testagram-self-hosted-object-storage-1 | head -n 1)"
-          if [[ -z "$minio_id" ]]; then
-            echo "MinIO container is missing." >&2
-            exit 1
-          fi
-          bindings="$(sudo docker inspect --format '{{json .HostConfig.PortBindings}}' "$minio_id")"
-          if ! jq -e '."9000/tcp" | length == 1 and .[0].HostIp == "127.0.0.1"' <<<"$bindings" >/dev/null; then
-            echo "MinIO S3 port 9000 is not restricted to the VPS loopback interface." >&2
-            exit 1
-          fi
-          if jq -e '."9001/tcp" // [] | length > 0' <<<"$bindings" >/dev/null; then
-            echo "MinIO console port 9001 must not be published on the VPS host." >&2
-            exit 1
-          fi
-          echo "MinIO verified private: S3 bound only to 127.0.0.1; console unpublished."
-          '
+          cmd="$(cat <<'REMOTE_HEALTH_CHECK'
+set -euo pipefail
+containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-api-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
+if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
+  containers+=(testagram-data-centre-media-1)
+fi
+for container in "${containers[@]}"; do
+  ready=false
+  status=missing
+  for attempt in $(seq 1 36); do
+    status="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || echo missing)"
+    if [[ "$status" == healthy || "$status" == running ]]; then ready=true; break; fi
+    if [[ "$status" == missing || "$status" == exited || "$status" == dead || "$status" == unhealthy ]]; then break; fi
+    sleep 5
+  done
+  echo "$container: $status"
+  if [[ "$ready" != true ]]; then
+    sudo docker logs --tail=100 "$container" 2>&1 || true
+    exit 1
+  fi
+done
+minio_id="$(sudo docker ps -q --filter name=testagram-self-hosted-object-storage-1 | head -n 1)"
+if [[ -z "$minio_id" ]]; then
+  echo "MinIO container is missing." >&2
+  exit 1
+fi
+bindings="$(sudo docker inspect --format '{{json .HostConfig.PortBindings}}' "$minio_id")"
+if ! jq -e '."9000/tcp" | length == 1 and .[0].HostIp == "127.0.0.1"' <<<"$bindings" >/dev/null; then
+  echo "MinIO S3 port 9000 is not restricted to the VPS loopback interface." >&2
+  exit 1
+fi
+if jq -e '."9001/tcp" // [] | length > 0' <<<"$bindings" >/dev/null; then
+  echo "MinIO console port 9001 must not be published on the VPS host." >&2
+  exit 1
+fi
+echo "MinIO verified private: S3 bound only to 127.0.0.1; console unpublished."
+REMOTE_HEALTH_CHECK
+)"
           payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:180}')"
           result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" -d "$payload" \
