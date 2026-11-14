@@ -49,7 +49,7 @@ for file in \
   041_native_identity_verification.sql \
   042_native_identity_evidence.sql \
   043_native_identity_integrity.sql \
-  044_identity_evidence_access_audit.sql \\
+  044_identity_evidence_access_audit.sql \
   045_native_identity_status_access.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
