@@ -288,21 +288,14 @@ fi
 echo "Starting PostgreSQL, MinIO and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
-# Existing PostgreSQL volumes do not replay initdb mounts. Apply the small,
-# additive Appwrite-consent migration only after taking and validating a backup.
-consent_table="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL"')"
-if [[ "$consent_table" != "t" ]]; then
-  backup_dir="$ROOT/backups"; mkdir -p "$backup_dir"; chmod 700 "$backup_dir"
-  backup="$backup_dir/testagram-pre-appwrite-consent-$(date -u +%Y%m%dT%H%M%SZ).dump"
-  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
-  test -s "$backup"
-  sha256sum "$backup" > "$backup.sha256"
-  sudo docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine pg_restore --list "/backup/$(basename "$backup")" >/dev/null
-  sha256sum -c "$backup.sha256"
-  chmod 600 "$backup" "$backup.sha256"
-  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql'
-fi
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL" | grep -qx t'
+# Existing PostgreSQL volumes do not replay initdb mounts. The shared
+# preflight skips a complete schema, otherwise it fails closed unless the
+# workflow carries explicit approval. The helper takes and fully restore-tests
+# a backup before applying any additive identity migrations.
+sudo env \
+  CONFIRM_NATIVE_IDENTITY_MIGRATIONS="${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
+  COMPOSE_FILE="$BASE_COMPOSE" ENV_FILE="$BASE_ENV" BACKUP_DIR="$ROOT/backups" \
+  bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
 
 echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
