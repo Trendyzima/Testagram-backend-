@@ -18,7 +18,7 @@ canonical_start = workflow.index('ready_status=000', workflow.index("CANONICAL_A
 canonical_end = workflow.index('exit 1', canonical_start)
 canonical_smoke = workflow[canonical_start:canonical_end]
 
-assert 'ready_status=="404"' in canonical_smoke, (
+assert 'ready_status" == "404"' in canonical_smoke, (
     "Canonical public smoke must expect the intentionally hidden /readyz route"
 )
 assert 'health_status" == "200"' in canonical_smoke
