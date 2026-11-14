@@ -159,7 +159,7 @@ func TestAppwriteRegistrationConsentRequiresBearerSession(t *testing.T) {
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "2026-11-11")
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "2026-11-11")
 	service := &service{}
-	request := httptest.NewRequest(http.MethodPost, "/api/auth/registration-consent", strings.NewReader(`{"age_confirmed":true,"terms_accepted":true,"privacy_accepted":true,"terms_version":"2026-11-11","privacy_version":"2026-11-11"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/registration-consent", strings.NewReader(`{"adult_confirmed":true,"terms_accepted":true,"privacy_accepted":true,"terms_version":"2026-11-11","privacy_version":"2026-11-11"}`))
 	response := httptest.NewRecorder()
 	service.appwriteRegistrationConsent(response, request)
 	if response.Code != http.StatusUnauthorized {
@@ -171,7 +171,7 @@ func TestAppwriteRegistrationConsentRejectsUnacceptedPolicyBeforeDatabase(t *tes
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "2026-11-11")
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "2026-11-11")
 	service := &service{}
-	request := httptest.NewRequest(http.MethodPost, "/api/auth/registration-consent", strings.NewReader(`{"age_confirmed":true,"terms_accepted":false,"privacy_accepted":true,"terms_version":"2026-11-11","privacy_version":"2026-11-11"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/registration-consent", strings.NewReader(`{"adult_confirmed":true,"terms_accepted":false,"privacy_accepted":true,"terms_version":"2026-11-11","privacy_version":"2026-11-11"}`))
 	request.Header.Set("Authorization", "Bearer valid-session-token")
 	response := httptest.NewRecorder()
 	service.appwriteRegistrationConsent(response, request)
