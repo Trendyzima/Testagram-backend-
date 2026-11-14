@@ -61,24 +61,27 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		upstream = &http.Client{Timeout: 15 * time.Second}
 
 		var requestStatus string
-		var reviewCount, approvalTokenCount int
+		var reviewCount, approvalLedgerCount, approvalTokenCount int
 		err := db.QueryRow(ctx, `
 			SELECT a.email, a.username, a.status, sar.status,
-			       (SELECT count(*) FROM testagram_identity.identity_application_reviews r
+			       (SELECT count(DISTINCT r.reviewer_appwrite_user_id) FROM testagram_identity.identity_application_reviews r
 			        WHERE r.application_id=a.id AND r.decision='approved'),
+			       (SELECT count(DISTINCT sa.approver_appwrite_user_id) FROM testagram_auth.sensitive_action_approvals sa
+			        WHERE sa.request_id=sar.id AND sa.decision='approved'),
 			       (SELECT count(*) FROM testagram_identity.identity_approval_tokens tok
-			        WHERE tok.application_id=a.id AND tok.consumed_at IS NULL)
+			        WHERE tok.application_id=a.id AND tok.consumed_at IS NULL
+			          AND tok.first_approver_appwrite_user_id <> tok.second_approver_appwrite_user_id)
 			FROM testagram_identity.identity_applications a
 			JOIN testagram_auth.sensitive_action_requests sar
 			  ON sar.id=a.sensitive_action_request_id
 			WHERE a.id=$1::uuid
-		`, applicationID).Scan(&applicationEmail, &username, &applicationStatus, &requestStatus, &reviewCount, &approvalTokenCount)
+		`, applicationID).Scan(&applicationEmail, &username, &applicationStatus, &requestStatus, &reviewCount, &approvalLedgerCount, &approvalTokenCount)
 		if err != nil {
 			t.Fatalf("load dedicated pre-approved staging application: %v", err)
 		}
-		if applicationStatus != "approved" || requestStatus != "approved" || reviewCount != 2 || approvalTokenCount != 1 {
-			t.Fatalf("staging application is not ready for provisioning: application=%q request=%q reviews=%d unconsumed_tokens=%d; want approved/approved/2/1",
-				applicationStatus, requestStatus, reviewCount, approvalTokenCount)
+		if applicationStatus != "approved" || requestStatus != "approved" || reviewCount != 2 || approvalLedgerCount != 2 || approvalTokenCount != 1 {
+			t.Fatalf("staging application is not ready for provisioning: application=%q request=%q reviews=%d approval_ledger=%d unconsumed_tokens=%d; want approved/approved/2/2/1",
+				applicationStatus, requestStatus, reviewCount, approvalLedgerCount, approvalTokenCount)
 		}
 		if applicationEmail != appwriteEmail {
 			t.Fatalf("staging Appwrite email %q does not match approved application email %q", appwriteEmail, applicationEmail)
