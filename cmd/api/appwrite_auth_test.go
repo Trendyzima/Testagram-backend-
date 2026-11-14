@@ -194,6 +194,7 @@ func TestWriteAppwriteAuthFailureReturnsStableAuthorizationCodes(t *testing.T) {
 		{"identity approval", http.StatusForbidden, errors.New("identity review and two-person account approval are required before accessing Testagram"), "IDENTITY_APPROVAL_REQUIRED", http.StatusForbidden},
 		{"email verification", http.StatusForbidden, errors.New("email verification is required before accessing Testagram"), "EMAIL_VERIFICATION_REQUIRED", http.StatusForbidden},
 		{"generic forbidden", http.StatusForbidden, errors.New("account is inactive"), "AUTH_FORBIDDEN", http.StatusForbidden},
+		{"invalid provider response", http.StatusBadGateway, errors.New("invalid Appwrite response"), "AUTH_PROVIDER_INVALID", http.StatusBadGateway},
 		{"dependency outage", http.StatusServiceUnavailable, errors.New("identity database unavailable"), "AUTH_BACKEND_UNAVAILABLE", http.StatusServiceUnavailable},
 	}
 	for _, test := range tests {
