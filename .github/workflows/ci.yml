@@ -627,11 +627,12 @@ jobs:
               "042_native_identity_evidence.sql",
               "043_native_identity_integrity.sql",
               "044_identity_evidence_access_audit.sql",
+              "047_appwrite_registration_consent.sql",
           )
           assert all(f"/docker-entrypoint-initdb.d/{name}:ro" in compose for name in identity_migration_mounts), "fresh VPS databases must mount every native identity and reviewer security migration"
           assert "20261113_identity_idswyft_intake.sql" not in compose, "retired Idswyft intake must not enter the production schema path"
           apply_identity = Path("deploy/self-hosted/apply-native-identity-migrations.sh").read_text()
-          assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval"
+          assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity and "047_appwrite_registration_consent.sql" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval for the consent ledger"
           assert "identityEvidenceMatchesContentType" in identity and "evidence_access_attempted" in review, "identity evidence requires file-signature validation and audited reviewer access"
           identity_migration_test = Path("scripts/test-identity-registration-migration.sh").read_text()
           assert "adult_verification_session_id" not in identity and "adult_verification_result" not in identity and "adult_verification_mode" not in identity and "adult_verification_threshold," not in identity, "native identity status must read verification_sessions, not retired vendor columns"

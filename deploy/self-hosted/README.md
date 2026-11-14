@@ -28,10 +28,11 @@ service-owned PostgreSQL outboxes and idempotent workers.
 1. Copy `.env.example` to `.env`.
 2. Set strong unique values for PostgreSQL, MinIO, control-plane, media and admin session secrets.
 3. Set `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`. Set `APPWRITE_API_KEY` only if owners will issue staff invitations; restrict it to user-management operations.
-4. Confirm the Appwrite identity bridge, native media-link and staff-role migrations are included.
-5. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
-6. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
-7. Start the Backend base stack:
+4. Set the production `ONSPACE_AI_API_KEY` secret for content moderation. The Backend deliberately rejects post publishing when this key is missing or the moderation service is unavailable. Ordinary Appwrite self-service registration records age/Terms/Privacy consent in the Backend before canonical account provisioning; it does not enable the separate high-assurance two-person review workflow.
+5. Confirm the Appwrite identity bridge, registration-consent, native media-link and staff-role migrations are included.
+6. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
+7. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
+8. Start the Backend base stack:
 
 ```sh
 docker compose --env-file .env -f docker-compose.yml config

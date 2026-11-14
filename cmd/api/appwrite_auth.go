@@ -157,6 +157,31 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "appwrite:"+account.ID); err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("Testagram identity lock is unavailable")
 	}
+	var alreadyLinked bool
+	if err = tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1)
+	`, account.ID).Scan(&alreadyLinked); err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("Testagram identity mapping could not be checked")
+	}
+	if !alreadyLinked {
+		termsVersion := strings.TrimSpace(env("TESTAGRAM_TERMS_VERSION", "2026-11-11"))
+		privacyVersion := strings.TrimSpace(env("TESTAGRAM_PRIVACY_VERSION", "2026-11-11"))
+		var consentCount int
+		err = tx.QueryRow(ctx, `
+			SELECT count(DISTINCT consent_type)
+			FROM testagram_identity.appwrite_registration_consents
+			WHERE appwrite_user_id=$1 AND email=$2
+			  AND (consent_type='age_confirmation' AND policy_version='age-v1'
+			    OR consent_type='terms' AND policy_version=$3
+			    OR consent_type='privacy' AND policy_version=$4)
+		`, account.ID, email, termsVersion, privacyVersion).Scan(&consentCount)
+		if err != nil {
+			return "", http.StatusServiceUnavailable, errors.New("registration consent store is unavailable")
+		}
+		if consentCount != 3 {
+			return "", http.StatusForbidden, errors.New("registration consent is required before Testagram account provisioning")
+		}
+	}
 	err = tx.QueryRow(ctx, `
 		UPDATE testagram_identity.appwrite_accounts
 		SET email=$2,email_verified=$3,last_seen_at=now(),updated_at=now()
@@ -204,4 +229,131 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 		}
 	}
 	return canonicalID, http.StatusOK, nil
+}
+
+
+
+
+type appwriteRegistrationConsentRequest struct {
+	AgeConfirmed    bool   `json:"age_confirmed"`
+	TermsAccepted   bool   `json:"terms_accepted"`
+	PrivacyAccepted bool   `json:"privacy_accepted"`
+	TermsVersion    string `json:"terms_version"`
+	PrivacyVersion  string `json:"privacy_version"`
+}
+
+// appwriteRegistrationConsent records age and current policy declarations
+// against an Appwrite account session. It intentionally permits an
+// unverified email at this stage; product access remains gated by the verified
+// Appwrite session and the durable consent ledger.
+func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Request) {
+	id := requestID(r)
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", id))
+		return
+	}
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 || len(parts[1]) > 8192 {
+		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "A valid Appwrite session is required", id))
+		return
+	}
+	var input appwriteRegistrationConsentRequest
+	if err := decodeMediaJSON(w, r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REGISTRATION_CONSENT", "Registration consent payload is invalid", id))
+		return
+	}
+	termsVersion := strings.TrimSpace(env("TESTAGRAM_TERMS_VERSION", "2026-11-11"))
+	privacyVersion := strings.TrimSpace(env("TESTAGRAM_PRIVACY_VERSION", "2026-11-11"))
+	if !input.AgeConfirmed || !input.TermsAccepted || !input.PrivacyAccepted ||
+		input.TermsVersion != termsVersion || input.PrivacyVersion != privacyVersion ||
+		termsVersion == "" || privacyVersion == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("REGISTRATION_CONSENT_REQUIRED", "Confirm your age and accept the current Terms and Privacy Notice", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", id))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	ipAllowed, err := s.authRateAllowed(ctx, "registration-consent-ip", authClientIP(r), 300)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", id))
+		return
+	}
+	if !ipAllowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts. Try again later.", id))
+		return
+	}
+	account, status, err := fetchAppwriteAccount(ctx, s.upstream,
+		strings.TrimSpace(env("APPWRITE_ENDPOINT", "")),
+		strings.TrimSpace(env("APPWRITE_PROJECT_ID", "")), parts[1])
+	if err != nil {
+		writeJSON(w, status, errorBody("APPWRITE_SESSION_INVALID", "Appwrite could not verify this registration session", id))
+		return
+	}
+	email, err := authEmail(account.Email)
+	if err != nil || !validAppwriteUserID(account.ID) {
+		writeJSON(w, http.StatusBadGateway, errorBody("APPWRITE_ACCOUNT_INVALID", "Appwrite returned an invalid account identity", id))
+		return
+	}
+	userAllowed, err := s.authRateAllowed(ctx, "registration-consent-user", account.ID, 12)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", id))
+		return
+	}
+	if !userAllowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts for this account. Try again later.", id))
+		return
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CONSENT_STORE_UNAVAILABLE", "Registration consent could not be saved", id))
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	for _, consent := range []struct{ kind, version string }{
+		{"age_confirmation", "age-v1"},
+		{"terms", termsVersion},
+		{"privacy", privacyVersion},
+	} {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO testagram_identity.appwrite_registration_consents
+			  (appwrite_user_id,email,consent_type,policy_version,accepted_at,request_id)
+			VALUES($1,$2,$3,$4,now(),$5)
+			ON CONFLICT (appwrite_user_id,consent_type,policy_version,email) DO NOTHING
+		`, account.ID, email, consent.kind, consent.version, id)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("CONSENT_STORE_UNAVAILABLE", "Registration consent could not be saved", id))
+			return
+		}
+	}
+	var count int
+	err = tx.QueryRow(ctx, `
+		SELECT count(DISTINCT consent_type)
+		FROM testagram_identity.appwrite_registration_consents
+		WHERE appwrite_user_id=$1 AND email=$2
+		  AND (consent_type='age_confirmation' AND policy_version='age-v1'
+		    OR consent_type='terms' AND policy_version=$3
+		    OR consent_type='privacy' AND policy_version=$4)
+	`, account.ID, email, termsVersion, privacyVersion).Scan(&count)
+	if err != nil || count != 3 {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CONSENT_STORE_UNAVAILABLE", "Registration consent could not be verified", id))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CONSENT_STORE_UNAVAILABLE", "Registration consent could not be committed", id))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{"recorded": true, "email_verified": account.EmailVerification},
+		"error": nil,
+		"request_id": id,
+	})
 }

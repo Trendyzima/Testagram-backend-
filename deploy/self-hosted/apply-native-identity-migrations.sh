@@ -50,7 +50,8 @@ for file in \
   042_native_identity_evidence.sql \
   043_native_identity_integrity.sql \
   044_identity_evidence_access_audit.sql \
-  045_native_identity_status_access.sql; do
+  045_native_identity_status_access.sql \
+  047_appwrite_registration_consent.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -69,11 +70,13 @@ apply_migration 042_native_identity_evidence.sql
 apply_migration 043_native_identity_integrity.sql
 apply_migration 044_identity_evidence_access_audit.sql
 apply_migration 045_native_identity_status_access.sql
+apply_migration 047_appwrite_registration_consent.sql
 
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
     SELECT
       to_regclass('\''testagram_identity.identity_applications'\'') IS NOT NULL
+      AND to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL
       AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
       AND to_regclass('\''testagram_identity.verification_evidence'\'') IS NOT NULL
       AND to_regclass('\''testagram_identity.verification_events'\'') IS NOT NULL
@@ -85,6 +88,6 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
       )
   "' | grep -qx t
 
-echo "Native identity schema and reviewer evidence-access audit verified."
-echo "Registration remains disabled. Do not enable it until B2/R2 lifecycle and end-to-end staging acceptance pass."
+echo "Native identity schema, reviewer evidence-access audit, and Appwrite self-service consent ledger verified."
+echo "Appwrite self-service registration consent schema is installed. High-assurance identity applications remain separately gated by their approval and storage acceptance controls."
 echo "Retain backup until restore verification and release acceptance are complete."
