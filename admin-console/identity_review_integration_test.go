@@ -91,7 +91,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin requester self-approval transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, requester, "approved", "Requester must not approve own request"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, requester, "approved", "Requester must not approve own request"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("requester was allowed to approve their own identity application")
 	}
@@ -101,7 +101,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin first reviewer transaction: %v", err)
 	}
-	state, applicationState, approvalCount, err := recordSensitiveActionDecision(ctx, tx, requestID, reviewerOne, "approved", "First independent reviewer approval")
+	state, applicationState, approvalCount, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, reviewerOne, "approved", "First independent reviewer approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("record first two-person decision: %v", err)
@@ -118,7 +118,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin duplicate reviewer transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, reviewerOne, "approved", "Duplicate first reviewer decision"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, reviewerOne, "approved", "Duplicate first reviewer decision"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("same reviewer was counted twice")
 	}
@@ -128,7 +128,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin second reviewer transaction: %v", err)
 	}
-	state, applicationState, approvalCount, err = recordSensitiveActionDecision(ctx, tx, requestID, reviewerTwo, "approved", "Second independent reviewer approval")
+	state, applicationState, approvalCount, err = recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", requester, reviewerTwo, "approved", "Second independent reviewer approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("record second two-person decision: %v", err)
