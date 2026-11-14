@@ -59,7 +59,7 @@ jobs:
               assert required in workflow, f"read-only inspector is missing diagnostic command: {required}"
           for forbidden in ("docker restart", "docker stop", "docker rm", "docker pull", "docker compose up", "docker compose down", "docker volume rm", "docker system prune"):
               assert forbidden not in workflow, f"read-only workflow contains a mutating Docker command: {forbidden}"
-          assert 'state" != "running"' in workflow and "will not start, restart or recreate" in workflow, "offline machine must fail without automatic recovery"
+          assert 'if [[ "$state" != "running" || "$ready" != "true" ]]' in workflow and "no lifecycle action will be attempted" in workflow, "offline or unready machine must fail without lifecycle actions"
           PY
       - name: Validate staff console JavaScript syntax
         run: node --check admin-console/web/app.js
