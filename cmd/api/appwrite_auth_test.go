@@ -119,3 +119,25 @@ func TestAuthenticatedAppwriteUserRejectsUnverifiedEmailBeforeIdentityLookup(t *
 	}
 }
 
+
+func TestAppwriteDefaultUsernameIsStableAndValid(t *testing.T) {
+	first := appwriteDefaultUsername("Trendy.User+test@example.test", "appwrite-user-123")
+	second := appwriteDefaultUsername("Trendy.User+test@example.test", "appwrite-user-123")
+	if first != second {
+		t.Fatalf("username is not stable: %q != %q", first, second)
+	}
+	if !authUsernamePattern.MatchString(first) || len(first) > 30 {
+		t.Fatalf("generated username is invalid: %q", first)
+	}
+	other := appwriteDefaultUsername("Trendy.User+test@example.test", "different-appwrite-user")
+	if first == other {
+		t.Fatalf("different Appwrite identities received the same generated username: %q", first)
+	}
+}
+
+func TestAppwriteDefaultUsernameHandlesInvalidLocalPart(t *testing.T) {
+	username := appwriteDefaultUsername("..@example.test", "appwrite-user-456")
+	if !authUsernamePattern.MatchString(username) {
+		t.Fatalf("generated username is invalid: %q", username)
+	}
+}
