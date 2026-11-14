@@ -10,11 +10,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"os"
+	"strconv"
 	"strings"
 	"time"
-
 )
 
 type identityReviewDecisionInput struct {
