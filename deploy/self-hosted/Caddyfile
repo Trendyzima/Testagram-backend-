@@ -15,8 +15,17 @@
     Referrer-Policy no-referrer
     -Server
   }
-  reverse_proxy api:8080 {
-    header_up X-Real-IP {remote_host}
+  # Keep liveness public for external release checks; dependency readiness
+  # and metrics remain private and are checked from inside the deployment.
+  handle /healthz {
+    reverse_proxy api:8080 {
+      header_up X-Real-IP {remote_host}
+    }
+  }
+  handle {
+    reverse_proxy api:8080 {
+      header_up X-Real-IP {remote_host}
+    }
   }
 }
 {$MEDIA_DOMAIN} {
