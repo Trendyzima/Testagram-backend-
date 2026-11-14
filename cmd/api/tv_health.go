@@ -212,6 +212,55 @@ func validTVHealthInput(channel tvHealthInput) bool {
 	return err == nil && parsed.Host != "" && parsed.User == nil && (parsed.Scheme == "https" || parsed.Scheme == "http")
 }
 
+// tvCatalogRead exposes only the public stream catalogue to the one authorized
+// GitHub Actions monitor. Stream URLs are not exposed through the public API.
+func (s *service) tvCatalogRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := verifyTVGitHubOIDCToken(ctx, s.upstream, r.Header.Get("X-GitHub-OIDC-Token"), time.Now()); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "authorized GitHub Actions identity required"})
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "TV catalogue database unavailable"})
+		return
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT channel_id,url,source,country,group_name,priority
+		FROM testagram_tv.channel_health
+		ORDER BY priority DESC,channel_id ASC
+		LIMIT 20000
+	`)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "TV catalogue temporarily unavailable"})
+		return
+	}
+	defer rows.Close()
+	channels := make([]map[string]any, 0)
+	for rows.Next() {
+		var id, streamURL, source, country, groupName string
+		var priority int
+		if err := rows.Scan(&id, &streamURL, &source, &country, &groupName, &priority); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "TV catalogue temporarily unavailable"})
+			return
+		}
+		channels = append(channels, map[string]any{
+			"id": id, "url": streamURL, "source": source,
+			"country": country, "group_name": groupName, "priority": priority,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "TV catalogue temporarily unavailable"})
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channels": channels, "count": len(channels)})
+}
+
 func (s *service) tvHealthBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})

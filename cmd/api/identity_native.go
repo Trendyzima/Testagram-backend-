@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"path"
 	"regexp"
@@ -166,10 +169,9 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 			  (id,email,username,display_name,adult_confirmed_at,evidence_reference,
 			   evidence_fingerprint_sha256,terms_version,privacy_version,terms_accepted_at,
 			   privacy_accepted_at,submission_key_sha256,status_access_token_sha256,
-			   status_access_token_expires_at,adult_verification_threshold,
-			   adult_verification_mode,adult_verification_result,status)
+			   status_access_token_expires_at,status)
 			VALUES ($1::uuid,$2,$3,$4,now(),$5,NULL,$6,$7,now(),now(),$8,$9,
-			        now()+interval '7 days',18,'age_only','pending','verification_pending')
+			        now()+interval '7 days','verification_pending')
 		`, applicationID, email, username, displayName, "native-session-pending:"+applicationID,
 			termsVersion, privacyVersion, submissionHash, applicationTokenHash)
 		if err != nil {
@@ -230,9 +232,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
-		SET adult_verification_session_id=$2,adult_verification_threshold=18,
-		    adult_verification_mode='age_only',adult_verification_result='pending',
-		    evidence_reference=$3,status='verification_pending',updated_at=now()
+		SET evidence_reference=$3,status='verification_pending',updated_at=now()
 		WHERE id=$1::uuid
 	`, applicationID, sessionID, "native-session-pending:"+sessionID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification session could not be linked", requestID(r)))
@@ -273,10 +273,16 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 	var updatedAt time.Time
 	var storedHash []byte
 	err := s.db.QueryRow(ctx, `
-		SELECT status,adult_verification_result,adult_verification_threshold,updated_at,
-		       status_access_token_sha256,COALESCE(adult_verification_session_id,'')
-		FROM testagram_identity.identity_applications
-		WHERE id=$1::uuid AND status_access_token_expires_at>now()
+		SELECT a.status,COALESCE(v.status,'pending'),COALESCE(v.requested_minimum_age,18),a.updated_at,
+		       a.status_access_token_sha256,COALESCE(v.id::text,'')
+		FROM testagram_identity.identity_applications a
+		LEFT JOIN LATERAL (
+		  SELECT id,status,requested_minimum_age
+		  FROM testagram_identity.verification_sessions
+		  WHERE application_id=a.id AND purpose='age_assurance'
+		  ORDER BY created_at DESC LIMIT 1
+		) v ON true
+		WHERE a.id=$1::uuid AND a.status_access_token_expires_at>now()
 	`, applicationID).Scan(&status, &verificationStatus, &threshold, &updatedAt, &storedHash, &sessionID)
 	if err != nil || subtle.ConstantTimeCompare(storedHash, authTokenHash(token)) != 1 {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
@@ -351,6 +357,17 @@ func (s *service) identitySessionStatus(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func identityEvidenceMatchesContentType(payload []byte, contentType string) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if contentType == "application/pdf" {
+		return bytes.HasPrefix(payload, []byte("%PDF-"))
+	}
+	detected := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(payload), ";")[0]))
+	return detected == contentType
+}
+
 func identityEvidenceExtension(contentType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(contentType)) {
 	case "image/jpeg":
@@ -407,11 +424,6 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	}
 	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
 	objectKey := path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
-	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, input.ContentType, input.SizeBytes)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
-		return
-	}
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_evidence
 		  (id,session_id,object_key,content_type,size_bytes,sha256)
@@ -422,11 +434,99 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	// Do not expose an internal MinIO hostname or a raw object-store capability
+	// to mobile clients. The client uploads to this authenticated API route;
+	// Backend streams the bounded payload to the private object store itself.
+	uploadPath := "/api/identity/sessions/" + r.PathValue("session_id") + "/evidence/" + evidenceID + "/upload"
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"evidence_id": evidenceID, "upload_url": uploadURL,
+		"evidence_id": evidenceID, "upload_url": uploadPath,
 		"method": http.MethodPut, "content_type": input.ContentType,
 		"size_bytes": input.SizeBytes, "expires_in_seconds": 300,
 	})
+}
+
+func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request) {
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
+		return
+	}
+	if r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "PUT required", requestID(r)))
+		return
+	}
+	access, err := s.identitySessionAccess(r)
+	if err != nil || (access.Status != "in_progress" && access.Status != "created") {
+		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
+		return
+	}
+	evidenceID := strings.TrimSpace(r.PathValue("evidence_id"))
+	if !identityApplicationIDPattern.MatchString(evidenceID) || s.virtualStorage == nil {
+		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	var objectKey, contentType string
+	var size int64
+	var expectedDigest []byte
+	err = s.db.QueryRow(ctx, `
+		SELECT object_key,content_type,size_bytes,sha256
+		FROM testagram_identity.verification_evidence
+		WHERE id=$1::uuid AND session_id=$2::uuid AND status='upload_pending'
+		  AND created_at > now()-interval '5 minutes'
+	`, evidenceID, r.PathValue("session_id")).Scan(&objectKey, &contentType, &size, &expectedDigest)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
+		return
+	}
+	if r.ContentLength != size || strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))) != contentType {
+		writeJSON(w, http.StatusBadRequest, errorBody("EVIDENCE_METADATA_MISMATCH", "Upload size and content type must match the reserved evidence metadata", requestID(r)))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxIdentityEvidenceBytes)
+	defer r.Body.Close()
+	payload, err := io.ReadAll(r.Body)
+	if err != nil || int64(len(payload)) != size {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errorBody("EVIDENCE_SIZE_MISMATCH", "Evidence upload is incomplete or exceeds its reserved size", requestID(r)))
+		return
+	}
+	actualDigest := sha256.Sum256(payload)
+	if len(expectedDigest) != sha256.Size || subtle.ConstantTimeCompare(actualDigest[:], expectedDigest) != 1 {
+		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_CHECKSUM_MISMATCH", "Evidence upload failed its SHA-256 integrity check", requestID(r)))
+		return
+	}
+	if !identityEvidenceMatchesContentType(payload, contentType) {
+		writeJSON(w, http.StatusBadRequest, errorBody("EVIDENCE_CONTENT_MISMATCH", "Evidence bytes do not match the declared content type", requestID(r)))
+		return
+	}
+	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, contentType, size)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
+		return
+	}
+	upstreamRequest, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(payload))
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence upload could not be forwarded", requestID(r)))
+		return
+	}
+	upstreamRequest.Header.Set("Content-Type", contentType)
+	upstreamRequest.ContentLength = size
+	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	upstreamResponse, err := client.Do(upstreamRequest)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence could not be stored", requestID(r)))
+		return
+	}
+	io.Copy(io.Discard, io.LimitReader(upstreamResponse.Body, 4096))
+	upstreamResponse.Body.Close()
+	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_REJECTED", "Private storage rejected the evidence upload", requestID(r)))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request) {
@@ -441,6 +541,10 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	access, err := s.identitySessionAccess(r)
 	if err != nil || (access.Status != "in_progress" && access.Status != "created") {
 		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
+		return
+	}
+	if s.virtualStorage == nil || s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -459,6 +563,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		SELECT object_key,content_type,size_bytes,sha256
 		FROM testagram_identity.verification_evidence
 		WHERE id=$1::uuid AND session_id=$2::uuid AND status='upload_pending'
+		  AND created_at > now()-interval '5 minutes'
 	`, input.EvidenceID, r.PathValue("session_id")).Scan(&objectKey, &contentType, &size, &digest)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
@@ -516,7 +621,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
 		SET evidence_reference=$2,evidence_fingerprint_sha256=$3,
-		    adult_verification_result='manual_review',status='under_review',updated_at=now()
+		    status='under_review',updated_at=now()
 		WHERE id=$1::uuid
 	`, access.ApplicationID, evidenceRef, digest); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence submission could not be committed", requestID(r)))

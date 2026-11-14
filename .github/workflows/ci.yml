@@ -41,6 +41,21 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check PyYAML
           python scripts/validate-fresh-openapi.py
+      - name: Lint every GitHub Actions workflow
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -color -ignore 'SC2034' -ignore 'SC2016' -ignore 'SC2129'
+      - name: Validate read-only Instabox inspection
+        run: |
+          set -euo pipefail
+          bash -n scripts/instabox-readonly-health.sh
+          python - <<'PY'
+          from pathlib import Path
+          script = Path("scripts/instabox-readonly-health.sh").read_text()
+          workflow = Path(".github/workflows/instabox-readonly-health.yml").read_text()
+          for forbidden in ("docker compose up", "docker restart", "docker stop", "docker rm", "docker pull", "volume rm"):
+              assert forbidden not in script, f"read-only inspector contains a mutating command: {forbidden}"
+          assert "workflow_dispatch:" in workflow and "/v1/machines/$machine_id/exec" in workflow, "health inspection must be manual and use the read-only diagnostic command"
+          assert 'state" != "running"' in workflow and "will not start, restart or recreate" in workflow, "offline machine must fail without automatic recovery"
+          PY
       - name: Validate staff console JavaScript syntax
         run: node --check admin-console/web/app.js
       - name: Check formatting of changed API Go files
@@ -486,7 +501,67 @@ jobs:
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
-          assert "envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token}" in deploy, "deployment must forward the Federation read secret to the VPS environment"
+          assert "envs:{" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
+          dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then')
+          dc_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', dc_media_gate)
+          backend_media_gate = deploy.index('if [[ "$(read_env_value MEDIA_REPLICATION_ENABLED)" == "true" ]]; then')
+          backend_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', backend_media_gate)
+          assert "DATA_CENTRE_MEDIA_ENABLED:$media_enabled" in deploy and "MEDIA_REPLICATION_ENABLED:$media_replication_enabled" in deploy and 'write_env_value MEDIA_REPLICATION_ENABLED "$MEDIA_REPLICATION_ENABLED"' in deploy and dc_credential_copy > dc_media_gate and backend_credential_copy > backend_media_gate and 'b2_access=""' in deploy and 'r2_access=""' in deploy and '--arg b2_access "$b2_access"' in deploy and '--arg r2_access "$r2_access"' in deploy, "B2/R2 credentials must be transferred only after their independent explicit activation gates"
+          compose = Path("deploy/self-hosted/docker-compose.yml").read_text()
+          minio_init = Path("deploy/self-hosted/minio-tools/init.sh").read_text()
+          assert 'write_env_value FRESH_MEDIA_ENABLED "$media_enabled"' in deploy and "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" in compose, "deployment activation must reach the Backend runtime feature gate"
+          assert 'write_env_value VIRTUAL_STORAGE_ENABLED true' in deploy and "VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-true}" in compose, "private evidence storage must be enabled on the VPS"
+          assert 'write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false' in deploy and "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}" in compose, "identity registration must remain fail-closed until explicit acceptance"
+          assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in compose and "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in minio_init and 'mc anonymous set none "local/$identity_bucket"' in minio_init, "identity evidence must use a dedicated private MinIO bucket"
+          assert "CLOUDFLARE_R2_SECRET_ACCESS_KEY" in compose and "B2_S3_SECRET_ACCESS_KEY" in compose, "three-provider replication credentials must reach Backend only through environment mapping"
+          deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
+          assert "B2_S3_PUBLIC_BUCKET" in deploy and "CLOUDFLARE_R2_PUBLIC_BUCKET" in deploy and 'MEDIA_REPLICATION_ENABLED' in deploy, "deployment must wire distinct provider buckets and keep replication explicitly gated"
+          assert "MEDIA_REPLICATION_ENABLED=true requires complete B2/R2 settings" in deploy, "deployment must reject incomplete replication activation"
+          assert 'write_dc_env_value DATA_CENTRE_MEDIA_ENABLED "$media_enabled"' in deploy and 'write_dc_env_value COMPOSE_PROFILES media' in deploy, "Data Centre media profile activation must persist across later Compose operations"
+          identity = Path("cmd/api/identity_native.go").read_text()
+          review = Path("cmd/api/identity_review.go").read_text()
+          assert 'uploadPath := "/api/identity/sessions/"' in identity and "s.identityEvidenceUpload" in Path("cmd/api/main.go").read_text(), "identity evidence uploads must use the authenticated Backend proxy"
+          assert "s.identityReviewEvidence" in Path("cmd/api/main.go").read_text() and 'Content-Disposition' in review and 'Cache-Control", "private, no-store' in review, "reviewer evidence must be streamed through authenticated no-store API"
+          identity_migration_mounts = (
+              "034_admin_security_controls.sql",
+              "035_identity_registration_pipeline.sql",
+              "039_identity_registration_hardening.sql",
+              "041_native_identity_verification.sql",
+              "042_native_identity_evidence.sql",
+              "043_native_identity_integrity.sql",
+              "044_identity_evidence_access_audit.sql",
+          )
+          assert all(f"/docker-entrypoint-initdb.d/{name}:ro" in compose for name in identity_migration_mounts), "fresh VPS databases must mount every native identity and reviewer security migration"
+          assert "20261113_identity_idswyft_intake.sql" not in compose, "retired Idswyft intake must not enter the production schema path"
+          apply_identity = Path("deploy/self-hosted/apply-native-identity-migrations.sh").read_text()
+          assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval"
+          assert "identityEvidenceMatchesContentType" in identity and "evidence_access_attempted" in review, "identity evidence requires file-signature validation and audited reviewer access"
+          identity_migration_test = Path("scripts/test-identity-registration-migration.sh").read_text()
+          assert "adult_verification_session_id" not in identity and "adult_verification_result" not in identity and "adult_verification_mode" not in identity and "adult_verification_threshold," not in identity, "native identity status must read verification_sessions, not retired vendor columns"
+          assert "20261113_identity_idswyft_intake.sql" not in identity_migration_test, "retired Idswyft intake migration must not be applied by identity CI"
+          live_replication = Path("internal/virtualstorage/identity_replication_live_test.go").read_text()
+          provider_smoke = Path(".github/workflows/media-provider-smoke.yml").read_text()
+          assert "TestLiveIdentityEvidenceReplicationLifecycle" in live_replication and "TestLiveIdentityEvidenceReplicationLifecycle" in provider_smoke and "confirm_live_provider_writes" in provider_smoke, "identity evidence must have an explicit, gated live MinIO/B2/R2 lifecycle acceptance test"
+          identity_smoke_workflow = Path(".github/workflows/identity-evidence-staging-smoke.yml").read_text()
+          assert "workflow_dispatch:" in identity_smoke_workflow and "confirm_staging_bucket_writes" in identity_smoke_workflow and "TESTAGRAM_LIVE_IDENTITY_EVIDENCE_REPLICATION: \"true\"" in identity_smoke_workflow, "identity provider lifecycle must be manual and explicitly write-confirmed"
+          assert "IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET" in identity_smoke_workflow and "IDENTITY_SMOKE_R2_IDENTITY_BUCKET" in identity_smoke_workflow and "IDENTITY_SMOKE_B2_IDENTITY_BUCKET" in identity_smoke_workflow and "three distinct private, public and identity-evidence staging buckets" in identity_smoke_workflow, "identity evidence smoke must use dedicated staging buckets on all providers"
+          replica = Path("internal/virtualstorage/replication.go").read_text()
+          reviewer_evidence = Path("cmd/api/identity_review.go").read_text()
+          reviewer_tests = Path("cmd/api/identity_review_evidence_test.go").read_text()
+          assert "RestorePrimary" in replica and "ReplicaDownloadURLs" in replica and "fetchIdentityEvidenceBytes" in reviewer_evidence, "reviewer evidence must fail over only to checksum-verified replicas and restore the VPS primary"
+          assert "TestFetchIdentityEvidenceBytesRejectsChecksumMismatch" in reviewer_tests and "TestFetchIdentityEvidenceBytesDoesNotFollowRedirects" in reviewer_tests, "reviewer evidence proxy must reject corrupt and redirected object responses"
+          admin = Path("admin-console/main.go").read_text()
+          assert 'BACKEND_INTERNAL_URL: http://api:8080' in compose and '"/account/jwts"' in admin and 'handleIdentityReviewQueue' in admin, "staff console must mint reviewer JWTs server-side and proxy through the private Backend network"
+          assert 'loadIdentityReviewQueue' in Path("admin-console/web/app.js").read_text() and 'identity-review-panel' in Path("admin-console/web/index.html").read_text(), "staff console must expose the identity reviewer workflow"
+          for check in (
+              "DATA_CENTRE_MEDIA_ENABLED",
+              "media-migrate",
+              "up -d --build --force-recreate media",
+              'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media MEDIA_INTERNAL_TOKEN',
+              "Backend-to-Data-Centre private media readiness",
+              'media-enabled.txt',
+          ):
+              assert check in deploy, f"deployment must wire and verify private Data Centre media: {check}"
           assert "must be distinct from FEDERATION_INGRESS_TOKEN" in deploy, "Federation credentials must remain independently keyed"
           for check in (
               'verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_BACKEND_INTERNAL_TOKEN',

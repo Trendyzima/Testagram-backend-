@@ -169,7 +169,7 @@ jobs:
               raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
           if deploy_source.index('host_arch="$(uname -m)"') > deploy_source.index('up -d postgres'):
               raise SystemExit("Instabox must reject an unsupported CDN host architecture before changing services.")
-          match = re.search(r"(?m)^\s*cmd='([^']*)'\s*$", target["run"])
+          match = re.search(r"(?m)^\s*cmd='(.*)'\s*$", target["run"])
           if not match:
               raise SystemExit("Remote CDN configuration command was not found or contains unsafe quote boundaries.")
           subprocess.run(["bash", "-n"], input=match.group(1), text=True, check=True)
@@ -221,10 +221,37 @@ jobs:
       - name: Smoke-test fresh PostgreSQL migrations
         working-directory: deploy/self-hosted
         run: |
+          set -euo pipefail
           docker compose up -d postgres
-          for attempt in $(seq 1 40); do
-            if docker compose exec -T postgres pg_isready -U testagram -d testagram; then break; fi
-            if [ "$attempt" -eq 40 ]; then docker compose logs postgres; exit 1; fi
+
+          # On an empty data volume, the official image starts a temporary
+          # postmaster to execute docker-entrypoint-initdb.d, stops it, then
+          # starts the final server. pg_isready and even SELECT 1 can succeed
+          # against the temporary process. Require both startup events before
+          # treating the database as stable.
+          ready_events=0
+          stable=false
+          for attempt in $(seq 1 90); do
+            logs="$(docker compose logs --no-color postgres 2>&1 || true)"
+            ready_events="$(printf '%s\n' "$logs" | grep -c 'database system is ready to accept connections' || true)"
+            if [ "$ready_events" -ge 2 ] &&
+              docker compose exec -T postgres pg_isready -U testagram -d testagram >/dev/null 2>&1 &&
+              docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "SELECT 1" >/dev/null 2>&1; then
+              stable=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$stable" != true ]; then
+            docker compose logs postgres
+            echo "PostgreSQL did not reach a stable post-initialization startup (ready events: $ready_events)." >&2
+            exit 1
+          fi
+
+          # Require consecutive successful queries after the final startup so
+          # a transient readiness window cannot pass the migration gate.
+          for attempt in $(seq 1 5); do
+            docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "SELECT 1" | grep -qx 1
             sleep 2
           done
           result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null and to_regclass('testagram_hosting.audit_events') is not null")

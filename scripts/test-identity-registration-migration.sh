@@ -36,22 +36,26 @@ for migration in \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
   migrations/20261113_identity_registration_hardening.sql \
-  migrations/20261113_identity_idswyft_intake.sql \
   migrations/20261113_native_identity_verification.sql \
+  migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
-  migrations/20261114_native_identity_evidence.sql; do
+  migrations/20261115_identity_evidence_access_audit.sql \
+  migrations/20261115_native_identity_status_access.sql; do
   psql_ci < "$migration"
 done
 
 # Re-apply the new migration to prove idempotent DDL behavior.
 psql_ci < migrations/20261113_identity_registration_hardening.sql
-psql_ci < migrations/20261113_identity_idswyft_intake.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
-psql_ci < migrations/20261114_native_identity_integrity.sql
-psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261114_native_identity_evidence.sql
 psql_ci < migrations/20261114_native_identity_evidence.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261114_native_identity_integrity.sql
+psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci < migrations/20261115_native_identity_status_access.sql
+psql_ci < migrations/20261115_native_identity_status_access.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
@@ -76,17 +80,13 @@ BEGIN
   INSERT INTO testagram_identity.identity_applications
     (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
      adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
-     adult_verification_session_id,adult_verification_mode,adult_verification_threshold,
-     adult_verification_result,adult_verification_webhook_received_at,
      evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
-     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id,
-     status_access_token_sha256,status_access_token_expires_at)
+     terms_accepted_at,privacy_accepted_at,submission_key_sha256,sensitive_action_request_id)
   VALUES
     (app_id,'first@example.test','ci_first','CI First',now(),now(),
-     'ci-provider','ci-adult-evidence-ref',now(),
-     '123e4567-e89b-42d3-a456-426614174000','age_only',18,'verified',now(),
+     'testagram_manual','ci-adult-evidence-ref',now(),
      'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
-     decode(repeat('2',64),'hex'),action_id,decode(repeat('6',64),'hex'),now()+interval '7 days');
+     decode(repeat('2',64),'hex'),action_id);
 
   -- A token cannot be issued while the ledger is still pending.
   BEGIN
@@ -278,7 +278,16 @@ BEGIN
   INSERT INTO testagram_identity.verification_events
     (session_id,event_type,actor_type,actor_reference,request_id)
   VALUES
-    (v_session_id,'session_created','applicant','native-ci','native-session-created');
+    (v_session_id,'session_created','applicant','native-ci','native-session-created'),
+    (v_session_id,'evidence_access_attempted','reviewer','ci-reviewer-one','native-evidence-read');
+
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_identity.verification_events
+    WHERE session_id=v_session_id AND event_type='evidence_access_attempted'
+      AND actor_type='reviewer' AND actor_reference='ci-reviewer-one'
+  ) THEN
+    RAISE EXCEPTION 'reviewer evidence-access audit event was not persisted';
+  END IF;
 
   INSERT INTO testagram_identity.verification_reviews
     (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
@@ -373,7 +382,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.accounts (
 SQL
 
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestNativeIdentityProvisioningTokenAndRedeemIntegration$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationStatusUsesVerificationSessions)$' -count=1
 
 # Exercise the Admin Console review handler against this same isolated database.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
@@ -384,4 +393,4 @@ if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tam
   exit 1
 fi
 
-echo "Identity registration hardening migration and invariants passed."
+echo "Native identity migrations, evidence-access audit and registration invariants passed."

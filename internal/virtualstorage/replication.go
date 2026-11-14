@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type checksumProvider interface {
@@ -29,6 +30,116 @@ type ReplicaResult struct {
 	ObjectKey string
 	Size     int64
 	SHA256   string
+}
+
+type ReplicaDownload struct {
+	Provider string
+	URL      string
+}
+
+// ReplicaDownloadURLs returns short-lived server-side download capabilities only
+// for replicas whose size, content type and SHA-256 match the authoritative record.
+// Callers must proxy the bytes and must never return these URLs to an end user.
+func (r *Replicator) ReplicaDownloadURLs(ctx context.Context, tenantID, namespace, objectKey string, size int64, contentType, expectedSHA256 string) ([]ReplicaDownload, error) {
+	if r == nil || len(r.targets) != 2 {
+		return nil, errors.New("three-provider media replication is not configured")
+	}
+	namespace = strings.TrimSpace(namespace)
+	if !tenantIDPattern.MatchString(tenantID) || !validKey(objectKey) || size < 1 || strings.TrimSpace(contentType) == "" || len(expectedSHA256) != 64 {
+		return nil, errors.New("invalid replica download identity or metadata")
+	}
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if _, err := hexDecodeSHA256(expectedSHA256); err != nil {
+		return nil, err
+	}
+	scopedKey := tenantPrefix(tenantID) + objectKey
+	downloads := make([]ReplicaDownload, 0, len(r.targets))
+	for _, target := range r.targets {
+		bucket := target.buckets[namespace]
+		if bucket == "" {
+			continue
+		}
+		info, err := target.provider.Head(ctx, bucket, scopedKey)
+		if err != nil || info.Size != size || !strings.EqualFold(info.ContentType, contentType) {
+			continue
+		}
+		actual, err := target.checksum.SHA256(ctx, bucket, scopedKey, size)
+		if err != nil || !strings.EqualFold(actual, expectedSHA256) {
+			continue
+		}
+		url, err := target.provider.PresignGet(ctx, bucket, scopedKey, 5*time.Minute)
+		if err != nil || strings.TrimSpace(url) == "" {
+			continue
+		}
+		downloads = append(downloads, ReplicaDownload{Provider: target.name, URL: url})
+	}
+	if len(downloads) == 0 {
+		return nil, errors.New("no checksum-verified media replica is available")
+	}
+	return downloads, nil
+}
+
+// RestorePrimary repairs a missing or checksum-drifted primary object from the
+// first replica whose metadata and streamed SHA-256 match the authoritative object.
+func (r *Replicator) RestorePrimary(ctx context.Context, tenantID, namespace, objectKey string, size int64, contentType, expectedSHA256 string) error {
+	if r == nil || r.primary == nil || len(r.targets) != 2 {
+		return errors.New("three-provider media replication is not configured")
+	}
+	namespace = strings.TrimSpace(namespace)
+	primaryBucket := r.primaryBuckets[namespace]
+	if primaryBucket == "" || !tenantIDPattern.MatchString(tenantID) || !validKey(objectKey) || size < 1 || strings.TrimSpace(contentType) == "" || len(expectedSHA256) != 64 {
+		return errors.New("invalid primary restore identity or metadata")
+	}
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if _, err := hexDecodeSHA256(expectedSHA256); err != nil {
+		return err
+	}
+	scopedKey := tenantPrefix(tenantID) + objectKey
+	if info, err := r.primary.Head(ctx, primaryBucket, scopedKey); err == nil && info.Size == size && strings.EqualFold(info.ContentType, contentType) {
+		if digest, digestErr := r.primary.SHA256(ctx, primaryBucket, scopedKey, size); digestErr == nil && strings.EqualFold(digest, expectedSHA256) {
+			return nil
+		}
+	}
+	primaryCopier, ok := r.primary.(copyProvider)
+	if !ok {
+		return errors.New("primary media provider does not support verified replica restoration")
+	}
+	var failures []string
+	for _, target := range r.targets {
+		bucket := target.buckets[namespace]
+		if bucket == "" {
+			continue
+		}
+		info, err := target.provider.Head(ctx, bucket, scopedKey)
+		if err != nil || info.Size != size || !strings.EqualFold(info.ContentType, contentType) {
+			failures = append(failures, target.name+": replica metadata unavailable or mismatched")
+			continue
+		}
+		digest, err := target.checksum.SHA256(ctx, bucket, scopedKey, size)
+		if err != nil || !strings.EqualFold(digest, expectedSHA256) {
+			failures = append(failures, target.name+": replica checksum mismatch or unavailable")
+			continue
+		}
+		if err := primaryCopier.CopyFromProvider(ctx, target.provider, bucket, scopedKey, primaryBucket, scopedKey, size, contentType, expectedSHA256); err != nil {
+			failures = append(failures, target.name+": primary restore copy failed")
+			continue
+		}
+		restored, err := r.primary.Head(ctx, primaryBucket, scopedKey)
+		if err != nil || restored.Size != size || !strings.EqualFold(restored.ContentType, contentType) {
+			failures = append(failures, target.name+": restored primary metadata verification failed")
+			continue
+		}
+		restoredDigest, err := r.primary.SHA256(ctx, primaryBucket, scopedKey, size)
+		if err != nil || !strings.EqualFold(restoredDigest, expectedSHA256) {
+			failures = append(failures, target.name+": restored primary checksum verification failed")
+			continue
+		}
+		return nil
+	}
+	if len(failures) == 0 {
+		return errors.New("no media replicas are configured for primary restoration")
+	}
+	return fmt.Errorf("no checksum-verified replica could restore the primary: %s", strings.Join(failures, "; "))
 }
 
 type Replicator struct {
