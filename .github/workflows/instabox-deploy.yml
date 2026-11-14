@@ -116,6 +116,7 @@ jobs:
         env:
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
+          MEDIA_REPLICATION_ENABLED: ${{ vars.MEDIA_REPLICATION_ENABLED || 'false' }}
           B2_S3_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
           B2_S3_REGION: ${{ vars.B2_S3_REGION }}
           B2_S3_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
@@ -310,14 +311,14 @@ jobs:
           if [[ -z "$(read_env_value MEDIA_REPLICATION_ENABLED)" ]]; then write_env_value MEDIA_REPLICATION_ENABLED false; fi
           if [[ -z "$(read_env_value TESTAGRAM_TERMS_VERSION)" ]]; then write_env_value TESTAGRAM_TERMS_VERSION ""; fi
           if [[ -z "$(read_env_value TESTAGRAM_PRIVACY_VERSION)" ]]; then write_env_value TESTAGRAM_PRIVACY_VERSION ""; fi
-          # Copy provider settings into Backend's own .env as well as the
-          # Data Centre .env. The Backend replicator stays disabled unless
-          # MEDIA_REPLICATION_ENABLED is explicitly enabled after staging.
-          for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
-            value="${!key:-}"
-            if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
-          done
+          # The Backend three-provider replicator has its own explicit activation
+          # switch; credentials are copied only when that switch is true.
+          write_env_value MEDIA_REPLICATION_ENABLED "$MEDIA_REPLICATION_ENABLED"
           if [[ "$(read_env_value MEDIA_REPLICATION_ENABLED)" == "true" ]]; then
+            for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+              value="${!key:-}"
+              if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
+            done
             for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
               if [[ -z "$(read_env_value "$key")" ]]; then
                 echo "::error::MEDIA_REPLICATION_ENABLED=true requires complete B2/R2 settings; missing $key (value redacted)."
@@ -330,6 +331,14 @@ jobs:
             }
             [[ "$(read_env_value B2_S3_PRIVATE_BUCKET)" != "$(read_env_value B2_S3_PUBLIC_BUCKET)" ]] || {
               echo "::error::B2 private and public buckets must be distinct."
+              exit 1
+            }
+            [[ "$(read_env_value B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET)" != "$(read_env_value B2_S3_PUBLIC_BUCKET)" ]] || {
+              echo "::error::B2 identity evidence must not use the public bucket."
+              exit 1
+            }
+            [[ "$(read_env_value CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET)" != "$(read_env_value CLOUDFLARE_R2_PUBLIC_BUCKET)" ]] || {
+              echo "::error::R2 identity evidence must not use the public bucket."
               exit 1
             }
             [[ "$(read_env_value CLOUDFLARE_R2_PRIVATE_BUCKET)" != "$(read_env_value CLOUDFLARE_R2_PUBLIC_BUCKET)" ]] || {
@@ -483,7 +492,7 @@ jobs:
           # are fully configured. It remains off otherwise; Backend must not receive a
           # half-configured URL/token pair.
           media_enabled=false
-          if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then
+          if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" || "${MEDIA_REPLICATION_ENABLED:-false}" == "true" ]]; then
             media_enabled=true
             for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
               value="${!key:-}"
@@ -730,13 +739,14 @@ jobs:
             --arg appwrite "${APPWRITE_PROJECT_ID:-}" \
             --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
             --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
+            --arg media_replication_enabled "$MEDIA_REPLICATION_ENABLED" \
             --arg b2_endpoint "$b2_endpoint" --arg b2_region "$b2_region" --arg b2_bucket "$b2_bucket" \
             --arg b2_private "$b2_private" --arg b2_public "$b2_public" --arg b2_identity "$b2_identity" \
             --arg b2_access "$b2_access" --arg b2_secret "$b2_secret" \
             --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
             --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
             --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-            '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+            '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
