@@ -101,8 +101,8 @@ IDENTITY_EVIDENCE_PRIVATE_BUCKET=testagram-identity-evidence-private
 VIRTUAL_STORAGE_ENABLED=true
 MEDIA_REPLICATION_ENABLED=false
 TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}
-TESTAGRAM_TERMS_VERSION=${TESTAGRAM_TERMS_VERSION:-}
-TESTAGRAM_PRIVACY_VERSION=${TESTAGRAM_PRIVACY_VERSION:-}
+TESTAGRAM_TERMS_VERSION=${TESTAGRAM_TERMS_VERSION:-2026-11-11}
+TESTAGRAM_PRIVACY_VERSION=${TESTAGRAM_PRIVACY_VERSION:-2026-11-11}
 CLOUDFLARE_R2_ENDPOINT=
 CLOUDFLARE_R2_REGION=auto
 CLOUDFLARE_R2_BUCKET=
@@ -120,7 +120,7 @@ B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=
 B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
 APPWRITE_ENDPOINT=${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
-APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-}
+APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
 ALGORITHM_URL=http://algorithm:8092
 ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
 FEDERATION_INTERNAL_URL=http://federation:8081
@@ -276,6 +276,19 @@ set +a
 echo "Starting PostgreSQL, MinIO and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
+# Existing PostgreSQL volumes do not replay initdb mounts. Apply the small,
+# additive Appwrite-consent migration only after taking and validating a backup.
+consent_table="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL"')"
+if [[ "$consent_table" != "t" ]]; then
+  backup_dir="$ROOT/backups"; mkdir -p "$backup_dir"; chmod 700 "$backup_dir"
+  backup="$backup_dir/testagram-pre-appwrite-consent-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
+  test -s "$backup"
+  sudo docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine pg_restore --list "/backup/$(basename "$backup")" >/dev/null
+  chmod 600 "$backup"
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql'
+fi
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL" | grep -qx t'
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
 
 echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
