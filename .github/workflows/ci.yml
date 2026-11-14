@@ -54,10 +54,10 @@ jobs:
           for forbidden in ("docker compose up", "docker restart", "docker stop", "docker rm", "docker pull", "volume rm"):
               assert forbidden not in script, f"read-only inspector contains a mutating command: {forbidden}"
           assert "workflow_dispatch:" in workflow and "/v1/machines/$MACHINE_ID/exec" in workflow, "health inspection must be manual and use the read-only diagnostic command"
-for required in ("sudo docker ps", "sudo docker inspect", "sudo docker compose", "sudo docker info", "sudo docker stats"):
-    assert required in workflow, f"read-only inspector is missing diagnostic command: {required}"
-for forbidden in ("docker restart", "docker stop", "docker rm", "docker pull", "docker compose up", "docker compose down", "docker volume rm", "docker system prune"):
-    assert forbidden not in workflow, f"read-only workflow contains a mutating Docker command: {forbidden}"
+          for required in ("sudo docker ps", "sudo docker inspect", "sudo docker compose", "sudo docker info", "sudo docker stats"):
+              assert required in workflow, f"read-only inspector is missing diagnostic command: {required}"
+          for forbidden in ("docker restart", "docker stop", "docker rm", "docker pull", "docker compose up", "docker compose down", "docker volume rm", "docker system prune"):
+              assert forbidden not in workflow, f"read-only workflow contains a mutating Docker command: {forbidden}"
           assert 'state" != "running"' in workflow and "will not start, restart or recreate" in workflow, "offline machine must fail without automatic recovery"
           PY
       - name: Validate staff console JavaScript syntax
