@@ -501,9 +501,9 @@ func TestIdentityReviewerHonorsRevocationAndPermissionOverrides(t *testing.T) {
 
 	svc := &service{db: db, upstream: server.Client()}
 	authorize := func() (int, error) {
-		account, status, err := svc.identityReviewer(
-			httptest.NewRequest(http.MethodGet, "/api/admin/identity/review-queue", nil),
-		)
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/identity/review-queue", nil)
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		account, status, err := svc.identityReviewer(req)
 		if err == nil && account.ID != reviewerID {
 			t.Fatalf("reviewer identity=%q, want %q", account.ID, reviewerID)
 		}
