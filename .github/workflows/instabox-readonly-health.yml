@@ -1,4 +1,4 @@
-name: Instabox read-only health inspection
+name: Read-only InstaBox production health inspection
 
 on:
   workflow_dispatch:
@@ -7,62 +7,132 @@ permissions:
   contents: read
 
 concurrency:
-  group: instabox-readonly-health
+  group: testagram-instabox-readonly-health
   cancel-in-progress: false
 
 jobs:
   inspect:
-    name: Inspect existing Instabox containers without changing them
+    name: Inspect machine and every Docker container (read-only)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
+      INSTABOX_READONLY_API_KEY: ${{ secrets.INSTABOX_READONLY_API_KEY }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+      INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Inspect the existing machine and run read-only diagnostics
+      - name: Validate dedicated inspection credentials
         shell: bash
         run: |
           set -euo pipefail
-          API="https://api.instabox.sh"
-          if [[ -z "${INSTABOX_API_KEY:-}" ]]; then
-            echo "::error::Missing TESTAGRAM_DB_API repository secret."
+          test -n "${INSTABOX_READONLY_API_KEY:-}" || { echo "::error::Missing dedicated INSTABOX_READONLY_API_KEY. Do not substitute a broad deployment key."; exit 1; }
+
+      - name: Resolve and read machine state (GET only)
+        id: machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${INSTABOX_MACHINE_ID:-}" ]]; then
+            curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
+              -H "X-API-Key: $INSTABOX_READONLY_API_KEY" \
+              "https://api.instabox.sh/v1/machines?limit=100" > machines.json
+            INSTABOX_MACHINE_ID="$(jq -r --arg name "$INSTABOX_MACHINE_NAME" '([.machines[] | select(.name == $name)][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' machines.json)"
+          fi
+          if [[ -z "${INSTABOX_MACHINE_ID:-}" ]]; then
+            echo "::error::No unambiguous InstaBox machine. Set INSTABOX_MACHINE_ID or INSTABOX_MACHINE_NAME."
+            exit 1
+          fi
+          curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
+            -H "X-API-Key: $INSTABOX_READONLY_API_KEY" \
+            "https://api.instabox.sh/v1/machines/$INSTABOX_MACHINE_ID" > machine.json
+          state="$(jq -r '.state // "unknown"' machine.json)"
+          ready="$(jq -r '.runtime.ready // false' machine.json)"
+          echo "machine_id=$INSTABOX_MACHINE_ID" >> "$GITHUB_OUTPUT"
+          echo "machine_state=$state" >> "$GITHUB_OUTPUT"
+          echo "runtime_ready=$ready" >> "$GITHUB_OUTPUT"
+          {
+            echo "### InstaBox machine"
+            jq -r '"- State: " + (.state // "unknown"), "- Runtime ready: " + ((.runtime.ready // false)|tostring)' machine.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$state" != "running" || "$ready" != "true" ]]; then
+            echo "::error::Machine is not running and ready; no lifecycle action will be attempted."
             exit 1
           fi
 
-          machine_id="${INSTABOX_MACHINE_ID:-}"
-          if [[ -z "$machine_id" ]]; then
-            machines="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
-              -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
-            mapfile -t matches < <(jq -r '[.machines[]? | select(.name == "testagram") | .id] | unique | .[]' <<<"$machines")
-            if (( ${#matches[@]} != 1 )); then
-              echo "::error::Expected exactly one existing machine named testagram; found ${#matches[@]}. Set INSTABOX_MACHINE_ID explicitly."
-              exit 1
-            fi
-            machine_id="${matches[0]}"
+      - name: Inspect every Docker container without changing it
+        shell: bash
+        env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
+        run: |
+          set -euo pipefail
+          command='set -euo pipefail
+          ids="$({ sudo docker ps -aq --no-trunc --filter label=com.docker.compose.project=testagram-self-hosted; sudo docker ps -aq --no-trunc --filter label=com.docker.compose.project=testagram-data-centre; } | sort -u)"
+          if [ -z "$ids" ]; then echo "NO_CONTAINERS"; exit 2; fi
+          printf "NAME\tIMAGE\tSTATE\tHEALTH\tRESTARTS\tEXIT_CODE\tOOM_KILLED\tSTARTED_AT\n"
+          bad=0
+          missing_health=0
+          while IFS= read -r id; do
+            row="$(sudo docker inspect --format "{{.Name}}\t{{.Config.Image}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}\t{{.RestartCount}}\t{{.State.ExitCode}}\t{{.State.OOMKilled}}\t{{.State.StartedAt}}" "$id")"
+            printf "%s\n" "$row"
+            state="$(sudo docker inspect --format "{{.State.Status}}" "$id")"
+            health="$(sudo docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}" "$id")"
+            if [ "$state" != "running" ] || [ "$health" = "unhealthy" ] || [ "$health" = "starting" ]; then bad=1; fi
+            if [ "$health" = "no-healthcheck" ]; then missing_health=1; fi
+          done <<< "$ids"
+          echo "--- BACKEND COMPOSE SERVICES ---"
+          if [ -f /data/home/testagram/repos/backend/deploy/self-hosted/docker-compose.yml ]; then
+            sudo docker compose --env-file /data/home/testagram/repos/backend/deploy/self-hosted/.env -f /data/home/testagram/repos/backend/deploy/self-hosted/docker-compose.yml ps --all
+          else
+            echo "Backend Compose manifest not found at expected path"
+            bad=1
+          fi
+          echo "--- DATA CENTRE COMPOSE SERVICES ---"
+          if [ -f /data/home/testagram/repos/data-centre/backend/docker-compose.yml ]; then
+            sudo docker compose --env-file /data/home/testagram/repos/data-centre/backend/.env -f /data/home/testagram/repos/data-centre/backend/docker-compose.yml ps --all
+          else
+            echo "Data Centre Compose manifest not found at expected path"
+            bad=1
+          fi
+          echo "--- DOCKER DAEMON ---"
+          sudo docker info --format "ServerVersion={{.ServerVersion}} Containers={{.Containers}} Running={{.ContainersRunning}} Paused={{.ContainersPaused}} Stopped={{.ContainersStopped}}"
+          echo "--- DOCKER RESOURCE SNAPSHOT ---"
+          sudo docker stats --no-stream --format "NAME={{.Name}} CPU={{.CPUPerc}} MEMORY={{.MemUsage}} MEM_PCT={{.MemPerc}}"
+          if [ "$missing_health" -ne 0 ]; then
+            echo "ACCEPTANCE_GAP: one or more containers have no Docker healthcheck"
+            bad=1
+          fi
+          exit "$bad"
+          '
+          payload="$(jq -nc --arg cmd "$command" '{cmd:$cmd,timeoutSeconds:240}')"
+          response="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
+            -X POST -H "X-API-Key: $INSTABOX_READONLY_API_KEY" \
+            -H "Content-Type: application/json" -d "$payload" \
+            "https://api.instabox.sh/v1/machines/$MACHINE_ID/exec")"
+          exit_code="$(jq -r '.exitCode // 1' <<<"$response")"
+          stdout="$(jq -r '.stdout // empty' <<<"$response")"
+          stderr="$(jq -r '.stderr // empty' <<<"$response")"
+          printf '%s\n' "$stdout"
+          if [ -n "$stderr" ]; then printf '%s\n' "$stderr" >&2; fi
+          {
+            echo "### Full container inventory and health"
+            echo "---"
+            printf '%s\n' "$stdout"
+            echo "---"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$exit_code" != "0" ]; then
+            echo "::error::One or more production containers are stopped, unhealthy, starting, lack a healthcheck, or could not be inspected."
+            exit "$exit_code"
           fi
 
-          machine="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
-            -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
-          state="$(jq -r '.state // empty' <<<"$machine")"
-          echo "Instabox machine state: ${state:-unknown}"
-          if [[ "$state" != "running" ]]; then
-            echo "::error::Machine is not running. This workflow will not start, restart or recreate it."
-            exit 1
-          fi
-
-          script_b64="$(base64 -w0 scripts/instabox-readonly-health.sh)"
-          cmd="printf '%s' '$script_b64' | base64 -d | bash"
-          payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:240}')"
-          result="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS -X POST \
-            -H "X-API-Key: $INSTABOX_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$payload" "$API/v1/machines/$machine_id/exec")"
-          code="$(jq -r '.exitCode // 1' <<<"$result")"
-          jq -r '.stdout // empty' <<<"$result"
-          if [[ "$code" != "0" ]]; then
-            echo "::error::Read-only Instabox health inspection reported failures."
-            jq -r '.stderr // empty' <<<"$result"
-            exit 1
-          fi
-          echo "Read-only inspection completed. No containers or machine state were changed."
+      - name: Publish inspection safety boundary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo ""
+            echo "### Safety boundary"
+            echo "- Machine discovery and state use GET requests only."
+            echo "- Remote command is limited to docker ps, inspect, compose ps, info and stats."
+            echo "- No start, stop, restart, deploy, pull, recreate, prune, or container modification."
+            echo "- No environment values, tokens, or secret contents are printed."
+            echo "- The check fails closed if any container is not running/healthy or lacks a healthcheck."
+          } >> "$GITHUB_STEP_SUMMARY"
