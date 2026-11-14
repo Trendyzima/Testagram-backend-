@@ -43,6 +43,8 @@ jobs:
           python scripts/validate-fresh-openapi.py
       - name: Lint every GitHub Actions workflow
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -color -ignore 'SC2034' -ignore 'SC2016' -ignore 'SC2129'
+      - name: Validate public/private deployment readiness contract
+        run: python scripts/validate-canonical-deploy-smoke.py
       - name: Validate read-only Instabox inspection
         run: |
           set -euo pipefail
