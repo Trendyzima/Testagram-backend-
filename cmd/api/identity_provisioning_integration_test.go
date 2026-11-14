@@ -218,6 +218,26 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		t.Fatalf("redemption retry did not return the same canonical account: %#v", replayResult)
 	}
 
+	// A valid Appwrite JWT and completed provisioning mapping must not revive
+	// a canonical account that has subsequently been suspended or deactivated.
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_local.accounts SET account_status='suspended' WHERE user_id=$1::uuid
+	`, authenticatedCanonicalID); err != nil {
+		t.Fatal(err)
+	}
+	inactiveID, inactiveStatus, inactiveErr := svc.authenticatedAppwriteUser(
+		httptest.NewRequest(http.MethodGet, "/api/me/profile", nil), appwriteJWT,
+	)
+	if inactiveStatus != http.StatusForbidden || inactiveErr == nil || inactiveID != "" {
+		t.Fatalf("inactive canonical account canonical=%q status=%d err=%v; want empty identity and 403",
+			inactiveID, inactiveStatus, inactiveErr)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_local.accounts SET account_status='active' WHERE user_id=$1::uuid
+	`, authenticatedCanonicalID); err != nil {
+		t.Fatal(err)
+	}
+
 	if !liveAppwrite {
 		appwriteUserID = "different-appwrite-user"
 		replay = redeem()

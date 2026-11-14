@@ -401,6 +401,8 @@ CREATE TABLE IF NOT EXISTS testagram_local.accounts (
   user_id UUID PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL DEFAULT '',
+  account_status TEXT NOT NULL DEFAULT 'active'
+    CHECK (account_status IN ('active','deactivated','suspended')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
