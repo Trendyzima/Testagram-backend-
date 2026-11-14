@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -177,5 +179,41 @@ func TestAppwriteRegistrationConsentRejectsUnacceptedPolicyBeforeDatabase(t *tes
 	service.appwriteRegistrationConsent(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s; expected explicit consent rejection", response.Code, response.Body.String())
+	}
+}
+
+
+func TestWriteAppwriteAuthFailureReturnsStableAuthorizationCodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		cause      error
+		wantCode   string
+		wantStatus int
+	}{
+		{"identity approval", http.StatusForbidden, errors.New("identity review and two-person account approval are required before accessing Testagram"), "IDENTITY_APPROVAL_REQUIRED", http.StatusForbidden},
+		{"email verification", http.StatusForbidden, errors.New("email verification is required before accessing Testagram"), "EMAIL_VERIFICATION_REQUIRED", http.StatusForbidden},
+		{"generic forbidden", http.StatusForbidden, errors.New("account is inactive"), "AUTH_FORBIDDEN", http.StatusForbidden},
+		{"dependency outage", http.StatusServiceUnavailable, errors.New("identity database unavailable"), "AUTH_BACKEND_UNAVAILABLE", http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			writeAppwriteAuthFailure(response, test.status, test.cause, "request-test")
+			if response.Code != test.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, test.wantStatus, response.Body.String())
+			}
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if envelope.Error.Code != test.wantCode {
+				t.Fatalf("error code=%q want=%q body=%s", envelope.Error.Code, test.wantCode, response.Body.String())
+			}
+		})
 	}
 }
