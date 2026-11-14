@@ -33,3 +33,18 @@ func TestHealthzIdentifiesCanonicalBackend(t *testing.T) {
 		t.Fatalf("health body = %+v, want ok=true service=testagram-api", body)
 	}
 }
+
+
+func TestReadyzFailsClosedWithoutDatabase(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+
+	(&service{}).routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /readyz without PostgreSQL status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if rec.Code == http.StatusOK {
+		t.Fatal("readiness must not pass when PostgreSQL is unavailable")
+	}
+}
