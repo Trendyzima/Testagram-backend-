@@ -518,6 +518,20 @@ jobs:
           review = Path("cmd/api/identity_review.go").read_text()
           assert 'uploadPath := "/api/identity/sessions/"' in identity and "s.identityEvidenceUpload" in Path("cmd/api/main.go").read_text(), "identity evidence uploads must use the authenticated Backend proxy"
           assert "s.identityReviewEvidence" in Path("cmd/api/main.go").read_text() and 'Content-Disposition' in review and 'Cache-Control", "private, no-store' in review, "reviewer evidence must be streamed through authenticated no-store API"
+          identity_migration_mounts = (
+              "034_admin_security_controls.sql",
+              "035_identity_registration_pipeline.sql",
+              "039_identity_registration_hardening.sql",
+              "041_native_identity_verification.sql",
+              "042_native_identity_evidence.sql",
+              "043_native_identity_integrity.sql",
+              "044_identity_evidence_access_audit.sql",
+          )
+          assert all(f"/docker-entrypoint-initdb.d/{name}:ro" in compose for name in identity_migration_mounts), "fresh VPS databases must mount every native identity and reviewer security migration"
+          assert "20261113_identity_idswyft_intake.sql" not in compose, "retired Idswyft intake must not enter the production schema path"
+          apply_identity = Path("deploy/self-hosted/apply-native-identity-migrations.sh").read_text()
+          assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval"
+          assert "identityEvidenceMatchesContentType" in identity and "evidence_access_attempted" in review, "identity evidence requires file-signature validation and audited reviewer access"
           admin = Path("admin-console/main.go").read_text()
           assert 'BACKEND_INTERNAL_URL: http://api:8080' in compose and '"/account/jwts"' in admin and 'handleIdentityReviewQueue' in admin, "staff console must mint reviewer JWTs server-side and proxy through the private Backend network"
           assert 'loadIdentityReviewQueue' in Path("admin-console/web/app.js").read_text() and 'identity-review-panel' in Path("admin-console/web/index.html").read_text(), "staff console must expose the identity reviewer workflow"
