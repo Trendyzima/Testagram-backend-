@@ -280,6 +280,15 @@ func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
+	ipAllowed, err := s.authRateAllowed(ctx, "registration-consent-ip", authClientIP(r), 300)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", id))
+		return
+	}
+	if !ipAllowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts. Try again later.", id))
+		return
+	}
 	account, status, err := fetchAppwriteAccount(ctx, s.upstream,
 		strings.TrimSpace(env("APPWRITE_ENDPOINT", "")),
 		strings.TrimSpace(env("APPWRITE_PROJECT_ID", "")), parts[1])
@@ -292,13 +301,13 @@ func (s *service) appwriteRegistrationConsent(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusBadGateway, errorBody("APPWRITE_ACCOUNT_INVALID", "Appwrite returned an invalid account identity", id))
 		return
 	}
-	allowed, err := s.authRateAllowed(ctx, "registration-consent-ip", authClientIP(r), 12)
+	userAllowed, err := s.authRateAllowed(ctx, "registration-consent-user", account.ID, 12)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", id))
 		return
 	}
-	if !allowed {
-		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts. Try again later.", id))
+	if !userAllowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts for this account. Try again later.", id))
 		return
 	}
 	tx, err := s.db.Begin(ctx)
