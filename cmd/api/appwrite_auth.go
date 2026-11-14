@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,6 +94,29 @@ func validAppwriteUserID(value string) bool {
 	return true
 }
 
+
+// appwriteDefaultUsername produces a stable, collision-resistant public handle.
+// It never derives identity from an email match to an existing Testagram user.
+func appwriteDefaultUsername(email, appwriteID string) string {
+	local := strings.SplitN(strings.ToLower(strings.TrimSpace(email)), "@", 2)[0]
+	var clean strings.Builder
+	for _, r := range local {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			clean.WriteRune(r)
+		}
+	}
+	base := strings.Trim(clean.String(), "_")
+	if len(base) < 3 {
+		base = "user"
+	}
+	sum := sha256.Sum256([]byte(appwriteID))
+	suffix := hex.EncodeToString(sum[:4])
+	if len(base) > 21 {
+		base = base[:21]
+	}
+	return base + "_" + suffix
+}
+
 func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string, int, error) {
 	endpoint := strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT"))
 	projectID := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
@@ -118,24 +143,50 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if len(email) > 254 || strings.ContainsAny(email, "\r\n") {
 		return "", http.StatusBadGateway, errors.New("Appwrite returned an invalid email address")
 	}
-	// Authentication must never create a new Testagram identity as a side
-	// effect. A valid Appwrite account is not proof that it has been linked to
-	// an existing Testagram profile, posts, actor ID, or storage ownership.
-	// Signup provisioning and existing-account linking are separate trusted,
-	// transactional flows; unknown identities fail closed here.
-	err = s.db.QueryRow(ctx, `
+	// First verified Appwrite sign-in provisions a canonical Testagram profile
+	// atomically. Existing users are never matched by email: only an existing
+	// Appwrite ID mapping can resume an established account and its content.
+	if _, err := authEmail(email); err != nil {
+		return "", http.StatusBadGateway, errors.New("Appwrite returned an invalid email address")
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("Testagram identity store is unavailable")
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "appwrite:"+account.ID); err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("Testagram identity lock is unavailable")
+	}
+	err = tx.QueryRow(ctx, `
 		UPDATE testagram_identity.appwrite_accounts
-		SET email = COALESCE(NULLIF($2, ''), email),
-		    email_verified = $3,
-		    last_seen_at = now(),
-		    updated_at = now()
-		WHERE appwrite_user_id = $1
+		SET email=$2,email_verified=$3,last_seen_at=now(),updated_at=now()
+		WHERE appwrite_user_id=$1
 		RETURNING canonical_user_id::text`, account.ID, email, account.EmailVerification).Scan(&canonicalID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", http.StatusConflict, errors.New("Appwrite identity is not linked to a Testagram account")
+		username := appwriteDefaultUsername(email, account.ID)
+		displayName := strings.TrimSpace(account.Name)
+		if len(displayName) > 80 {
+			displayName = displayName[:80]
+		}
+		if displayName == "" {
+			displayName = username
+		}
+		err = tx.QueryRow(ctx, `
+			INSERT INTO testagram_local.accounts(user_id,username,display_name)
+			VALUES(gen_random_uuid(),$1,$2)
+			RETURNING user_id::text`, username, displayName).Scan(&canonicalID)
+		if err == nil {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO testagram_identity.appwrite_accounts
+				  (appwrite_user_id,canonical_user_id,email,email_verified,linked_at,last_seen_at,updated_at)
+				VALUES($1,$2::uuid,$3,$4,now(),now(),now())`, account.ID, canonicalID, email, account.EmailVerification)
+		}
 	}
 	if err != nil {
-		return "", http.StatusServiceUnavailable, errors.New("Appwrite identity could not be mapped to the Testagram account")
+		return "", http.StatusServiceUnavailable, errors.New("Appwrite identity could not be provisioned as a Testagram account")
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("Testagram account provisioning could not be committed")
 	}
 	if account.EmailVerification {
 		// Promote a newly verified Appwrite identity from the pending-email
