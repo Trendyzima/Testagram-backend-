@@ -505,6 +505,10 @@ jobs:
           import re
 
           deploy = Path(".github/workflows/instabox-deploy.yml").read_text()
+          trigger = deploy.split("permissions:", 1)[0]
+          assert "workflow_dispatch:" in trigger and "push:" not in trigger, "production deployment must never run automatically on push"
+          assert "confirm_production_deploy" in trigger and "inputs.confirm_production_deploy == true" in deploy, "production deployment must require an explicit confirmation input"
+          assert "github.ref == 'refs/heads/main'" in deploy and "environment: production" in deploy, "production deployment must be restricted to main and the production environment"
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:" in deploy, "deployment must consume the repository Federation read secret"
           assert "envs:{" in deploy and "APPWRITE_PROJECT_ID:$appwrite" in deploy and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy, "deployment must forward the Federation read secret to the VPS environment"
           dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then')
