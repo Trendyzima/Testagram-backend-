@@ -40,7 +40,8 @@ for migration in \
   migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
   migrations/20261115_identity_evidence_access_audit.sql \
-  migrations/20261115_native_identity_status_access.sql; do
+  migrations/20261115_native_identity_status_access.sql \
+  migrations/20261114_appwrite_registration_consent.sql; do
   psql_ci < "$migration"
 done
 
@@ -56,6 +57,30 @@ psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
+psql_ci < migrations/20261114_appwrite_registration_consent.sql
+psql_ci < migrations/20261114_appwrite_registration_consent.sql
+
+psql_ci <<'SQL'
+INSERT INTO testagram_identity.appwrite_registration_consents
+  (appwrite_user_id,email,consent_type,policy_version,accepted_at,request_id)
+VALUES
+  ('ci-appwrite-user','ci@example.test','age_confirmation','age-v1',now(),'ci-consent'),
+  ('ci-appwrite-user','ci@example.test','terms','2026-11-11',now(),'ci-consent'),
+  ('ci-appwrite-user','ci@example.test','privacy','2026-11-11',now(),'ci-consent');
+
+DO $consent$
+BEGIN
+  IF (SELECT count(DISTINCT consent_type) FROM testagram_identity.appwrite_registration_consents
+      WHERE appwrite_user_id='ci-appwrite-user' AND email='ci@example.test') <> 3 THEN
+    RAISE EXCEPTION 'self-service Appwrite consent ledger did not persist all declarations';
+  END IF;
+  IF NOT has_table_privilege('testagram_app','testagram_identity.appwrite_registration_consents','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_identity.appwrite_registration_consents','INSERT') THEN
+    RAISE EXCEPTION 'Backend app role lacks consent ledger privileges';
+  END IF;
+END;
+$consent$;
+SQL
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
