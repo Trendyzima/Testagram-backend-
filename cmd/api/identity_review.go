@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -145,6 +146,48 @@ func (s *service) identityReviewQueue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items":items,"count":len(items)})
 }
 
+func fetchIdentityEvidenceBytes(ctx context.Context, rawURL string, size int64, contentType, expectedSHA256 string) ([]byte, error) {
+	if size < 1 || size > maxIdentityEvidenceBytes || len(expectedSHA256) != 64 {
+		return nil, errors.New("invalid identity evidence integrity metadata")
+	}
+	expectedDigest, err := hex.DecodeString(expectedSHA256)
+	if err != nil || len(expectedDigest) != sha256.Size {
+		return nil, errors.New("invalid identity evidence SHA-256")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return nil, errors.New("private evidence provider returned an invalid URL")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, errors.New("could not create private evidence request")
+	}
+	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, errors.New("private evidence provider is unavailable")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || (response.ContentLength >= 0 && response.ContentLength != size) {
+		return nil, errors.New("private evidence provider returned an invalid object response")
+	}
+	actualType := strings.ToLower(strings.TrimSpace(strings.Split(response.Header.Get("Content-Type"), ";")[0]))
+	if actualType != strings.ToLower(strings.TrimSpace(contentType)) {
+		return nil, errors.New("private evidence content type does not match its verified metadata")
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, size+1))
+	if err != nil || int64(len(payload)) != size {
+		return nil, errors.New("private evidence byte length does not match its verified metadata")
+	}
+	actualDigest := sha256.Sum256(payload)
+	if subtle.ConstantTimeCompare(actualDigest[:], expectedDigest) != 1 {
+		return nil, errors.New("private evidence SHA-256 does not match its verified metadata")
+	}
+	return payload, nil
+}
+
 // identityReviewEvidence streams private evidence through the authenticated
 // Backend API. It never returns a provider URL to a browser and never exposes
 // the internal MinIO hostname or a reusable storage capability.
@@ -164,23 +207,23 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 	}
 	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	evidenceID := strings.TrimSpace(r.PathValue("evidence_id"))
-	if !identityApplicationIDPattern.MatchString(sessionID) || !identityApplicationIDPattern.MatchString(evidenceID) || s.virtualStorage == nil {
+	if !identityApplicationIDPattern.MatchString(sessionID) || !identityApplicationIDPattern.MatchString(evidenceID) || s.virtualStorage == nil || s.mediaReplicator == nil {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	var applicationID, objectKey, contentType string
+	var applicationID, objectKey, contentType, expectedSHA256 string
 	var size int64
 	err = s.db.QueryRow(ctx, `
-		SELECT a.id::text,e.object_key,e.content_type,e.size_bytes
+		SELECT a.id::text,e.object_key,e.content_type,e.size_bytes,encode(e.sha256,'hex')
 		FROM testagram_identity.verification_sessions v
 		JOIN testagram_identity.identity_applications a ON a.id=v.application_id
 		JOIN testagram_identity.verification_evidence e ON e.session_id=v.id
 		WHERE v.id=$1::uuid AND e.id=$2::uuid
 		  AND v.status='manual_review' AND v.expires_at>now()
 		  AND e.status='verified'
-	`, sessionID, evidenceID).Scan(&applicationID, &objectKey, &contentType, &size)
+	`, sessionID, evidenceID).Scan(&applicationID, &objectKey, &contentType, &size, &expectedSHA256)
 	if err != nil || size < 1 || size > maxIdentityEvidenceBytes {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
 		return
@@ -201,43 +244,51 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
 		return
 	}
-	downloadURL, err := s.virtualStorage.DownloadURL(ctx, applicationID, applicationID, identityEvidenceNamespace, objectKey)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence storage is unavailable", requestID(r)))
-		return
+	var payload []byte
+	primaryURL, primaryErr := s.virtualStorage.DownloadURL(ctx, applicationID, applicationID, identityEvidenceNamespace, objectKey)
+	if primaryErr == nil {
+		payload, err = fetchIdentityEvidenceBytes(ctx, primaryURL, size, contentType, expectedSHA256)
+	} else {
+		err = primaryErr
 	}
-	upstreamRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence storage is unavailable", requestID(r)))
-		return
+		restoreCtx, restoreCancel := context.WithTimeout(ctx, 20*time.Second)
+		restoreErr := s.mediaReplicator.RestorePrimary(restoreCtx, applicationID, identityEvidenceNamespace, objectKey, size, contentType, expectedSHA256)
+		restoreCancel()
+		if restoreErr == nil {
+			if restoredURL, urlErr := s.virtualStorage.DownloadURL(ctx, applicationID, applicationID, identityEvidenceNamespace, objectKey); urlErr == nil {
+				payload, err = fetchIdentityEvidenceBytes(ctx, restoredURL, size, contentType, expectedSHA256)
+			} else {
+				err = urlErr
+			}
+		}
 	}
-	client := &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
-	upstreamResponse, err := client.Do(upstreamRequest)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence could not be retrieved", requestID(r)))
-		return
+		replicas, replicaErr := s.mediaReplicator.ReplicaDownloadURLs(ctx, applicationID, identityEvidenceNamespace, objectKey, size, contentType, expectedSHA256)
+		if replicaErr == nil {
+			for _, replica := range replicas {
+				payload, err = fetchIdentityEvidenceBytes(ctx, replica.URL, size, contentType, expectedSHA256)
+				if err == nil {
+					break
+				}
+			}
+		}
 	}
-	defer upstreamResponse.Body.Close()
-	if upstreamResponse.StatusCode != http.StatusOK || (upstreamResponse.ContentLength >= 0 && upstreamResponse.ContentLength != size) {
-		io.Copy(io.Discard, io.LimitReader(upstreamResponse.Body, 4096))
-		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Evidence storage returned an invalid object", requestID(r)))
+	if err != nil || int64(len(payload)) != size {
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Verified evidence could not be retrieved from primary or replicas", requestID(r)))
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="identity-evidence-`+evidenceID+extension+`"`)
+	w.Header().Set("Content-Disposition", "attachment; filename=\"identity-evidence-"+evidenceID+extension+"\"")
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	if _, err := io.CopyN(w, upstreamResponse.Body, size); err != nil {
-		// Content-Length ensures clients reject a truncated transfer. Do not
-		// append a JSON body after any evidence bytes have been written.
-		return
-	}
+	_, _ = w.Write(payload)
 }
 
 func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request) {
