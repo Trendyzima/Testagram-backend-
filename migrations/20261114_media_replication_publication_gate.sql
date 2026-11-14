@@ -81,6 +81,50 @@ WHERE a.status='ready'
       AND r.provider IN ('instabox-vps','cloudflare-r2','backblaze-b2')
   ) < 3;
 
+CREATE OR REPLACE FUNCTION testagram_media.enforce_three_provider_media_publication()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, testagram_media
+AS $
+DECLARE
+  verified_count INTEGER;
+BEGIN
+  IF NEW.status = 'ready'
+     AND NEW.storage_namespace IN ('media-private','media-public')
+     AND NEW.storage_provider IS DISTINCT FROM 'data-centre' THEN
+    SELECT count(DISTINCT provider)
+      INTO verified_count
+    FROM testagram_media.storage_replicas
+    WHERE object_key=NEW.object_key
+      AND state='verified'
+      AND verified_at IS NOT NULL
+      AND object_size_bytes=NEW.size_bytes
+      AND checksum_sha256=lower(NEW.checksum_sha256)
+      AND provider IN ('instabox-vps','cloudflare-r2','backblaze-b2');
+
+    IF verified_count <> 3 THEN
+      RAISE EXCEPTION 'virtual-storage media cannot become ready before all three provider copies are SHA-256 verified'
+        USING ERRCODE='23514';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$;
+
+DROP TRIGGER IF EXISTS media_replication_publication_guard ON testagram_media.assets;
+CREATE TRIGGER media_replication_publication_guard
+BEFORE INSERT OR UPDATE OF status ON testagram_media.assets
+FOR EACH ROW
+WHEN (
+  NEW.status='ready'
+  AND NEW.storage_namespace IN ('media-private','media-public')
+  AND NEW.storage_provider IS DISTINCT FROM 'data-centre'
+)
+EXECUTE FUNCTION testagram_media.enforce_three_provider_media_publication();
+
+REVOKE ALL ON FUNCTION testagram_media.enforce_three_provider_media_publication() FROM PUBLIC;
+
 COMMENT ON COLUMN testagram_media.assets.status IS
   'replication_pending is non-publishable; ready means the required three provider copies have been independently read-back and SHA-256 verified for virtual-storage media.';
 
