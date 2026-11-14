@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts import instabox_watchdog as watchdog
@@ -172,6 +173,14 @@ class WatchdogTests(unittest.TestCase):
             result = watchdog.restart_running(api, {"last_restart_at": __import__("time").time()})
         self.assertIn("cooldown", result)
         self.assertEqual(api.calls, [])
+
+    def test_workflow_uses_separate_write_key_and_canonical_backend_health_urls(self):
+        workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
+        self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
+        self.assertIn("https://api.testagram.site/healthz", workflow)
+        self.assertIn("https://api.testagram.site/readyz", workflow)
+        self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
+        self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true'", workflow)
 
 
 if __name__ == "__main__":
