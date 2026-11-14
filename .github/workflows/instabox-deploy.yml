@@ -122,6 +122,8 @@ jobs:
 
       - name: Start deployment on the machine
         id: remote
+        env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           MEDIA_REPLICATION_ENABLED: ${{ vars.MEDIA_REPLICATION_ENABLED || 'false' }}
@@ -145,12 +147,6 @@ jobs:
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
         shell: bash
-        env:
-          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
-        run: bash scripts/start-instabox-deployment.sh
-
-        env:
-          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
         run: bash scripts/start-instabox-deployment.sh
       - name: Wait for deployment and report logs
         shell: bash
