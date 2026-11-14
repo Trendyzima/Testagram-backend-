@@ -157,6 +157,31 @@ func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string
 	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "appwrite:"+account.ID); err != nil {
 		return "", http.StatusServiceUnavailable, errors.New("Testagram identity lock is unavailable")
 	}
+	var alreadyLinked bool
+	if err = tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1)
+	`, account.ID).Scan(&alreadyLinked); err != nil {
+		return "", http.StatusServiceUnavailable, errors.New("Testagram identity mapping could not be checked")
+	}
+	if !alreadyLinked {
+		termsVersion := strings.TrimSpace(env("TESTAGRAM_TERMS_VERSION", "2026-11-11"))
+		privacyVersion := strings.TrimSpace(env("TESTAGRAM_PRIVACY_VERSION", "2026-11-11"))
+		var consentCount int
+		err = tx.QueryRow(ctx, `
+			SELECT count(DISTINCT consent_type)
+			FROM testagram_identity.appwrite_registration_consents
+			WHERE appwrite_user_id=$1 AND email=$2
+			  AND (consent_type='age_confirmation' AND policy_version='age-v1'
+			    OR consent_type='terms' AND policy_version=$3
+			    OR consent_type='privacy' AND policy_version=$4)
+		`, account.ID, email, termsVersion, privacyVersion).Scan(&consentCount)
+		if err != nil {
+			return "", http.StatusServiceUnavailable, errors.New("registration consent store is unavailable")
+		}
+		if consentCount != 3 {
+			return "", http.StatusForbidden, errors.New("registration consent is required before Testagram account provisioning")
+		}
+	}
 	err = tx.QueryRow(ctx, `
 		UPDATE testagram_identity.appwrite_accounts
 		SET email=$2,email_verified=$3,last_seen_at=now(),updated_at=now()
