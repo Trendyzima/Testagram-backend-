@@ -117,6 +117,9 @@ jobs:
           FEDERATION_BACKEND_INTERNAL_TOKEN: ${{ secrets.FEDERATION_BACKEND_INTERNAL_TOKEN }}
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           MEDIA_REPLICATION_ENABLED: ${{ vars.MEDIA_REPLICATION_ENABLED || 'false' }}
+          TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED || 'false' }}
+          TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
+          TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
           B2_S3_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
           B2_S3_REGION: ${{ vars.B2_S3_REGION }}
           B2_S3_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
@@ -138,6 +141,15 @@ jobs:
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          case "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" in
+            true|false) ;;
+            *) echo "::error::TESTAGRAM_IDENTITY_REGISTRATION_ENABLED must be true or false."; exit 1 ;;
+          esac
+          if [[ "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" == "true" ]]; then
+            [[ "$MEDIA_REPLICATION_ENABLED" == "true" ]] || { echo "::error::Identity registration requires MEDIA_REPLICATION_ENABLED=true."; exit 1; }
+            [[ -n "$TESTAGRAM_TERMS_VERSION" && ${#TESTAGRAM_TERMS_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_TERMS_VERSION (1-64 characters)."; exit 1; }
+            [[ -n "$TESTAGRAM_PRIVACY_VERSION" && ${#TESTAGRAM_PRIVACY_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_PRIVACY_VERSION (1-64 characters)."; exit 1; }
+          fi
           if [[ -z "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ]]; then
             echo "::error::Missing FEDERATION_BACKEND_INTERNAL_TOKEN repository secret."
             exit 1
@@ -224,9 +236,9 @@ jobs:
           IDENTITY_EVIDENCE_PRIVATE_BUCKET=testagram-identity-evidence-private
           VIRTUAL_STORAGE_ENABLED=true
           MEDIA_REPLICATION_ENABLED=false
-          TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=false
-          TESTAGRAM_TERMS_VERSION=
-          TESTAGRAM_PRIVACY_VERSION=
+          TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}
+          TESTAGRAM_TERMS_VERSION=${TESTAGRAM_TERMS_VERSION:-}
+          TESTAGRAM_PRIVACY_VERSION=${TESTAGRAM_PRIVACY_VERSION:-}
           CLOUDFLARE_R2_ENDPOINT=
           CLOUDFLARE_R2_REGION=auto
           CLOUDFLARE_R2_BUCKET=
@@ -307,10 +319,10 @@ jobs:
           # a separate staging acceptance and explicit operator activation.
           write_env_value VIRTUAL_STORAGE_ENABLED true
           write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-private
-          write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false
+          write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
+          write_env_value TESTAGRAM_TERMS_VERSION "$TESTAGRAM_TERMS_VERSION"
+          write_env_value TESTAGRAM_PRIVACY_VERSION "$TESTAGRAM_PRIVACY_VERSION"
           if [[ -z "$(read_env_value MEDIA_REPLICATION_ENABLED)" ]]; then write_env_value MEDIA_REPLICATION_ENABLED false; fi
-          if [[ -z "$(read_env_value TESTAGRAM_TERMS_VERSION)" ]]; then write_env_value TESTAGRAM_TERMS_VERSION ""; fi
-          if [[ -z "$(read_env_value TESTAGRAM_PRIVACY_VERSION)" ]]; then write_env_value TESTAGRAM_PRIVACY_VERSION ""; fi
           # The Backend three-provider replicator has its own explicit activation
           # switch; credentials are copied only when that switch is true.
           write_env_value MEDIA_REPLICATION_ENABLED "$MEDIA_REPLICATION_ENABLED"
@@ -754,13 +766,16 @@ jobs:
             --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
             --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
             --arg media_replication_enabled "$MEDIA_REPLICATION_ENABLED" \
+            --arg identity_registration_enabled "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" \
+            --arg terms_version "$TESTAGRAM_TERMS_VERSION" \
+            --arg privacy_version "$TESTAGRAM_PRIVACY_VERSION" \
             --arg b2_endpoint "$b2_endpoint" --arg b2_region "$b2_region" --arg b2_bucket "$b2_bucket" \
             --arg b2_private "$b2_private" --arg b2_public "$b2_public" --arg b2_identity "$b2_identity" \
             --arg b2_access "$b2_access" --arg b2_secret "$b2_secret" \
             --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
             --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
             --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-            '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+            '{cmd:$cmd,envs:{APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
           response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
             -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" \
