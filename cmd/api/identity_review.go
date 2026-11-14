@@ -533,6 +533,24 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		writeJSON(w,http.StatusConflict,errorBody("APPLICATION_NOT_APPROVABLE","Application is not awaiting account approval",requestID(r)))
 		return
 	}
+
+	// Lock and validate the linked sensitive-action request before accepting
+	// another approval. The general admin approval path already enforces this
+	// expiry boundary; identity approval must enforce the same policy.
+	var actionType, actionStatus, targetReference string
+	var requiredApprovals int
+	var requestUnexpired bool
+	err=tx.QueryRow(ctx,`
+		SELECT action_type,status,target_reference,required_approvals,(expires_at>now())
+		FROM testagram_auth.sensitive_action_requests
+		WHERE id=$1::uuid
+		FOR UPDATE
+	`,requestIDValue).Scan(&actionType,&actionStatus,&targetReference,&requiredApprovals,&requestUnexpired)
+	if err!=nil || actionType!="identity.approve" || actionStatus!="pending" ||
+		targetReference!=applicationID || requiredApprovals!=2 || !requestUnexpired {
+		writeJSON(w,http.StatusConflict,errorBody("APPROVAL_REQUEST_EXPIRED_OR_INVALID","The linked two-person approval request is expired or no longer pending",requestID(r)))
+		return
+	}
 	if strings.EqualFold(strings.TrimSpace(email),strings.TrimSpace(reviewer.Email)) {
 		writeJSON(w,http.StatusForbidden,errorBody("SELF_APPROVAL_FORBIDDEN","Applicants cannot approve their own applications",requestID(r)))
 		return
@@ -575,18 +593,21 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		writeJSON(w,http.StatusConflict,errorBody("INVALID_APPROVAL_COUNT","Approval ledger has an unexpected number of approvals",requestID(r)))
 		return
 	}
-	if _,err=tx.Exec(ctx,`
+	requestTag,updateErr:=tx.Exec(ctx,`
 		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
-		WHERE id=$1::uuid AND status='pending' AND required_approvals=2
-	`,requestIDValue); err!=nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_APPROVAL_FAILED","Approval request could not be finalized",requestID(r)))
+		WHERE id=$1::uuid AND action_type='identity.approve' AND target_reference=$2
+		  AND status='pending' AND required_approvals=2 AND expires_at>now()
+	`,requestIDValue,applicationID)
+	if updateErr!=nil || requestTag.RowsAffected()!=1 {
+		writeJSON(w,http.StatusConflict,errorBody("APPROVAL_REQUEST_EXPIRED_OR_INVALID","The linked two-person approval request could not be finalized",requestID(r)))
 		return
 	}
-	if _,err=tx.Exec(ctx,`
+	applicationTag,updateErr:=tx.Exec(ctx,`
 		UPDATE testagram_identity.identity_applications SET status='approved',updated_at=now()
 		WHERE id=$1::uuid AND status='verified'
-	`,applicationID); err!=nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("IDENTITY_APPROVAL_FAILED","Application could not be approved",requestID(r)))
+	`,applicationID)
+	if updateErr!=nil || applicationTag.RowsAffected()!=1 {
+		writeJSON(w,http.StatusConflict,errorBody("APPLICATION_NOT_APPROVABLE","Application changed before approval could be finalized",requestID(r)))
 		return
 	}
 	var firstApprover,secondApprover string
