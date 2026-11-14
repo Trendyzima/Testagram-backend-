@@ -13,6 +13,9 @@ backup_dir="${BACKUP_DIR:-$script_dir/backups}"
 [[ -f "$compose_file" ]] || { echo "Missing Compose file: $compose_file" >&2; exit 1; }
 [[ -f "$env_file" ]] || { echo "Missing environment file: $env_file" >&2; exit 1; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
+docker compose --env-file "$env_file" -f "$compose_file" config -q
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
