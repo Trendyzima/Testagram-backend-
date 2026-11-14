@@ -406,6 +406,11 @@ CREATE TABLE IF NOT EXISTS testagram_local.accounts (
 );
 SQL
 
+# Exercise the real Go Appwrite -> consent ledger -> PostgreSQL canonical-link
+# path against the same isolated database after applying all identity schemas.
+TEST_DATABASE_URL="postgres://postgres:ci-only-password@127.0.0.1:5432/postgres?sslmode=disable" \
+  go test ./cmd/api -run '^TestAuthenticatedAppwriteUserRequiresConsentAndLinksCanonicalAccount$' -count=1
+
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationStatusUsesVerificationSessions)$' -count=1
 
