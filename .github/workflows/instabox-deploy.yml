@@ -345,7 +345,7 @@ jobs:
         run: |
           echo "Backend and Go CDN published origins passed direct health/readiness checks."
           echo "Run the CDN repository's Restore canonical Testagram API and Go CDN host routing workflow with the API URL and Go CDN URL from this deployment summary."
-          echo "That workflow is the final public-host release gate and verifies API liveness, hidden readiness/metrics, Go CDN version/readiness, and private-media denial."
+          echo "Cloudflare gateway workflow performs the final public api.testagram.site and media.testagram.site identity, readiness, and authorization checks after both origins are deployed."
 
       - name: Deployment summary
         if: always()
