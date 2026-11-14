@@ -296,8 +296,10 @@ if [[ "$consent_table" != "t" ]]; then
   backup="$backup_dir/testagram-pre-appwrite-consent-$(date -u +%Y%m%dT%H%M%SZ).dump"
   sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
   test -s "$backup"
+  sha256sum "$backup" > "$backup.sha256"
   sudo docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine pg_restore --list "/backup/$(basename "$backup")" >/dev/null
-  chmod 600 "$backup"
+  sha256sum -c "$backup.sha256"
+  chmod 600 "$backup" "$backup.sha256"
   sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql'
 fi
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL" | grep -qx t'
