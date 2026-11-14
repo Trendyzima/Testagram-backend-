@@ -49,7 +49,7 @@ jobs:
           INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
           INSTABOX_MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
           INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
-          TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz' }}
+          TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://api.testagram.site/healthz' }}
           TESTAGRAM_READINESS_URL: ${{ vars.TESTAGRAM_READINESS_URL || 'https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/readyz' }}
           WATCHDOG_ALERT_WEBHOOK: ${{ secrets.WATCHDOG_ALERT_WEBHOOK }}
           WATCHDOG_STATE_FILE: .watchdog-state.json
