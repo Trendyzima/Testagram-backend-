@@ -354,6 +354,17 @@ func (s *service) identitySessionStatus(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func identityEvidenceMatchesContentType(payload []byte, contentType string) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	if contentType == "application/pdf" {
+		return bytes.HasPrefix(payload, []byte("%PDF-"))
+	}
+	detected := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(payload), ";")[0]))
+	return detected == contentType
+}
+
 func identityEvidenceExtension(contentType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(contentType)) {
 	case "image/jpeg":
@@ -478,6 +489,10 @@ func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request)
 	actualDigest := sha256.Sum256(payload)
 	if len(expectedDigest) != sha256.Size || subtle.ConstantTimeCompare(actualDigest[:], expectedDigest) != 1 {
 		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_CHECKSUM_MISMATCH", "Evidence upload failed its SHA-256 integrity check", requestID(r)))
+		return
+	}
+	if !identityEvidenceMatchesContentType(payload, contentType) {
+		writeJSON(w, http.StatusBadRequest, errorBody("EVIDENCE_CONTENT_MISMATCH", "Evidence bytes do not match the declared content type", requestID(r)))
 		return
 	}
 	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, contentType, size)
