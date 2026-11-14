@@ -512,6 +512,8 @@ func (s *service) routes() http.Handler {
 		mux.HandleFunc("OPTIONS /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 		mux.HandleFunc("POST /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
 	}
+	mux.HandleFunc("OPTIONS /api/auth/registration-consent", s.mediaPreflight)
+	mux.HandleFunc("POST /api/auth/registration-consent", s.appwriteRegistrationConsent)
 	mux.HandleFunc("OPTIONS /api/me/profile", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/profile", s.socialMyProfileRead)
 	mux.HandleFunc("PUT /api/me/profile", s.socialMyProfileUpdate)
