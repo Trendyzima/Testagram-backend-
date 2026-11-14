@@ -242,7 +242,7 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 		if err := tx.QueryRow(ctx, `
 			SELECT count(DISTINCT provider)
 			FROM testagram_media.storage_replicas
-			WHERE object_key=$1 AND state='verified' AND verified_at IS NOT NULL
+			WHERE object_key=$1 AND state='verified' AND verified_at >= now() - interval '24 hours'
 			  AND object_size_bytes=$2 AND checksum_sha256=$3
 			  AND provider IN ('instabox-vps','cloudflare-r2','backblaze-b2')
 		`, job.ObjectKey, job.SizeBytes, strings.ToLower(job.Checksum)).Scan(&verifiedCount); err != nil {
