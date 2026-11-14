@@ -230,8 +230,9 @@ func (s *service) tvCatalogRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.Query(ctx, `
-		SELECT channel_id,url,source,country,group_name,priority
-		FROM testagram_tv.channel_health
+		SELECT channel_id,stream_url,source,country,group_name,priority
+		FROM testagram_tv.channel_catalog
+		WHERE enabled = true
 		ORDER BY priority DESC,channel_id ASC
 		LIMIT 20000
 	`)
@@ -298,6 +299,10 @@ func (s *service) tvHealthBatch(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "TV health batch contains an invalid channel record"})
 			return
 		}
+		if _, exists := unique[channel.ChannelID]; exists {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "TV health batch contains a duplicate channel ID"})
+			return
+		}
 		unique[channel.ChannelID] = channel
 	}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -308,14 +313,16 @@ func (s *service) tvHealthBatch(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(context.Background())
 	now := time.Now().UTC()
 	for _, channel := range unique {
-		_, err = tx.Exec(ctx, `
+		command, execErr := tx.Exec(ctx, `
 			INSERT INTO testagram_tv.channel_health
 				(channel_id, url, is_online, last_checked_at, last_online_at,
 				 consecutive_failures, consecutive_successes, latency_ms, check_error,
 				 source, country, group_name, priority, updated_at)
-			VALUES ($1,$2,$3,$4,CASE WHEN $3 THEN $4 ELSE NULL END,
-			        CASE WHEN $3 THEN 0 ELSE 1 END,CASE WHEN $3 THEN 1 ELSE 0 END,
-			        $5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,$4)
+			SELECT c.channel_id,c.stream_url,$3,$4,CASE WHEN $3 THEN $4 ELSE NULL END,
+			       CASE WHEN $3 THEN 0 ELSE 1 END,CASE WHEN $3 THEN 1 ELSE 0 END,
+			       $5,NULLIF($6,''),c.source,c.country,c.group_name,c.priority,$4
+			FROM testagram_tv.channel_catalog c
+			WHERE c.channel_id=$1 AND c.stream_url=$2 AND c.enabled=true
 			ON CONFLICT (channel_id) DO UPDATE SET
 				url=EXCLUDED.url,
 				is_online=EXCLUDED.is_online,
@@ -326,10 +333,13 @@ func (s *service) tvHealthBatch(w http.ResponseWriter, r *http.Request) {
 				latency_ms=EXCLUDED.latency_ms, check_error=EXCLUDED.check_error,
 				source=EXCLUDED.source,country=EXCLUDED.country,group_name=EXCLUDED.group_name,
 				priority=EXCLUDED.priority,updated_at=EXCLUDED.updated_at`,
-			channel.ChannelID, channel.URL, channel.IsOnline, now, channel.LatencyMS, channel.CheckError,
-			channel.Source, channel.Country, channel.GroupName, channel.Priority)
-		if err != nil {
+			channel.ChannelID, channel.URL, channel.IsOnline, now, channel.LatencyMS, channel.CheckError)
+		if execErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "TV health persistence temporarily unavailable"})
+			return
+		}
+		if command.RowsAffected() != 1 {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "TV health record does not match an enabled authoritative catalogue entry"})
 			return
 		}
 	}
