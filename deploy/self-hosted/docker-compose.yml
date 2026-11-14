@@ -55,7 +55,6 @@ services:
       - ../../migrations/20261115_identity_evidence_access_audit.sql:/docker-entrypoint-initdb.d/044_identity_evidence_access_audit.sql:ro
       - ../../migrations/20261115_native_identity_status_access.sql:/docker-entrypoint-initdb.d/045_native_identity_status_access.sql:ro
       - ../../migrations/20261114_media_replication_publication_gate.sql:/docker-entrypoint-initdb.d/046_media_replication_publication_gate.sql:ro
-      - ../../migrations/20261116_appwrite_registration_consents.sql:/docker-entrypoint-initdb.d/047_appwrite_registration_consents.sql:ro
       - ../../migrations/20261114_appwrite_registration_consent.sql:/docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
