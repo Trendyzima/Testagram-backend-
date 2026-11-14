@@ -172,7 +172,7 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	var applicationID, objectKey, contentType string
 	var size int64
-	err := s.db.QueryRow(ctx, `
+	err = s.db.QueryRow(ctx, `
 		SELECT a.id::text,e.object_key,e.content_type,e.size_bytes
 		FROM testagram_identity.verification_sessions v
 		JOIN testagram_identity.identity_applications a ON a.id=v.application_id
