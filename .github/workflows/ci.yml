@@ -536,6 +536,9 @@ jobs:
           apply_identity = Path("deploy/self-hosted/apply-native-identity-migrations.sh").read_text()
           assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval"
           assert "identityEvidenceMatchesContentType" in identity and "evidence_access_attempted" in review, "identity evidence requires file-signature validation and audited reviewer access"
+          identity_migration_test = Path("scripts/test-identity-registration-migration.sh").read_text()
+          assert "adult_verification_session_id" not in identity and "adult_verification_result" not in identity and "adult_verification_threshold" not in identity, "native identity status must read verification_sessions, not retired vendor columns"
+          assert "20261113_identity_idswyft_intake.sql" not in identity_migration_test, "retired Idswyft intake migration must not be applied by identity CI"
           live_replication = Path("internal/virtualstorage/identity_replication_live_test.go").read_text()
           provider_smoke = Path(".github/workflows/media-provider-smoke.yml").read_text()
           assert "TestLiveIdentityEvidenceReplicationLifecycle" in live_replication and "TestLiveIdentityEvidenceReplicationLifecycle" in provider_smoke and "confirm_live_provider_writes" in provider_smoke, "identity evidence must have an explicit, gated live MinIO/B2/R2 lifecycle acceptance test"
