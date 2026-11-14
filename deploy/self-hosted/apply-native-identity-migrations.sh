@@ -3,8 +3,8 @@ set -Eeuo pipefail
 umask 077
 
 # Existing PostgreSQL volumes do not rerun docker-entrypoint-initdb.d.
-# This operator-gated workflow backs up and verifies the live DB before
-# applying the native identity/reviewer migrations in dependency order.
+# This helper exits when the complete schema is present and requires explicit
+# authorization plus a verified backup before applying the migration chain.
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 compose_file="${COMPOSE_FILE:-$script_dir/docker-compose.yml}"
 env_file="${ENV_FILE:-$script_dir/.env}"
@@ -16,13 +16,83 @@ command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
 docker compose --env-file "$env_file" -f "$compose_file" config -q
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+schema_ready() {
+  docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+    sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
+      SELECT
+        to_regclass('\''testagram_auth.admin_rate_limits'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.admin_permissions'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.sensitive_action_requests'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.sensitive_action_approvals'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.admin_security_audit'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.identity_applications'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.identity_application_reviews'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.identity_approval_tokens'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.registration_provisioning'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.verification_events'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.verification_reviews'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.verification_evidence'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.legal_consent_audit'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_applications'\''
+            AND column_name='\''status_access_token_sha256'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid=to_regclass('\''testagram_identity.identity_approval_tokens'\'')
+            AND tgname='\''identity_approval_token_requires_two_person_approval'\''
+            AND NOT tgisinternal
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid=to_regclass('\''testagram_identity.verification_events'\'')
+            AND tgname='\''verification_events_append_only'\''
+            AND NOT tgisinternal
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid=to_regclass('\''testagram_identity.verification_reviews'\'')
+            AND tgname='\''verification_reviews_append_only'\''
+            AND NOT tgisinternal
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid=to_regclass('\''testagram_identity.legal_consent_audit'\'')
+            AND tgname='\''legal_consent_audit_append_only'\''
+            AND NOT tgisinternal
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid=to_regclass('\''testagram_identity.verification_events'\'')
+            AND conname='\''verification_events_event_type_check'\''
+            AND pg_get_constraintdef(oid) LIKE '\''%evidence_access_attempted%'\''
+        )
+    "'
+}
+
+if [[ "$(schema_ready)" == "t" ]]; then
+  echo "Native identity PostgreSQL schema is complete; migration preflight passed without changing data."
+  exit 0
+fi
+
+if [[ "${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" != "APPLY-NATIVE-IDENTITY-MIGRATIONS" ]]; then
+  echo "::error::Native identity schema is incomplete. No migrations were applied. Re-run the production workflow with confirm_native_identity_migrations=true after reviewing the backup and migration plan."
+  exit 1
+fi
+
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup="$backup_dir/testagram-pre-native-identity-$stamp.dump"
 checksum="$backup.sha256"
+verify_db="testagram_backup_verify_${stamp//[^A-Za-z0-9]/_}"
+container_backup="/tmp/testagram-pre-native-identity-$stamp.dump"
 
-# Take and independently validate a restorable custom-format backup first.
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
 test -s "$backup"
@@ -32,15 +102,23 @@ docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine \
 sha256sum -c "$checksum"
 chmod 600 "$backup" "$checksum"
 
-echo "Verified pre-migration backup: $backup"
-echo "SHA-256: $(cut -d ' ' -f1 "$checksum")"
-read -r -p "Type APPLY-NATIVE-IDENTITY-MIGRATIONS to continue: " confirm
-if [[ "$confirm" != "APPLY-NATIVE-IDENTITY-MIGRATIONS" ]]; then
-  echo "Cancelled. Backup retained; no migrations were applied."
-  exit 0
-fi
+# Prove the archive can restore into a fresh database on the same PostgreSQL
+# server; pg_restore --list alone only proves the archive table of contents.
+cleanup_restore_test() {
+  docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+    sh -ec 'dropdb --if-exists -U "$POSTGRES_USER" "$1" || true; rm -f "$2"' sh "$verify_db" "$container_backup" >/dev/null 2>&1 || true
+}
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'createdb -U "$POSTGRES_USER" "$1"' sh "$verify_db"
+trap cleanup_restore_test EXIT
+cat "$backup" | docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'cat > "$1"' sh "$container_backup"
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'pg_restore --exit-on-error --no-owner --no-acl -U "$POSTGRES_USER" -d "$1" "$2"' sh "$verify_db" "$container_backup"
+cleanup_restore_test
+trap - EXIT
+echo "Verified SHA-256 and completed a full restore test: $backup"
 
-# Reconcile the Postgres service with the updated read-only migration mounts.
 docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
 for file in \
   034_admin_security_controls.sql \
@@ -72,22 +150,10 @@ apply_migration 044_identity_evidence_access_audit.sql
 apply_migration 045_native_identity_status_access.sql
 apply_migration 047_appwrite_registration_consent.sql
 
-docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
-    SELECT
-      to_regclass('\''testagram_identity.identity_applications'\'') IS NOT NULL
-      AND to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL
-      AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
-      AND to_regclass('\''testagram_identity.verification_evidence'\'') IS NOT NULL
-      AND to_regclass('\''testagram_identity.verification_events'\'') IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid='\''testagram_identity.verification_events'\''::regclass
-          AND conname='\''verification_events_event_type_check'\''
-          AND pg_get_constraintdef(oid) LIKE '\''%evidence_access_attempted%'\''
-      )
-  "' | grep -qx t
+if [[ "$(schema_ready)" != "t" ]]; then
+  echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
+  exit 1
+fi
 
-echo "Native identity schema, reviewer evidence-access audit, and Appwrite self-service consent ledger verified."
-echo "Appwrite self-service registration consent schema is installed. High-assurance identity applications remain separately gated by their approval and storage acceptance controls."
-echo "Retain backup until restore verification and release acceptance are complete."
+echo "Verified native identity applications, independent approvals, provisioning, evidence audit, status access, and consent schema."
+echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."

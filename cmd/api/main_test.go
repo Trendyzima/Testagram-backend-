@@ -17,7 +17,7 @@ func TestHealthz(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "ok" {
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"ok":true,"service":"testagram-api"}` {
 		t.Fatalf("healthz: status=%d body=%q", w.Code, w.Body.String())
 	}
 }

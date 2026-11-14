@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: false
+      confirm_native_identity_migrations:
+        description: "Authorize additive native identity PostgreSQL migrations only if the live schema preflight finds them incomplete"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -127,6 +132,7 @@ jobs:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           MEDIA_REPLICATION_ENABLED: ${{ vars.MEDIA_REPLICATION_ENABLED || 'false' }}
           TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED || 'false' }}
+          CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ inputs.confirm_native_identity_migrations == true && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
           APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
@@ -300,9 +306,10 @@ jobs:
           set -euo pipefail
           API="https://api.instabox.sh"
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
+          API_ORIGIN="${{ steps.publish.outputs.api_url }}"
           CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
-          cmd='set -euo pipefail; ROOT=/data/home/testagram; BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"; upsert_env(){ key="$1"; value="$2"; if grep -q "^${key}=" "$BASE_ENV"; then sed -i "s|^${key}=.*|${key}=${value}|" "$BASE_ENV"; else printf "%s=%s\n" "$key" "$value" >> "$BASE_ENV"; fi; }; CDN_URL="${CDN_URL%/}"; upsert_env MINIO_PUBLIC_ENDPOINT "http://object-storage:9000"; upsert_env CDN_MEDIA_BASE_URL "$CDN_URL"; upsert_env MEDIA_PUBLIC_BASE_URL "$CDN_URL/v1"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" up -d --force-recreate media-cache api; for attempt in $(seq 1 36); do if sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /healthcheck && sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz; then break; fi; sleep 5; done; cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q media-cache)"; api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q api)"; check_env(){ container="$1"; key="$2"; expected="$3"; if ! sudo docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$container" | grep -Fqx -- "$key=$expected"; then echo "Runtime env mismatch: $key" >&2; exit 1; fi; }; expected_purge="$(sed -n "s/^CDN_PURGE_TOKEN=//p" "$BASE_ENV" | tail -n 1)"; check_env "$cdn_container" PUBLIC_BASE_URL "$CDN_URL"; check_env "$cdn_container" PURGE_TOKEN "$expected_purge"; check_env "$api_container" CDN_MEDIA_BASE_URL "$CDN_URL"; check_env "$api_container" MEDIA_PUBLIC_BASE_URL "$CDN_URL/v1"; check_env "$api_container" CDN_PURGE_URL "http://media-cache:8081/api/cache/purge"; check_env "$api_container" CDN_PURGE_TOKEN "$expected_purge"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /healthcheck; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz'
-          payload="$(jq -nc --arg cmd "$cmd" --arg cdn "$CDN_URL" '{cmd:$cmd,envs:{CDN_URL:$cdn},timeoutSeconds:240}')"
+          cmd='set -euo pipefail; API_ORIGIN="${API_ORIGIN%/}"; CDN_ORIGIN="${CDN_URL%/}"; curl -fsS "$API_ORIGIN/healthz" | grep -q testagram-api; curl -fsS "$API_ORIGIN/readyz" >/dev/null; curl -fsS "$CDN_ORIGIN/healthz" | grep -q testagram-cdn; curl -fsS "$CDN_ORIGIN/readyz" | grep -qx ready; ROOT=/data/home/testagram; BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"; upsert_env(){ key="$1"; value="$2"; if grep -q "^${key}=" "$BASE_ENV"; then sed -i "s|^${key}=.*|${key}=${value}|" "$BASE_ENV"; else printf "%s=%s\n" "$key" "$value" >> "$BASE_ENV"; fi; }; PUBLIC_CDN_URL="https://media.testagram.site"; upsert_env MINIO_PUBLIC_ENDPOINT "http://object-storage:9000"; upsert_env CDN_MEDIA_BASE_URL "$PUBLIC_CDN_URL"; upsert_env MEDIA_PUBLIC_BASE_URL "$PUBLIC_CDN_URL/v1"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" up -d --force-recreate media-cache api; for attempt in $(seq 1 36); do if sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /healthcheck && sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz; then break; fi; sleep 5; done; cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q media-cache)"; api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q api)"; check_env(){ container="$1"; key="$2"; expected="$3"; if ! sudo docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$container" | grep -Fqx -- "$key=$expected"; then echo "Runtime env mismatch: $key" >&2; exit 1; fi; }; expected_purge="$(sed -n "s/^CDN_PURGE_TOKEN=//p" "$BASE_ENV" | tail -n 1)"; check_env "$cdn_container" PUBLIC_BASE_URL "$PUBLIC_CDN_URL"; check_env "$cdn_container" PURGE_TOKEN "$expected_purge"; check_env "$api_container" CDN_MEDIA_BASE_URL "$PUBLIC_CDN_URL"; check_env "$api_container" MEDIA_PUBLIC_BASE_URL "$PUBLIC_CDN_URL/v1"; check_env "$api_container" CDN_PURGE_URL "http://media-cache:8081/api/cache/purge"; check_env "$api_container" CDN_PURGE_TOKEN "$expected_purge"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /healthcheck; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz'
+          payload="$(jq -nc --arg cmd "$cmd" --arg api "$API_ORIGIN" --arg cdn "$CDN_URL" '{cmd:$cmd,envs:{API_ORIGIN:$api,CDN_URL:$cdn},timeoutSeconds:240}')"
           result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
             -H "Content-Type: application/json" -d "$payload" \
             "$API/v1/machines/$MACHINE_ID/exec")"
@@ -312,7 +319,7 @@ jobs:
             jq -r '.stderr // empty' <<<"$result"
             exit 1
           fi
-          echo "Backend and CDN runtime configuration verified against the published HTTPS CDN origin."
+          echo "Backend and Go CDN now publish media URLs on https://media.testagram.site; the private InstaBox CDN origin remains an upstream only."
 
       - name: Verify public API health and readiness
         shell: bash
@@ -321,7 +328,8 @@ jobs:
           URL="${{ steps.publish.outputs.api_url }}"
           CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
           for attempt in $(seq 1 30); do
-            if curl -fsS "$URL/healthz" >/dev/null && curl -fsS "$URL/readyz" >/dev/null && curl -fsS "$CDN_URL/healthz" >/tmp/cdn-health.json && curl -fsS "$CDN_URL/readyz" >/tmp/cdn-ready.txt && grep -q '"service":"testagram-cdn"' /tmp/cdn-health.json && grep -qx 'ready' /tmp/cdn-ready.txt; then
+            api_status="$(curl -sS --connect-timeout 5 --max-time 10 -D /tmp/api-health.headers -o /tmp/api-health.json -w '%{http_code}' "$URL/healthz" || true)"
+            if [[ "$api_status" == "200" ]] && grep -Eiq '^x-testagram-service:[[:space:]]*testagram-api[[:space:]]*$' /tmp/api-health.headers && jq -e '.ok == true and .service == "testagram-api"' /tmp/api-health.json >/dev/null && curl -fsS "$URL/readyz" >/dev/null && curl -fsS "$CDN_URL/healthz" >/tmp/cdn-health.json && curl -fsS "$CDN_URL/readyz" >/tmp/cdn-ready.txt && grep -q '"service":"testagram-cdn"' /tmp/cdn-health.json && grep -qx 'ready' /tmp/cdn-ready.txt; then
               private_status="$(curl -sS -o /dev/null -w '%{http_code}' "$CDN_URL/v1/users/cdn-smoke/0123456789abcdef0123456789abcdef")"
               case "$private_status" in 401|403|404) ;; *) echo "::error::Unauthenticated media request returned unsafe HTTP $private_status"; exit 1 ;; esac
               echo "Testagram API and pinned Go CDN are reachable; MinIO remains private behind the backend/CDN and unauthenticated media denial passed."
@@ -348,19 +356,45 @@ jobs:
           ready_status=000
           catalog_status=000
           for attempt in $(seq 1 12); do
-            health_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/health" -w '%{http_code}' "$CANONICAL_API_URL/healthz" || true)"
+            health_status="$(curl -sS --connect-timeout 5 --max-time 10 -D "$tmp/health.headers" -o "$tmp/health" -w '%{http_code}' "$CANONICAL_API_URL/healthz" || true)"
             # Caddy deliberately hides dependency readiness from the public internet.
             # The deploy script already checks /readyz from inside the API container.
             ready_status="$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$CANONICAL_API_URL/readyz" || true)"
             catalog_status="$(curl -sS --connect-timeout 5 --max-time 10 -o "$tmp/catalog" -w '%{http_code}' "$CANONICAL_API_URL/internal/tv/catalog" || true)"
             if [[ "$health_status" == "200" && "$ready_status" == "404" && "$catalog_status" == "401" ]] &&
-               grep -qx 'ok' "$tmp/health"; then
-              echo "Canonical API liveness passed; private readiness remains hidden (404) and the internal TV catalogue correctly rejects unauthenticated access (401). Container readiness was verified privately during deployment."
+               grep -Eiq '^x-testagram-service:[[:space:]]*testagram-api[[:space:]]*$' "$tmp/health.headers" &&
+               jq -e '.ok == true and .service == "testagram-api"' "$tmp/health" >/dev/null; then
+              echo "Canonical API hostname is serving the Testagram Backend liveness contract; private readiness remains hidden (404) and the internal TV catalogue rejects unauthenticated access (401)."
               exit 0
             fi
             sleep 10
           done
           echo "::error::Canonical API origin is not wired to the deployed Backend or exposes an unexpected route. Expected public /healthz=200, hidden /readyz=404 and unauthenticated /internal/tv/catalog=401; observed $health_status, $ready_status and $catalog_status."
+          exit 1
+
+      - name: Verify canonical media hostname serves the pinned Go CDN
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          for attempt in $(seq 1 18); do
+            status="$(curl -sS --connect-timeout 5 --max-time 15 -D "$tmp/headers" -o "$tmp/health.json" -w '%{http_code}' "https://media.testagram.site/healthz?release_probe=$GITHUB_RUN_ID" || true)"
+            ready="$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp/ready" -w '%{http_code}' "https://media.testagram.site/readyz?release_probe=$GITHUB_RUN_ID" || true)"
+            if [[ "$status" == "200" && "$ready" == "200" ]] &&
+               grep -Eiq '^x-testagram-cdn:[[:space:]]*testagram-edge[[:space:]]*$' "$tmp/headers" &&
+               grep -Eiq '^x-testagram-cdn-version:[[:space:]]*2026-11-13-backend-origin-hardened-v1[[:space:]]*$' "$tmp/headers" &&
+               jq -e '.ok == true and .service == "testagram-cdn"' "$tmp/health.json" >/dev/null &&
+               grep -qx 'ready' "$tmp/ready"; then
+              private_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp/private" -w '%{http_code}' "https://media.testagram.site/v1/users/cdn-smoke/0123456789abcdef0123456789abcdef" || true)"
+              case "$private_status" in 401|403|404) ;; *) echo "::error::Canonical CDN exposed an unauthenticated private-media path (HTTP $private_status)"; cat "$tmp/private"; exit 1 ;; esac
+              echo "media.testagram.site is serving the canonical Go CDN; readiness and private-media denial passed."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::media.testagram.site is not routed to the canonical Go CDN. Observed health=$status readiness=$ready."
+          cat "$tmp/health.json" "$tmp/ready" 2>/dev/null || true
           exit 1
 
       - name: Deployment summary

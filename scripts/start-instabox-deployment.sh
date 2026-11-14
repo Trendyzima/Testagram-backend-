@@ -288,21 +288,14 @@ fi
 echo "Starting PostgreSQL, MinIO and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
-# Existing PostgreSQL volumes do not replay initdb mounts. Apply the small,
-# additive Appwrite-consent migration only after taking and validating a backup.
-consent_table="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL"')"
-if [[ "$consent_table" != "t" ]]; then
-  backup_dir="$ROOT/backups"; mkdir -p "$backup_dir"; chmod 700 "$backup_dir"
-  backup="$backup_dir/testagram-pre-appwrite-consent-$(date -u +%Y%m%dT%H%M%SZ).dump"
-  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$backup"
-  test -s "$backup"
-  sha256sum "$backup" > "$backup.sha256"
-  sudo docker run --rm -v "$backup_dir:/backup:ro" postgres:17-alpine pg_restore --list "/backup/$(basename "$backup")" >/dev/null
-  sha256sum -c "$backup.sha256"
-  chmod 600 "$backup" "$backup.sha256"
-  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql'
-fi
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL" | grep -qx t'
+# Existing PostgreSQL volumes do not replay initdb mounts. The shared
+# preflight skips a complete schema, otherwise it fails closed unless the
+# workflow carries explicit approval. The helper takes and fully restore-tests
+# a backup before applying any additive identity migrations.
+sudo env \
+  CONFIRM_NATIVE_IDENTITY_MIGRATIONS="${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
+  COMPOSE_FILE="$BASE_COMPOSE" ENV_FILE="$BASE_ENV" BACKUP_DIR="$ROOT/backups" \
+  bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
 
 echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
@@ -664,6 +657,7 @@ payload="$(jq -nc \
   --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
   --arg media_replication_enabled "$MEDIA_REPLICATION_ENABLED" \
   --arg identity_registration_enabled "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" \
+  --arg identity_migration_confirmation "${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
   --arg terms_version "$TESTAGRAM_TERMS_VERSION" \
   --arg privacy_version "$TESTAGRAM_PRIVACY_VERSION" \
   --arg appwrite_api_key "${APPWRITE_API_KEY:-}" \
@@ -679,7 +673,7 @@ payload="$(jq -nc \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,ONSPACE_AI_API_KEY:$onspace_key,ONSPACE_AI_BASE_URL:$onspace_base,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,ONSPACE_AI_API_KEY:$onspace_key,ONSPACE_AI_BASE_URL:$onspace_base,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \
