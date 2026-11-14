@@ -344,7 +344,8 @@ func TestIdentityApprovalRejectsExpiredSensitiveActionRequest(t *testing.T) {
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
 		t.Fatal(err)
 	}
-	fingerprint := strings.Repeat("d", 64)
+	// Use a fingerprint distinct from the shared migration harness fixtures.
+	fingerprint := strings.Repeat("f", 64)
 	payload := map[string]any{
 		"application_id": applicationID,
 		"email": applicantEmail,
