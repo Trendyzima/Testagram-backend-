@@ -239,6 +239,84 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	return nextStatus, nil
 }
 
+func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, approverID, decision, reason string) (string, string, int, error) {
+	var actionType, requesterID, requestStatus, targetReference string
+	var payload []byte
+	err := tx.QueryRow(ctx, `
+		SELECT action_type, requested_by_appwrite_user_id, status, target_reference, payload
+		FROM testagram_auth.sensitive_action_requests
+		WHERE id=$1::uuid AND expires_at>now()
+		FOR UPDATE
+	`, requestID).Scan(&actionType, &requesterID, &requestStatus, &targetReference, &payload)
+	if err != nil || requestStatus != "pending" {
+		return "", "", 0, errors.New("approval request is missing, expired or no longer pending")
+	}
+	if approverID == requesterID {
+		return "", "", 0, errors.New("requester cannot approve their own sensitive action")
+	}
+	if decision != "approved" && decision != "rejected" {
+		return "", "", 0, errors.New("unsupported sensitive-action decision")
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_approvals
+		  (request_id, approver_appwrite_user_id, decision, reason)
+		VALUES ($1::uuid, $2, $3, $4)
+	`, requestID, approverID, decision, reason); err != nil {
+		return "", "", 0, errors.New("approver has already decided this request or the decision could not be recorded")
+	}
+
+	var approvalCount int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(DISTINCT approver_appwrite_user_id)
+		FROM testagram_auth.sensitive_action_approvals
+		WHERE request_id=$1::uuid AND decision='approved'
+	`, requestID).Scan(&approvalCount); err != nil {
+		return "", "", 0, err
+	}
+
+	state := "pending"
+	if decision == "rejected" {
+		state = "rejected"
+	} else if approvalCount >= 2 {
+		state = "approved"
+	}
+	if state != "pending" {
+		tag, err := tx.Exec(ctx, `
+			UPDATE testagram_auth.sensitive_action_requests
+			SET status=$2, decided_at=now()
+			WHERE id=$1::uuid AND status='pending'
+		`, requestID, state)
+		if err != nil {
+			return "", "", 0, err
+		}
+		if tag.RowsAffected() != 1 {
+			return "", "", 0, errors.New("approval request changed while recording the decision")
+		}
+	}
+
+	applicationState := ""
+	if actionType == "identity.approve" {
+		applicationState, err = recordIdentityApplicationReview(
+			ctx, tx, requestID, targetReference, approverID, decision, reason, payload, approvalCount,
+		)
+		if err != nil {
+			return "", "", 0, err
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_auth.admin_security_audit
+		  (actor_appwrite_user_id, action, target_reference, request_id, metadata)
+		VALUES ($1, $2, $3, $4::uuid,
+		        jsonb_build_object('action_type', $5, 'decision', $6, 'approval_count', $7))
+	`, approverID, "sensitive_action."+decision, targetReference, requestID, actionType, decision, approvalCount)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return state, applicationState, approvalCount, nil
+}
+
 func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if len(id) != 36 || !regexp.MustCompile("^[0-9a-fA-F-]{36}$").MatchString(id) {
@@ -246,7 +324,9 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var input decisionInput
-	if !decodeBody(w, r, &input) { return }
+	if !decodeBody(w, r, &input) {
+		return
+	}
 	input.Reason = strings.TrimSpace(input.Reason)
 	decision, decisionErr := normalizeSensitiveDecision(input.Decision)
 	if decisionErr != nil {
@@ -281,8 +361,12 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s, approver, ok := a.requirePermission(w, r, permission)
-	if !ok { return }
-	if !a.requireRecentStepUp(w, s) { return }
+	if !ok {
+		return
+	}
+	if !a.requireRecentStepUp(w, s) {
+		return
+	}
 	if allowed, rateErr := a.consumeAdminRateLimit(ctx, approver.ID, "sensitive-decision", 30, time.Hour); rateErr != nil {
 		writeJSON(w, 503, map[string]string{"error": "Security rate-limit service is unavailable"})
 		return
@@ -302,58 +386,10 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	var lockedStatus, targetReference string
-	var payload []byte
-	err = tx.QueryRow(ctx, `
-		SELECT status, target_reference, payload
-		FROM testagram_auth.sensitive_action_requests
-		WHERE id=$1::uuid AND expires_at>now()
-		FOR UPDATE
-	`, id).Scan(&lockedStatus, &targetReference, &payload)
-	if err != nil || lockedStatus != "pending" {
-		writeJSON(w, 409, map[string]string{"error": "This request is no longer pending"})
-		return
-	}
-
-	_, err = tx.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals
-		  (request_id, approver_appwrite_user_id, decision, reason)
-		VALUES ($1::uuid, $2, $3, $4)
-	`, id, approver.ID, input.Decision, input.Reason)
-	if err != nil {
-		writeJSON(w, 409, map[string]string{"error": "You have already decided this request or the approval could not be recorded"})
-		return
-	}
-	var count int
-	err = tx.QueryRow(ctx, `
-		SELECT count(DISTINCT approver_appwrite_user_id)
-		FROM testagram_auth.sensitive_action_approvals
-		WHERE request_id=$1::uuid AND decision='approved'
-	`, id).Scan(&count)
-	state := "pending"
-	if input.Decision == "rejected" {
-		state = "rejected"
-		_, err = tx.Exec(ctx, "UPDATE testagram_auth.sensitive_action_requests SET status='rejected',decided_at=now() WHERE id=$1::uuid AND status='pending'", id)
-	} else if err == nil && count >= 2 {
-		state = "approved"
-		_, err = tx.Exec(ctx, "UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now() WHERE id=$1::uuid AND status='pending'", id)
-	}
-
-	applicationState := ""
-	if err == nil && action == "identity.approve" {
-		applicationState, err = recordIdentityApplicationReview(ctx, tx, id, targetReference, approver.ID, input.Decision, input.Reason, payload, count)
-	}
+	state, applicationState, count, err := recordSensitiveActionDecision(ctx, tx, id, approver.ID, input.Decision, input.Reason)
 	if err == nil {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO testagram_auth.admin_security_audit
-			  (actor_appwrite_user_id, action, target_reference, request_id, metadata)
-			SELECT $1, $2, target_reference, id,
-			       jsonb_build_object('action_type', action_type, 'decision', $3, 'approval_count', $4)
-			FROM testagram_auth.sensitive_action_requests
-			WHERE id=$5::uuid
-		`, approver.ID, "sensitive_action."+input.Decision, input.Decision, count, id)
+		err = tx.Commit(ctx)
 	}
-	if err == nil { err = tx.Commit(ctx) }
 	if err != nil {
 		writeJSON(w, 503, map[string]string{"error": "Could not safely record the approval"})
 		return
@@ -363,9 +399,12 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 		"required_approvals": 2,
 		"message": "Decision recorded. The underlying action is not executed by this approval ledger.",
 	}
-	if action == "identity.approve" { response["application_status"] = applicationState }
+	if action == "identity.approve" {
+		response["application_status"] = applicationState
+	}
 	writeJSON(w, 200, response)
 }
+
 func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) {
 	_,user,ok:=a.requireStaff(w,r); if !ok { return }
 	canAudit,err:=a.hasPermission(user,"audit.read")
