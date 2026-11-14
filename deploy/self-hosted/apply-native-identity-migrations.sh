@@ -51,7 +51,7 @@ for file in \
   043_native_identity_integrity.sql \
   044_identity_evidence_access_audit.sql \
   045_native_identity_status_access.sql \
-  047_appwrite_registration_consents.sql; do
+  047_appwrite_registration_consent.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -70,7 +70,7 @@ apply_migration 042_native_identity_evidence.sql
 apply_migration 043_native_identity_integrity.sql
 apply_migration 044_identity_evidence_access_audit.sql
 apply_migration 045_native_identity_status_access.sql
-apply_migration 047_appwrite_registration_consents.sql
+apply_migration 047_appwrite_registration_consent.sql
 
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
