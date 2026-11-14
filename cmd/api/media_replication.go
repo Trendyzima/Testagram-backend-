@@ -235,6 +235,7 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 				return fmt.Errorf("write verified replica placement: %w", err)
 			}
 		}
+
 		// The placement ledger must contain all three independently verified copies
 		// before the asset can transition from replication_pending to ready.
 		var verifiedCount int
@@ -250,44 +251,7 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 		if verifiedCount != 3 {
 			return fmt.Errorf("durable media replica ledger has %d verified providers, want 3", verifiedCount)
 		}
-		var assetStatus string
-		if err := tx.QueryRow(ctx, `
-			SELECT status FROM testagram_media.assets
-			WHERE object_key=$1 AND size_bytes=$2 AND checksum_sha256=$3
-			FOR UPDATE
-		`, job.ObjectKey, job.SizeBytes, strings.ToLower(job.Checksum)).Scan(&assetStatus); err != nil {
-			return fmt.Errorf("load asset before publication transition: %w", err)
-		}
-		if assetStatus == "replication_pending" {
-			tag, err := tx.Exec(ctx, `
-				UPDATE testagram_media.assets SET status='ready', updated_at=now()
-				WHERE object_key=$1 AND status='replication_pending'
-				  AND size_bytes=$2 AND checksum_sha256=$3
-			`, job.ObjectKey, job.SizeBytes, strings.ToLower(job.Checksum))
-			if err != nil {
-				return fmt.Errorf("mark fully replicated media ready: %w", err)
-			}
-			if tag.RowsAffected() != 1 {
-				return errors.New("media asset did not transition from replication_pending to ready")
-			}
-		} else if assetStatus != "ready" {
-			return fmt.Errorf("media asset cannot be published from state %q", assetStatus)
-		}
-		// The placement ledger must contain all three independently verified copies
-		// before the asset can transition from replication_pending to ready.
-		var verifiedCount int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(DISTINCT provider)
-			FROM testagram_media.storage_replicas
-			WHERE object_key=$1 AND state='verified' AND verified_at IS NOT NULL
-			  AND object_size_bytes=$2 AND checksum_sha256=$3
-			  AND provider IN ('instabox-vps','cloudflare-r2','backblaze-b2')
-		`, job.ObjectKey, job.SizeBytes, strings.ToLower(job.Checksum)).Scan(&verifiedCount); err != nil {
-			return fmt.Errorf("verify durable media replica ledger: %w", err)
-		}
-		if verifiedCount != 3 {
-			return fmt.Errorf("durable media replica ledger has %d verified providers, want 3", verifiedCount)
-		}
+
 		var assetStatus string
 		if err := tx.QueryRow(ctx, `
 			SELECT status FROM testagram_media.assets
@@ -328,8 +292,8 @@ func completeMediaReplicationJob(ctx context.Context, db *pgxpool.Pool, job medi
 	return tx.Commit(ctx)
 }
 
-// Reconciliation checks every expected placement at least once per day. Replicate
-// performs HEAD and SHA-256 checks and repairs only missing or drifted copies.
+// Reconciliation repairs missing or drifted copies and requeues pending assets
+// whose prior replication job reached dead-letter state.
 func enqueueMediaReplicaReconciliation(ctx context.Context, db *pgxpool.Pool) error {
 	_, err := db.Exec(ctx, `
 		INSERT INTO testagram_media.media_replication_outbox
@@ -340,14 +304,17 @@ func enqueueMediaReplicaReconciliation(ctx context.Context, db *pgxpool.Pool) er
 		FROM testagram_media.assets a
 		WHERE a.status IN ('ready','replication_pending')
 		  AND a.storage_namespace IN ('media-private', 'media-public')
-		  AND a.checksum_sha256 ~ '^[0-9a-f]{64}
-		    SELECT 1
-		    FROM (VALUES ('instabox-vps'), ('cloudflare-r2'), ('backblaze-b2')) AS required(provider)
-		    LEFT JOIN testagram_media.storage_replicas r
-		      ON r.object_key = a.object_key AND r.provider = required.provider
-		    WHERE r.object_key IS NULL OR r.state <> 'verified' OR r.verified_at IS NULL
-		       OR r.verified_at < now() - interval '24 hours'
-		  )
+		  AND a.checksum_sha256 ~ '^[0-9a-f]{64}$'
+		  AND (
+		    a.status = 'replication_pending'
+		    OR EXISTS (
+		      SELECT 1
+		      FROM (VALUES ('instabox-vps'), ('cloudflare-r2'), ('backblaze-b2')) AS required(provider)
+		      LEFT JOIN testagram_media.storage_replicas r
+		        ON r.object_key = a.object_key AND r.provider = required.provider
+		      WHERE r.object_key IS NULL OR r.state <> 'verified' OR r.verified_at IS NULL
+		         OR r.verified_at < now() - interval '24 hours'
+		    )
 		  )
 		ON CONFLICT (object_key) DO UPDATE SET
 		  status = 'pending', attempts = 0, available_at = now(),
