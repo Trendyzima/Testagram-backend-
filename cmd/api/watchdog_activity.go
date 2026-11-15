@@ -39,7 +39,7 @@ func (s *service) enqueueWatchdogImpulse(eventType string) {
 
 func (s *service) deliverWatchdogImpulse(eventType string) {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INTERNAL_URL")), "/")
-	token := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INGRESS_TOKEN"))
+	token := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INTERNAL_TOKEN"))
 	if base == "" || token == "" {
 		return
 	}
