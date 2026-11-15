@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/argon2"
 )
 
 const authPasswordRounds = 210000
@@ -76,7 +77,13 @@ func authTokenHash(token string) []byte {
 	return sum[:]
 }
 
-// PBKDF2-HMAC-SHA256 password storage; salt and work factor are encoded with the hash.
+// Argon2id is the default password KDF. The encoded format is self-describing so
+// parameters can be upgraded without a schema migration.
+const authArgon2Memory uint32 = 64 * 1024
+const authArgon2Iterations uint32 = 3
+const authArgon2Parallelism uint8 = 2
+const authArgon2KeyLength uint32 = 32
+
 func authPasswordHash(password string) (string, error) {
 	if len(password) < 12 || len(password) > 128 {
 		return "", errors.New("password must be between 12 and 128 bytes")
@@ -85,26 +92,44 @@ func authPasswordHash(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	dk := authPBKDF2([]byte(password), salt, authPasswordRounds, 32)
-	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", authPasswordRounds, base64.RawURLEncoding.EncodeToString(salt), base64.RawURLEncoding.EncodeToString(dk)), nil
+	derived := argon2.IDKey([]byte(password), salt, authArgon2Iterations, authArgon2Memory, authArgon2Parallelism, authArgon2KeyLength)
+	return fmt.Sprintf("argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+		authArgon2Memory, authArgon2Iterations, authArgon2Parallelism,
+		base64.RawURLEncoding.EncodeToString(salt),
+		base64.RawURLEncoding.EncodeToString(derived)), nil
 }
 
+// authPasswordVerify accepts the previous PBKDF2 format only as a migration
+// bridge. A successful legacy login is transparently rehashed by the caller.
 func authPasswordVerify(encoded, password string) bool {
+	if strings.HasPrefix(encoded, "pbkdf2-sha256$") {
+		parts := strings.Split(encoded, "$")
+		if len(parts) != 4 || parts[0] != "pbkdf2-sha256" { return false }
+		var rounds int
+		if _, err := fmt.Sscanf(parts[1], "%d", &rounds); err != nil || rounds < 100000 || rounds > 1000000 { return false }
+		salt, err1 := base64.RawURLEncoding.DecodeString(parts[2])
+		expected, err2 := base64.RawURLEncoding.DecodeString(parts[3])
+		if err1 != nil || err2 != nil || len(salt) < 16 || len(expected) != 32 { return false }
+		actual := authPBKDF2([]byte(password), salt, rounds, len(expected))
+		return subtle.ConstantTimeCompare(actual, expected) == 1
+	}
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
+	if len(parts) != 5 || parts[0] != "argon2id" || parts[1] != "v=19" { return false }
+	var memory, iterations uint32
+	var parallelism uint8
+	if _, err := fmt.Sscanf(parts[2], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil ||
+		memory < 8*1024 || memory > 256*1024 || iterations < 1 || iterations > 10 || parallelism < 1 || parallelism > 8 {
 		return false
 	}
-	var rounds int
-	if _, err := fmt.Sscanf(parts[1], "%d", &rounds); err != nil || rounds < 100000 || rounds > 1000000 {
-		return false
-	}
-	salt, err1 := base64.RawURLEncoding.DecodeString(parts[2])
-	expected, err2 := base64.RawURLEncoding.DecodeString(parts[3])
-	if err1 != nil || err2 != nil || len(salt) < 16 || len(expected) != 32 {
-		return false
-	}
-	actual := authPBKDF2([]byte(password), salt, rounds, len(expected))
+	salt, err1 := base64.RawURLEncoding.DecodeString(parts[3])
+	expected, err2 := base64.RawURLEncoding.DecodeString(parts[4])
+	if err1 != nil || err2 != nil || len(salt) < 16 || len(salt) > 64 || len(expected) != int(authArgon2KeyLength) { return false }
+	actual := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(expected)))
 	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func authPasswordNeedsRehash(encoded string) bool {
+	return !strings.HasPrefix(encoded, "argon2id$v=19$m=65536,t=3,p=2$")
 }
 
 func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
@@ -119,9 +144,7 @@ func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
 			mac = hmac.New(sha256.New, password)
 			_, _ = mac.Write(u)
 			u = mac.Sum(nil)
-			for j := range t {
-				t[j] ^= u[j]
-			}
+			for j := range t { t[j] ^= u[j] }
 		}
 		out = append(out, t...)
 	}
