@@ -49,9 +49,9 @@ func localJWTSubject(authorization string) (string, error) {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return "", errors.New("bearer token required")
 	}
-	secrets := []string{strings.TrimSpace(os.Getenv("SUPABASE_JWT_SECRET")), strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))}
-	if secrets[0] == "" && secrets[1] == "" {
-		return "", errors.New("local JWT verification is not configured")
+	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
+	if len(secret) < 32 {
+		return "", errors.New("Testagram JWT verification is not configured")
 	}
 	segments := strings.Split(parts[1], ".")
 	if len(segments) != 3 {
@@ -70,18 +70,9 @@ func localJWTSubject(authorization string) (string, error) {
 		return "", errors.New("invalid token signature")
 	}
 	signed := []byte(segments[0] + "." + segments[1])
-	validSignature := false
-	for _, secret := range secrets {
-		if secret == "" {
-			continue
-		}
-		mac := hmac.New(sha256.New, []byte(secret))
-		_, _ = mac.Write(signed)
-		if hmac.Equal(sig, mac.Sum(nil)) {
-			validSignature = true
-			break
-		}
-	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(signed)
+	validSignature := hmac.Equal(sig, mac.Sum(nil))
 	if !validSignature {
 		return "", errors.New("invalid token signature")
 	}
