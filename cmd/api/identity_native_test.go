@@ -12,7 +12,133 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func TestIdentityApplicationConflictOnlyMasksDuplicateEmailOrUsername(t *testing.T) {
+	for _, constraint := range []string{
+		"identity_applications_active_email_ci_idx",
+		"identity_applications_active_username_ci_idx",
+	} {
+		err := &pgconn.PgError{Code: "23505", ConstraintName: constraint}
+		if !identityApplicationConflict(err) {
+			t.Errorf("duplicate constraint %q should receive privacy-preserving acceptance", constraint)
+		}
+		if !identityApplicationConflict(fmt.Errorf("wrapped: %w", err)) {
+			t.Errorf("wrapped duplicate constraint %q was not recognized", constraint)
+		}
+	}
+	if identityApplicationConflict(&pgconn.PgError{Code: "23505", ConstraintName: "identity_applications_submission_key_idx"}) {
+		t.Fatal("idempotency-key conflicts must not be masked as generic acceptance")
+	}
+	if identityApplicationConflict(&pgconn.PgError{Code: "42P01"}) {
+		t.Fatal("missing-table errors must not be masked as generic acceptance")
+	}
+	if identityApplicationConflict(fmt.Errorf("database connection lost")) {
+		t.Fatal("connection failures must not be masked as generic acceptance")
+	}
+}
+
+func TestIdentityApplicationRecoveryDoesNotReopenVerifiedOrProvisionedSessions(t *testing.T) {
+	cases := []struct {
+		name              string
+		status            string
+		provisioningExists bool
+		wantRenew         bool
+	}{
+		{name: "new pending application", status: "pending", wantRenew: true},
+		{name: "initial verification pending", status: "verification_pending", wantRenew: true},
+		{name: "under review", status: "under_review", wantRenew: false},
+		{name: "verified", status: "verified", wantRenew: false},
+		{name: "approved", status: "approved", wantRenew: false},
+		{name: "rejected", status: "rejected", wantRenew: false},
+		{name: "provisioned but email unverified", status: "verification_pending", provisioningExists: true, wantRenew: false},
+		{name: "provisioning saga exists while pending", status: "pending", provisioningExists: true, wantRenew: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := identityApplicationNeedsVerificationSessionRenewal(tc.status, tc.provisioningExists); got != tc.wantRenew {
+				t.Fatalf("renewal=%v, want %v", got, tc.wantRenew)
+			}
+		})
+	}
+}
+
+func TestIdentityIdempotencyAdvisoryLockIsTransactionScoped(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for idempotency lock integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	keyHash := authTokenHash("identity-idempotency-lock:" + time.Now().UTC().Format(time.RFC3339Nano))
+	first, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Rollback(context.Background())
+	second, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Rollback(context.Background())
+
+	if _, err := first.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
+	`, keyHash); err != nil {
+		t.Fatal(err)
+	}
+	var acquired bool
+	if err := second.QueryRow(ctx, `
+		SELECT pg_try_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
+	`, keyHash).Scan(&acquired); err != nil {
+		t.Fatal(err)
+	}
+	if acquired {
+		t.Fatal("a concurrent transaction acquired an idempotency lock already held by the first request")
+	}
+	if err := first.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.QueryRow(ctx, `
+		SELECT pg_try_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
+	`, keyHash).Scan(&acquired); err != nil {
+		t.Fatal(err)
+	}
+	if !acquired {
+		t.Fatal("idempotency lock was not released when the first transaction committed")
+	}
+}
+
+func TestIdentityDerivedCapabilityTokensAreStableAndSeparated(t *testing.T) {
+	key := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+	application := identityDerivedCapabilityToken(key, "application", "app-123")
+	session := identityDerivedCapabilityToken(key, "session", "session-123")
+	if len(application) != 43 || len(session) != 43 {
+		t.Fatalf("derived capabilities must be 256-bit URL-safe tokens, got lengths %d and %d", len(application), len(session))
+	}
+	if application != identityDerivedCapabilityToken(key, "application", "app-123") {
+		t.Fatal("application capability changed for the same idempotency key and application")
+	}
+	if session != identityDerivedCapabilityToken(key, "session", "session-123") {
+		t.Fatal("session capability changed for the same idempotency key and session")
+	}
+	if application == session {
+		t.Fatal("application and session capabilities must be domain separated")
+	}
+	if session == identityDerivedCapabilityToken(key, "session", "session-456") {
+		t.Fatal("different session IDs must produce different capabilities")
+	}
+	if session == identityDerivedCapabilityToken(key+"x", "session", "session-123") {
+		t.Fatal("different idempotency keys must produce different capabilities")
+	}
+}
 
 func TestIdentityEvidenceExtensionAllowlist(t *testing.T) {
 	cases := []struct {
