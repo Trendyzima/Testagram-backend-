@@ -1,50 +1,43 @@
 # Testagram authenticated-activity watchdog
 
-The Backend control plane exposes an internal-only impulse queue for the InstaBox watchdog. It is not a public session endpoint.
+The durable watchdog queue belongs to the **Data Centre VPS control plane**, which also owns node registration and issues the node credentials used by the node agent. Backend emits coarse activity signals to that private control plane using a dedicated service credential. The browser and mobile clients never call watchdog endpoints.
 
 ## Trigger policy
 
-- A successful login emits `login` and requests the Algorithm service.
-- `feed_open` requests Algorithm.
-- `post_publish` requests Data Centre.
-- `media_upload` and `media_view` request CDN and Data Centre.
-- `federation_interaction` requests Federation.
-- Backend/API authentication and PostgreSQL remain always-on. The API repository is a contract/control-plane source, not an independently awakened runtime process.
+- Successful login -> `algorithm`
+- Authenticated feed open -> `algorithm`
+- Successful post publish -> `data-centre`; public posts additionally wake `federation`
+- Verified media upload and authorized private media download -> `cdn` and `data-centre`
+- Federation publication/interaction -> `federation`
 
-## Trust boundary
+The Backend keeps canonical identity, session verification, profiles, posts, follows, blocks, privacy, moderation and media ownership. Activity impulses contain only an allowlisted event type and a random idempotency key; no user ID, email, IP address, session token or post content is sent.
 
-The application must emit an impulse only after its existing production authentication middleware has validated the session and authorized the action. The client must never call these endpoints directly. Do not send user IDs, email addresses, access tokens, session cookies, or other identity data in an impulse. Use a cryptographically random per-event idempotency key (at least 16 characters).
+## Private configuration
 
-The control-plane endpoints require the existing internal bearer token:
+Backend environment:
+- `VPS_WATCHDOG_INTERNAL_URL`: private Data Centre control-plane origin, e.g. `http://control-plane:8787` on a private service network
+- `VPS_WATCHDOG_INTERNAL_TOKEN`: dedicated random service credential
 
-- `POST /v1/watchdog/impulses` — body: `{"idempotencyKey":"...","eventType":"login"}`; returns accepted event and mapped services.
-- `POST /v1/watchdog/impulses/claim?limit=10` — trusted activation worker claims queued events; 60-second lease; expired claims can be retried.
-- `POST /v1/watchdog/impulses/ack` — body: `{"id":123,"success":true}` or a bounded error string.
-- `GET /v1/watchdog/services` — active service leases.
+Data Centre control-plane environment:
+- `VPS_WATCHDOG_INTERNAL_TOKEN`: same dedicated credential, distinct from `VPS_INTERNAL_TOKEN` and `VPS_NODE_BOOTSTRAP_TOKEN`
 
-All events are idempotent and persisted in PostgreSQL. Service leases are extended by new events for ten minutes. Claim operations use row locking with `SKIP LOCKED` to support multiple workers. Only fixed service names can be selected; event payloads cannot supply arbitrary commands, images, URLs, or service names.
+Node-agent environment:
+- `VPS_ENABLE_WATCHDOG_ACTIVATION=false` by default
+- `VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE`
+- `VPS_WATCHDOG_CDN_COMPOSE_FILE`
 
-## Deployment and remaining integration
+The Backend call is best-effort and time-bounded; failure to wake optional services never rejects a login, feed read, post, upload or media authorization request.
 
-Apply migration `20261115_instabox_user_impulse_watchdog.sql` before enabling the endpoints. The existing public authentication and health routes are unchanged.
+## Runtime and safety
 
-This PR implements the authenticated internal event queue and lease/claim contract. It does **not** claim to start containers by itself: a trusted InstaBox/node activation worker must consume claims and call the existing allowlisted runtime actuator. The production auth/API request handlers must also emit the corresponding impulse after successful authentication. Until those two integrations are deployed and tested, leave the service auto-suspend policy unchanged and do not disable existing services.
+Only a recent, enrolled node that advertises `watchdogActivation=true` can claim impulses using its node token. Claims are leased, concurrent-safe and retried with bounded exponential backoff. The node agent starts only compile-time allowlisted Compose services using preinstalled images. It cannot receive arbitrary commands, image names, Compose paths or environment values from events.
 
+The agent never issues `docker compose down`, stop or prune. Backend, PostgreSQL, authentication, public ingress, the control plane and persistent data services remain available; public CDN and Federation services are start-only in this release. Do not enable activation until the Data Centre migration has been applied, the dedicated token is configured on both sides, and staging verifies the full enqueue/claim/activate/ack cycle.
 
-## Node-agent activation worker
+## Social architecture
 
-The Backend control plane exposes the claim and acknowledgement endpoints to a dedicated `VPS_WATCHDOG_TOKEN`. This credential is distinct from the public user session, the node registration token, and the general VPS internal token. It is only for the trusted activation agent. Keep it in the VPS secret environment file and never in Flutter, browser configuration, repository files, or CI logs.
+- X-inspired: high-throughput timelines, engagement signals, reposts, replies and ranking.
+- Bluesky-inspired: composable feed-generation boundaries and portable event/identity interfaces; this does not imply an AT Protocol or Bluesky account integration.
+- Mastodon-inspired: ActivityPub actor identity, signed federation, followers and remote delivery; public federation remains subject to explicit account consent and the Federation release gates.
 
-Enable the worker on the designated Linux activation node only after the PR is reviewed and the database migration has been applied:
-
-- `VPS_ENABLE_ACTIVITY_WATCHDOG=true`
-- `VPS_WATCHDOG_CONTROL_URL=https://api.instabox.sh` (use the actual private/approved Backend control-plane origin)
-- `VPS_WATCHDOG_TOKEN=<same dedicated secret configured on the Backend control-plane>`
-- `VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE=/absolute/path/to/Testagram-data-centre-/backend/docker-compose.yml`
-- `VPS_WATCHDOG_BACKEND_COMPOSE_FILE=/absolute/path/to/Testagram-backend-/deploy/self-hosted/docker-compose.yml`
-
-The worker starts only fixed Compose service names. It uses `up -d --no-deps --no-recreate --pull never`: it does not run dependency migrations, pull new images, recreate running containers, execute user-supplied commands, or stop databases, public ingress, Backend, or the watchdog. Current targets are Algorithm, the Data Centre worker/notification/video/media services, Federation API, and the existing media-cache ingress.
-
-Activation success requires the container to be running and, when a healthcheck exists, healthy. Failed attempts are retried by the durable queue up to five claims; after that the event is terminally failed for operator review. Expired worker claims are recoverable. Service leases are advisory; this release intentionally does not auto-stop workers on lease expiry because queue drain and in-flight work state must be proven first.
-
-The node agent must have access to the Docker daemon and the exact deployed Compose files. Keep its systemd unit restricted; grant only the Docker socket access needed by its existing workload runner. The activation worker is disabled by default and must not be enabled until both compose paths, service images, secret, and healthchecks are verified on the target VPS.
+Testagram remains the authority for local identity and product permissions. Remote platforms never become authentication providers for local accounts.
