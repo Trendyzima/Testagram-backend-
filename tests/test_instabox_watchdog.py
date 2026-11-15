@@ -197,7 +197,10 @@ class WatchdogTests(unittest.TestCase):
     def test_workflow_uses_separate_write_key_and_canonical_backend_health_urls(self):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
         self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
+        self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagram'", workflow)
         self.assertIn("https://api.testagram.site/healthz", workflow)
+        self.assertNotIn("TESTAGRAM_READINESS_URL", workflow)
+        self.assertNotIn("/readyz", workflow)
         self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
         self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true'", workflow)
 
