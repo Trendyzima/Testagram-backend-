@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,37 +59,36 @@ func TestAuthJWTRequiresDedicatedSecret(t *testing.T) {
 			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
 		}
 	})
-	if _, err := authSignJWT("123e4567-e89b-42d3-a456-426614174000", "user@example.com", 1); err == nil {
+	if _, err := authSignJWT("123e4567-e89b-42d3-a456-426614174000", "user@example.com", 1, "223e4567-e89b-42d3-a456-426614174000"); err == nil {
 		t.Fatal("JWT signing must fail without a dedicated secret")
 	}
 }
 
-func TestAuthJWTIsAcceptedByLocalTokenVerifier(t *testing.T) {
+func TestAuthJWTContainsStrictSessionBoundClaims(t *testing.T) {
 	oldAuth, hadAuth := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
-	oldSupabase, hadSupabase := os.LookupEnv("SUPABASE_JWT_SECRET")
 	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("a", 40))
-	_ = os.Unsetenv("SUPABASE_JWT_SECRET")
 	t.Cleanup(func() {
-		if hadAuth {
-			_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", oldAuth)
-		} else {
-			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
-		}
-		if hadSupabase {
-			_ = os.Setenv("SUPABASE_JWT_SECRET", oldSupabase)
-		} else {
-			_ = os.Unsetenv("SUPABASE_JWT_SECRET")
-		}
+		if hadAuth { _ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", oldAuth) } else { _ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET") }
 	})
 	const userID = "123e4567-e89b-42d3-a456-426614174000"
-	token, err := authSignJWT(userID, "user@example.com", 1)
-	if err != nil {
-		t.Fatal(err)
+	const sessionID = "223e4567-e89b-42d3-a456-426614174000"
+	token, err := authSignJWT(userID, "user@example.com", 7, sessionID)
+	if err != nil { t.Fatal(err) }
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 { t.Fatalf("JWT has %d segments", len(parts)) }
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil { t.Fatal(err) }
+	var claims authClaims
+	if err := json.Unmarshal(payload, &claims); err != nil { t.Fatal(err) }
+	if claims.Subject != userID || claims.SessionID != sessionID || claims.TokenVersion != 7 ||
+		claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" ||
+		claims.Role != "authenticated" || claims.ExpiresAt-claims.IssuedAt != 900 {
+		t.Fatalf("unexpected signed claims: %+v", claims)
 	}
-	got, err := localJWTSubject("Bearer " + token)
-	if err != nil || got != userID {
-		t.Fatalf("locally issued token rejected: subject=%q error=%v", got, err)
-	}
+	mac := hmac.New(sha256.New, []byte(strings.Repeat("a", 40)))
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) { t.Fatal("JWT signature is invalid") }
 }
 
 func TestAuthTokenHashIsNotRawToken(t *testing.T) {
@@ -133,6 +135,9 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 		"/api/auth/login",
 		"/api/auth/forgot-password",
 		"/api/auth/reset-password",
+		"/api/auth/refresh",
+		"/api/auth/logout",
+		"/api/auth/logout-all",
 	} {
 		req := httptest.NewRequest(http.MethodOptions, path, nil)
 		rec := httptest.NewRecorder()
@@ -165,7 +170,7 @@ func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 	}
 }
 
-func TestLegacyPasswordEndpointsRequireAppwrite(t *testing.T) {
+func TestNativePasswordEndpointsRemainDisabledOutsideNativeMode(t *testing.T) {
 	handler := (&service{}).routes()
 	for _, path := range []string{
 		"/api/auth/login",
@@ -175,8 +180,8 @@ func TestLegacyPasswordEndpointsRequireAppwrite(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"user@example.com","password":"example-password","token":"example-token"}`))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), "APPWRITE_AUTH_REQUIRED") {
-			t.Fatalf("POST %s status=%d body=%s; expected Appwrite-only authentication gate", path, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "NATIVE_AUTH_NOT_ENABLED") {
+			t.Fatalf("POST %s status=%d body=%s; expected explicit native-provider deployment gate", path, rec.Code, rec.Body.String())
 		}
 	}
 }

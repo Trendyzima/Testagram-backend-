@@ -964,8 +964,16 @@ func decodeMediaJSON(w http.ResponseWriter, r *http.Request, destination any) er
 
 func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 {
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 || len(parts[1]) > 8192 {
 		return "", http.StatusUnauthorized, errors.New("missing bearer token")
+	}
+	if nativeAuthEnabled() {
+		if s.db == nil { return "", http.StatusServiceUnavailable, errors.New("native identity store is unavailable") }
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		claims, status, err := verifyNativeAccessToken(ctx, s.db, parts[1])
+		if err != nil { return "", status, err }
+		return claims.Subject, http.StatusOK, nil
 	}
 	return s.authenticatedAppwriteUser(r, parts[1])
 }

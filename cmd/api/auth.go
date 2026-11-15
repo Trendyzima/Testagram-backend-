@@ -33,7 +33,8 @@ type authInput struct {
 	Email    string `json:"email"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Token    string `json:"token"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type authClaims struct {
@@ -41,9 +42,11 @@ type authClaims struct {
 	Email        string `json:"email"`
 	Role         string `json:"role"`
 	Issuer       string `json:"iss"`
+	Audience     string `json:"aud"`
 	IssuedAt     int64  `json:"iat"`
 	ExpiresAt    int64  `json:"exp"`
 	TokenVersion int64  `json:"ver"`
+	SessionID    string `json:"sid"`
 }
 
 var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}$`)
@@ -125,14 +128,14 @@ func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
 	return out[:keyLen]
 }
 
-func authSignJWT(userID, email string, version int64) (string, error) {
+func authSignJWT(userID, email string, version int64, sessionID string) (string, error) {
 	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
 	if len(secret) < 32 {
 		return "", errors.New("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters")
 	}
 	now := time.Now().UTC()
 	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
-	claims, _ := json.Marshal(authClaims{Subject: userID, Email: email, Role: "authenticated", Issuer: "testagram-auth", IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(), TokenVersion: version})
+	claims, _ := json.Marshal(authClaims{Subject: userID, Email: email, Role: "authenticated", Issuer: "testagram-auth", Audience: "testagram-api", IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(), TokenVersion: version, SessionID: sessionID})
 	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(unsigned))
@@ -259,12 +262,11 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		))
 		return true
 	}
-	if action == "login" || action == "forgot-password" || action == "reset-password" {
-		// Appwrite is the sole credential and session provider. These legacy
-		// PostgreSQL-password routes must never become a parallel auth system.
-		writeJSON(w, http.StatusGone, errorBody(
-			"APPWRITE_AUTH_REQUIRED",
-			"Use Appwrite authentication for sign-in and password recovery.",
+	if (action == "login" || action == "forgot-password" || action == "reset-password" ||
+		action == "refresh" || action == "logout" || action == "logout-all") && !nativeAuthEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody(
+			"NATIVE_AUTH_NOT_ENABLED",
+			"Native Testagram authentication is not enabled on this deployment.",
 			requestID(r),
 		))
 		return true
@@ -422,19 +424,50 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			return true
 		}
 		var userID, hash string
-		var verified bool
+		var verified, disabled, resetRequired bool
 		var version int64
-		err = s.db.QueryRow(ctx, `SELECT user_id::text,password_hash,email_verified_at IS NOT NULL,token_version FROM testagram_auth.identities WHERE email_normalized=$1`, email).Scan(&userID, &hash, &verified, &version)
-		if err != nil || !authPasswordVerify(hash, in.Password) || !verified {
+		err = s.db.QueryRow(ctx, `SELECT user_id::text,password_hash,email_verified_at IS NOT NULL,
+			token_version,disabled_at IS NOT NULL,password_reset_required
+			FROM testagram_auth.identities WHERE email_normalized=$1`, email).Scan(&userID, &hash, &verified, &version, &disabled, &resetRequired)
+		if err != nil || !authPasswordVerify(hash, in.Password) || !verified || disabled {
 			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect, or email verification is pending.", requestID(r)))
 			return true
 		}
-		jwt, err := authSignJWT(userID, email, version)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_NOT_CONFIGURED", "Independent authentication is not configured", requestID(r)))
+		if resetRequired {
+			writeJSON(w, http.StatusForbidden, errorBody("PASSWORD_RESET_REQUIRED", "Reset your password before signing in.", requestID(r)))
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "access_token": jwt, "token_type": "Bearer", "expires_in": 900, "user": map[string]any{"id": userID, "email": email}})
+		tokens, err := issueNativeSession(ctx, s.db, userID, email, version, r.UserAgent(), ip)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SESSION_CREATE_FAILED", "A secure session could not be created", requestID(r)))
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": tokens, "error": nil, "request_id": requestID(r)})
+		return true
+	case "refresh":
+		tokens, err := s.rotateNativeRefresh(ctx, in.RefreshToken, r.UserAgent(), ip)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_REFRESH_TOKEN", "Refresh token is invalid, expired, or has already been used.", requestID(r)))
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": tokens, "error": nil, "request_id": requestID(r)})
+		return true
+	case "logout", "logout-all":
+		bearer, err := nativeBearerToken(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "A valid native access token is required.", requestID(r)))
+			return true
+		}
+		claims, status, err := verifyNativeAccessToken(ctx, s.db, bearer)
+		if err != nil {
+			writeJSON(w, status, errorBody("AUTH_REQUIRED", "The native session is invalid or expired.", requestID(r)))
+			return true
+		}
+		if err := s.revokeNativeSession(ctx, claims, action == "logout-all", ip); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SESSION_REVOKE_FAILED", "Session revocation could not be completed.", requestID(r)))
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"revoked": true}, "error": nil, "request_id": requestID(r)})
 		return true
 	case "forgot-password":
 		email, err := authEmail(in.Email)
@@ -458,11 +491,33 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			return true
 		}
 		var savedEmail string
-		err = s.db.QueryRow(ctx, `
-			UPDATE testagram_auth.identities SET reset_token_hash=$2,reset_expires_at=now()+interval '30 minutes',updated_at=now()
-			WHERE email_normalized=$1 AND email_verified_at IS NOT NULL RETURNING email
-		`, email, authTokenHash(token)).Scan(&savedEmail)
-		if err == nil {
+		tx, txErr := s.db.Begin(ctx)
+		if txErr == nil {
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			_, txErr = tx.Exec(ctx, `
+				UPDATE testagram_auth.password_reset_tokens
+				SET consumed_at=now()
+				WHERE user_id=(SELECT user_id FROM testagram_auth.identities WHERE email_normalized=$1)
+				  AND consumed_at IS NULL
+			`, email)
+			if txErr == nil {
+				err = tx.QueryRow(ctx, `
+					WITH eligible AS (
+						SELECT user_id,email FROM testagram_auth.identities
+						WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL
+						FOR UPDATE
+					), inserted AS (
+						INSERT INTO testagram_auth.password_reset_tokens(token_hash,user_id,expires_at,request_ip_hash)
+						SELECT $2,user_id,now()+interval '30 minutes',$3 FROM eligible
+						RETURNING user_id
+					)
+					SELECT eligible.email FROM eligible JOIN inserted USING(user_id)
+				`, email, authTokenHash(token), authFingerprint(ip)).Scan(&savedEmail)
+				txErr = err
+			}
+			if txErr == nil { txErr = tx.Commit(ctx) }
+		}
+		if txErr == nil && savedEmail != "" {
 			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 			link := base + "/reset-password?token=" + url.QueryEscape(token)
 			if sendErr := s.authSendEmail(ctx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>"); sendErr != nil {
@@ -478,32 +533,60 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
 			return true
 		}
-		tokenHash := authTokenHash(token)
-		var tokenValid bool
-		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM testagram_auth.identities WHERE reset_token_hash=$1 AND reset_expires_at>now() AND email_verified_at IS NOT NULL)`, tokenHash).Scan(&tokenValid); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
-			return true
-		}
-		if !tokenValid {
-			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
-			return true
-		}
 		hash, err := authPasswordHash(in.Password)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PASSWORD", "Password must be 12–128 bytes", requestID(r)))
 			return true
 		}
-		tag, err := s.db.Exec(ctx, `
-			UPDATE testagram_auth.identities SET password_hash=$2,reset_token_hash=NULL,reset_expires_at=NULL,
-				password_changed_at=now(),token_version=token_version+1,updated_at=now()
-			WHERE reset_token_hash=$1 AND reset_expires_at>now() AND email_verified_at IS NOT NULL
-		`, tokenHash, hash)
+		tx, err := s.db.Begin(ctx)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to reset password", requestID(r)))
 			return true
 		}
-		if tag.RowsAffected() == 0 {
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		var userID string
+		err = tx.QueryRow(ctx, `
+			SELECT user_id::text FROM testagram_auth.password_reset_tokens
+			WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now()
+			FOR UPDATE
+		`, authTokenHash(token)).Scan(&userID)
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
+			return true
+		}
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
+			return true
+		}
+		identityTag, updateErr := tx.Exec(ctx, `
+			UPDATE testagram_auth.identities SET password_hash=$2,password_reset_required=false,
+				reset_token_hash=NULL,reset_expires_at=NULL,password_changed_at=now(),
+				token_version=token_version+1,updated_at=now()
+			WHERE user_id=$1::uuid AND email_verified_at IS NOT NULL AND disabled_at IS NULL
+		`, userID, hash)
+		if updateErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to update password", requestID(r)))
+			return true
+		}
+		if identityTag.RowsAffected() != 1 {
+			writeJSON(w, http.StatusForbidden, errorBody("ACCOUNT_NOT_ACTIVE", "This account cannot reset its password.", requestID(r)))
+			return true
+		}
+		if _, err = tx.Exec(ctx, "UPDATE testagram_auth.password_reset_tokens SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL", authTokenHash(token)); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to consume reset token", requestID(r)))
+			return true
+		}
+		if _, err = tx.Exec(ctx, "UPDATE testagram_auth.sessions SET revoked_at=COALESCE(revoked_at,now()),revoke_reason='password_reset' WHERE user_id=$1::uuid AND revoked_at IS NULL", userID); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to revoke existing sessions", requestID(r)))
+			return true
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
+			VALUES($1::uuid,'auth.password_reset','success',$2)`, userID, authFingerprint(ip)); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to record password reset", requestID(r)))
+			return true
+		}
+		if err = tx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to commit password reset", requestID(r)))
 			return true
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Password reset. Sign in with your new password."})
