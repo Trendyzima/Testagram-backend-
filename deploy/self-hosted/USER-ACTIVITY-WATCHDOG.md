@@ -12,7 +12,9 @@ The durable watchdog queue belongs to the **Data Centre VPS control plane**, whi
 
 The Backend keeps canonical identity, session verification, profiles, posts, follows, blocks, privacy, moderation and media ownership. Activity impulses contain only an allowlisted event type and a random idempotency key; no user ID, email, IP address, session token or post content is sent.
 
-## Private configuration
+## Deployment order and private configuration
+
+Start the Backend self-hosted Compose stack first. It creates the shared internal `testagram-platform` and `testagram-ranker` Docker networks. The Data Centre stack consumes these as external networks; its installer checks that both already exist. Backend can start with ranking optional and falls back chronologically until the Algorithm service is running.
 
 Backend environment:
 - `VPS_WATCHDOG_INTERNAL_URL`: private Data Centre control-plane origin, e.g. `http://control-plane:8787` on a private service network
