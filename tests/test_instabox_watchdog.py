@@ -33,6 +33,82 @@ class FakeAPI:
 
 
 class WatchdogTests(unittest.TestCase):
+    def test_dry_run_without_provider_key_runs_public_liveness_only(self):
+        health_url = "https://api.example.test/healthz"
+        probe_calls = []
+
+        def successful_probe(url):
+            probe_calls.append(url)
+            return True, "HTTP 200"
+
+        with (
+            patch.object(watchdog, "DRY_RUN", True),
+            patch.object(watchdog, "API_KEY", ""),
+            patch.object(watchdog, "MACHINE_ID", ""),
+            patch.object(watchdog, "HEALTH_URL", health_url),
+            patch.object(watchdog, "probe", side_effect=successful_probe),
+            patch.object(watchdog, "API") as api_factory,
+        ):
+            self.assertEqual(watchdog.main(), 0)
+
+        self.assertEqual(probe_calls, [health_url])
+        api_factory.assert_not_called()
+
+    def test_dry_run_without_provider_key_reports_liveness_failure_without_api_access(self):
+        with (
+            patch.object(watchdog, "DRY_RUN", True),
+            patch.object(watchdog, "API_KEY", ""),
+            patch.object(watchdog, "MACHINE_ID", ""),
+            patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"),
+            patch.object(watchdog, "FAILURES_REQUIRED", 2),
+            patch.object(watchdog, "PROBE_INTERVAL", 1),
+            patch.object(watchdog, "probe", return_value=(False, "HTTP 503")),
+            patch.object(watchdog.time, "sleep"),
+            patch.object(watchdog, "API") as api_factory,
+        ):
+            with self.assertRaisesRegex(
+                watchdog.WatchdogError,
+                "read-only public liveness probes failed",
+            ):
+                watchdog.main()
+
+        api_factory.assert_not_called()
+
+    def test_read_only_liveness_404_fails_closed_without_provider_access(self):
+        with (
+            patch.object(watchdog, "DRY_RUN", True),
+            patch.object(watchdog, "API_KEY", ""),
+            patch.object(watchdog, "MACHINE_ID", ""),
+            patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"),
+            patch.object(
+                watchdog,
+                "probe",
+                side_effect=watchdog.ProbeConfigurationError(
+                    "Health probe /healthz returned HTTP 404; refusing automatic lifecycle action"
+                ),
+            ),
+            patch.object(watchdog, "API") as api_factory,
+        ):
+            with self.assertRaises(watchdog.ProbeConfigurationError):
+                watchdog.main()
+
+        api_factory.assert_not_called()
+
+    def test_missing_provider_key_without_dry_run_fails_closed(self):
+        with (
+            patch.object(watchdog, "DRY_RUN", False),
+            patch.object(watchdog, "API_KEY", ""),
+            patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"),
+            patch.object(watchdog, "API") as api_factory,
+        ):
+            with self.assertRaisesRegex(
+                watchdog.WatchdogError,
+                "INSTABOX_WATCHDOG_API_KEY is required",
+            ):
+                watchdog.main()
+
+        api_factory.assert_not_called()
+
     def test_resolves_machine_by_unique_exact_name(self):
         class ListAPI:
             def request(self, method, path, body=None, idempotency_key=None):
