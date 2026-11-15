@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -38,7 +36,7 @@ func (s *service) enqueueWatchdogImpulse(eventType string) {
 		return
 	}
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INTERNAL_URL")), "/")
-	token := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INTERNAL_TOKEN"))
+	token := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INGRESS_TOKEN"))
 	if base == "" || token == "" {
 		return
 	}
@@ -49,18 +47,9 @@ func (s *service) enqueueWatchdogImpulse(eventType string) {
 		log.Printf("activity watchdog skipped: invalid private control-plane URL")
 		return
 	}
-	keyBytes := make([]byte, 24)
-	if _, err := rand.Read(keyBytes); err != nil {
-		log.Printf("activity watchdog idempotency key generation failed: %v", err)
-		return
-	}
-	payload, err := json.Marshal(map[string]string{
-		"idempotencyKey": hex.EncodeToString(keyBytes),
-		"eventType":      eventType,
-	})
-	if err != nil {
-		return
-	}
+	key := watchdogBucketKey(eventType,time.Now())
+	payload, err := json.Marshal(map[string]string{"idempotencyKey":key,"eventType":eventType})
+	if err != nil { return }
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/watchdog/impulses", bytes.NewReader(payload))
