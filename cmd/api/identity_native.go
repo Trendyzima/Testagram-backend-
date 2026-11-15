@@ -176,6 +176,14 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
+	if !existing {
+		if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
+			return
+		}
+	}
+	applicationToken := identityDerivedCapabilityToken(idempotencyKey, "application", applicationID)
+	applicationTokenHash := authTokenHash(applicationToken)
 	provisioningExists := false
 	if existing {
 		if err := tx.QueryRow(ctx, `
@@ -210,10 +218,6 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !existing {
-		if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
-			return
-		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO testagram_identity.identity_applications
 			  (id,email,username,display_name,adult_confirmed_at,evidence_reference,
