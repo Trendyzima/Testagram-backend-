@@ -238,6 +238,7 @@ services:
       platform:
         aliases: [testagram-backend-api]
       egress: {}
+      ranker: {}
 
   admin-console:
     build:
@@ -428,6 +429,9 @@ networks:
   platform:
     name: testagram-platform
     internal: true
+  ranker:
+    name: testagram-ranker
+    external: true
   # Egress-only network for services that must validate Appwrite sessions.
   egress:
     name: testagram-egress
