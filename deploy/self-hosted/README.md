@@ -168,3 +168,18 @@ pre-migration backup instead.
 
 
 The Backend `FEDERATION_PUBLIC_BASE_URL` must exactly match the Federation service `PUBLIC_BASE_URL`. The Backend uses this origin for ActivityPub actor, activity and public object IDs; a mismatch causes signed activity enqueue authorization to fail closed.
+
+
+## Authenticated-activity watchdog
+
+The Backend API emits coarse, allowlisted impulses only after its existing auth/action checks. The API reaches the Backend control plane over the private Docker `data` network at `http://control-plane:8787`; enqueue uses the separate `VPS_WATCHDOG_INGRESS_TOKEN`. The node-agent uses the dedicated `VPS_WATCHDOG_TOKEN` for claim/ack. These credentials are not interchangeable and must never be exposed to clients.
+
+The Backend control-plane's node-agent endpoint is bound to host loopback only, by default `127.0.0.1:8788`. Configure the designated node-agent with `VPS_WATCHDOG_CONTROL_URL=http://127.0.0.1:8788`. Do not bind it to a public interface or route it through Cloudflare.
+
+For a fresh PostgreSQL volume, the watchdog migration is mounted as init script 048. Existing PostgreSQL volumes do not rerun init scripts. Apply the additive migration to an existing database only with the backup-gated operator script:
+
+```sh
+./apply-user-activity-watchdog-migration.sh
+```
+
+It creates and verifies a custom-format backup, requires the explicit confirmation phrase, applies the migration with `ON_ERROR_STOP`, and verifies the queue, lease tables and scoped enqueue function. The watchdog remains disabled until the node-agent is explicitly configured and tested. This release does not stop services on lease expiry.
