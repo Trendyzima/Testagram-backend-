@@ -2,6 +2,8 @@ package virtualstorage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -51,6 +53,16 @@ func (s *replicaTestStore) SHA256(_ context.Context, bucket, key string, _ int64
 	if !ok { return "", ErrNotFound }
 	return obj.hash, nil
 }
+
+func (s *replicaTestStore) PutObjectVerified(_ context.Context, bucket, key string, body []byte, contentType string) error {
+	h := sha256.Sum256(body)
+	s.objects[replicaTestKey(bucket,key)] = replicaTestObject{
+		info:ObjectInfo{Key:key,Size:int64(len(body)),ContentType:contentType},
+		hash:hex.EncodeToString(h[:]),
+	}
+	return nil
+}
+
 func (s *replicaTestStore) CopyFromProvider(_ context.Context, source Provider, sourceBucket, sourceKey, destinationBucket, destinationKey string, expectedBytes int64, contentType, expectedSHA256 string) error {
 	if s.failCopy { return errors.New("simulated provider outage") }
 	s.copyCalls++
@@ -321,5 +333,53 @@ func TestReplicatorReturnsOnlyChecksumVerifiedPrivateReplicaURLs(t *testing.T) {
 	}
 	if len(urls) != 1 || urls[0].Provider != "cloudflare-r2" {
 		t.Fatalf("verified replica downloads=%+v, want only checksum-valid R2", urls)
+	}
+}
+
+
+func TestReplicatorWritesAndDeletesMetadataSidecarsOnAllProviders(t *testing.T) {
+	primary, r2, b2 := newReplicaTestStore(), newReplicaTestStore(), newReplicaTestStore()
+	const digest = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	key := "users/user-1/avatar.webp"
+	scoped := tenantPrefix("user-1") + key
+	primary.objects[replicaTestKey("vps-private", scoped)] = replicaTestObject{
+		info: ObjectInfo{Key: scoped, Size: 123, ContentType: "image/webp"}, hash: digest,
+	}
+	primaryBuckets := map[string]string{
+		"media-private":"vps-private", "media-public":"vps-public", "media-metadata-private":"vps-metadata",
+	}
+	r2Buckets := map[string]string{
+		"media-private":"r2-private", "media-public":"r2-public", "media-metadata-private":"r2-metadata",
+	}
+	b2Buckets := map[string]string{
+		"media-private":"b2-private", "media-public":"b2-public", "media-metadata-private":"b2-metadata",
+	}
+	r, err := NewReplicator("instabox-vps", primary, primaryBuckets, []ReplicaTarget{
+		{Name:"cloudflare-r2", Provider:r2, Buckets:r2Buckets},
+		{Name:"backblaze-b2", Provider:b2, Buckets:b2Buckets},
+	})
+	if err != nil { t.Fatal(err) }
+	if _, err := r.Replicate(context.Background(), "user-1", "media-private", key, 123, "image/webp", digest); err != nil {
+		t.Fatalf("replicate with metadata sidecars: %v", err)
+	}
+	metadataKey := scoped + ".metadata.json"
+	for _, entry := range []struct{store *replicaTestStore; bucket string}{
+		{primary,"vps-metadata"},{r2,"r2-metadata"},{b2,"b2-metadata"},
+	} {
+		obj, ok := entry.store.objects[replicaTestKey(entry.bucket, metadataKey)]
+		if !ok { t.Fatalf("metadata sidecar missing from %s", entry.bucket) }
+		if obj.info.ContentType != "application/json" || obj.info.Size == 0 || len(obj.hash) != 64 {
+			t.Fatalf("metadata sidecar on %s was not verified: %+v", entry.bucket, obj.info)
+		}
+	}
+	if err := r.Delete(context.Background(), "user-1", "media-private", key); err != nil {
+		t.Fatalf("delete media and metadata sidecars: %v", err)
+	}
+	for _, entry := range []struct{store *replicaTestStore; bucket string}{
+		{primary,"vps-metadata"},{r2,"r2-metadata"},{b2,"b2-metadata"},
+	} {
+		if _, ok := entry.store.objects[replicaTestKey(entry.bucket, metadataKey)]; ok {
+			t.Fatalf("metadata sidecar remains in %s after deletion", entry.bucket)
+		}
 	}
 }

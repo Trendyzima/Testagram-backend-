@@ -79,6 +79,15 @@ func validateMediaBucketIsolation(provider string, buckets map[string]string) er
 	return nil
 }
 
+func validateMediaMetadataBucketIsolation(provider string, buckets map[string]string) error {
+	metadata := strings.TrimSpace(buckets["media-metadata-private"])
+	if metadata == "" { return fmt.Errorf("%s private metadata bucket must be configured", provider) }
+	if metadata == strings.TrimSpace(buckets["media-private"]) || metadata == strings.TrimSpace(buckets["media-public"]) || (strings.TrimSpace(buckets["identity-evidence-private"]) != "" && metadata == strings.TrimSpace(buckets["identity-evidence-private"])) {
+		return fmt.Errorf("%s metadata bucket must be distinct from private/public media buckets", provider)
+	}
+	return nil
+}
+
 func configureMediaReplicator(primary *virtualstorage.S3Provider) (*virtualstorage.Replicator, error) {
 	if primary == nil {
 		return nil, errors.New("Instabox VPS primary provider is not configured")
@@ -94,14 +103,17 @@ func configureMediaReplicator(primary *virtualstorage.S3Provider) (*virtualstora
 	primaryBuckets := map[string]string{
 		"media-private": env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))),
 		"media-public": env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
+		"media-metadata-private": env("MINIO_METADATA_BUCKET", "testagram-media-metadata"),
 	}
 	r2Buckets := map[string]string{
 		"media-private": replicaBucket("CLOUDFLARE_R2", "private", "CLOUDFLARE_R2_BUCKET"),
 		"media-public": replicaBucket("CLOUDFLARE_R2", "public", "CLOUDFLARE_R2_BUCKET"),
+		"media-metadata-private": strings.TrimSpace(os.Getenv("CLOUDFLARE_R2_METADATA_BUCKET")),
 	}
 	b2Buckets := map[string]string{
 		"media-private": replicaBucket("B2_S3", "private", "B2_S3_BUCKET"),
 		"media-public": replicaBucket("B2_S3", "public", "B2_S3_BUCKET"),
+		"media-metadata-private": strings.TrimSpace(os.Getenv("B2_S3_METADATA_BUCKET")),
 	}
 	for provider, buckets := range map[string]map[string]string{
 		"instabox-vps": primaryBuckets,
@@ -111,6 +123,7 @@ func configureMediaReplicator(primary *virtualstorage.S3Provider) (*virtualstora
 		if err := validateMediaBucketIsolation(provider, buckets); err != nil {
 			return nil, err
 		}
+		if err := validateMediaMetadataBucketIsolation(provider, buckets); err != nil { return nil, err }
 	}
 	return virtualstorage.NewReplicator("instabox-vps", primary, primaryBuckets, []virtualstorage.ReplicaTarget{
 		{Name: "cloudflare-r2", Provider: r2, Buckets: r2Buckets},

@@ -1,6 +1,7 @@
 package virtualstorage
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -348,6 +349,42 @@ func (p *S3Provider) List(ctx context.Context, bucket, prefix, cursor string, li
 		next = result.NextContinuationToken
 	}
 	return items, next, nil
+}
+
+
+// PutObjectVerified writes a small server-generated metadata object and then
+// independently reads it back. It is intentionally bounded and is not for media.
+func (p *S3Provider) PutObjectVerified(ctx context.Context, bucket, key string, body []byte, contentType string) error {
+	if p == nil || len(body) == 0 || len(body) > 64<<10 {
+		return errors.New("metadata sidecar must contain between 1 byte and 64 KiB")
+	}
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if contentType != "application/json" {
+		return errors.New("metadata sidecar content type must be application/json")
+	}
+	u, err := p.presign(ctx, http.MethodPut, bucket, key, url.Values{}, map[string]string{"content-type": contentType}, 10*time.Minute)
+	if err != nil { return err }
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(body))
+	if err != nil { return err }
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Type", contentType)
+	resp, err := p.do(req)
+	if err != nil { return err }
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("metadata sidecar PUT failed with HTTP %d", resp.StatusCode)
+	}
+	info, err := p.Head(ctx, bucket, key)
+	if err != nil { return fmt.Errorf("metadata sidecar HEAD read-back: %w", err) }
+	if info.Size != int64(len(body)) || strings.ToLower(strings.TrimSpace(info.ContentType)) != contentType {
+		return ErrObjectMismatch
+	}
+	h := sha256.Sum256(body)
+	actual, err := p.SHA256(ctx, bucket, key, int64(len(body)))
+	if err != nil { return fmt.Errorf("metadata sidecar SHA-256 read-back: %w", err) }
+	if !strings.EqualFold(actual, hex.EncodeToString(h[:])) { return ErrChecksumMismatch }
+	return nil
 }
 
 func (p *S3Provider) presign(ctx context.Context, method, bucket, key string, extra url.Values, headers map[string]string, ttl time.Duration) (string, error) {
