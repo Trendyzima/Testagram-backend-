@@ -49,7 +49,7 @@ func issueNativeSession(ctx context.Context, db interface {
 		INSERT INTO testagram_auth.sessions
 			(session_id,user_id,refresh_token_hash,family_id,token_version,expires_at,user_agent_hash,ip_hash)
 		VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,now()+$6::interval,$7,$8)
-	`, sessionID, userID, authTokenHash(refresh), familyID, version, nativeRefreshTTL.String(), authFingerprint(userAgent), authFingerprint(ip)); err != nil {
+	`, sessionID, userID, authTokenHash(refresh), familyID, version, "30 days", authFingerprint(userAgent), authFingerprint(ip)); err != nil {
 		return nativeSessionTokens{}, err
 	}
 	access, err := authSignJWT(userID, email, version, sessionID)
@@ -191,7 +191,7 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 	if _, err := tx.Exec(ctx, `INSERT INTO testagram_auth.sessions
 		(session_id,user_id,refresh_token_hash,family_id,token_version,expires_at,user_agent_hash,ip_hash)
 		VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,now()+$6::interval,$7,$8)`,
-		nextID, userID, authTokenHash(nextRefresh), familyID, version, nativeRefreshTTL.String(), authFingerprint(userAgent), authFingerprint(ip)); err != nil {
+		nextID, userID, authTokenHash(nextRefresh), familyID, version, "30 days", authFingerprint(userAgent), authFingerprint(ip)); err != nil {
 		return nativeSessionTokens{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
