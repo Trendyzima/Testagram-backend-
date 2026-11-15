@@ -110,7 +110,7 @@ func verifyNativeAccessToken(ctx context.Context, db interface {
 		return claims, http.StatusUnauthorized, errors.New("invalid token claims")
 	}
 	now := time.Now().UTC().Unix()
-	if claims.Issuer != "testagram-auth" || claims.Role != "authenticated" ||
+	if claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" || claims.Role != "authenticated" ||
 		!localUUIDPattern.MatchString(claims.Subject) || !localUUIDPattern.MatchString(claims.SessionID) ||
 		claims.TokenVersion < 1 || claims.IssuedAt <= 0 || claims.IssuedAt > now+60 ||
 		claims.ExpiresAt <= now || claims.ExpiresAt <= claims.IssuedAt ||
