@@ -105,7 +105,7 @@ SELECT
   a.email,
   u.username,
   '!appwrite-password-reset-required!',
-  CASE WHEN a.email_verified THEN a.last_seen_at ELSE NULL END,
+  CASE WHEN a.email_verified THEN now() ELSE NULL END,
   TRUE,
   CASE WHEN u.account_status='active' THEN NULL ELSE now() END
 FROM testagram_identity.appwrite_accounts a
