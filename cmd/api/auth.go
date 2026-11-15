@@ -466,8 +466,15 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("CREDENTIAL_UPGRADE_FAILED", "Secure credential upgrade could not be completed", requestID(r)))
 				return true
 			}
-			if _, hashErr = s.db.Exec(ctx, `UPDATE testagram_auth.identities SET password_hash=$2,updated_at=now() WHERE user_id=$1::uuid AND password_hash=$3`, userID, upgradedHash, hash); hashErr != nil {
+			result, updateErr := s.db.Exec(ctx, `UPDATE testagram_auth.identities SET password_hash=$2,updated_at=now() WHERE user_id=$1::uuid AND password_hash=$3`, userID, upgradedHash, hash)
+			if updateErr != nil {
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("CREDENTIAL_UPGRADE_FAILED", "Secure credential upgrade could not be completed", requestID(r)))
+				return true
+			}
+			if result.RowsAffected() != 1 {
+				// The password or account state changed while the legacy hash was
+				// being upgraded. Do not continue with a potentially stale login.
+				writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect, or email verification is pending.", requestID(r)))
 				return true
 			}
 		}
