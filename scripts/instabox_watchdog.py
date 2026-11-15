@@ -45,7 +45,7 @@ class API:
     def request(self, method: str, path: str, body: dict[str, Any] | None = None,
                 idempotency_key: str | None = None) -> dict[str, Any]:
         if not self.key:
-            raise WatchdogError("INSTABOX_API_KEY is not configured")
+            raise WatchdogError("INSTABOX_WATCHDOG_API_KEY is not configured")
         headers = {"Authorization": f"Bearer {self.key}", "Accept": "application/json"}
         payload = None
         if body is not None:
