@@ -1291,6 +1291,7 @@ func main() {
 		go federationWorker.Run(signalCtx)
 	}
 	go svc.runStorageDeletionWorker(signalCtx)
+	go svc.runStorageCleanupWorker(signalCtx)
 	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
 	if replicationApplyEnabled {
 		if replicationStore == nil {
