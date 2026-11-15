@@ -318,7 +318,7 @@ fi
 echo "Waiting for Backend readiness..."
 backend_ready=false
 for attempt in $(seq 1 60); do
-  if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -q -O /dev/null http://127.0.0.1:8080/readyz; then
+  if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -q -O /dev/null http://127.0.0.1:8082/readyz; then
     backend_ready=true
     break
   fi
@@ -576,7 +576,7 @@ if [[ "$media_enabled" == true ]]; then
   api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
   api_ready=false
   for attempt in $(seq 1 60); do
-    if sudo docker exec "$api_container" wget -q -O /dev/null http://127.0.0.1:8080/readyz; then api_ready=true; break; fi
+    if sudo docker exec "$api_container" wget -q -O /dev/null http://127.0.0.1:8082/readyz; then api_ready=true; break; fi
     sleep 5
   done
   if [[ "$api_ready" != true ]]; then
