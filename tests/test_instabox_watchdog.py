@@ -5,13 +5,14 @@ from unittest.mock import patch
 from scripts import instabox_watchdog as watchdog
 
 watchdog.MACHINE_ID = "machine-123"
+watchdog.MACHINE_NAME = "testagramdb"
 
 
 class FakeAPI:
     def __init__(self, machine=None):
         self.machine = machine or {
             "id": "machine-123",
-            "name": "testagram",
+            "name": "testagramdb",
             "state": "running",
             "desiredState": "running",
             "operationId": None,
@@ -113,7 +114,7 @@ class WatchdogTests(unittest.TestCase):
         class ListAPI:
             def request(self, method, path, body=None, idempotency_key=None):
                 return {"machines": [
-                    {"id": "machine-123", "name": "testagram"},
+                    {"id": "machine-123", "name": "testagramdb"},
                     {"id": "other-id", "name": "another-machine"}
                 ], "nextCursor": None}
         with patch.object(watchdog, "MACHINE_ID", ""):
@@ -123,8 +124,8 @@ class WatchdogTests(unittest.TestCase):
         class ListAPI:
             def request(self, method, path, body=None, idempotency_key=None):
                 return {"machines": [
-                    {"id": "machine-123", "name": "testagram"},
-                    {"id": "machine-456", "name": "testagram"}
+                    {"id": "machine-123", "name": "testagramdb"},
+                    {"id": "machine-456", "name": "testagramdb"}
                 ], "nextCursor": None}
         with patch.object(watchdog, "MACHINE_ID", ""), \
              self.assertRaisesRegex(watchdog.WatchdogError, "found 2"):
@@ -207,7 +208,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_active_operation_is_not_interrupted(self):
         api = FakeAPI({
-            "id": "machine-123", "name": "testagram", "state": "running",
+            "id": "machine-123", "name": "testagramdb", "state": "running",
             "desiredState": "running", "operationId": "op-in-progress"
         })
         with (
@@ -224,7 +225,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_intentional_stop_is_never_overridden(self):
         api = FakeAPI({
-            "id": "machine-123", "name": "testagram", "state": "stopped",
+            "id": "machine-123", "name": "testagramdb", "state": "stopped",
             "desiredState": "stopped", "operationId": None
         })
         with (
@@ -241,7 +242,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_unexpected_stop_is_started_when_desired_state_is_running(self):
         api = FakeAPI({
-            "id": "machine-123", "name": "testagram", "state": "stopped",
+            "id": "machine-123", "name": "testagramdb", "state": "stopped",
             "desiredState": "running", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
@@ -304,7 +305,7 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("INSTABOX_WATCHDOG_API_KEY_HEADER=X-API-Key", workflow)
         self.assertIn("dedicated INSTABOX_WATCHDOG_API_KEY", workflow)
         self.assertIn("secrets.INSTABOX_MACHINE_ID", workflow)
-        self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagram'", workflow)
+        self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagramdb'", workflow)
         self.assertIn("https://api.testagram.site/healthz", workflow)
         self.assertNotIn("TESTAGRAM_READINESS_URL", workflow)
         self.assertNotIn("/readyz", workflow)
