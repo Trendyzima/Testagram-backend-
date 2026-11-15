@@ -42,6 +42,7 @@ type authClaims struct {
 	Email        string `json:"email"`
 	Role         string `json:"role"`
 	Issuer       string `json:"iss"`
+	Audience     string `json:"aud"`
 	IssuedAt     int64  `json:"iat"`
 	ExpiresAt    int64  `json:"exp"`
 	TokenVersion int64  `json:"ver"`
@@ -134,7 +135,7 @@ func authSignJWT(userID, email string, version int64, sessionID string) (string,
 	}
 	now := time.Now().UTC()
 	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
-	claims, _ := json.Marshal(authClaims{Subject: userID, Email: email, Role: "authenticated", Issuer: "testagram-auth", IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(), TokenVersion: version, SessionID: sessionID})
+	claims, _ := json.Marshal(authClaims{Subject: userID, Email: email, Role: "authenticated", Issuer: "testagram-auth", Audience: "testagram-api", IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(), TokenVersion: version, SessionID: sessionID})
 	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(unsigned))
