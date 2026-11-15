@@ -14,6 +14,31 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestIdentityApplicationRecoveryDoesNotReopenVerifiedOrProvisionedSessions(t *testing.T) {
+	cases := []struct {
+		name              string
+		status            string
+		provisioningExists bool
+		wantRenew         bool
+	}{
+		{name: "new pending application", status: "pending", wantRenew: true},
+		{name: "initial verification pending", status: "verification_pending", wantRenew: true},
+		{name: "under review", status: "under_review", wantRenew: false},
+		{name: "verified", status: "verified", wantRenew: false},
+		{name: "approved", status: "approved", wantRenew: false},
+		{name: "rejected", status: "rejected", wantRenew: false},
+		{name: "provisioned but email unverified", status: "verification_pending", provisioningExists: true, wantRenew: false},
+		{name: "provisioning saga exists while pending", status: "pending", provisioningExists: true, wantRenew: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := identityApplicationNeedsVerificationSessionRenewal(tc.status, tc.provisioningExists); got != tc.wantRenew {
+				t.Fatalf("renewal=%v, want %v", got, tc.wantRenew)
+			}
+		})
+	}
+}
+
 func TestIdentityEvidenceExtensionAllowlist(t *testing.T) {
 	cases := []struct {
 		contentType string
