@@ -22,6 +22,14 @@ func parseFollowingOnly(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
+func parseVideoOnly(value string) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
+}
+
 type homeFeedCursor struct {
 	CreatedAt time.Time `json:"created_at"`
 	ID        string    `json:"id"`
@@ -115,6 +123,11 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_FOLLOWING_FILTER", "following_only must be a boolean", requestID))
 		return
 	}
+	videoOnly, videoOnlyErr := parseVideoOnly(r.URL.Query().Get("video_only"))
+	if videoOnlyErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_FILTER", "video_only must be a boolean", requestID))
+		return
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 50 {
@@ -162,6 +175,16 @@ WHERE p.deleted_at IS NULL
       SELECT 1 FROM testagram_local.follows f
       WHERE f.follower_id=$1::uuid AND f.following_id=p.author_id AND f.status='accepted'
   ))
+  AND (NOT $6::boolean OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(COALESCE(p.media_ids,'[]'::jsonb)) AS media_key(object_key)
+      JOIN testagram_media.assets ma
+        ON ma.object_key=media_key.object_key
+       AND ma.owner_id=p.author_id
+       AND ma.status='ready'
+       AND ma.visibility='public'
+       AND ma.content_type LIKE 'video/%'
+  ))
   AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
@@ -170,7 +193,7 @@ LIMIT $4`
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly)
+	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly, videoOnly)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
@@ -259,7 +282,7 @@ LIMIT $4`
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
-		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode},
+		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode, "video_only": videoOnly},
 		"error": nil, "request_id": requestID,
 	})
 }
