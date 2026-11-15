@@ -33,9 +33,9 @@ func TestWatchdogBucketKeyIsStableAndContainsNoIdentity(t *testing.T) {
 }
 
 func TestEnqueueWatchdogImpulseUsesPrivateCoarseEventContract(t *testing.T) {
-	called := false
+	called := make(chan struct{},1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		called <- struct{}{}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/watchdog/impulses" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -51,20 +51,20 @@ func TestEnqueueWatchdogImpulseUsesPrivateCoarseEventContract(t *testing.T) {
 	}))
 	defer server.Close()
 	setWatchdogTestEnv(t, "VPS_WATCHDOG_INTERNAL_URL", server.URL)
-	setWatchdogTestEnv(t, "VPS_WATCHDOG_INTERNAL_TOKEN", "watchdog-test-secret")
+	setWatchdogTestEnv(t, "VPS_WATCHDOG_INGRESS_TOKEN", "watchdog-test-secret")
 	(&service{}).enqueueWatchdogImpulse("login")
-	if !called { t.Fatal("watchdog impulse was not sent") }
+	select { case <-called: case <-time.After(time.Second): t.Fatal("watchdog impulse was not sent") }
 }
 
 func TestEnqueueWatchdogImpulseIgnoresUnknownEvent(t *testing.T) {
-	called := false
+	called := make(chan struct{},1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		called <- struct{}{}
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
 	setWatchdogTestEnv(t, "VPS_WATCHDOG_INTERNAL_URL", server.URL)
 	setWatchdogTestEnv(t, "VPS_WATCHDOG_INTERNAL_TOKEN", "watchdog-test-secret")
 	(&service{}).enqueueWatchdogImpulse("run-arbitrary-command")
-	if called { t.Fatal("unsupported event reached watchdog control plane") }
+	select { case <-called: t.Fatal("unsupported event reached watchdog control plane"); case <-time.After(50*time.Millisecond): }
 }
