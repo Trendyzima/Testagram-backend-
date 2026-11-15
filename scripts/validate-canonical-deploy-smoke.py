@@ -19,7 +19,7 @@ assert "http://127.0.0.1:8082/readyz" in workflow, (
 
 # The Backend deploy must verify the newly published origin directly. It must
 # not wait for the public Worker gateway, which is deployed in the next stage.
-assert "Verify public API health and readiness" in workflow
+assert "Verify public API liveness and private endpoint isolation" in workflow
 assert '"$URL/healthz"' in workflow
 assert "x-testagram-service" in workflow
 assert '.ok == true and .service == "testagram-api"' in workflow
