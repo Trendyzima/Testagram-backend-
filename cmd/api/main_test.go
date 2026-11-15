@@ -348,20 +348,27 @@ func TestDecodeSingleJSON(t *testing.T) {
 
 func TestMetricsExposeRouteStatusAndLatencyWithoutRawPathLabels(t *testing.T) {
 	s := &service{}
-	handler := s.routes()
+	public := s.routes()
+	internal := s.internalRoutes()
 
-	for _, path := range []string{"/readyz", "/unknown/private-user-id"} {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+	for _, request := range []struct {
+		handler http.Handler
+		path    string
+	}{
+		{internal, "/readyz"},
+		{public, "/unknown/private-user-id"},
+	} {
+		r := httptest.NewRequest(http.MethodGet, request.path, nil)
 		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
+		request.handler.ServeHTTP(w, r)
 	}
 
 	r := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
+	internal.ServeHTTP(w, r)
 	r = httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
+	internal.ServeHTTP(w, r)
 
 	body := w.Body.String()
 	for _, want := range []string{
