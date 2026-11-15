@@ -123,6 +123,43 @@ jobs:
             exit "$exit_code"
           fi
 
+      - name: Verify production native identity PostgreSQL schema without applying migrations
+        shell: bash
+        env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
+        run: |
+          set -euo pipefail
+          # The existing migration helper runs a read-only schema_ready SELECT
+          # and exits before any migration unless an explicit apply token is set.
+          command='set -euo pipefail
+          script=/data/home/testagram/repos/backend/deploy/self-hosted/apply-native-identity-migrations.sh
+          if [ ! -f "$script" ]; then
+            echo "IDENTITY_MIGRATION_HELPER_MISSING"
+            exit 2
+          fi
+          sudo env CONFIRM_NATIVE_IDENTITY_MIGRATIONS="" bash "$script"
+          '
+          payload="$(jq -nc --arg cmd "$command" '{cmd:$cmd,timeoutSeconds:240}')"
+          response="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS \
+            -X POST -H "X-API-Key: $INSTABOX_READONLY_API_KEY" \
+            -H "Content-Type: application/json" -d "$payload" \
+            "https://api.instabox.sh/v1/machines/$MACHINE_ID/exec")"
+          exit_code="$(jq -r '.exitCode // 1' <<<"$response")"
+          stdout="$(jq -r '.stdout // empty' <<<"$response")"
+          stderr="$(jq -r '.stderr // empty' <<<"$response")"
+          printf '%s\\n' "$stdout"
+          if [ -n "$stderr" ]; then printf '%s\\n' "$stderr" >&2; fi
+          {
+            echo "### Native identity PostgreSQL schema (read-only)"
+            echo "---"
+            printf '%s\\n' "$stdout"
+            echo "---"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$exit_code" != "0" ]; then
+            echo "::error::Production native identity schema is incomplete or the read-only preflight failed. No migrations were applied."
+            exit "$exit_code"
+          fi
+
       - name: Publish inspection safety boundary
         if: always()
         shell: bash
