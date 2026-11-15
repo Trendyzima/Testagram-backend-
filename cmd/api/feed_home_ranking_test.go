@@ -7,6 +7,31 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
+func TestParseHomeFeedMode(t *testing.T) {
+	cases := []struct {
+		input string
+		want string
+		wantErr bool
+	}{
+		{input: "", want: "for_you"},
+		{input: "for_you", want: "for_you"},
+		{input: " FOLLOWING ", want: "following"},
+		{input: "latest", want: "latest"},
+		{input: "media", want: "media"},
+		{input: "discover", want: "discover"},
+		{input: "trending", wantErr: true},
+	}
+	for _, tc := range cases {
+		got, err := parseHomeFeedMode(tc.input)
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("parseHomeFeedMode(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+		}
+		if err == nil && got != tc.want {
+			t.Fatalf("parseHomeFeedMode(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestParseVideoOnly(t *testing.T) {
 	cases := []struct {
 		name string
