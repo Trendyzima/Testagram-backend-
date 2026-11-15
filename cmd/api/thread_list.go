@@ -22,20 +22,27 @@ func (s *service) threadsList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 503, errorBody("SOCIAL_DATABASE_UNAVAILABLE", "Social data service is unavailable", rid))
 		return
 	}
-	tab := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tab")))
+	requestedTab := strings.TrimSpace(r.URL.Query().Get("tab"))
+	tab := strings.ToLower(requestedTab)
 	if tab == "" {
 		tab = "for-you"
 	}
-	if tab != "for-you" && tab != "following" && tab != "saved" {
+	if tab != "for-you" && tab != "following" && tab != "saved" && tab != "latest" && tab != "media" {
 		writeJSON(w, 400, errorBody("INVALID_THREAD_TAB", "Thread tab is invalid", rid))
 		return
 	}
 	userID := ""
-	if tab != "for-you" || strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+	if tab == "following" || tab == "saved" || strings.TrimSpace(r.Header.Get("Authorization")) != "" {
 		var ok bool
 		userID, rid, ok = s.socialAuth(w, r)
 		if !ok {
 			return
+		}
+	}
+	if userID != "" && requestedTab == "" {
+		var preferred string
+		if err := s.db.QueryRow(r.Context(), "SELECT default_feed FROM testagram_local.user_feed_preferences WHERE user_id=$1", userID).Scan(&preferred); err == nil && validDefaultFeed(preferred) {
+			tab = preferred
 		}
 	}
 	if (tab == "following" || tab == "saved") && userID == "" {
@@ -76,7 +83,8 @@ func (s *service) threadsList(w http.ResponseWriter, r *http.Request) {
 	var err error
 	baseSelect := `SELECT t.id::text,t.owner_id::text,t.body,t.visibility,t.created_at,t.media_urls,
       t.likes_count,t.reposts_count,t.quotes_count,t.replies_count,t.views_count,
-      a.username,a.display_name,a.avatar_key
+      a.username,a.display_name,a.avatar_key,
+      coalesce((SELECT q.source_thread_id::text FROM testagram_local.thread_quotes q WHERE q.quote_thread_id=t.id),'')
     FROM testagram_local.threads t
     JOIN testagram_local.accounts a ON a.user_id=t.owner_id
     WHERE t.deleted_at IS NULL AND a.account_status='active'`
@@ -107,11 +115,11 @@ func (s *service) threadsList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := make([]map[string]any, 0, limit+1)
 	for rows.Next() {
-		var id, owner, body, visibility, username, displayName, avatarKey string
+		var id, owner, body, visibility, username, displayName, avatarKey, quoteOfThreadID string
 		var created time.Time
 		var mediaJSON []byte
 		var likes, reposts, quotes, replies, views int64
-		if err := rows.Scan(&id, &owner, &body, &visibility, &created, &mediaJSON, &likes, &reposts, &quotes, &replies, &views, &username, &displayName, &avatarKey); err != nil {
+		if err := rows.Scan(&id, &owner, &body, &visibility, &created, &mediaJSON, &likes, &reposts, &quotes, &replies, &views, &username, &displayName, &avatarKey, &quoteOfThreadID); err != nil {
 			writeJSON(w, 503, errorBody("THREAD_LIST_FAILED", "Thread rows could not be decoded", rid))
 			return
 		}
@@ -123,7 +131,7 @@ func (s *service) threadsList(w http.ResponseWriter, r *http.Request) {
 		if avatarKey != "" {
 			avatarURL = publicMediaURL(avatarKey)
 		}
-		items = append(items, map[string]any{"id": id, "owner_id": owner, "body": body, "visibility": visibility, "created_at": created, "media_urls": media, "likes_count": likes, "reposts_count": reposts, "quotes_count": quotes, "replies_count": replies, "views_count": views, "profiles": map[string]any{"id": owner, "username": username, "display_name": displayName, "avatar_url": avatarURL, "verified": false}})
+		items = append(items, map[string]any{"id": id, "owner_id": owner, "body": body, "visibility": visibility, "created_at": created, "media_urls": media, "likes_count": likes, "reposts_count": reposts, "quotes_count": quotes, "replies_count": replies, "views_count": views, "quote_of_thread_id": quoteOfThreadID, "profiles": map[string]any{"id": owner, "username": username, "display_name": displayName, "avatar_url": avatarURL, "verified": false}})
 	}
 	if err := rows.Err(); err != nil {
 		writeJSON(w, 503, errorBody("THREAD_LIST_FAILED", "Thread list could not be read", rid))
