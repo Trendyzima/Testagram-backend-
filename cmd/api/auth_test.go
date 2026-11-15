@@ -79,7 +79,7 @@ func TestAuthJWTIsAcceptedByLocalTokenVerifier(t *testing.T) {
 		}
 	})
 	const userID = "123e4567-e89b-42d3-a456-426614174000"
-	token, err := authSignJWT(userID, "user@example.com", 1)
+	token, err := authSignJWT(userID, "user@example.com", 1, "223e4567-e89b-42d3-a456-426614174000")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +133,9 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 		"/api/auth/login",
 		"/api/auth/forgot-password",
 		"/api/auth/reset-password",
+		"/api/auth/refresh",
+		"/api/auth/logout",
+		"/api/auth/logout-all",
 	} {
 		req := httptest.NewRequest(http.MethodOptions, path, nil)
 		rec := httptest.NewRecorder()
@@ -165,7 +168,7 @@ func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 	}
 }
 
-func TestLegacyPasswordEndpointsRequireAppwrite(t *testing.T) {
+func TestNativePasswordEndpointsRemainDisabledOutsideNativeMode(t *testing.T) {
 	handler := (&service{}).routes()
 	for _, path := range []string{
 		"/api/auth/login",
@@ -175,8 +178,8 @@ func TestLegacyPasswordEndpointsRequireAppwrite(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"user@example.com","password":"example-password","token":"example-token"}`))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusGone || !strings.Contains(rec.Body.String(), "APPWRITE_AUTH_REQUIRED") {
-			t.Fatalf("POST %s status=%d body=%s; expected Appwrite-only authentication gate", path, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "NATIVE_AUTH_NOT_ENABLED") {
+			t.Fatalf("POST %s status=%d body=%s; expected explicit native-provider deployment gate", path, rec.Code, rec.Body.String())
 		}
 	}
 }
