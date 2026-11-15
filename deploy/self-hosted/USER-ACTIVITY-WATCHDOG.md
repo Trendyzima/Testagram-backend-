@@ -18,7 +18,7 @@ Start the Backend self-hosted Compose stack first. It creates the shared interna
 
 Backend environment:
 - `VPS_WATCHDOG_INTERNAL_URL`: private Data Centre control-plane origin, e.g. `http://control-plane:8787` on a private service network
-- `VPS_WATCHDOG_INTERNAL_TOKEN`: dedicated random service credential
+- `VPS_WATCHDOG_INTERNAL_TOKEN`: dedicated random service credential (generate with `openssl rand -hex 32` and set the identical value in the Backend and Data Centre environment files)
 
 Data Centre control-plane environment:
 - `VPS_WATCHDOG_INTERNAL_TOKEN`: same dedicated credential, distinct from `VPS_INTERNAL_TOKEN` and `VPS_NODE_BOOTSTRAP_TOKEN`
