@@ -98,6 +98,8 @@ $preflight$;
 
 -- Preserve canonical UUIDs exactly. No source email match is used to discover
 -- the canonical user: the pre-existing Appwrite mapping is the authority.
+-- Appwrite exposes only a verified boolean here, not the original verification
+-- timestamp; use migration time rather than misrepresenting last_seen_at.
 INSERT INTO testagram_auth.identities
   (user_id,email,username,password_hash,email_verified_at,password_reset_required,disabled_at)
 SELECT
