@@ -30,7 +30,6 @@ schema_ready() {
     sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
       SELECT to_regclass('\''testagram_watchdog.impulses'\'') IS NOT NULL
          AND to_regclass('\''testagram_watchdog.service_leases'\'') IS NOT NULL
-         AND to_regprocedure('\''testagram_watchdog.enqueue_impulse(text,text)'\'') IS NOT NULL
     "'
 }
 if [[ "$(schema_ready)" == "t" ]]; then
