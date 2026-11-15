@@ -273,16 +273,17 @@ set -a
 source "$BASE_ENV"
 set +a
 
-# Account login and post publishing are both production-critical. Fail the
-# deployment rather than leave users with an apparently healthy but unusable
-# registration or posting path.
+# Appwrite identity configuration is required for the enabled login path.
 if [[ -z "${APPWRITE_PROJECT_ID:-}" ]]; then
   echo "::error::APPWRITE_PROJECT_ID is required for Appwrite registration and login."
   exit 1
 fi
+# Moderation is optional for service startup, but never optional for publishing:
+# cmd/api leaves s.moderation nil when no key is configured and social_post_create
+# returns POST_MODERATION_UNAVAILABLE before any post is written. This allows
+# health/CDN recovery without bypassing moderation or silently accepting posts.
 if [[ -z "${ONSPACE_AI_API_KEY:-}" ]]; then
-  echo "::error::ONSPACE_AI_API_KEY is required; Backend post publishing remains fail-closed without moderation."
-  exit 1
+  echo "Moderation provider key is absent; API health/CDN services may start, but post publishing remains fail-closed."
 fi
 
 echo "Starting PostgreSQL, MinIO and the native Go API..."
