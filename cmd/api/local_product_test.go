@@ -34,7 +34,7 @@ func TestLocalJWTSubjectVerifiesSignatureAndExpiry(t *testing.T) {
 	if _, err := localJWTSubject("Bearer " + token + "x"); err == nil {
 		t.Fatal("expected tampered signature to be rejected")
 	}
-	expired := makeLocalTestToken(t, "local-test-secret", map[string]any{"sub": sub, "exp": time.Now().Add(-time.Minute).Unix()})
+	expired := makeLocalTestToken(t, secret, map[string]any{"sub": sub, "exp": time.Now().Add(-time.Minute).Unix()})
 	if _, err := localJWTSubject("Bearer " + expired); err == nil {
 		t.Fatal("expected expired token to be rejected")
 	}
