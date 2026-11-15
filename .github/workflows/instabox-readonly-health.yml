@@ -147,12 +147,12 @@ jobs:
           exit_code="$(jq -r '.exitCode // 1' <<<"$response")"
           stdout="$(jq -r '.stdout // empty' <<<"$response")"
           stderr="$(jq -r '.stderr // empty' <<<"$response")"
-          printf '%s\\n' "$stdout"
-          if [ -n "$stderr" ]; then printf '%s\\n' "$stderr" >&2; fi
+          printf '%s\n' "$stdout"
+          if [ -n "$stderr" ]; then printf '%s\n' "$stderr" >&2; fi
           {
             echo "### Native identity PostgreSQL schema (read-only)"
             echo "---"
-            printf '%s\\n' "$stdout"
+            printf '%s\n' "$stdout"
             echo "---"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$exit_code" != "0" ]; then
