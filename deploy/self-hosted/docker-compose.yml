@@ -73,8 +73,6 @@ services:
       dockerfile: control-plane/Dockerfile
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
-      VPS_WATCHDOG_INTERNAL_URL: ${VPS_WATCHDOG_INTERNAL_URL:-http://control-plane:8787}
-      VPS_WATCHDOG_INGRESS_TOKEN: ${VPS_WATCHDOG_INGRESS_TOKEN:-}
       VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:?Set VPS_INTERNAL_TOKEN in .env}
       VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:?Set VPS_NODE_BOOTSTRAP_TOKEN in .env}
       VPS_WATCHDOG_TOKEN: ${VPS_WATCHDOG_TOKEN:-}
@@ -89,6 +87,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Node-agent access is loopback-only; never expose the control plane publicly.
+    ports: ["${VPS_WATCHDOG_HOST_BIND:-127.0.0.1:8788}:8787"]
     expose: ["8787"]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8787/readyz"]
@@ -143,6 +143,8 @@ services:
       LISTEN_ADDR: ":8080"
       INTERNAL_LISTEN_ADDR: ":8082"
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
+      VPS_WATCHDOG_INTERNAL_URL: ${VPS_WATCHDOG_INTERNAL_URL:-http://control-plane:8787}
+      VPS_WATCHDOG_INGRESS_TOKEN: ${VPS_WATCHDOG_INGRESS_TOKEN:-}
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
       ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
