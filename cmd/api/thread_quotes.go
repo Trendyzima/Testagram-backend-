@@ -18,6 +18,12 @@ type threadQuoteInput struct {
 	Visibility string `json:"visibility"`
 }
 
+func threadQuoteHashes(idempotencyKey,sourceID,body,visibility string) (string,string) {
+	keyDigest:=sha256.Sum256([]byte(idempotencyKey))
+	requestDigest:=sha256.Sum256([]byte(sourceID+"\\x00"+body+"\\x00"+visibility))
+	return hex.EncodeToString(keyDigest[:]),hex.EncodeToString(requestDigest[:])
+}
+
 func (s *service) threadQuote(w http.ResponseWriter,r *http.Request) {
 	userID,rid,ok:=s.socialAuth(w,r)
 	if !ok { return }
