@@ -2,6 +2,8 @@ package virtualstorage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -51,6 +53,16 @@ func (s *replicaTestStore) SHA256(_ context.Context, bucket, key string, _ int64
 	if !ok { return "", ErrNotFound }
 	return obj.hash, nil
 }
+
+func (s *replicaTestStore) PutObjectVerified(_ context.Context, bucket, key string, body []byte, contentType string) error {
+	h := sha256.Sum256(body)
+	s.objects[replicaTestKey(bucket,key)] = replicaTestObject{
+		info:ObjectInfo{Key:key,Size:int64(len(body)),ContentType:contentType},
+		hash:hex.EncodeToString(h[:]),
+	}
+	return nil
+}
+
 func (s *replicaTestStore) CopyFromProvider(_ context.Context, source Provider, sourceBucket, sourceKey, destinationBucket, destinationKey string, expectedBytes int64, contentType, expectedSHA256 string) error {
 	if s.failCopy { return errors.New("simulated provider outage") }
 	s.copyCalls++
