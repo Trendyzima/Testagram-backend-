@@ -60,6 +60,7 @@ func (s *service) threadCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 503, errorBody("THREAD_CREATE_FAILED", "Thread could not be created", rid))
 		return
 	}
+	s.enqueueWatchdogImpulse("post_publish")
 	writeJSON(w, 201, map[string]any{"ok": true, "data": map[string]any{"id": id, "owner_id": userID, "body": in.Body, "visibility": in.Visibility, "media_urls": []threadMediaDTO{}, "created_at": time.Now().UTC()}, "error": nil, "request_id": rid})
 }
 
