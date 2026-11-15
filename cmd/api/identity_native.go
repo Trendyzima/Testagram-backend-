@@ -65,7 +65,11 @@ func identityDerivedCapabilityToken(idempotencyKey, purpose, resourceID string) 
 
 func identityApplicationConflict(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return false
+	}
+	return pgErr.ConstraintName == "identity_applications_active_email_ci_idx" ||
+		pgErr.ConstraintName == "identity_applications_active_username_ci_idx"
 }
 
 func identityApplicationNeedsVerificationSessionRenewal(status string, provisioningExists bool) bool {
