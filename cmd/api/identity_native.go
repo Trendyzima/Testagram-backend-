@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var identityApplicationIDPattern = regexp.MustCompile("^[0-9a-fA-F-]{36}$")
@@ -52,6 +53,11 @@ type identitySessionAccess struct {
 	Email string
 	Status string
 	Purpose string
+}
+
+func identityApplicationConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func identityApplicationNeedsVerificationSessionRenewal(status string, provisioningExists bool) bool {
@@ -211,7 +217,13 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		`, applicationID, email, username, displayName, "native-session-pending:"+applicationID,
 			termsVersion, privacyVersion, submissionHash, applicationTokenHash)
 		if err != nil {
-			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the application is eligible, the next verification step will be sent."})
+			if identityApplicationConflict(err) {
+				// Duplicate email/username constraints receive the same neutral
+				// acceptance as an ineligible application to prevent enumeration.
+				writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the application is eligible, the next verification step will be sent."})
+				return
+			}
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 			return
 		}
 		for _, consent := range []struct{ kind, version string }{{"terms", termsVersion}, {"privacy", privacyVersion}, {"age_confirmation", "age-v1"}} {
