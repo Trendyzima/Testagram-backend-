@@ -198,6 +198,9 @@ func (s *service) socialPostCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.enqueueWatchdogImpulse("post_publish")
+	if input.Visibility == "public" {
+		s.enqueueWatchdogImpulse("federation_interaction")
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ok": true,
 		"data": map[string]any{
