@@ -35,27 +35,37 @@ func authFingerprint(value string) []byte {
 }
 
 func issueNativeSession(ctx context.Context, db interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Begin(context.Context) (pgx.Tx, error)
 }, userID, email string, version int64, userAgent, ip string) (nativeSessionTokens, error) {
 	refresh, err := authRandomToken()
 	if err != nil {
 		return nativeSessionTokens{}, err
 	}
-	var sessionID, familyID string
-	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text").Scan(&sessionID, &familyID); err != nil {
+	tx, err := db.Begin(ctx)
+	if err != nil {
 		return nativeSessionTokens{}, err
 	}
-	if _, err := db.Exec(ctx, `
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	var sessionID, familyID string
+	if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text").Scan(&sessionID, &familyID); err != nil {
+		return nativeSessionTokens{}, err
+	}
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_auth.sessions
 			(session_id,user_id,refresh_token_hash,family_id,token_version,expires_at,user_agent_hash,ip_hash)
-		VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,now()+$6::interval,$7,$8)
-	`, sessionID, userID, authTokenHash(refresh), familyID, version, "30 days", authFingerprint(userAgent), authFingerprint(ip)); err != nil {
+		VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,now()+interval '30 days',$6,$7)
+	`, sessionID, userID, authTokenHash(refresh), familyID, version, authFingerprint(userAgent), authFingerprint(ip)); err != nil {
 		return nativeSessionTokens{}, err
 	}
 	access, err := authSignJWT(userID, email, version, sessionID)
 	if err != nil {
-		_, _ = db.Exec(ctx, "UPDATE testagram_auth.sessions SET revoked_at=now(),revoke_reason='access_token_sign_failed' WHERE session_id=$1::uuid", sessionID)
+		return nativeSessionTokens{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
+		VALUES($1::uuid,'auth.login','success',$2)`, userID, authFingerprint(ip)); err != nil {
+		return nativeSessionTokens{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nativeSessionTokens{}, err
 	}
 	return nativeSessionTokens{
@@ -197,15 +207,15 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 		WHERE session_id=$1::uuid AND revoked_at IS NULL`, oldID, nextID); err != nil {
 		return nativeSessionTokens{}, err
 	}
+	access, err := authSignJWT(userID, email, version, nextID)
+	if err != nil {
+		return nativeSessionTokens{}, err
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
 		VALUES($1::uuid,'auth.refresh_rotated','success',$2)`, userID, authFingerprint(ip)); err != nil {
 		return nativeSessionTokens{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nativeSessionTokens{}, err
-	}
-	access, err := authSignJWT(userID, email, version, nextID)
-	if err != nil {
 		return nativeSessionTokens{}, err
 	}
 	return nativeSessionTokens{AccessToken: access, RefreshToken: nextRefresh, TokenType: "Bearer", ExpiresIn: 900, User: map[string]any{"id": userID, "email": email}}, nil
@@ -230,7 +240,12 @@ func (s *service) revokeNativeSession(ctx context.Context, claims authClaims, al
 		}
 		return tx.Commit(ctx)
 	}
-	tag, err := s.db.Exec(ctx, `UPDATE testagram_auth.sessions SET revoked_at=COALESCE(revoked_at,now()),revoke_reason='logout'
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	tag, err := tx.Exec(ctx, `UPDATE testagram_auth.sessions SET revoked_at=COALESCE(revoked_at,now()),revoke_reason='logout'
 		WHERE session_id=$1::uuid AND user_id=$2::uuid AND revoked_at IS NULL`, claims.SessionID, claims.Subject)
 	if err != nil {
 		return err
@@ -238,9 +253,11 @@ func (s *service) revokeNativeSession(ctx context.Context, claims authClaims, al
 	if tag.RowsAffected() == 0 {
 		return errors.New("session is already revoked")
 	}
-	_, err = s.db.Exec(ctx, `INSERT INTO testagram_auth.security_audit(actor_user_id,subject_user_id,event_type,outcome,ip_hash)
-		VALUES($1::uuid,$1::uuid,'auth.logout','success',$2)`, claims.Subject, authFingerprint(ip))
-	return err
+	if _, err := tx.Exec(ctx, `INSERT INTO testagram_auth.security_audit(actor_user_id,subject_user_id,event_type,outcome,ip_hash)
+		VALUES($1::uuid,$1::uuid,'auth.logout','success',$2)`, claims.Subject, authFingerprint(ip)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func nativeBearerToken(r *http.Request) (string, error) {
