@@ -108,12 +108,14 @@ class WatchdogTests(unittest.TestCase):
             "id": "machine-123", "name": "testagram", "state": "running",
             "desiredState": "running", "operationId": "op-in-progress"
         })
-        with patch.object(watchdog, "API", return_value=api), \
-             patch.object(watchdog, "load_state", return_value={}), \
-             patch.object(watchdog, "notify") as notify, \
-             patch.object(watchdog, "API_KEY", "test-key"), \
-             patch.object(watchdog, "MACHINE_ID", "machine-123"), \
-             patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "notify") as notify,
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
+        ):
             self.assertEqual(watchdog.main(), 0)
         self.assertEqual(len(api.calls), 1)
         notify.assert_not_called()
@@ -123,12 +125,14 @@ class WatchdogTests(unittest.TestCase):
             "id": "machine-123", "name": "testagram", "state": "stopped",
             "desiredState": "stopped", "operationId": None
         })
-        with patch.object(watchdog, "API", return_value=api), \
-             patch.object(watchdog, "load_state", return_value={}), \
-             patch.object(watchdog, "notify") as notify, \
-             patch.object(watchdog, "API_KEY", "test-key"), \
-             patch.object(watchdog, "MACHINE_ID", "machine-123"), \
-             patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"), \
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "notify") as notify,
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
+        ):
             self.assertEqual(watchdog.main(), 0)
         self.assertEqual(len(api.calls), 1)
         notify.assert_not_called()
