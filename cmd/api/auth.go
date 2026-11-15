@@ -460,6 +460,17 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusForbidden, errorBody("PASSWORD_RESET_REQUIRED", "Reset your password before signing in.", requestID(r)))
 			return true
 		}
+		if authPasswordNeedsRehash(hash) {
+			upgradedHash, hashErr := authPasswordHash(in.Password)
+			if hashErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("CREDENTIAL_UPGRADE_FAILED", "Secure credential upgrade could not be completed", requestID(r)))
+				return true
+			}
+			if _, hashErr = s.db.Exec(ctx, `UPDATE testagram_auth.identities SET password_hash=$2,updated_at=now() WHERE user_id=$1::uuid AND password_hash=$3`, userID, upgradedHash, hash); hashErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("CREDENTIAL_UPGRADE_FAILED", "Secure credential upgrade could not be completed", requestID(r)))
+				return true
+			}
+		}
 		tokens, err := issueNativeSession(ctx, s.db, userID, email, version, r.UserAgent(), ip)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("SESSION_CREATE_FAILED", "A secure session could not be created", requestID(r)))
