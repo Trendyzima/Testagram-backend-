@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type feedPreferenceInput struct {
@@ -30,9 +33,11 @@ func (s *service) feedPreferences(w http.ResponseWriter,r *http.Request) {
 	case http.MethodGet:
 		var feed string;var updated time.Time
 		err:=s.db.QueryRow(ctx,`SELECT default_feed,updated_at FROM testagram_local.user_feed_preferences WHERE user_id=$1`,userID).Scan(&feed,&updated)
-		if err!=nil {
+		if errors.Is(err,pgx.ErrNoRows) {
 			feed="for-you"
 			updated=time.Time{}
+		} else if err!=nil {
+			writeJSON(w,503,errorBody("FEED_PREFERENCE_READ_FAILED","Feed preference could not be loaded",rid));return
 		}
 		writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"default_feed":feed,"available_feeds":[]string{"for-you","following","latest","media"},"updated_at":updated},"error":nil,"request_id":rid})
 	case http.MethodPut:
