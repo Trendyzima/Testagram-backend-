@@ -82,7 +82,7 @@ jobs:
             sleep 2
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' testagram-cdn-ci)" = "healthy"
-          docker exec testagram-cdn-ci /healthcheck
+          docker exec testagram-cdn-ci /app/healthcheck
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.10"
@@ -142,7 +142,7 @@ jobs:
           if "edge" not in cdn.get("networks", []):
               raise SystemExit("Go CDN must share only the private edge bridge with Caddy and Backend.")
           health = cdn.get("healthcheck", {}).get("test", [])
-          if "/healthcheck" not in health:
+          if "/app/healthcheck" not in health:
               raise SystemExit("Go CDN healthcheck must use the scratch-compatible static probe.")
           api_env = services["api"].get("environment", {})
           for key in ("CDN_ORIGIN_AUTH_TOKEN", "CDN_MEDIA_ASSERTION_SECRET", "CDN_MEDIA_BASE_URL", "CDN_PURGE_URL", "CDN_PURGE_TOKEN"):
