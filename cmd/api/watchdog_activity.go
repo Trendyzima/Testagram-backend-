@@ -29,10 +29,23 @@ func watchdogBucketKey(eventType string, now time.Time) string {
 	return "testagram:"+eventType+":"+now.UTC().Truncate(5*time.Minute).Format("20060102T1504")
 }
 
-func (s *service) enqueueWatchdogImpulse(eventType string) {
+func validWatchdogEvent(eventType string) bool {
 	switch eventType {
 	case "login", "feed_open", "post_publish", "media_upload", "media_view", "federation_interaction":
+		return true
 	default:
+		return false
+	}
+}
+
+// A shared five-minute bucket bounds queue writes without identifying users.
+// A fresh bucket can extend a service lease while platform-wide activity continues.
+func watchdogBucketKey(eventType string, at time.Time) string {
+	return "testagram:" + eventType + ":" + at.UTC().Truncate(5*time.Minute).Format("20060102T1504")
+}
+
+func (s *service) enqueueWatchdogImpulse(eventType string) {
+	if !validWatchdogEvent(eventType) {
 		return
 	}
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INTERNAL_URL")), "/")
