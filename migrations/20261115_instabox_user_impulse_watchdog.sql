@@ -17,7 +17,7 @@ create index if not exists watchdog_impulses_claim_idx
   on testagram_watchdog.impulses(status, created_at) where status in ('queued','claimed');
 
 create table if not exists testagram_watchdog.service_leases (
-  service_name text primary key check (service_name in ('backend','data-centre','cdn','algorithm','federation')),
+  service_name text primary key check (service_name in ('cdn','algorithm','federation','worker','notification','video-worker','media')),
   active_until timestamptz not null,
   last_impulse_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
