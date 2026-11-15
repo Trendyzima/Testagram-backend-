@@ -15,7 +15,7 @@ from urllib.parse import quote, urlencode, urlparse
 API_BASE = os.getenv("INSTABOX_API_BASE_URL", "https://api.instabox.sh").rstrip("/")
 API_KEY = os.getenv("INSTABOX_WATCHDOG_API_KEY", "")
 MACHINE_ID = os.getenv("INSTABOX_MACHINE_ID", "")
-MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagramdb")
+MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagram")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
 READY_URL = os.getenv("TESTAGRAM_READINESS_URL", "")
 STATE_FILE = os.getenv("WATCHDOG_STATE_FILE", ".watchdog-state.json")
@@ -47,7 +47,7 @@ class API:
                 idempotency_key: str | None = None) -> dict[str, Any]:
         if not self.key:
             raise WatchdogError("INSTABOX_API_KEY is not configured")
-        headers = {"Authorization": f"Bearer {self.key}", "Accept": "application/json"}
+        headers = {"X-API-Key": self.key, "Accept": "application/json"}
         payload = None
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -185,11 +185,19 @@ def resolve_machine_id(api: API) -> str:
     return str(matches[0]["id"])
 
 
+def readiness_probe() -> tuple[bool, str]:
+    # The public port agent intentionally does not expose /readyz. Private
+    # dependency readiness is checked by the deployment job inside Docker.
+    if not READY_URL:
+        return True, "skipped (private readiness is not publicly routable)"
+    return probe(READY_URL)
+
+
 def wait_for_service() -> None:
     deadline = time.monotonic() + RECOVERY_HEALTH_TIMEOUT
     while True:
         health_ok, health_detail = probe(HEALTH_URL)
-        ready_ok, ready_detail = probe(READY_URL)
+        ready_ok, ready_detail = readiness_probe()
         if health_ok and ready_ok:
             emit(f"recovery verified: health={health_detail}, readiness={ready_detail}")
             return
@@ -295,10 +303,9 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
 
 def main() -> int:
     global MACHINE_ID
-    if not API_KEY or (not MACHINE_ID and not MACHINE_NAME) or not HEALTH_URL or not READY_URL:
+    if not API_KEY or (not MACHINE_ID and not MACHINE_NAME) or not HEALTH_URL:
         raise WatchdogError("Configure INSTABOX_WATCHDOG_API_KEY, INSTABOX_MACHINE_NAME (or INSTABOX_MACHINE_ID), TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
-    for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL),
-                         ("readiness", READY_URL)):
+    for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL)) + ((("readiness", READY_URL),) if READY_URL else ()):
 
         if urlparse(value).scheme != "https":
             raise WatchdogError(f"{label} URL must use HTTPS")
