@@ -441,11 +441,6 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("SESSION_CREATE_FAILED", "A secure session could not be created", requestID(r)))
 			return true
 		}
-		if _, err := s.db.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
-			VALUES($1::uuid,'auth.login','success',$2)`, userID, authFingerprint(ip)); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_AUDIT_FAILED", "Sign-in could not be completed", requestID(r)))
-			return true
-		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": tokens, "error": nil, "request_id": requestID(r)})
 		return true
 	case "refresh":
@@ -562,13 +557,18 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
 			return true
 		}
-		if _, err = tx.Exec(ctx, `
+		identityTag, updateErr := tx.Exec(ctx, `
 			UPDATE testagram_auth.identities SET password_hash=$2,password_reset_required=false,
 				reset_token_hash=NULL,reset_expires_at=NULL,password_changed_at=now(),
 				token_version=token_version+1,updated_at=now()
 			WHERE user_id=$1::uuid AND email_verified_at IS NOT NULL AND disabled_at IS NULL
-		`, userID, hash); err != nil {
+		`, userID, hash)
+		if updateErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to update password", requestID(r)))
+			return true
+		}
+		if identityTag.RowsAffected() != 1 {
+			writeJSON(w, http.StatusForbidden, errorBody("ACCOUNT_NOT_ACTIVE", "This account cannot reset its password.", requestID(r)))
 			return true
 		}
 		if _, err = tx.Exec(ctx, "UPDATE testagram_auth.password_reset_tokens SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL", authTokenHash(token)); err != nil {
