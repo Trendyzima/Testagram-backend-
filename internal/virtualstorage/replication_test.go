@@ -335,3 +335,51 @@ func TestReplicatorReturnsOnlyChecksumVerifiedPrivateReplicaURLs(t *testing.T) {
 		t.Fatalf("verified replica downloads=%+v, want only checksum-valid R2", urls)
 	}
 }
+
+
+func TestReplicatorWritesAndDeletesMetadataSidecarsOnAllProviders(t *testing.T) {
+	primary, r2, b2 := newReplicaTestStore(), newReplicaTestStore(), newReplicaTestStore()
+	const digest = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	key := "users/user-1/avatar.webp"
+	scoped := tenantPrefix("user-1") + key
+	primary.objects[replicaTestKey("vps-private", scoped)] = replicaTestObject{
+		info: ObjectInfo{Key: scoped, Size: 123, ContentType: "image/webp"}, hash: digest,
+	}
+	primaryBuckets := map[string]string{
+		"media-private":"vps-private", "media-public":"vps-public", "media-metadata-private":"vps-metadata",
+	}
+	r2Buckets := map[string]string{
+		"media-private":"r2-private", "media-public":"r2-public", "media-metadata-private":"r2-metadata",
+	}
+	b2Buckets := map[string]string{
+		"media-private":"b2-private", "media-public":"b2-public", "media-metadata-private":"b2-metadata",
+	}
+	r, err := NewReplicator("instabox-vps", primary, primaryBuckets, []ReplicaTarget{
+		{Name:"cloudflare-r2", Provider:r2, Buckets:r2Buckets},
+		{Name:"backblaze-b2", Provider:b2, Buckets:b2Buckets},
+	})
+	if err != nil { t.Fatal(err) }
+	if _, err := r.Replicate(context.Background(), "user-1", "media-private", key, 123, "image/webp", digest); err != nil {
+		t.Fatalf("replicate with metadata sidecars: %v", err)
+	}
+	metadataKey := scoped + ".metadata.json"
+	for _, entry := range []struct{store *replicaTestStore; bucket string}{
+		{primary,"vps-metadata"},{r2,"r2-metadata"},{b2,"b2-metadata"},
+	} {
+		obj, ok := entry.store.objects[replicaTestKey(entry.bucket, metadataKey)]
+		if !ok { t.Fatalf("metadata sidecar missing from %s", entry.bucket) }
+		if obj.info.ContentType != "application/json" || obj.info.Size == 0 || len(obj.hash) != 64 {
+			t.Fatalf("metadata sidecar on %s was not verified: %+v", entry.bucket, obj.info)
+		}
+	}
+	if err := r.Delete(context.Background(), "user-1", "media-private", key); err != nil {
+		t.Fatalf("delete media and metadata sidecars: %v", err)
+	}
+	for _, entry := range []struct{store *replicaTestStore; bucket string}{
+		{primary,"vps-metadata"},{r2,"r2-metadata"},{b2,"b2-metadata"},
+	} {
+		if _, ok := entry.store.objects[replicaTestKey(entry.bucket, metadataKey)]; ok {
+			t.Fatalf("metadata sidecar remains in %s after deletion", entry.bucket)
+		}
+	}
+}
