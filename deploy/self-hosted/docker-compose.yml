@@ -231,7 +231,13 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [edge, data, monitoring, platform, egress]
+    networks:
+      edge: {}
+      data: {}
+      monitoring: {}
+      platform:
+        aliases: [testagram-backend-api]
+      egress: {}
 
   admin-console:
     build:
