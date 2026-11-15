@@ -438,56 +438,6 @@ func (s *service) routes() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{\"ok\":true,\"service\":\"testagram-api\"}\n"))
 	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if s.db == nil {
-			http.Error(w, "database not configured", http.StatusServiceUnavailable)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := s.db.Ping(ctx); err != nil {
-			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready\n"))
-	})
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		var output strings.Builder
-		output.WriteString(s.metricsText())
-		if s.db != nil {
-			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
-			defer cancel()
-			var outboxPending, oldestOutboxSeconds, outboxFailed, inboxPending, oldestInboxSeconds, inboxRejected, inboxStale, inboxRejected24h int64
-			err := s.db.QueryRow(ctx, `
-				SELECT count(*) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL),
-				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL)))::bigint, 0),
-				       count(*) FILTER (WHERE failed_at IS NOT NULL)
-				FROM platform_replication_outbox`).Scan(&outboxPending, &oldestOutboxSeconds, &outboxFailed)
-			if err == nil {
-				err = s.db.QueryRow(ctx, `
-					SELECT count(*) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry')),
-					       COALESCE(EXTRACT(EPOCH FROM (now() - min(received_at) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry'))))::bigint, 0),
-					       count(*) FILTER (WHERE outcome = 'rejected'),
-					       count(*) FILTER (WHERE outcome = 'stale'),
-					       count(*) FILTER (WHERE outcome = 'rejected' AND received_at >= now() - interval '24 hours')
-					FROM platform_replication_inbox`).Scan(&inboxPending, &oldestInboxSeconds, &inboxRejected, &inboxStale, &inboxRejected24h)
-			}
-			if err == nil {
-				fmt.Fprintf(&output, "testagram_replication_outbox_pending %d\n", outboxPending)
-				fmt.Fprintf(&output, "testagram_replication_outbox_oldest_seconds %d\n", oldestOutboxSeconds)
-				fmt.Fprintf(&output, "testagram_replication_outbox_failed_total %d\n", outboxFailed)
-				fmt.Fprintf(&output, "testagram_replication_inbox_pending %d\n", inboxPending)
-				fmt.Fprintf(&output, "testagram_replication_inbox_oldest_seconds %d\n", oldestInboxSeconds)
-				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_total %d\n", inboxRejected)
-				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_24h %d\n", inboxRejected24h)
-				fmt.Fprintf(&output, "testagram_replication_inbox_stale_total %d\n", inboxStale)
-			}
-		}
-		_, _ = w.Write([]byte(output.String()))
-	})
 	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
@@ -527,12 +477,6 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/me/federation", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/federation", s.federationPreference)
 	mux.HandleFunc("PUT /api/me/federation", s.federationPreference)
-	mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationInternalReady)
-	mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActorByHandle)
-	mux.HandleFunc("GET /internal/v1/federation/actors/by-id/{user_id}", s.federationActorByID)
-	mux.HandleFunc("GET /internal/v1/federation/objects/{post_id}", s.federationObject)
-	mux.HandleFunc("POST /internal/v1/federation/remote-follows", s.federationRemoteFollow)
-	mux.HandleFunc("POST /internal/v1/federation/remote-follows/undo", s.federationRemoteUnfollow)
 	mux.HandleFunc("OPTIONS /api/feed/home", s.mediaPreflight)
 	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/feed/public", s.mediaPreflight)
@@ -637,6 +581,73 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/media/private-download-url", s.mediaPrivateDownloadURL)
 	mux.HandleFunc("OPTIONS /api/media/list", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/list", s.mediaList)
+	return s.instrument(mux)
+}
+
+func (s *service) internalRoutes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if s.db == nil {
+			http.Error(w, "database not configured", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.db.Ping(ctx); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready\n"))
+	})
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		var output strings.Builder
+		output.WriteString(s.metricsText())
+		if s.db != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+			defer cancel()
+			var outboxPending, oldestOutboxSeconds, outboxFailed, inboxPending, oldestInboxSeconds, inboxRejected, inboxStale, inboxRejected24h int64
+			err := s.db.QueryRow(ctx, `
+				SELECT count(*) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL),
+				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE delivered_at IS NULL AND failed_at IS NULL)))::bigint, 0),
+				       count(*) FILTER (WHERE failed_at IS NOT NULL)
+				FROM platform_replication_outbox`).Scan(&outboxPending, &oldestOutboxSeconds, &outboxFailed)
+			if err == nil {
+				err = s.db.QueryRow(ctx, `
+					SELECT count(*) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry')),
+					       COALESCE(EXTRACT(EPOCH FROM (now() - min(received_at) FILTER (WHERE applied_at IS NULL AND outcome IN ('received','retry'))))::bigint, 0),
+					       count(*) FILTER (WHERE outcome = 'rejected'),
+					       count(*) FILTER (WHERE outcome = 'stale'),
+					       count(*) FILTER (WHERE outcome = 'rejected' AND received_at >= now() - interval '24 hours')
+					FROM platform_replication_inbox`).Scan(&inboxPending, &oldestInboxSeconds, &inboxRejected, &inboxStale, &inboxRejected24h)
+			}
+			if err == nil {
+				fmt.Fprintf(&output, "testagram_replication_outbox_pending %d\n", outboxPending)
+				fmt.Fprintf(&output, "testagram_replication_outbox_oldest_seconds %d\n", oldestOutboxSeconds)
+				fmt.Fprintf(&output, "testagram_replication_outbox_failed_total %d\n", outboxFailed)
+				fmt.Fprintf(&output, "testagram_replication_inbox_pending %d\n", inboxPending)
+				fmt.Fprintf(&output, "testagram_replication_inbox_oldest_seconds %d\n", oldestInboxSeconds)
+				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_total %d\n", inboxRejected)
+				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_24h %d\n", inboxRejected24h)
+				fmt.Fprintf(&output, "testagram_replication_inbox_stale_total %d\n", inboxStale)
+			}
+		}
+		_, _ = w.Write([]byte(output.String()))
+	})
+	mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationInternalReady)
+	mux.HandleFunc("GET /internal/v1/federation/actors/{handle}", s.federationActorByHandle)
+	mux.HandleFunc("GET /internal/v1/federation/actors/by-id/{user_id}", s.federationActorByID)
+	mux.HandleFunc("GET /internal/v1/federation/objects/{post_id}", s.federationObject)
+	mux.HandleFunc("POST /internal/v1/federation/remote-follows", s.federationRemoteFollow)
+	mux.HandleFunc("POST /internal/v1/federation/remote-follows/undo", s.federationRemoteUnfollow)
+	return s.instrument(mux)
+}
+
+// instrument records requests for either listener. internalRoutes is served
+// only on the Docker-private :8082 listener; only routes() is port-agent public.
+func (s *service) instrument(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
@@ -657,7 +668,7 @@ func (s *service) routes() http.Handler {
 				return
 			}
 		}
-		mux.ServeHTTP(recorder, r)
+		handler.ServeHTTP(recorder, r)
 		s.recordRequest(normalizedMethod(r.Method), normalizedRoute(r.URL.Path), recorder.status, time.Since(started))
 	})
 }
@@ -1247,16 +1258,27 @@ func main() {
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
 	log.Printf("Testagram-native manual identity verification is available when private evidence storage and registration policy are configured")
+	internalAddr := env("INTERNAL_LISTEN_ADDR", ":8082")
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
-	serverErrors := make(chan error, 1)
+	internalServer := &http.Server{
+		Addr: internalAddr, Handler: svc.internalRoutes(),
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	serverErrors := make(chan error, 2)
 	go func() {
-		log.Printf("Testagram backend listening on %s", addr)
+		log.Printf("Testagram public Backend listening on %s", addr)
 		serverErrors <- server.ListenAndServe()
+	}()
+	go func() {
+		log.Printf("Testagram private health/metrics listener on %s", internalAddr)
+		serverErrors <- internalServer.ListenAndServe()
 	}()
 
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -1308,9 +1330,11 @@ func main() {
 	case <-signalCtx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			log.Printf("graceful shutdown failed: %v", err)
-			_ = server.Close()
+		for _, listener := range []*http.Server{server, internalServer} {
+			if err := listener.Shutdown(shutdownCtx); err != nil {
+				log.Printf("graceful HTTP shutdown failed: %v", err)
+				_ = listener.Close()
+			}
 		}
 	}
 }

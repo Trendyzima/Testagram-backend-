@@ -29,6 +29,8 @@
   }
 }
 {$MEDIA_DOMAIN} {
+  @internal_observability path /readyz /metrics
+  respond @internal_observability 404
   encode zstd gzip
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"

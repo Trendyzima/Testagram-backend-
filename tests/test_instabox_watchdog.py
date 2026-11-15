@@ -11,7 +11,7 @@ class FakeAPI:
     def __init__(self, machine=None):
         self.machine = machine or {
             "id": "machine-123",
-            "name": "testagramdb",
+            "name": "testagram",
             "state": "running",
             "desiredState": "running",
             "operationId": None,
@@ -37,7 +37,7 @@ class WatchdogTests(unittest.TestCase):
         class ListAPI:
             def request(self, method, path, body=None, idempotency_key=None):
                 return {"machines": [
-                    {"id": "machine-123", "name": "testagramdb"},
+                    {"id": "machine-123", "name": "testagram"},
                     {"id": "other-id", "name": "another-machine"}
                 ], "nextCursor": None}
         with patch.object(watchdog, "MACHINE_ID", ""):
@@ -47,15 +47,16 @@ class WatchdogTests(unittest.TestCase):
         class ListAPI:
             def request(self, method, path, body=None, idempotency_key=None):
                 return {"machines": [
-                    {"id": "machine-123", "name": "testagramdb"},
-                    {"id": "machine-456", "name": "testagramdb"}
+                    {"id": "machine-123", "name": "testagram"},
+                    {"id": "machine-456", "name": "testagram"}
                 ], "nextCursor": None}
         with patch.object(watchdog, "MACHINE_ID", ""), \
              self.assertRaisesRegex(watchdog.WatchdogError, "found 2"):
             watchdog.resolve_machine_id(ListAPI())
 
     def test_wait_for_service_requires_both_health_and_readiness(self):
-        with patch.object(watchdog, "probe", side_effect=[
+        with patch.object(watchdog, "READY_URL", "https://api.example.test/private-readyz"), \
+             patch.object(watchdog, "probe", side_effect=[
             (False, "HTTP 503"), (True, "HTTP 200"),
             (True, "HTTP 200"), (True, "HTTP 200")
         ]) as probe, patch.object(watchdog.time, "sleep"):
@@ -132,7 +133,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_active_operation_is_not_interrupted(self):
         api = FakeAPI({
-            "id": "machine-123", "name": "testagramdb", "state": "running",
+            "id": "machine-123", "name": "testagram", "state": "running",
             "desiredState": "running", "operationId": "op-in-progress"
         })
         with patch.object(watchdog, "API", return_value=api), \
@@ -148,7 +149,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_intentional_stop_is_never_overridden(self):
         api = FakeAPI({
-            "id": "machine-123", "name": "testagramdb", "state": "stopped",
+            "id": "machine-123", "name": "testagram", "state": "stopped",
             "desiredState": "stopped", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
@@ -164,7 +165,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_unexpected_stop_is_started_when_desired_state_is_running(self):
         api = FakeAPI({
-            "id": "machine-123", "name": "testagramdb", "state": "stopped",
+            "id": "machine-123", "name": "testagram", "state": "stopped",
             "desiredState": "running", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
@@ -225,7 +226,7 @@ class WatchdogTests(unittest.TestCase):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
         self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
         self.assertIn("https://api.testagram.site/healthz", workflow)
-        self.assertIn("https://api.testagram.site/readyz", workflow)
+        self.assertNotIn("/readyz", workflow)
         self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
         self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true'", workflow)
 
