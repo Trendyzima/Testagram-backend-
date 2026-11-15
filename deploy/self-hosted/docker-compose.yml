@@ -431,7 +431,7 @@ networks:
     internal: true
   ranker:
     name: testagram-ranker
-    external: true
+    internal: true
   # Egress-only network for services that must validate Appwrite sessions.
   egress:
     name: testagram-egress
