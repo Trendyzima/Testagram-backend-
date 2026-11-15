@@ -18,6 +18,19 @@ import (
 // Data Centre control plane. It carries no user ID, email, IP, post content,
 // access token or session identifier. Delivery is best-effort: watchdog
 // outages must never break login, feed reads, publishing or media access.
+func validWatchdogEvent(eventType string) bool {
+	switch eventType {
+	case "login", "feed_open", "post_publish", "media_upload", "media_view", "federation_interaction":
+		return true
+	default:
+		return false
+	}
+}
+
+func watchdogBucketKey(eventType string, now time.Time) string {
+	return "testagram:"+eventType+":"+now.UTC().Truncate(5*time.Minute).Format("20060102T1504")
+}
+
 func (s *service) enqueueWatchdogImpulse(eventType string) {
 	switch eventType {
 	case "login", "feed_open", "post_publish", "media_upload", "media_view", "federation_interaction":
