@@ -46,12 +46,16 @@ func (s *service) scheduleExpiredMediaCleanup(parent context.Context) error {
 	// Reap stale in-flight claims, then enqueue only expired/cleanup-pending
 	// intents that have no corresponding asset row. A deletion is idempotent;
 	// provider-specific routing remains in performStorageDeletion.
-	_, err := s.db.Exec(ctx, `
+	if _, err := s.db.Exec(ctx, `
 		UPDATE testagram_media.upload_intents
 		   SET status='expired', updated_at=now()
 		 WHERE status IN ('issued','uploading')
-		   AND expires_at < now() - interval '2 hours';
+		   AND expires_at < now() - interval '2 hours'
+	`); err != nil {
+		return err
+	}
 
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO testagram_media.storage_deletion_jobs
 		  (object_key, owner_id, visibility, storage_namespace, storage_provider, reason, status)
 		SELECT i.object_key, i.owner_id, i.visibility, i.storage_namespace, i.storage_provider,
