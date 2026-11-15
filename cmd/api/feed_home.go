@@ -49,25 +49,25 @@ type homeFeedCursor struct {
 }
 
 type homeFeedPost struct {
-	ID             string         `json:"id"`
-	UserID         string         `json:"user_id"`
-	Content        string         `json:"content"`
-	Visibility     string         `json:"visibility"`
-	MediaIDs       []string       `json:"media_ids"`
-	MediaURLs      []string          `json:"media_urls"`
-	MediaContentTypes []string `json:"media_content_types"`
-	MediaAuthHeaders map[string]string `json:"media_auth_headers,omitempty"`
-	IsVideo        bool           `json:"is_video"`
-	IsFollowing    bool           `json:"is_following"`
-	Language       string         `json:"language"`
-	CreatedAt      time.Time      `json:"created_at"`
-	LikesCount     int64          `json:"likes_count"`
-	RepliesCount   int64          `json:"replies_count"`
-	RepostsCount   int64          `json:"reposts_count"`
-	Author         map[string]any `json:"author"`
-	Origin         string         `json:"origin"`
-	RankingScore   float64        `json:"ranking_score,omitempty"`
-	RankingReasons []string       `json:"ranking_reasons,omitempty"`
+	ID                string            `json:"id"`
+	UserID            string            `json:"user_id"`
+	Content           string            `json:"content"`
+	Visibility        string            `json:"visibility"`
+	MediaIDs          []string          `json:"media_ids"`
+	MediaURLs         []string          `json:"media_urls"`
+	MediaContentTypes []string          `json:"media_content_types"`
+	MediaAuthHeaders  map[string]string `json:"media_auth_headers,omitempty"`
+	IsVideo           bool              `json:"is_video"`
+	IsFollowing       bool              `json:"is_following"`
+	Language          string            `json:"language"`
+	CreatedAt         time.Time         `json:"created_at"`
+	LikesCount        int64             `json:"likes_count"`
+	RepliesCount      int64             `json:"replies_count"`
+	RepostsCount      int64             `json:"reposts_count"`
+	Author            map[string]any    `json:"author"`
+	Origin            string            `json:"origin"`
+	RankingScore      float64           `json:"ranking_score,omitempty"`
+	RankingReasons    []string          `json:"ranking_reasons,omitempty"`
 }
 
 func encodeHomeFeedCursor(cursor homeFeedCursor) string {
@@ -89,7 +89,6 @@ func decodeHomeFeedCursor(value string) (*homeFeedCursor, error) {
 	}
 	return &cursor, nil
 }
-
 
 func orderHomeFeedByRanking(posts []homeFeedPost, ranked []algorithmclient.RankedItem) ([]homeFeedPost, bool) {
 	if len(posts) == 0 || len(ranked) != len(posts) {
@@ -454,7 +453,9 @@ WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 					return errors.New("private media CDN origin is not verified; refusing direct-storage fallback")
 				}
 				assertion, _, issueErr := s.cdnMediaAssertions.IssueForViewer(asset.ObjectKey, asset.OwnerID, viewerID, time.Now())
-				if issueErr != nil { return issueErr }
+				if issueErr != nil {
+					return issueErr
+				}
 				mediaURL = s.cdnMediaBaseURL + "/v1/" + asset.ObjectKey
 				posts[i].MediaAuthHeaders[mediaURL] = "Bearer " + assertion
 			} else if asset.StorageNamespace != "legacy-media" && s.virtualStorage != nil {
@@ -462,7 +463,9 @@ WHERE a.status='ready' AND a.object_key = ANY($1::text[])`, ids)
 			} else if s.media != nil {
 				mediaURL, err = s.media.PresignPrivateDownload(viewerID, asset.ObjectKey, 5*time.Minute, time.Now())
 			}
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			if mediaURL != "" {
 				posts[i].MediaURLs = append(posts[i].MediaURLs, mediaURL)
 				posts[i].MediaContentTypes = append(posts[i].MediaContentTypes, asset.ContentType)
