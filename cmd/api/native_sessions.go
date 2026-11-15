@@ -45,6 +45,25 @@ func issueNativeSession(ctx context.Context, db interface {
 		return nativeSessionTokens{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	// Serialize session creation with password resets and account disablement.
+	// If either operation wins first, the stale login must not create a usable
+	// session with an old token version.
+	var currentEmail string
+	var currentVersion int64
+	var emailVerified, accountEnabled, resetNotRequired bool
+	if err := tx.QueryRow(ctx, `
+		SELECT email_normalized, token_version, email_verified_at IS NOT NULL,
+			disabled_at IS NULL, NOT password_reset_required
+		FROM testagram_auth.identities
+		WHERE user_id=$1::uuid
+		FOR UPDATE
+	`, userID).Scan(&currentEmail, &currentVersion, &emailVerified, &accountEnabled, &resetNotRequired); err != nil {
+		return nativeSessionTokens{}, err
+	}
+	if currentEmail != strings.ToLower(strings.TrimSpace(email)) || currentVersion != version ||
+		!emailVerified || !accountEnabled || !resetNotRequired {
+		return nativeSessionTokens{}, errors.New("identity changed during sign-in")
+	}
 	var sessionID, familyID string
 	if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text").Scan(&sessionID, &familyID); err != nil {
 		return nativeSessionTokens{}, err
