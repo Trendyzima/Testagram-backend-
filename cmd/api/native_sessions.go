@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -89,8 +90,9 @@ func verifyNativeAccessToken(ctx context.Context, db interface {
 	if len(secret) < 32 {
 		return claims, http.StatusServiceUnavailable, errors.New("native authentication is not configured")
 	}
-	mac := hmacSHA256([]byte(secret), []byte(parts[0]+"."+parts[1]))
-	if !constantTimeEqual(signature, mac) {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	if !hmac.Equal(signature, mac.Sum(nil)) {
 		return claims, http.StatusUnauthorized, errors.New("invalid token signature")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
