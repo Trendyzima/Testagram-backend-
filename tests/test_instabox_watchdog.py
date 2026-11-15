@@ -136,6 +136,7 @@ class WatchdogTests(unittest.TestCase):
         ]) as probe, patch.object(watchdog.time, "sleep"):
             watchdog.wait_for_service()
         self.assertEqual(probe.call_count, 2)
+        self.assertFalse(hasattr(watchdog, "READY_URL"))
 
     def test_probe_404_is_a_configuration_error_not_an_outage(self):
         error = watchdog.urllib.error.HTTPError(
