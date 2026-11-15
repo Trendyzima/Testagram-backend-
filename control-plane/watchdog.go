@@ -46,6 +46,14 @@ func servicesForImpulse(event string) ([]string, bool) {
 	}
 }
 
+func (s *Server) watchdogOnly(w http.ResponseWriter, r *http.Request) bool {
+	if !equalSecret(bearer(r), s.watchdogToken) {
+		reply(w, http.StatusUnauthorized, map[string]string{"error":"watchdog worker unauthorized"})
+		return false
+	}
+	return true
+}
+
 func (s *Server) registerWatchdogRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/watchdog/impulses", s.watchdogImpulses)
 	mux.HandleFunc("/v1/watchdog/impulses/claim", s.watchdogClaimImpulses)
@@ -201,10 +209,14 @@ func (s *Server) ackWatchdogImpulse(w http.ResponseWriter,r *http.Request,nodeID
 	}
 	if err!=nil { reply(w,http.StatusServiceUnavailable,map[string]string{"error":"watchdog result could not be persisted"}); return }
 	if tag.RowsAffected()!=1 { reply(w,http.StatusConflict,map[string]string{"error":"impulse is not currently claimed by this worker"}); return }
-	status:="failed"; if in.Success { status="completed" } else {
+	status:="queued"; if in.Success { status="completed" } else {
 		var current string
 		_ = s.db.QueryRow(ctx,`select status from testagram_watchdog.impulses where id=$1`,in.ID).Scan(&current)
 		status=current
+	}
+	if !in.Success {
+		var finalStatus string
+		if err := s.db.QueryRow(ctx, "select status from testagram_watchdog.impulses where id=$1", in.ID).Scan(&finalStatus); err == nil { status = finalStatus }
 	}
 	reply(w,http.StatusOK,map[string]any{"id":in.ID,"status":status})
 }
