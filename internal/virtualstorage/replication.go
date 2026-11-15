@@ -2,6 +2,7 @@ package virtualstorage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,6 +31,54 @@ type ReplicaResult struct {
 	ObjectKey string
 	Size     int64
 	SHA256   string
+}
+
+
+// mediaMetadataManifest is a small, deterministic sidecar stored in the private
+// metadata bucket on every configured provider. PostgreSQL remains canonical;
+// this sidecar is a recovery/inspection copy and contains no credentials or URLs.
+type mediaMetadataManifest struct {
+	SchemaVersion string `json:"schema_version"`
+	OwnerID       string `json:"owner_id"`
+	Namespace     string `json:"namespace"`
+	ObjectKey     string `json:"object_key"`
+	SizeBytes     int64  `json:"size_bytes"`
+	ContentType   string `json:"content_type"`
+	SHA256        string `json:"sha256"`
+}
+
+type verifiedObjectWriter interface {
+	PutObjectVerified(context.Context, string, string, []byte, string) error
+}
+
+func (r *Replicator) writeMetadataManifest(ctx context.Context, tenantID, namespace, objectKey string, size int64, contentType, checksum string) error {
+	manifestBucket := strings.TrimSpace(r.primaryBuckets["media-metadata-private"])
+	if manifestBucket == "" {
+		return nil // Backward-compatible for isolated unit tests and legacy deployments.
+	}
+	manifest := mediaMetadataManifest{
+		SchemaVersion: "instabox.media-metadata.v1",
+		OwnerID: tenantID, Namespace: namespace, ObjectKey: objectKey,
+		SizeBytes: size, ContentType: contentType, SHA256: strings.ToLower(checksum),
+	}
+	payload, err := json.Marshal(manifest)
+	if err != nil { return fmt.Errorf("encode media metadata sidecar: %w", err) }
+	key := tenantPrefix(tenantID) + objectKey + ".metadata.json"
+	type destination struct { name, bucket string; provider Provider }
+	destinations := []destination{{name:r.primaryName, bucket:manifestBucket, provider:r.primary}}
+	for _, target := range r.targets {
+		bucket := strings.TrimSpace(target.buckets["media-metadata-private"])
+		if bucket == "" { return fmt.Errorf("%s metadata sidecar bucket is not configured", target.name) }
+		destinations = append(destinations, destination{name:target.name, bucket:bucket, provider:target.provider})
+	}
+	for _, destination := range destinations {
+		writer, ok := destination.provider.(verifiedObjectWriter)
+		if !ok { return fmt.Errorf("%s provider cannot write verified metadata sidecars", destination.name) }
+		if err := writer.PutObjectVerified(ctx, destination.bucket, key, payload, "application/json"); err != nil {
+			return fmt.Errorf("write verified metadata sidecar on %s: %w", destination.name, err)
+		}
+	}
+	return nil
 }
 
 type ReplicaDownload struct {
@@ -299,6 +348,9 @@ func (r *Replicator) Replicate(ctx context.Context, tenantID, namespace, objectK
 			SHA256: expectedSHA256,
 		})
 	}
+	if err := r.writeMetadataManifest(ctx, tenantID, namespace, objectKey, size, contentType, expectedSHA256); err != nil {
+		return results, err
+	}
 	return results, nil
 }
 
@@ -329,6 +381,18 @@ func (r *Replicator) Delete(ctx context.Context, tenantID, namespace, objectKey 
 		err := target.provider.Delete(ctx,target.bucket,scopedKey)
 		if err != nil && !errors.Is(err,ErrNotFound) {
 			failures = append(failures,fmt.Sprintf("%s: %v",target.name,err))
+		}
+	}
+	metadataKey := scopedKey + ".metadata.json"
+	if metadataBucket := strings.TrimSpace(r.primaryBuckets["media-metadata-private"]); metadataBucket != "" {
+		metadataDestinations := []destination{{name:r.primaryName,provider:r.primary,bucket:metadataBucket}}
+		for _, target := range r.targets {
+			metadataDestinations = append(metadataDestinations,destination{name:target.name,provider:target.provider,bucket:target.buckets["media-metadata-private"]})
+		}
+		for _, target := range metadataDestinations {
+			if target.bucket == "" { failures = append(failures,target.name+": metadata bucket is not configured"); continue }
+			err := target.provider.Delete(ctx,target.bucket,metadataKey)
+			if err != nil && !errors.Is(err,ErrNotFound) { failures = append(failures,fmt.Sprintf("%s metadata: %v",target.name,err)) }
 		}
 	}
 	if len(failures)>0 {
