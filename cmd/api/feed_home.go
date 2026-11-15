@@ -30,6 +30,19 @@ func parseVideoOnly(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
+func parseHomeFeedMode(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "for_you", nil
+	}
+	switch value {
+	case "for_you", "following", "latest", "media", "discover":
+		return value, nil
+	default:
+		return "", errors.New("unsupported feed mode")
+	}
+}
+
 type homeFeedCursor struct {
 	CreatedAt time.Time `json:"created_at"`
 	ID        string    `json:"id"`
@@ -118,9 +131,26 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := 20
+	feedMode, feedModeErr := parseHomeFeedMode(r.URL.Query().Get("feed"))
+	if feedModeErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_FEED_MODE", "feed must be for_you, following, latest, media, or discover", requestID))
+		return
+	}
 	followingOnly, followingErr := parseFollowingOnly(r.URL.Query().Get("following_only"))
 	if followingErr != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_FOLLOWING_FILTER", "following_only must be a boolean", requestID))
+		return
+	}
+	if feedMode == "following" {
+		followingOnly = true
+	} else if feedMode == "for_you" && followingOnly {
+		feedMode = "following"
+	}
+	mediaOnly := feedMode == "media"
+	discoverOnly := feedMode == "discover"
+	rankingEnabled := feedMode != "latest"
+	if discoverOnly && followingOnly {
+		writeJSON(w, http.StatusBadRequest, errorBody("CONFLICTING_FEED_FILTERS", "discover cannot be combined with following_only=true", requestID))
 		return
 	}
 	videoOnly, videoOnlyErr := parseVideoOnly(r.URL.Query().Get("video_only"))
@@ -175,6 +205,12 @@ WHERE p.deleted_at IS NULL
       SELECT 1 FROM testagram_local.follows f
       WHERE f.follower_id=$1::uuid AND f.following_id=p.author_id AND f.status='accepted'
   ))
+  AND (NOT $7::boolean OR jsonb_array_length(COALESCE(p.media_ids,'[]'::jsonb))>0)
+  AND (NOT $8::boolean OR (
+      p.author_id<>$1::uuid AND p.visibility='public' AND NOT a.protected_account
+      AND NOT EXISTS (SELECT 1 FROM testagram_local.follows f
+          WHERE f.follower_id=$1::uuid AND f.following_id=p.author_id AND f.status='accepted')
+  ))
   AND (NOT $6::boolean OR EXISTS (
       SELECT 1
       FROM jsonb_array_elements_text(COALESCE(p.media_ids,'[]'::jsonb)) AS media_key(object_key)
@@ -193,7 +229,7 @@ LIMIT $4`
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly, videoOnly)
+	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly, videoOnly, mediaOnly, discoverOnly)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
@@ -236,7 +272,7 @@ LIMIT $4`
 		return
 	}
 	rankingMode := "chronological"
-	if s.algorithm != nil && len(candidates) > 0 {
+	if rankingEnabled && s.algorithm != nil && len(candidates) > 0 {
 		s.algorithmRequests.Add(1)
 		rankCtx, cancel := context.WithTimeout(r.Context(), 1400*time.Millisecond)
 		ranked, rankErr := s.algorithm.Rank(rankCtx, algorithmclient.Request{
@@ -282,7 +318,7 @@ LIMIT $4`
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
-		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode, "video_only": videoOnly},
+		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode, "feed_mode": feedMode, "video_only": videoOnly},
 		"error": nil, "request_id": requestID,
 	})
 }
