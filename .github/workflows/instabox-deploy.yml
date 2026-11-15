@@ -344,6 +344,20 @@ jobs:
                   exit 1
                 fi
               done
+              # The internal TV monitor depends on these handlers being present in
+              # the exact Backend binary just deployed. No token must be rejected
+              # with 401; 404 means a stale binary or incorrect router is live.
+              for route in /internal/tv/catalog /internal/tv/health; do
+                if [[ "$route" == "/internal/tv/catalog" ]]; then
+                  route_status="$(curl -sS -o /dev/null -w '%{http_code}' "$URL$route" || true)"
+                else
+                  route_status="$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"channels":[]}' -o /dev/null -w '%{http_code}' "$URL$route" || true)"
+                fi
+                if [[ "$route_status" != "401" ]]; then
+                  echo "::error::Expected unauthenticated internal TV route $route to reject with HTTP 401; got HTTP $route_status. Check deployed Backend image and router before declaring release ready."
+                  exit 1
+                fi
+              done
               private_status="$(curl -sS -o /dev/null -w '%{http_code}' "$CDN_URL/v1/users/cdn-smoke/0123456789abcdef0123456789abcdef")"
               case "$private_status" in 401|403|404) ;; *) echo "::error::Unauthenticated media request returned unsafe HTTP $private_status"; exit 1 ;; esac
               echo "Testagram API and pinned Go CDN are reachable; MinIO remains private behind the backend/CDN and unauthenticated media denial passed."
