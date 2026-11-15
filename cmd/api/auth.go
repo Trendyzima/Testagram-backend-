@@ -33,7 +33,8 @@ type authInput struct {
 	Email    string `json:"email"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Token    string `json:"token"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type authClaims struct {
@@ -448,7 +449,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": tokens, "error": nil, "request_id": requestID(r)})
 		return true
 	case "refresh":
-		tokens, err := s.rotateNativeRefresh(ctx, in.Token, r.UserAgent(), ip)
+		tokens, err := s.rotateNativeRefresh(ctx, in.RefreshToken, r.UserAgent(), ip)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_REFRESH_TOKEN", "Refresh token is invalid, expired, or has already been used.", requestID(r)))
 			return true
@@ -494,11 +495,28 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			return true
 		}
 		var savedEmail string
-		err = s.db.QueryRow(ctx, `
-			UPDATE testagram_auth.identities SET reset_token_hash=$2,reset_expires_at=now()+interval '30 minutes',updated_at=now()
-			WHERE email_normalized=$1 AND email_verified_at IS NOT NULL RETURNING email
-		`, email, authTokenHash(token)).Scan(&savedEmail)
-		if err == nil {
+		tx, txErr := s.db.Begin(ctx)
+		if txErr == nil {
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			_, txErr = tx.Exec(ctx, `
+				UPDATE testagram_auth.password_reset_tokens
+				SET consumed_at=now()
+				WHERE user_id=(SELECT user_id FROM testagram_auth.identities WHERE email_normalized=$1)
+				  AND consumed_at IS NULL
+			`, email)
+			if txErr == nil {
+				err = tx.QueryRow(ctx, `
+					INSERT INTO testagram_auth.password_reset_tokens(token_hash,user_id,expires_at,request_ip_hash)
+					SELECT $2,user_id,now()+interval '30 minutes',$3
+					FROM testagram_auth.identities
+					WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL
+					RETURNING (SELECT email FROM testagram_auth.identities WHERE user_id=password_reset_tokens.user_id)
+				`, email, authTokenHash(token), authFingerprint(ip)).Scan(&savedEmail)
+				txErr = err
+			}
+			if txErr == nil { txErr = tx.Commit(ctx) }
+		}
+		if txErr == nil && savedEmail != "" {
 			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 			link := base + "/reset-password?token=" + url.QueryEscape(token)
 			if sendErr := s.authSendEmail(ctx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>"); sendErr != nil {
@@ -514,32 +532,55 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
 			return true
 		}
-		tokenHash := authTokenHash(token)
-		var tokenValid bool
-		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM testagram_auth.identities WHERE reset_token_hash=$1 AND reset_expires_at>now() AND email_verified_at IS NOT NULL)`, tokenHash).Scan(&tokenValid); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
-			return true
-		}
-		if !tokenValid {
-			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
-			return true
-		}
 		hash, err := authPasswordHash(in.Password)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PASSWORD", "Password must be 12–128 bytes", requestID(r)))
 			return true
 		}
-		tag, err := s.db.Exec(ctx, `
-			UPDATE testagram_auth.identities SET password_hash=$2,reset_token_hash=NULL,reset_expires_at=NULL,
-				password_changed_at=now(),token_version=token_version+1,updated_at=now()
-			WHERE reset_token_hash=$1 AND reset_expires_at>now() AND email_verified_at IS NOT NULL
-		`, tokenHash, hash)
+		tx, err := s.db.Begin(ctx)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to reset password", requestID(r)))
 			return true
 		}
-		if tag.RowsAffected() == 0 {
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		var userID string
+		err = tx.QueryRow(ctx, `
+			SELECT user_id::text FROM testagram_auth.password_reset_tokens
+			WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now()
+			FOR UPDATE
+		`, authTokenHash(token)).Scan(&userID)
+		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
+			return true
+		}
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
+			return true
+		}
+		if _, err = tx.Exec(ctx, `
+			UPDATE testagram_auth.identities SET password_hash=$2,password_reset_required=false,
+				reset_token_hash=NULL,reset_expires_at=NULL,password_changed_at=now(),
+				token_version=token_version+1,updated_at=now()
+			WHERE user_id=$1::uuid AND email_verified_at IS NOT NULL AND disabled_at IS NULL
+		`, userID, hash); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to update password", requestID(r)))
+			return true
+		}
+		if _, err = tx.Exec(ctx, "UPDATE testagram_auth.password_reset_tokens SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL", authTokenHash(token)); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to consume reset token", requestID(r)))
+			return true
+		}
+		if _, err = tx.Exec(ctx, "UPDATE testagram_auth.sessions SET revoked_at=COALESCE(revoked_at,now()),revoke_reason='password_reset' WHERE user_id=$1::uuid AND revoked_at IS NULL", userID); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to revoke existing sessions", requestID(r)))
+			return true
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
+			VALUES($1::uuid,'auth.password_reset','success',$2)`, userID, authFingerprint(ip)); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to record password reset", requestID(r)))
+			return true
+		}
+		if err = tx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to commit password reset", requestID(r)))
 			return true
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Password reset. Sign in with your new password."})
