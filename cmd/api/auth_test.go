@@ -56,7 +56,7 @@ func TestAuthJWTRequiresDedicatedSecret(t *testing.T) {
 			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
 		}
 	})
-	if _, err := authSignJWT("123e4567-e89b-42d3-a456-426614174000", "user@example.com", 1); err == nil {
+	if _, err := authSignJWT("123e4567-e89b-42d3-a456-426614174000", "user@example.com", 1, "223e4567-e89b-42d3-a456-426614174000"); err == nil {
 		t.Fatal("JWT signing must fail without a dedicated secret")
 	}
 }
