@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 const watchdogLeaseDuration = 10 * time.Minute
@@ -161,5 +158,3 @@ func (s *Server) watchdogServices(w http.ResponseWriter, r *http.Request) {
 	reply(w,http.StatusOK,map[string]any{"services":items,"count":len(items)})
 }
 
-var _ = json.Valid
-var _ = pgx.ErrNoRows
