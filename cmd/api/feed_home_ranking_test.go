@@ -9,8 +9,8 @@ import (
 
 func TestParseHomeFeedMode(t *testing.T) {
 	cases := []struct {
-		input string
-		want string
+		input   string
+		want    string
 		wantErr bool
 	}{
 		{input: "", want: "for_you"},
@@ -34,9 +34,9 @@ func TestParseHomeFeedMode(t *testing.T) {
 
 func TestParseVideoOnly(t *testing.T) {
 	cases := []struct {
-		name string
-		input string
-		want bool
+		name    string
+		input   string
+		want    bool
 		wantErr bool
 	}{
 		{name: "omitted defaults false", input: "", want: false},
@@ -83,8 +83,8 @@ func TestOrderHomeFeedByRankingRequiresCompleteCandidateCoverage(t *testing.T) {
 func TestOrderHomeFeedByRankingFallsBackForPartialOrInvalidResponses(t *testing.T) {
 	posts := []homeFeedPost{{ID: "post-1"}, {ID: "post-2"}}
 	cases := map[string][]algorithmclient.RankedItem{
-		"empty": nil,
-		"partial": {{ID: "post-1", Score: 0.8}},
+		"empty":      nil,
+		"partial":    {{ID: "post-1", Score: 0.8}},
 		"unknown ID": {{ID: "post-1", Score: 0.8}, {ID: "foreign-post", Score: 0.7}},
 	}
 	for name, ranked := range cases {
