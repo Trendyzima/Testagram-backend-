@@ -39,6 +39,7 @@ type Candidate struct {
 
 type Request struct {
 	Now              time.Time   `json:"now"`
+	FeedMode         string      `json:"feedMode,omitempty"`
 	Candidates       []Candidate `json:"candidates"`
 	SeenIDs          []string    `json:"seenIds"`
 	BlockedAuthorIDs []string    `json:"blockedAuthorIds"`
@@ -141,6 +142,14 @@ func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	}
 	if input.Limit < 1 || input.Limit > 50 {
 		return Response{}, errors.New("algorithm result limit must be between 1 and 50")
+	}
+	if input.FeedMode == "" {
+		input.FeedMode = "for_you"
+	}
+	switch input.FeedMode {
+	case "for_you", "following", "media", "discover":
+	default:
+		return Response{}, errors.New("unsupported algorithm feed mode")
 	}
 	payload, err := json.Marshal(input)
 	if err != nil {

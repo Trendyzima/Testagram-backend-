@@ -2,6 +2,7 @@ package algorithmclient
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,6 +39,13 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
 			t.Fatal("missing versioned API contract headers")
 		}
+		var request Request
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode ranking request: %v", err)
+		}
+		if request.FeedMode != "following" {
+			t.Fatalf("expected following feed profile, got %q", request.FeedMode)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[{"id":"post-1","score":0.9,"reasons":["recent"]}]}`))
 	}))
@@ -47,7 +55,7 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := client.Rank(context.Background(), Request{
-		Now: time.Now().UTC(), Limit: 1,
+		Now: time.Now().UTC(), FeedMode: "following", Limit: 1,
 		Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Visible: true, CreatedAt: time.Now().UTC()}},
 	})
 	if err != nil {
@@ -219,5 +227,31 @@ func TestReadyChecksAlgorithmServiceHealth(t *testing.T) {
 	}
 	if err := client.Ready(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+
+func TestRankDefaultsAndValidatesFeedMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request Request
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode ranking request: %v", err)
+		}
+		if request.FeedMode != "for_you" {
+			t.Fatalf("empty feed mode should default to for_you, got %q", request.FeedMode)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"id":"p","score":0.5}]} `))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Rank(context.Background(), Request{Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Rank(context.Background(), Request{FeedMode: "latest", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}}); err == nil {
+		t.Fatal("latest must bypass the ranker and be rejected")
 	}
 }
