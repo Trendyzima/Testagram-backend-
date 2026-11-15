@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"net/http"
+
+	"github.com/jackc/pgx/v5"
 	"strconv"
 	"strings"
 	"time"
@@ -72,18 +74,28 @@ func (s *Server) watchdogImpulses(w http.ResponseWriter, r *http.Request) {
 	var id int64
 	var status string
 	err = tx.QueryRow(ctx, `insert into testagram_watchdog.impulses(idempotency_key,event_type,services)
-		values($1,$2,$3) on conflict(idempotency_key) do update set idempotency_key=excluded.idempotency_key
-		returning id,status`, in.IdempotencyKey, in.EventType, services).Scan(&id,&status)
+		values($1,$2,$3) on conflict(idempotency_key) do nothing returning id,status`,
+		in.IdempotencyKey, in.EventType, services).Scan(&id,&status)
+	inserted := err == nil
+	if err == pgx.ErrNoRows {
+		var existingEvent string
+		err = tx.QueryRow(ctx, `select id,status,event_type from testagram_watchdog.impulses where idempotency_key=$1`,
+			in.IdempotencyKey).Scan(&id,&status,&existingEvent)
+		if err == nil && existingEvent != in.EventType {
+			reply(w,http.StatusConflict,map[string]string{"error":"idempotency key was already used for a different event"})
+			return
+		}
+	}
 	if err != nil { reply(w, http.StatusServiceUnavailable, map[string]string{"error":"watchdog impulse could not be persisted"}); return }
-	// Extend leases only for a newly queued event. A duplicate retry never
+	// Extend leases only for a newly inserted event. A duplicate retry never
 	// refreshes a lease and cannot keep a service awake indefinitely.
-	if status == "queued" {
+	if inserted {
 		for _, service := range services {
 			_, err = tx.Exec(ctx, `insert into testagram_watchdog.service_leases(service_name,active_until,last_impulse_at,updated_at)
-				values($1,now()+$2::interval,now(),now())
+				values($1,now()+interval '10 minutes',now(),now())
 				on conflict(service_name) do update set
 				active_until=greatest(testagram_watchdog.service_leases.active_until,excluded.active_until),
-				last_impulse_at=now(),updated_at=now()`, service, watchdogLeaseDuration.String())
+				last_impulse_at=now(),updated_at=now()`, service)
 			if err != nil { reply(w, http.StatusServiceUnavailable, map[string]string{"error":"service activation lease could not be persisted"}); return }
 		}
 	}
