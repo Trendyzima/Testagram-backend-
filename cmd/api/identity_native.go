@@ -54,6 +54,13 @@ type identitySessionAccess struct {
 	Purpose string
 }
 
+func identityApplicationNeedsVerificationSessionRenewal(status string, provisioningExists bool) bool {
+	if provisioningExists {
+		return false
+	}
+	return status == "pending" || status == "verification_pending"
+}
+
 func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Request) {
 	if !strings.EqualFold(env("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "false"), "true") {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("REGISTRATION_DISABLED", "Identity registration is not enabled", requestID(r)))
@@ -140,14 +147,14 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	var applicationID, applicationStatus, oldEmail, oldUsername, oldName, oldTerms, oldPrivacy string
+	var applicationID, applicationStatus, oldEmail, oldUsername, oldName string
 	err = tx.QueryRow(ctx, `
-		SELECT id::text,status,email,username,display_name,terms_version,privacy_version
+		SELECT id::text,status,email,username,display_name
 		FROM testagram_identity.identity_applications
 		WHERE submission_key_sha256=$1 FOR UPDATE
-	`, submissionHash).Scan(&applicationID, &applicationStatus, &oldEmail, &oldUsername, &oldName, &oldTerms, &oldPrivacy)
+	`, submissionHash).Scan(&applicationID, &applicationStatus, &oldEmail, &oldUsername, &oldName)
 	existing := err == nil
-	if existing && (oldEmail != email || oldUsername != username || oldName != displayName || oldTerms != termsVersion || oldPrivacy != privacyVersion) {
+	if existing && (oldEmail != email || oldUsername != username || oldName != displayName) {
 		writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used for a different application", requestID(r)))
 		return
 	}
@@ -155,8 +162,37 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
-	if existing && applicationStatus != "pending" && applicationStatus != "verification_pending" {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": applicationStatus, "message": "The existing application is already being processed."})
+	provisioningExists := false
+	if existing {
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM testagram_identity.registration_provisioning
+				WHERE application_id=$1::uuid
+			)
+		`, applicationID).Scan(&provisioningExists); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Application recovery state is unavailable", requestID(r)))
+			return
+		}
+	}
+	if existing && !identityApplicationNeedsVerificationSessionRenewal(applicationStatus, provisioningExists) {
+		if _, err := tx.Exec(ctx, `
+			UPDATE testagram_identity.identity_applications
+			SET status_access_token_sha256=$2,status_access_token_expires_at=now()+interval '7 days',updated_at=now()
+			WHERE id=$1::uuid
+		`, applicationID, applicationTokenHash); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Application access could not be renewed", requestID(r)))
+			return
+		}
+		if err := tx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Application recovery could not be committed", requestID(r)))
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"ok": true, "application_id": applicationID, "application_token": applicationToken,
+			"verification_session_id": "", "verification_session_token": "",
+			"status": applicationStatus, "verification_method": "existing_application",
+		})
 		return
 	}
 	if !existing {
