@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,9 +23,11 @@ func makeLocalTestToken(t *testing.T, secret string, claims map[string]any) stri
 }
 
 func TestLocalJWTSubjectVerifiesSignatureAndExpiry(t *testing.T) {
-	t.Setenv("SUPABASE_JWT_SECRET", "local-test-secret")
+	const secret = "testagram-local-auth-secret-32-bytes"
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", secret)
+	t.Setenv("SUPABASE_JWT_SECRET", "")
 	sub := "123e4567-e89b-42d3-a456-426614174000"
-	token := makeLocalTestToken(t, "local-test-secret", map[string]any{"sub": sub, "exp": time.Now().Add(time.Minute).Unix()})
+	token := makeLocalTestToken(t, secret, map[string]any{"sub": sub, "exp": time.Now().Add(time.Minute).Unix()})
 	got, err := localJWTSubject("Bearer " + token)
 	if err != nil || got != sub {
 		t.Fatalf("localJWTSubject() = %q, %v", got, err)
@@ -51,6 +54,7 @@ func TestLocalProductCapabilityIsDisabledByDefault(t *testing.T) {
 func TestLocalProductCapabilityFailsClosedWithoutJWTSecret(t *testing.T) {
 	t.Setenv("TESTAGRAM_LOCAL_PRODUCT_WRITES_ENABLED", "true")
 	t.Setenv("SUPABASE_JWT_SECRET", "")
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", "")
 	s := &service{}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/capability", nil)
@@ -62,3 +66,18 @@ func TestLocalProductCapabilityFailsClosedWithoutJWTSecret(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestLocalJWTVerifierRejectsSupabaseOnlySecret(t *testing.T) {
+	const legacySecret = "legacy-supabase-secret-that-must-not-authenticate"
+	const subject = "123e4567-e89b-42d3-a456-426614174000"
+	t.Setenv("SUPABASE_JWT_SECRET", legacySecret)
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", "")
+	token := makeLocalTestToken(t, legacySecret, map[string]any{
+		"sub": subject,
+		"exp": time.Now().Add(time.Minute).Unix(),
+	})
+	if _, err := localJWTSubject("Bearer " + token); err == nil {
+		t.Fatal("legacy Supabase-signed token must not authenticate Testagram requests")
+	}
+}
+
