@@ -101,6 +101,18 @@ func (s *service) threadsList(w http.ResponseWriter, r *http.Request) {
 		} else {
 			rows, err = s.db.Query(ctx, baseSelect+` AND (t.visibility IN ('public','unlisted') OR t.owner_id=$1) AND EXISTS(SELECT 1 FROM testagram_local.thread_bookmarks b WHERE b.thread_id=t.id AND b.user_id=$1) ORDER BY t.created_at DESC,t.id DESC LIMIT $2`, userID, limit+1)
 		}
+	case "media":
+		if cursor != "" {
+			rows, err = s.db.Query(ctx, baseSelect+` AND t.visibility='public' AND jsonb_array_length(t.media_urls)>0 AND (t.created_at,t.id)<($1::timestamptz,$2::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $3`, cursorTime, cursorID, limit+1)
+		} else {
+			rows, err = s.db.Query(ctx, baseSelect+` AND t.visibility='public' AND jsonb_array_length(t.media_urls)>0 ORDER BY t.created_at DESC,t.id DESC LIMIT $1`, limit+1)
+		}
+	case "latest":
+		if cursor != "" {
+			rows, err = s.db.Query(ctx, baseSelect+` AND t.visibility='public' AND (t.created_at,t.id)<($1::timestamptz,$2::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $3`, cursorTime, cursorID, limit+1)
+		} else {
+			rows, err = s.db.Query(ctx, baseSelect+` AND t.visibility='public' ORDER BY t.created_at DESC,t.id DESC LIMIT $1`, limit+1)
+		}
 	default:
 		if cursor != "" {
 			rows, err = s.db.Query(ctx, baseSelect+` AND t.visibility='public' AND (t.created_at,t.id)<($1::timestamptz,$2::uuid) ORDER BY t.created_at DESC,t.id DESC LIMIT $3`, cursorTime, cursorID, limit+1)
