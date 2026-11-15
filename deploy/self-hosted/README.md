@@ -152,7 +152,7 @@ For the exact B2/R2 secret names, bucket separation requirements, deployment-pat
 
 ## Network and operations
 
-- The InstaBox port agent publishes the Backend public listener on port 8080 and the Go CDN listener on port 8081. The Backend's internal listener on port 8082 is Docker-network-only; never publish it through the port agent or a host port.
+- The InstaBox port agent publishes the Backend public listener on port 8080 and the Go CDN public listener on port 8081. Both services use a separate Docker-network-only internal listener on port 8082 for readiness and metrics; never publish either internal listener through the port agent or a host port.
 - Keep PostgreSQL, object storage administration, Prometheus, Grafana and internal APIs private.
 - Public `/healthz` is liveness only. Backend `/readyz`, `/metrics` and Federation-to-Backend internal routes are served only on `api:8082`; Docker healthchecks, Admin Console, Prometheus and Federation use that private listener. Never probe these endpoints through the public API URL.
 - Alert on PostgreSQL saturation, oldest outbox age, failed media deletions, worker lag and storage capacity.
