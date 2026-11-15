@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const nativeRefreshTTL = 30 * 24 * time.Hour
@@ -35,7 +36,7 @@ func authFingerprint(value string) []byte {
 
 func issueNativeSession(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
-	Exec(context.Context, string, ...any) (pgx.CommandTag, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }, userID, email string, version int64, userAgent, ip string) (nativeSessionTokens, error) {
 	refresh, err := authRandomToken()
 	if err != nil {
