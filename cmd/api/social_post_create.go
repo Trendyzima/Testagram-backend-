@@ -197,6 +197,7 @@ func (s *service) socialPostCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_CREATE_FAILED", "Post could not be committed", requestID))
 		return
 	}
+	s.enqueueWatchdogImpulse("post_publish")
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ok": true,
 		"data": map[string]any{
