@@ -12,7 +12,23 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func TestIdentityApplicationConflictOnlyMasksUniqueViolations(t *testing.T) {
+	if !identityApplicationConflict(&pgconn.PgError{Code: "23505"}) {
+		t.Fatal("unique constraint violations must receive privacy-preserving acceptance")
+	}
+	if !identityApplicationConflict(fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "23505"})) {
+		t.Fatal("wrapped unique constraint violations must be recognized")
+	}
+	if identityApplicationConflict(&pgconn.PgError{Code: "42P01"}) {
+		t.Fatal("missing-table errors must not be masked as generic acceptance")
+	}
+	if identityApplicationConflict(fmt.Errorf("database connection lost")) {
+		t.Fatal("connection failures must not be masked as generic acceptance")
+	}
+}
 
 func TestIdentityApplicationRecoveryDoesNotReopenVerifiedOrProvisionedSessions(t *testing.T) {
 	cases := []struct {
