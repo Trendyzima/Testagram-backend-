@@ -293,13 +293,41 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
     return "power-cycled machine using stop/start; API health and readiness verified"
 
 
+def read_only_probe_without_provider_key() -> int:
+    """Check public health endpoints without provider credentials or lifecycle access."""
+    emit(
+        "Instabox API key is not configured; running read-only health/readiness probes only. "
+        "Provider inspection and lifecycle actions are unavailable."
+    )
+    for index in range(FAILURES_REQUIRED):
+        health_ok, health_detail = probe(HEALTH_URL)
+        ready_ok, ready_detail = probe(READY_URL)
+        emit(
+            f"read-only probe {index + 1}/{FAILURES_REQUIRED}: "
+            f"health={health_detail}, readiness={ready_detail}"
+        )
+        if health_ok and ready_ok:
+            emit(
+                "Testagram health and readiness are healthy; no provider lifecycle "
+                "operation was attempted."
+            )
+            return 0
+        if index + 1 < FAILURES_REQUIRED:
+            time.sleep(PROBE_INTERVAL)
+    raise WatchdogError(
+        f"All {FAILURES_REQUIRED} read-only health/readiness probes failed; "
+        "automatic recovery remains unavailable because "
+        "INSTABOX_WATCHDOG_API_KEY is not configured"
+    )
+
+
 def main() -> int:
     global MACHINE_ID
-    if not API_KEY or (not MACHINE_ID and not MACHINE_NAME) or not HEALTH_URL or not READY_URL:
-        raise WatchdogError("Configure INSTABOX_WATCHDOG_API_KEY, INSTABOX_MACHINE_NAME (or INSTABOX_MACHINE_ID), TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
-    for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL),
-                         ("readiness", READY_URL)):
-
+    if not HEALTH_URL or not READY_URL:
+        raise WatchdogError(
+            "Configure TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL"
+        )
+    for label, value in (("health", HEALTH_URL), ("readiness", READY_URL)):
         if urlparse(value).scheme != "https":
             raise WatchdogError(f"{label} URL must use HTTPS")
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
@@ -308,6 +336,19 @@ def main() -> int:
             or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1
             or RESTART_COOLDOWN < 300):
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, positive timeouts/intervals and >=300s restart cooldown")
+    if not API_KEY:
+        if DRY_RUN:
+            return read_only_probe_without_provider_key()
+        raise WatchdogError(
+            "INSTABOX_WATCHDOG_API_KEY is required for provider inspection "
+            "or lifecycle actions"
+        )
+    if not MACHINE_ID and not MACHINE_NAME:
+        raise WatchdogError(
+            "Configure INSTABOX_MACHINE_NAME or INSTABOX_MACHINE_ID"
+        )
+    if urlparse(API_BASE).scheme != "https":
+        raise WatchdogError("Instabox API URL must use HTTPS")
     api = API()
     MACHINE_ID = resolve_machine_id(api)
     state = load_state()
