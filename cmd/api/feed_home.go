@@ -205,7 +205,14 @@ WHERE p.deleted_at IS NULL
       SELECT 1 FROM testagram_local.follows f
       WHERE f.follower_id=$1::uuid AND f.following_id=p.author_id AND f.status='accepted'
   ))
-  AND (NOT $7::boolean OR jsonb_array_length(COALESCE(p.media_ids,'[]'::jsonb))>0)
+  AND (NOT $7::boolean OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(COALESCE(p.media_ids,'[]'::jsonb)) AS media_key(object_key)
+      JOIN testagram_media.assets ma
+        ON ma.object_key=media_key.object_key
+       AND ma.owner_id=p.author_id
+       AND ma.status='ready'
+  ))
   AND (NOT $8::boolean OR (
       p.author_id<>$1::uuid AND p.visibility='public' AND NOT a.protected_account
       AND NOT EXISTS (SELECT 1 FROM testagram_local.follows f
