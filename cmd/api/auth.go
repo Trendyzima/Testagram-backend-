@@ -506,11 +506,16 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			`, email)
 			if txErr == nil {
 				err = tx.QueryRow(ctx, `
-					INSERT INTO testagram_auth.password_reset_tokens(token_hash,user_id,expires_at,request_ip_hash)
-					SELECT $2,user_id,now()+interval '30 minutes',$3
-					FROM testagram_auth.identities
-					WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL
-					RETURNING (SELECT email FROM testagram_auth.identities WHERE user_id=password_reset_tokens.user_id)
+					WITH eligible AS (
+						SELECT user_id,email FROM testagram_auth.identities
+						WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL
+						FOR UPDATE
+					), inserted AS (
+						INSERT INTO testagram_auth.password_reset_tokens(token_hash,user_id,expires_at,request_ip_hash)
+						SELECT $2,user_id,now()+interval '30 minutes',$3 FROM eligible
+						RETURNING user_id
+					)
+					SELECT eligible.email FROM eligible JOIN inserted USING(user_id)
 				`, email, authTokenHash(token), authFingerprint(ip)).Scan(&savedEmail)
 				txErr = err
 			}
