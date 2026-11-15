@@ -26,3 +26,11 @@ create table if not exists testagram_watchdog.service_leases (
 alter table testagram_watchdog.impulses enable row level security;
 alter table testagram_watchdog.service_leases enable row level security;
 comment on schema testagram_watchdog is 'Private authenticated-activity watchdog queue and service activation leases; accessible only to the trusted control plane.';
+
+-- Bind node-agent claims to an authenticated, enrolled activation-capable node.
+alter table testagram_watchdog.impulses
+  add column if not exists available_at timestamptz not null default now(),
+  add column if not exists claimed_by_node_id uuid references public.vps_nodes(id) on delete set null;
+create index if not exists watchdog_impulses_available_idx
+  on testagram_watchdog.impulses(status, available_at, created_at)
+  where status in ('queued','claimed');
