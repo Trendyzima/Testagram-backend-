@@ -55,7 +55,8 @@ class WatchdogTests(unittest.TestCase):
             watchdog.resolve_machine_id(ListAPI())
 
     def test_wait_for_service_requires_both_health_and_readiness(self):
-        with patch.object(watchdog, "probe", side_effect=[
+        with patch.object(watchdog, "READY_URL", "https://api.example.test/private-readyz"), \
+             patch.object(watchdog, "probe", side_effect=[
             (False, "HTTP 503"), (True, "HTTP 200"),
             (True, "HTTP 200"), (True, "HTTP 200")
         ]) as probe, patch.object(watchdog.time, "sleep"):
