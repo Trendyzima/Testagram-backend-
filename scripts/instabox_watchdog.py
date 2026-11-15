@@ -304,7 +304,7 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
 def main() -> int:
     global MACHINE_ID
     if not API_KEY or (not MACHINE_ID and not MACHINE_NAME) or not HEALTH_URL:
-        raise WatchdogError("Configure INSTABOX_WATCHDOG_API_KEY, INSTABOX_MACHINE_NAME (or INSTABOX_MACHINE_ID), TESTAGRAM_HEALTH_URL and TESTAGRAM_READINESS_URL")
+        raise WatchdogError("Configure INSTABOX_WATCHDOG_API_KEY, INSTABOX_MACHINE_NAME (or INSTABOX_MACHINE_ID), TESTAGRAM_HEALTH_URL (TESTAGRAM_READINESS_URL is optional and must be private-reachable)")
     for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL)) + ((("readiness", READY_URL),) if READY_URL else ()):
 
         if urlparse(value).scheme != "https":
