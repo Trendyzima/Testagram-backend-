@@ -591,7 +591,6 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.enqueueWatchdogImpulse("media_view")
-	s.enqueueWatchdogImpulse("media_view")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"url": signedURL, "expires_in_seconds": 300}, "error": nil, "request_id": id})
 }
 
