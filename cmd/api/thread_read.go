@@ -33,7 +33,7 @@ func (s *service) threadRead(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	var threadID, ownerID, body, visibility, username, displayName, avatarKey string
+	var threadID, ownerID, body, visibility, username, displayName, avatarKey, quoteOfThreadID string
 	var mediaJSON []byte
 	var created time.Time
 	var likes, reposts, quotes, replies, views int64
@@ -43,12 +43,13 @@ func (s *service) threadRead(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.db.QueryRow(ctx, `SELECT t.id::text,t.owner_id::text,t.body,t.visibility,t.media_urls,t.created_at,
       t.likes_count,t.reposts_count,t.quotes_count,t.replies_count,t.views_count,
-      a.username,a.display_name,a.avatar_key
+      a.username,a.display_name,a.avatar_key,
+      coalesce((SELECT q.source_thread_id::text FROM testagram_local.thread_quotes q WHERE q.quote_thread_id=t.id),'')
     FROM testagram_local.threads t
     JOIN testagram_local.accounts a ON a.user_id=t.owner_id
     WHERE t.id=$1 AND t.deleted_at IS NULL
       AND (t.visibility IN ('public','unlisted') OR ($2::uuid IS NOT NULL AND t.owner_id=$2::uuid))
-      AND a.account_status='active'`, id, viewer).Scan(&threadID, &ownerID, &body, &visibility, &mediaJSON, &created, &likes, &reposts, &quotes, &replies, &views, &username, &displayName, &avatarKey)
+      AND a.account_status='active'`, id, viewer).Scan(&threadID, &ownerID, &body, &visibility, &mediaJSON, &created, &likes, &reposts, &quotes, &replies, &views, &username, &displayName, &avatarKey, &quoteOfThreadID)
 	if err != nil {
 		writeJSON(w, 404, errorBody("THREAD_NOT_FOUND", "Thread was not found", rid))
 		return
@@ -63,7 +64,7 @@ func (s *service) threadRead(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "data": map[string]any{
 		"id": threadID, "owner_id": ownerID, "body": body, "visibility": visibility, "media_urls": media, "created_at": created,
-		"likes_count": likes, "reposts_count": reposts, "quotes_count": quotes, "replies_count": replies, "views_count": views,
+		"likes_count": likes, "reposts_count": reposts, "quotes_count": quotes, "replies_count": replies, "views_count": views, "quote_of_thread_id": quoteOfThreadID,
 		"profiles": map[string]any{"id": ownerID, "username": username, "display_name": displayName, "avatar_url": avatarURL, "verified": false},
 	}, "error": nil, "request_id": rid})
 }
