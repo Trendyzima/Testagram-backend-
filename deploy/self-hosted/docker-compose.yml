@@ -56,6 +56,7 @@ services:
       - ../../migrations/20261115_native_identity_status_access.sql:/docker-entrypoint-initdb.d/045_native_identity_status_access.sql:ro
       - ../../migrations/20261114_media_replication_publication_gate.sql:/docker-entrypoint-initdb.d/046_media_replication_publication_gate.sql:ro
       - ../../migrations/20261114_appwrite_registration_consent.sql:/docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql:ro
+      - ../../migrations/20261115_instabox_user_impulse_watchdog.sql:/docker-entrypoint-initdb.d/048_user_activity_watchdog.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -153,9 +154,6 @@ services:
       FEDERATION_PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://federation.testagram.site}
       FEDERATION_INTERNAL_TOKEN: ${FEDERATION_INGRESS_TOKEN:?Set FEDERATION_INGRESS_TOKEN in .env}
       FEDERATION_BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN in .env}
-      # Private Data Centre control-plane activity ingress; distinct from node/bootstrap credentials.
-      VPS_WATCHDOG_INTERNAL_URL: ${VPS_WATCHDOG_INTERNAL_URL:-http://control-plane:8787}
-      VPS_WATCHDOG_INTERNAL_TOKEN: ${VPS_WATCHDOG_INTERNAL_TOKEN:-}
       MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-}
       MEDIA_S3_SIGNING_HOST: ${MEDIA_S3_SIGNING_HOST:-}
       MEDIA_S3_ACCESS_KEY: ${MEDIA_S3_ACCESS_KEY:-}
