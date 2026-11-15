@@ -44,6 +44,7 @@ type authClaims struct {
 	IssuedAt     int64  `json:"iat"`
 	ExpiresAt    int64  `json:"exp"`
 	TokenVersion int64  `json:"ver"`
+	SessionID    string `json:"sid"`
 }
 
 var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}$`)
@@ -125,14 +126,14 @@ func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
 	return out[:keyLen]
 }
 
-func authSignJWT(userID, email string, version int64) (string, error) {
+func authSignJWT(userID, email string, version int64, sessionID string) (string, error) {
 	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
 	if len(secret) < 32 {
 		return "", errors.New("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters")
 	}
 	now := time.Now().UTC()
 	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
-	claims, _ := json.Marshal(authClaims{Subject: userID, Email: email, Role: "authenticated", Issuer: "testagram-auth", IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(), TokenVersion: version})
+	claims, _ := json.Marshal(authClaims{Subject: userID, Email: email, Role: "authenticated", Issuer: "testagram-auth", IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(), TokenVersion: version, SessionID: sessionID})
 	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(unsigned))
@@ -259,12 +260,11 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		))
 		return true
 	}
-	if action == "login" || action == "forgot-password" || action == "reset-password" {
-		// Appwrite is the sole credential and session provider. These legacy
-		// PostgreSQL-password routes must never become a parallel auth system.
-		writeJSON(w, http.StatusGone, errorBody(
-			"APPWRITE_AUTH_REQUIRED",
-			"Use Appwrite authentication for sign-in and password recovery.",
+	if (action == "login" || action == "forgot-password" || action == "reset-password" ||
+		action == "refresh" || action == "logout" || action == "logout-all") && !nativeAuthEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody(
+			"NATIVE_AUTH_NOT_ENABLED",
+			"Native Testagram authentication is not enabled on this deployment.",
 			requestID(r),
 		))
 		return true
@@ -422,19 +422,55 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			return true
 		}
 		var userID, hash string
-		var verified bool
+		var verified, disabled, resetRequired bool
 		var version int64
-		err = s.db.QueryRow(ctx, `SELECT user_id::text,password_hash,email_verified_at IS NOT NULL,token_version FROM testagram_auth.identities WHERE email_normalized=$1`, email).Scan(&userID, &hash, &verified, &version)
-		if err != nil || !authPasswordVerify(hash, in.Password) || !verified {
+		err = s.db.QueryRow(ctx, `SELECT user_id::text,password_hash,email_verified_at IS NOT NULL,
+			token_version,disabled_at IS NOT NULL,password_reset_required
+			FROM testagram_auth.identities WHERE email_normalized=$1`, email).Scan(&userID, &hash, &verified, &version, &disabled, &resetRequired)
+		if err != nil || !authPasswordVerify(hash, in.Password) || !verified || disabled {
 			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect, or email verification is pending.", requestID(r)))
 			return true
 		}
-		jwt, err := authSignJWT(userID, email, version)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_NOT_CONFIGURED", "Independent authentication is not configured", requestID(r)))
+		if resetRequired {
+			writeJSON(w, http.StatusForbidden, errorBody("PASSWORD_RESET_REQUIRED", "Reset your password before signing in.", requestID(r)))
 			return true
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "access_token": jwt, "token_type": "Bearer", "expires_in": 900, "user": map[string]any{"id": userID, "email": email}})
+		tokens, err := issueNativeSession(ctx, s.db, userID, email, version, r.UserAgent(), ip)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SESSION_CREATE_FAILED", "A secure session could not be created", requestID(r)))
+			return true
+		}
+		if _, err := s.db.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
+			VALUES($1::uuid,'auth.login','success',$2)`, userID, authFingerprint(ip)); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_AUDIT_FAILED", "Sign-in could not be completed", requestID(r)))
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": tokens, "error": nil, "request_id": requestID(r)})
+		return true
+	case "refresh":
+		tokens, err := s.rotateNativeRefresh(ctx, in.Token, r.UserAgent(), ip)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_REFRESH_TOKEN", "Refresh token is invalid, expired, or has already been used.", requestID(r)))
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": tokens, "error": nil, "request_id": requestID(r)})
+		return true
+	case "logout", "logout-all":
+		bearer, err := nativeBearerToken(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "A valid native access token is required.", requestID(r)))
+			return true
+		}
+		claims, status, err := verifyNativeAccessToken(ctx, s.db, bearer)
+		if err != nil {
+			writeJSON(w, status, errorBody("AUTH_REQUIRED", "The native session is invalid or expired.", requestID(r)))
+			return true
+		}
+		if err := s.revokeNativeSession(ctx, claims, action == "logout-all", ip); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SESSION_REVOKE_FAILED", "Session revocation could not be completed.", requestID(r)))
+			return true
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"revoked": true}, "error": nil, "request_id": requestID(r)})
 		return true
 	case "forgot-password":
 		email, err := authEmail(in.Email)
