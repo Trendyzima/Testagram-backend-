@@ -622,8 +622,8 @@ expect_http_status() {
 }
 expect_http_status "$api_container" 400 "Backend ingress token accepted by Federation" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" --header="Content-Type: application/json" --post-data="{}" http://federation-api:8081/internal/v1/activities'
 expect_http_status "$api_container" 401 "Backend read token rejected by Federation ingress" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_BACKEND_INTERNAL_TOKEN" --header="Content-Type: application/json" --post-data="{}" http://federation-api:8081/internal/v1/activities'
-expect_http_status "$api_container" 200 "Federation read token accepted by Backend" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_BACKEND_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8080/internal/v1/federation/readyz'
-expect_http_status "$api_container" 401 "Federation ingress token rejected by Backend read endpoint" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8080/internal/v1/federation/readyz'
+expect_http_status "$api_container" 200 "Federation read token accepted by Backend" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_BACKEND_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8082/internal/v1/federation/readyz'
+expect_http_status "$api_container" 401 "Federation ingress token rejected by Backend read endpoint" 'wget -S -O /dev/null --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://127.0.0.1:8082/internal/v1/federation/readyz'
 
 echo "Data Centre overlay status: $overlay_status"
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
