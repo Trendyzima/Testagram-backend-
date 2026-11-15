@@ -5,6 +5,7 @@ from unittest.mock import patch
 from scripts import instabox_watchdog as watchdog
 
 watchdog.MACHINE_ID = "machine-123"
+watchdog.MACHINE_NAME = "testagramdb"
 
 
 class FakeAPI:
