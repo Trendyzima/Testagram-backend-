@@ -34,4 +34,16 @@ if [ -n "${MINIO_MEDIA_ACCESS_KEY:-}" ] && [ -n "${MINIO_MEDIA_SECRET_KEY:-}" ];
   mc admin policy attach local testagram-media-api --user "$MINIO_MEDIA_ACCESS_KEY"
 fi
 
+
+if [ -n "${MINIO_METADATA_ACCESS_KEY:-}" ] && [ -n "${MINIO_METADATA_SECRET_KEY:-}" ]; then
+  printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::%s/*"]}]}\n' \
+    "$metadata_bucket" > /tmp/testagram-metadata-policy.json
+  mc admin policy create local testagram-metadata-sidecar /tmp/testagram-metadata-policy.json || true
+  mc admin user add local "$MINIO_METADATA_ACCESS_KEY" "$MINIO_METADATA_SECRET_KEY" >/dev/null 2>&1 || true
+  mc admin policy attach local testagram-metadata-sidecar --user "$MINIO_METADATA_ACCESS_KEY"
+elif [ -n "${MINIO_METADATA_ACCESS_KEY:-}" ] || [ -n "${MINIO_METADATA_SECRET_KEY:-}" ]; then
+  echo "MINIO_METADATA_ACCESS_KEY and MINIO_METADATA_SECRET_KEY must be configured together" >&2
+  exit 1
+fi
+
 echo "MinIO private, public, identity-evidence and private metadata buckets are ready."
