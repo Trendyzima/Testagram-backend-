@@ -18,9 +18,10 @@ import (
 )
 
 type Server struct {
-	db        *pgxpool.Pool
-	internal  string
-	bootstrap string
+	db            *pgxpool.Pool
+	internal      string
+	bootstrap     string
+	watchdogToken string
 }
 
 type Registration struct {
@@ -376,6 +377,7 @@ func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	internal := os.Getenv("VPS_INTERNAL_TOKEN")
 	bootstrap := os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN")
+	watchdogToken := os.Getenv("VPS_WATCHDOG_TOKEN")
 	if dsn == "" || internal == "" || bootstrap == "" {
 		log.Fatal("DATABASE_URL, VPS_INTERNAL_TOKEN and VPS_NODE_BOOTSTRAP_TOKEN are required")
 	}
@@ -386,7 +388,7 @@ func main() {
 	}
 	defer db.Close()
 
-	s := &Server{db: db, internal: internal, bootstrap: bootstrap}
+	s := &Server{db: db, internal: internal, bootstrap: bootstrap, watchdogToken: watchdogToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/readyz", s.ready)
