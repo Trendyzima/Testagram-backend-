@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Verify pinned Go CDN image, scratch healthcheck and writable cache volume
         env:
-          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-cdn@sha256:4528cadcb3d65472a0664d73d045a8d9aa371b25b5473d21e63dd106c755c55f
+          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-cdn@sha256:39fe7cf0a27bbf9d09a0f0a311202030359d6e95ca414269af712f7281c8ae41
         run: |
           set -euo pipefail
           docker pull "$TESTAGRAM_CDN_IMAGE"
