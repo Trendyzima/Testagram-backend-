@@ -84,7 +84,7 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 				applicationStatus, requestStatus, reviewCount, approvalLedgerCount, approvalTokenCount)
 		}
 		if applicationEmail != appwriteEmail {
-			t.Fatalf("staging Appwrite email %q does not match approved application email %q", appwriteEmail, applicationEmail)
+			t.Fatal("staging Appwrite identity does not match the approved application; email values are intentionally redacted")
 		}
 	} else {
 		if err := db.QueryRow(ctx, `
@@ -234,6 +234,15 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 
 	// A valid Appwrite JWT and completed provisioning mapping must not revive
 	// a canonical account that has subsequently been suspended or deactivated.
+	// Restore the staging fixture even if an assertion below fails, so a
+	// failed smoke test cannot leave its canonical account suspended.
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		_, _ = db.Exec(cleanupCtx, `
+			UPDATE testagram_local.accounts SET account_status='active' WHERE user_id=$1::uuid
+		`, authenticatedCanonicalID)
+	})
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_local.accounts SET account_status='suspended' WHERE user_id=$1::uuid
 	`, authenticatedCanonicalID); err != nil {
