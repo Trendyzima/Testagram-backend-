@@ -208,6 +208,10 @@ func (s *service) threadDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM testagram_local.thread_quotes WHERE quote_thread_id=$1`, id); err != nil {
+		writeJSON(w, 503, errorBody("THREAD_DELETE_FAILED", "Quote relationship could not be removed", rid))
+		return
+	}
 	tag, err := tx.Exec(ctx, `UPDATE testagram_local.threads SET deleted_at=now(),updated_at=now()
     WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`, id, userID)
 	if err != nil {
