@@ -134,17 +134,36 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts. Try again later.", requestID(r)))
 		return
 	}
-	allowed, rateErr = s.authRateAllowed(ctx, "identity-application-email", email, 3)
-	if rateErr != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
-		return
-	}
-	if !allowed {
-		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts. Try again later.", requestID(r)))
-		return
-	}
-
 	submissionHash := authTokenHash(idempotencyKey)
+
+	// Count only new application submissions against the per-email limit.
+	// A retry with the same idempotency capability must remain recoverable even
+	// after the original request consumed its rate-limit allowance.
+	var preflightEmail, preflightUsername, preflightName string
+	preflightErr := s.db.QueryRow(ctx, `
+		SELECT email,username,display_name
+		FROM testagram_identity.identity_applications
+		WHERE submission_key_sha256=$1
+	`, submissionHash).Scan(&preflightEmail, &preflightUsername, &preflightName)
+	if preflightErr == nil {
+		if preflightEmail != email || preflightUsername != username || preflightName != displayName {
+			writeJSON(w, http.StatusConflict, errorBody("IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used for a different application", requestID(r)))
+			return
+		}
+	} else if errors.Is(preflightErr, pgx.ErrNoRows) {
+		allowed, rateErr = s.authRateAllowed(ctx, "identity-application-email", email, 3)
+		if rateErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
+			return
+		}
+		if !allowed {
+			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many registration attempts. Try again later.", requestID(r)))
+			return
+		}
+	} else {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Application recovery state is unavailable", requestID(r)))
+		return
+	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
