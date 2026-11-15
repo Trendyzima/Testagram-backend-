@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -53,6 +55,12 @@ type identitySessionAccess struct {
 	Email string
 	Status string
 	Purpose string
+}
+
+func identityDerivedCapabilityToken(idempotencyKey, purpose, resourceID string) string {
+	mac := hmac.New(sha256.New, []byte(idempotencyKey))
+	_, _ = mac.Write([]byte("testagram:identity:" + purpose + ":" + resourceID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func identityApplicationConflict(err error) bool {
@@ -132,19 +140,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	applicationToken, err := authRandomToken()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Could not create application access token", requestID(r)))
-		return
-	}
-	sessionToken, err := authRandomToken()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Could not create verification session token", requestID(r)))
-		return
-	}
 	submissionHash := authTokenHash(idempotencyKey)
-	applicationTokenHash := authTokenHash(applicationToken)
-	sessionTokenHash := authTokenHash(sessionToken)
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
