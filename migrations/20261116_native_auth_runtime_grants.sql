@@ -14,6 +14,7 @@ BEGIN
       testagram_auth.rate_limits
     TO testagram_app;
     GRANT SELECT,INSERT ON testagram_auth.security_audit TO testagram_app;
+    GRANT USAGE,SELECT ON SEQUENCE testagram_auth.security_audit_event_id_seq TO testagram_app;
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
@@ -25,6 +26,7 @@ BEGIN
       testagram_auth.rate_limits
     TO service_role;
     GRANT SELECT,INSERT ON testagram_auth.security_audit TO service_role;
+    GRANT USAGE,SELECT ON SEQUENCE testagram_auth.security_audit_event_id_seq TO service_role;
   END IF;
 END;
 $grants$;
