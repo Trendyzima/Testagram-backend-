@@ -118,6 +118,20 @@ func appwriteDefaultUsername(email, appwriteID string) string {
 }
 
 func (s *service) authenticatedAppwriteUser(r *http.Request, jwt string) (string, int, error) {
+	// One canonical authentication boundary serves every existing product
+	// handler. In native mode, never call Appwrite or fall back to provider JWTs.
+	if nativeAuthEnabled() {
+		if s.db == nil {
+			return "", http.StatusServiceUnavailable, errors.New("native identity database is unavailable")
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		claims, status, err := verifyNativeAccessToken(ctx, s.db, jwt)
+		if err != nil {
+			return "", status, err
+		}
+		return claims.Subject, http.StatusOK, nil
+	}
 	endpoint := strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT"))
 	projectID := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
 	if endpoint == "" || projectID == "" {
