@@ -7,6 +7,57 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
+func TestParseHomeFeedMode(t *testing.T) {
+	cases := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{input: "", want: "for_you"},
+		{input: "for_you", want: "for_you"},
+		{input: " FOLLOWING ", want: "following"},
+		{input: "latest", want: "latest"},
+		{input: "media", want: "media"},
+		{input: "discover", want: "discover"},
+		{input: "trending", wantErr: true},
+	}
+	for _, tc := range cases {
+		got, err := parseHomeFeedMode(tc.input)
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("parseHomeFeedMode(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+		}
+		if err == nil && got != tc.want {
+			t.Fatalf("parseHomeFeedMode(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestParseVideoOnly(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    bool
+		wantErr bool
+	}{
+		{name: "omitted defaults false", input: "", want: false},
+		{name: "true", input: "true", want: true},
+		{name: "false", input: "false", want: false},
+		{name: "trimmed true", input: " TRUE ", want: true},
+		{name: "invalid value", input: "videos", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseVideoOnly(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("parseVideoOnly(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Fatalf("parseVideoOnly(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOrderHomeFeedByRankingRequiresCompleteCandidateCoverage(t *testing.T) {
 	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
 	posts := []homeFeedPost{
@@ -32,8 +83,8 @@ func TestOrderHomeFeedByRankingRequiresCompleteCandidateCoverage(t *testing.T) {
 func TestOrderHomeFeedByRankingFallsBackForPartialOrInvalidResponses(t *testing.T) {
 	posts := []homeFeedPost{{ID: "post-1"}, {ID: "post-2"}}
 	cases := map[string][]algorithmclient.RankedItem{
-		"empty": nil,
-		"partial": {{ID: "post-1", Score: 0.8}},
+		"empty":      nil,
+		"partial":    {{ID: "post-1", Score: 0.8}},
 		"unknown ID": {{ID: "post-1", Score: 0.8}, {ID: "foreign-post", Score: 0.7}},
 	}
 	for name, ranked := range cases {
