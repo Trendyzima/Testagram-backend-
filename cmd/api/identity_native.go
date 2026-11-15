@@ -153,6 +153,18 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
+	// Serialize requests carrying the same idempotency capability across
+	// API replicas. SELECT ... FOR UPDATE cannot lock a row that does not yet
+	// exist, so without this transaction-scoped advisory lock two first-time
+	// retries could race into the unique index and one caller would lose the
+	// application capability.
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
+	`, submissionHash); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
+		return
+	}
+
 	var applicationID, applicationStatus, oldEmail, oldUsername, oldName string
 	err = tx.QueryRow(ctx, `
 		SELECT id::text,status,email,username,display_name
