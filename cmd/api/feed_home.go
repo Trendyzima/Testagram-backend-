@@ -105,6 +105,7 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 		writeAppwriteAuthFailure(w, status, authErr, requestID)
 		return
 	}
+	s.enqueueWatchdogImpulse("feed_open")
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_STORE_UNAVAILABLE", "Feed storage is unavailable", requestID))
 		return
