@@ -20,7 +20,7 @@ type threadQuoteInput struct {
 
 func threadQuoteHashes(idempotencyKey,sourceID,body,visibility string) (string,string) {
 	keyDigest:=sha256.Sum256([]byte(idempotencyKey))
-	requestDigest:=sha256.Sum256([]byte(sourceID+"\\x00"+body+"\\x00"+visibility))
+	requestDigest:=sha256.Sum256([]byte(sourceID+"\x00"+body+"\x00"+visibility))
 	return hex.EncodeToString(keyDigest[:]),hex.EncodeToString(requestDigest[:])
 }
 
