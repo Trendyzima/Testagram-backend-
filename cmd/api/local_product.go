@@ -46,60 +46,35 @@ func localCapabilityName(name string) bool {
 }
 func localJWTSubject(authorization string) (string, error) {
 	parts := strings.Fields(authorization)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", errors.New("bearer token required")
-	}
-	secrets := []string{strings.TrimSpace(os.Getenv("SUPABASE_JWT_SECRET")), strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))}
-	if secrets[0] == "" && secrets[1] == "" {
-		return "", errors.New("local JWT verification is not configured")
-	}
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") { return "", errors.New("bearer token required") }
 	segments := strings.Split(parts[1], ".")
-	if len(segments) != 3 {
-		return "", errors.New("invalid token")
-	}
-	hb, err := base64.RawURLEncoding.DecodeString(segments[0])
-	if err != nil {
-		return "", errors.New("invalid token header")
-	}
-	var header map[string]any
-	if json.Unmarshal(hb, &header) != nil || header["alg"] != "HS256" {
-		return "", errors.New("only HS256 local verification is configured")
-	}
+	if len(segments) != 3 || len(parts[1]) > 8192 { return "", errors.New("invalid token") }
+	headerBytes, err := base64.RawURLEncoding.DecodeString(segments[0])
+	if err != nil { return "", errors.New("invalid token header") }
+	var header struct { Alg string `json:"alg"`; Typ string `json:"typ"` }
+	if json.Unmarshal(headerBytes, &header) != nil || header.Alg != "HS256" || header.Typ != "JWT" { return "", errors.New("unsupported token header") }
+	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
+	if len(secret) < 32 { return "", errors.New("Testagram JWT verification is not configured") }
 	sig, err := base64.RawURLEncoding.DecodeString(segments[2])
-	if err != nil {
-		return "", errors.New("invalid token signature")
+	if err != nil { return "", errors.New("invalid token signature") }
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(segments[0] + "." + segments[1]))
+	if !hmac.Equal(sig, mac.Sum(nil)) { return "", errors.New("invalid token signature") }
+	payload, err := base64.RawURLEncoding.DecodeString(segments[1])
+	if err != nil { return "", errors.New("invalid token claims") }
+	var claims authClaims
+	if json.Unmarshal(payload, &claims) != nil { return "", errors.New("invalid token claims") }
+	now := time.Now().UTC().Unix()
+	if claims.Issuer != "testagram-auth" || claims.Role != "authenticated" ||
+		!localUUIDPattern.MatchString(claims.Subject) || !localUUIDPattern.MatchString(claims.SessionID) ||
+		claims.TokenVersion < 1 || claims.IssuedAt <= 0 || claims.IssuedAt > now+60 ||
+		claims.ExpiresAt <= now || claims.ExpiresAt <= claims.IssuedAt ||
+		claims.ExpiresAt-claims.IssuedAt > int64((16*time.Minute)/time.Second) {
+		return "", errors.New("invalid or expired Testagram token claims")
 	}
-	signed := []byte(segments[0] + "." + segments[1])
-	validSignature := false
-	for _, secret := range secrets {
-		if secret == "" {
-			continue
-		}
-		mac := hmac.New(sha256.New, []byte(secret))
-		_, _ = mac.Write(signed)
-		if hmac.Equal(sig, mac.Sum(nil)) {
-			validSignature = true
-			break
-		}
-	}
-	if !validSignature {
-		return "", errors.New("invalid token signature")
-	}
-	pb, err := base64.RawURLEncoding.DecodeString(segments[1])
-	if err != nil {
-		return "", errors.New("invalid token claims")
-	}
-	var claims map[string]any
-	if json.Unmarshal(pb, &claims) != nil {
-		return "", errors.New("invalid token claims")
-	}
-	sub, _ := claims["sub"].(string)
-	exp, ok := claims["exp"].(float64)
-	if !ok || exp <= float64(time.Now().Unix()) || !localUUIDPattern.MatchString(sub) {
-		return "", errors.New("invalid or expired token claims")
-	}
-	return strings.ToLower(sub), nil
+	return strings.ToLower(claims.Subject), nil
 }
+
 func (s *service) localProductCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
 	if !localProductEnabled() || !localCapabilityName(body.Capability) {
 		return false
