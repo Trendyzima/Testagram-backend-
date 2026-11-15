@@ -590,6 +590,7 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_ACCESS_DENIED", "This private media object is not available to this account", id))
 		return
 	}
+	s.enqueueWatchdogImpulse("media_view")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"url": signedURL, "expires_in_seconds": 300}, "error": nil, "request_id": id})
 }
 
