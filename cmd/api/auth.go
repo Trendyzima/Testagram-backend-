@@ -435,6 +435,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			return true
 		}
 		emitWatchdogImpulse(r.Context(), "login")
+		s.enqueueWatchdogImpulse("login")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "access_token": jwt, "token_type": "Bearer", "expires_in": 900, "user": map[string]any{"id": userID, "email": email}})
 		return true
 	case "forgot-password":
