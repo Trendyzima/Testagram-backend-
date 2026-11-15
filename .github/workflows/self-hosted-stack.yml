@@ -82,7 +82,7 @@ jobs:
             sleep 2
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' testagram-cdn-ci)" = "healthy"
-          docker exec testagram-cdn-ci /healthcheck
+          docker exec testagram-cdn-ci /app/healthcheck
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.10"
@@ -142,7 +142,7 @@ jobs:
           if "edge" not in cdn.get("networks", []):
               raise SystemExit("Go CDN must share only the private edge bridge with Caddy and Backend.")
           health = cdn.get("healthcheck", {}).get("test", [])
-          if "/healthcheck" not in health:
+          if "/app/healthcheck" not in health:
               raise SystemExit("Go CDN healthcheck must use the scratch-compatible static probe.")
           api_env = services["api"].get("environment", {})
           for key in ("CDN_ORIGIN_AUTH_TOKEN", "CDN_MEDIA_ASSERTION_SECRET", "CDN_MEDIA_BASE_URL", "CDN_PURGE_URL", "CDN_PURGE_TOKEN"):
@@ -169,6 +169,11 @@ jobs:
           subprocess.run(["bash", "-n", str(deploy_script_path)], check=True)
           if "ensure_random_secret CDN_PURGE_TOKEN" not in deploy_source or "CDN_PURGE_URL" not in deploy_source:
               raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
+          if "ONSPACE_AI_API_KEY is required" in deploy_source:
+              raise SystemExit("Missing moderation credentials must not block Backend/CDN health recovery deployment.")
+          post_source = pathlib.Path("../../cmd/api/social_post_create.go").read_text(encoding="utf-8")
+          if 'if s.moderation == nil' not in post_source or "POST_MODERATION_UNAVAILABLE" not in post_source:
+              raise SystemExit("Post publishing must remain fail-closed when the moderation provider is not configured.")
           if deploy_source.index('host_arch="$(uname -m)"') > deploy_source.index('up -d postgres'):
               raise SystemExit("Instabox must reject an unsupported CDN host architecture before changing services.")
           match = re.search(r"(?m)^\s*cmd='(.*)'\s*$", target["run"])
