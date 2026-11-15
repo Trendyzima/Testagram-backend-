@@ -184,15 +184,17 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 	if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&nextID); err != nil {
 		return nativeSessionTokens{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE testagram_auth.sessions
-		SET revoked_at=now(),revoke_reason='rotated',replaced_by=$2::uuid,last_used_at=now()
-		WHERE session_id=$1::uuid AND revoked_at IS NULL`, oldID, nextID); err != nil {
-		return nativeSessionTokens{}, err
-	}
+	// Insert the replacement first because replaced_by has an immediate
+	// foreign-key reference to the new session row.
 	if _, err := tx.Exec(ctx, `INSERT INTO testagram_auth.sessions
 		(session_id,user_id,refresh_token_hash,family_id,token_version,expires_at,user_agent_hash,ip_hash)
 		VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5,now()+$6::interval,$7,$8)`,
 		nextID, userID, authTokenHash(nextRefresh), familyID, version, "30 days", authFingerprint(userAgent), authFingerprint(ip)); err != nil {
+		return nativeSessionTokens{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE testagram_auth.sessions
+		SET revoked_at=now(),revoke_reason='rotated',replaced_by=$2::uuid,last_used_at=now()
+		WHERE session_id=$1::uuid AND revoked_at IS NULL`, oldID, nextID); err != nil {
 		return nativeSessionTokens{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,ip_hash)
