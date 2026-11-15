@@ -77,9 +77,6 @@ func authTokenHash(token string) []byte {
 	return sum[:]
 }
 
-// Keep the previous PBKDF2 work factor for legacy credential verification.
-const authPasswordRounds = 210000
-
 // Argon2id is the default password KDF. The encoded format is self-describing so
 // parameters can be upgraded without a schema migration.
 const authArgon2Memory uint32 = 64 * 1024
