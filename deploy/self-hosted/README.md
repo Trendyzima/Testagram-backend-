@@ -168,3 +168,20 @@ pre-migration backup instead.
 
 
 The Backend `FEDERATION_PUBLIC_BASE_URL` must exactly match the Federation service `PUBLIC_BASE_URL`. The Backend uses this origin for ActivityPub actor, activity and public object IDs; a mismatch causes signed activity enqueue authorization to fail closed.
+
+
+## X / Bluesky / Mastodon-inspired social capabilities
+
+The Backend adds native quote posts and per-account timeline presets. Quote posts are regular Testagram threads with a canonical source-thread relationship, an idempotent creation key, and a transactionally maintained quote count. Only active public source threads can be quoted. The thread API returns `quote_of_thread_id` so clients can render the quoted context.
+
+The account can choose a default thread feed: `for-you`, `following`, `latest`, or `media`. Clients can override it with `GET /api/threads?tab=...`. Feed preferences are stored per canonical Testagram account, not in browser metadata.
+
+These are product capabilities inspired by X-style quote posts and Bluesky-style feed choice; they do not claim Testagram is an X API client or an AT Protocol PDS. Mastodon interoperability remains the separate ActivityPub Federation service with remote actors/follows and signed server-to-server delivery. Keep Federation delivery disabled until its own acceptance gates pass.
+
+For a fresh database, migration 049 is mounted as an init script. Existing PostgreSQL volumes do not rerun init scripts. Apply the additive schema to an existing database only after reviewing a verified backup:
+
+```sh
+bash ./apply-social-protocol-upgrades.sh
+```
+
+The script requires the explicit confirmation phrase, uses `ON_ERROR_STOP`, and verifies quote relationships, user feed preferences and the quote-count trigger. No migration is run by user activity or by the watchdog.
