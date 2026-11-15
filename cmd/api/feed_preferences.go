@@ -41,6 +41,7 @@ func (s *service) feedPreferences(w http.ResponseWriter,r *http.Request) {
 		}
 		writeJSON(w,200,map[string]any{"ok":true,"data":map[string]any{"default_feed":feed,"available_feeds":[]string{"for-you","following","latest","media"},"updated_at":updated},"error":nil,"request_id":rid})
 	case http.MethodPut:
+		if !s.socialWriteAllowed(w,r,userID,rid,"feed-preference",20) { return }
 		var in feedPreferenceInput
 		if err:=decodeMediaJSON(w,r,&in);err!=nil {
 			writeJSON(w,400,errorBody("INVALID_FEED_PREFERENCE","Feed preference payload is invalid",rid));return
