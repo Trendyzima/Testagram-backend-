@@ -2,14 +2,10 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -44,37 +40,6 @@ func localCapabilityName(name string) bool {
 	}
 	return false
 }
-func localJWTSubject(authorization string) (string, error) {
-	parts := strings.Fields(authorization)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") { return "", errors.New("bearer token required") }
-	segments := strings.Split(parts[1], ".")
-	if len(segments) != 3 || len(parts[1]) > 8192 { return "", errors.New("invalid token") }
-	headerBytes, err := base64.RawURLEncoding.DecodeString(segments[0])
-	if err != nil { return "", errors.New("invalid token header") }
-	var header struct { Alg string `json:"alg"`; Typ string `json:"typ"` }
-	if json.Unmarshal(headerBytes, &header) != nil || header.Alg != "HS256" || header.Typ != "JWT" { return "", errors.New("unsupported token header") }
-	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
-	if len(secret) < 32 { return "", errors.New("Testagram JWT verification is not configured") }
-	sig, err := base64.RawURLEncoding.DecodeString(segments[2])
-	if err != nil { return "", errors.New("invalid token signature") }
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(segments[0] + "." + segments[1]))
-	if !hmac.Equal(sig, mac.Sum(nil)) { return "", errors.New("invalid token signature") }
-	payload, err := base64.RawURLEncoding.DecodeString(segments[1])
-	if err != nil { return "", errors.New("invalid token claims") }
-	var claims authClaims
-	if json.Unmarshal(payload, &claims) != nil { return "", errors.New("invalid token claims") }
-	now := time.Now().UTC().Unix()
-	if claims.Issuer != "testagram-auth" || claims.Role != "authenticated" ||
-		!localUUIDPattern.MatchString(claims.Subject) || !localUUIDPattern.MatchString(claims.SessionID) ||
-		claims.TokenVersion < 1 || claims.IssuedAt <= 0 || claims.IssuedAt > now+60 ||
-		claims.ExpiresAt <= now || claims.ExpiresAt <= claims.IssuedAt ||
-		claims.ExpiresAt-claims.IssuedAt > int64((16*time.Minute)/time.Second) {
-		return "", errors.New("invalid or expired Testagram token claims")
-	}
-	return strings.ToLower(claims.Subject), nil
-}
-
 func (s *service) localProductCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
 	if !localProductEnabled() || !localCapabilityName(body.Capability) {
 		return false
