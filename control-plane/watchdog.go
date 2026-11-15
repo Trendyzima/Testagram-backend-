@@ -121,6 +121,7 @@ func (s *Server) watchdogClaimImpulses(w http.ResponseWriter,r *http.Request) {
 		limit=n
 	}
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
+	if _,err:=s.db.Exec(ctx,`UPDATE testagram_watchdog.impulses SET status='failed',last_error=CASE WHEN last_error='' THEN 'activation worker lease expired after five attempts' ELSE last_error END,lease_until=NULL,updated_at=now() WHERE status='claimed' AND attempts>=5 AND lease_until<now()`);err!=nil { reply(w,http.StatusServiceUnavailable,map[string]string{"error":"watchdog expired-claim cleanup failed"});return }
 	rows,err:=s.db.Query(ctx,`WITH picked AS (
 		SELECT id FROM testagram_watchdog.impulses
 		WHERE attempts<5 AND ((status='queued' AND available_at<=now()) OR (status='claimed' AND lease_until<now()))
