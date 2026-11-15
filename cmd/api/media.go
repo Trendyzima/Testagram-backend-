@@ -942,6 +942,7 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_FAILED", "Media was verified but upload completion state could not be saved", id))
 		return
 	}
+	s.enqueueWatchdogImpulse("media_upload")
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "data": asset, "error": nil, "request_id": id})
 }
 
