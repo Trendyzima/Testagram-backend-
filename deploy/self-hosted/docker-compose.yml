@@ -107,7 +107,7 @@ services:
     volumes: [object-data:/data]
     ports: ["127.0.0.1:9000:9000"]
     restart: unless-stopped
-    networks: [data, egress]
+    networks: [data, egress, platform]
 
   object-init:
     build:
@@ -129,6 +129,8 @@ services:
       MINIO_MEDIA_SECRET_KEY: ${MINIO_MEDIA_SECRET_KEY:-}
       IDENTITY_EVIDENCE_PRIVATE_BUCKET: ${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}
       MINIO_METADATA_BUCKET: ${MINIO_METADATA_BUCKET:-testagram-media-metadata}
+      MINIO_METADATA_ACCESS_KEY: ${MINIO_METADATA_ACCESS_KEY:-}
+      MINIO_METADATA_SECRET_KEY: ${MINIO_METADATA_SECRET_KEY:-}
     restart: "no"
     networks: [data]
 
