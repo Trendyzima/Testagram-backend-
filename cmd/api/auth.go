@@ -434,6 +434,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_NOT_CONFIGURED", "Independent authentication is not configured", requestID(r)))
 			return true
 		}
+		emitWatchdogImpulse(r.Context(), "login")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "access_token": jwt, "token_type": "Bearer", "expires_in": 900, "user": map[string]any{"id": userID, "email": email}})
 		return true
 	case "forgot-password":
