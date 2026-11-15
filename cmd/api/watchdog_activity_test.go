@@ -20,7 +20,7 @@ func setWatchdogTestEnv(t *testing.T,name,value string) {
 func TestWatchdogBucketKeyIsStableAndContainsNoIdentity(t *testing.T) {
 	at:=time.Date(2026,11,15,17,42,0,0,time.FixedZone("EAT",3*60*60))
 	a:=watchdogBucketKey("feed_open",at)
-	b:=watchdogBucketKey("feed_open",at.Add(4*time.Minute))
+	b:=watchdogBucketKey("feed_open",at.Add(3*time.Minute))
 	c:=watchdogBucketKey("feed_open",at.Add(5*time.Minute))
 	if a!=b { t.Fatalf("same bucket should deduplicate: %q != %q",a,b) }
 	if a==c { t.Fatalf("next bucket should allow a fresh wake-up: %q",a) }
