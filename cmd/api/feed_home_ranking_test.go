@@ -57,3 +57,25 @@ func TestOrderHomeFeedByRankingRejectsDuplicateCandidateIDs(t *testing.T) {
 		t.Fatalf("duplicate candidates must retain original page: %#v, complete=%v", got, complete)
 	}
 }
+
+
+func TestParseHomeFeedMode(t *testing.T) {
+	cases := map[string]string{
+		"":         "for_you",
+		"for_you":  "for_you",
+		"following": "following",
+		"latest":   "latest",
+		"media":    "media",
+		"discover": "discover",
+		" DISCOVER ": "discover",
+	}
+	for input, want := range cases {
+		got, err := parseHomeFeedMode(input)
+		if err != nil || got != want {
+			t.Fatalf("parseHomeFeedMode(%q)=(%q,%v), want %q", input, got, err, want)
+		}
+	}
+	if _, err := parseHomeFeedMode("admin"); err == nil {
+		t.Fatal("unknown feed mode must be rejected")
+	}
+}
