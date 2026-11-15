@@ -37,6 +37,7 @@ func (s *service) threadsList(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		s.enqueueWatchdogImpulse("feed_open")
 	}
 	if (tab == "following" || tab == "saved") && userID == "" {
 		writeJSON(w, 401, errorBody("AUTH_REQUIRED", "Sign in to view this thread list", rid))
