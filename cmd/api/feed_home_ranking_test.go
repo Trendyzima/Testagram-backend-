@@ -7,6 +7,32 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
+func TestParseVideoOnly(t *testing.T) {
+	cases := []struct {
+		name string
+		input string
+		want bool
+		wantErr bool
+	}{
+		{name: "omitted defaults false", input: "", want: false},
+		{name: "true", input: "true", want: true},
+		{name: "false", input: "false", want: false},
+		{name: "trimmed true", input: " TRUE ", want: true},
+		{name: "invalid value", input: "videos", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseVideoOnly(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("parseVideoOnly(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Fatalf("parseVideoOnly(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestOrderHomeFeedByRankingRequiresCompleteCandidateCoverage(t *testing.T) {
 	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
 	posts := []homeFeedPost{
