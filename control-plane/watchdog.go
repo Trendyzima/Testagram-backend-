@@ -36,9 +36,9 @@ func servicesForImpulse(event string) ([]string, bool) {
 	case "feed_open":
 		return []string{"algorithm"}, true
 	case "post_publish":
-		return []string{"data-centre"}, true
+		return []string{"worker","notification"}, true
 	case "media_upload", "media_view":
-		return []string{"cdn", "data-centre"}, true
+		return []string{"cdn","media","video-worker"}, true
 	case "federation_interaction":
 		return []string{"federation"}, true
 	default:
