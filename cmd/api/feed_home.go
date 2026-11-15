@@ -135,6 +135,9 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	if feedMode == "following" {
 		followingOnly = true
+	} else if feedMode == "for_you" && followingOnly {
+		// Preserve the legacy boolean filter while selecting the matching ranker profile.
+		feedMode = "following"
 	}
 	mediaOnly := feedMode == "media"
 	discoverOnly := feedMode == "discover"
