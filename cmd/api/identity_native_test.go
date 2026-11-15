@@ -15,12 +15,21 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestIdentityApplicationConflictOnlyMasksUniqueViolations(t *testing.T) {
-	if !identityApplicationConflict(&pgconn.PgError{Code: "23505"}) {
-		t.Fatal("unique constraint violations must receive privacy-preserving acceptance")
+func TestIdentityApplicationConflictOnlyMasksDuplicateEmailOrUsername(t *testing.T) {
+	for _, constraint := range []string{
+		"identity_applications_active_email_ci_idx",
+		"identity_applications_active_username_ci_idx",
+	} {
+		err := &pgconn.PgError{Code: "23505", ConstraintName: constraint}
+		if !identityApplicationConflict(err) {
+			t.Errorf("duplicate constraint %q should receive privacy-preserving acceptance", constraint)
+		}
+		if !identityApplicationConflict(fmt.Errorf("wrapped: %w", err)) {
+			t.Errorf("wrapped duplicate constraint %q was not recognized", constraint)
+		}
 	}
-	if !identityApplicationConflict(fmt.Errorf("wrapped: %w", &pgconn.PgError{Code: "23505"})) {
-		t.Fatal("wrapped unique constraint violations must be recognized")
+	if identityApplicationConflict(&pgconn.PgError{Code: "23505", ConstraintName: "identity_applications_submission_key_idx"}) {
+		t.Fatal("idempotency-key conflicts must not be masked as generic acceptance")
 	}
 	if identityApplicationConflict(&pgconn.PgError{Code: "42P01"}) {
 		t.Fatal("missing-table errors must not be masked as generic acceptance")
@@ -104,6 +113,30 @@ func TestIdentityIdempotencyAdvisoryLockIsTransactionScoped(t *testing.T) {
 	}
 	if !acquired {
 		t.Fatal("idempotency lock was not released when the first transaction committed")
+	}
+}
+
+func TestIdentityDerivedCapabilityTokensAreStableAndSeparated(t *testing.T) {
+	key := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+	application := identityDerivedCapabilityToken(key, "application", "app-123")
+	session := identityDerivedCapabilityToken(key, "session", "session-123")
+	if len(application) != 43 || len(session) != 43 {
+		t.Fatalf("derived capabilities must be 256-bit URL-safe tokens, got lengths %d and %d", len(application), len(session))
+	}
+	if application != identityDerivedCapabilityToken(key, "application", "app-123") {
+		t.Fatal("application capability changed for the same idempotency key and application")
+	}
+	if session != identityDerivedCapabilityToken(key, "session", "session-123") {
+		t.Fatal("session capability changed for the same idempotency key and session")
+	}
+	if application == session {
+		t.Fatal("application and session capabilities must be domain separated")
+	}
+	if session == identityDerivedCapabilityToken(key, "session", "session-456") {
+		t.Fatal("different session IDs must produce different capabilities")
+	}
+	if session == identityDerivedCapabilityToken(key+"x", "session", "session-123") {
+		t.Fatal("different idempotency keys must produce different capabilities")
 	}
 }
 
