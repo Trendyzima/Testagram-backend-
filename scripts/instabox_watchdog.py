@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode, urlparse
 
 API_BASE = os.getenv("INSTABOX_API_BASE_URL", "https://api.instabox.sh").rstrip("/")
 API_KEY = os.getenv("INSTABOX_WATCHDOG_API_KEY", "")
+API_KEY_HEADER = os.getenv("INSTABOX_WATCHDOG_API_KEY_HEADER", "Authorization")
 MACHINE_ID = os.getenv("INSTABOX_MACHINE_ID", "")
 MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagramdb")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
@@ -47,7 +48,15 @@ class API:
                 idempotency_key: str | None = None) -> dict[str, Any]:
         if not self.key:
             raise WatchdogError("INSTABOX_API_KEY is not configured")
-        headers = {"Authorization": f"Bearer {self.key}", "Accept": "application/json"}
+        headers = {"Accept": "application/json"}
+        if API_KEY_HEADER == "Authorization":
+            headers["Authorization"] = f"Bearer {self.key}"
+        elif API_KEY_HEADER == "X-API-Key":
+            if method != "GET":
+                raise WatchdogError("read-only InstaBox credentials cannot issue lifecycle actions")
+            headers["X-API-Key"] = self.key
+        else:
+            raise WatchdogError("unsupported InstaBox API authentication header")
         payload = None
         if body is not None:
             headers["Content-Type"] = "application/json"
