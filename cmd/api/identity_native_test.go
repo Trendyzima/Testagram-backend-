@@ -55,6 +55,58 @@ func TestIdentityApplicationRecoveryDoesNotReopenVerifiedOrProvisionedSessions(t
 	}
 }
 
+func TestIdentityIdempotencyAdvisoryLockIsTransactionScoped(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for idempotency lock integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	keyHash := authTokenHash("identity-idempotency-lock:" + time.Now().UTC().Format(time.RFC3339Nano))
+	first, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Rollback(context.Background())
+	second, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Rollback(context.Background())
+
+	if _, err := first.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
+	`, keyHash); err != nil {
+		t.Fatal(err)
+	}
+	var acquired bool
+	if err := second.QueryRow(ctx, `
+		SELECT pg_try_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
+	`, keyHash).Scan(&acquired); err != nil {
+		t.Fatal(err)
+	}
+	if acquired {
+		t.Fatal("a concurrent transaction acquired an idempotency lock already held by the first request")
+	}
+	if err := first.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.QueryRow(ctx, `
+		SELECT pg_try_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
+	`, keyHash).Scan(&acquired); err != nil {
+		t.Fatal(err)
+	}
+	if !acquired {
+		t.Fatal("idempotency lock was not released when the first transaction committed")
+	}
+}
+
 func TestIdentityEvidenceExtensionAllowlist(t *testing.T) {
 	cases := []struct {
 		contentType string
