@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -61,32 +64,31 @@ func TestAuthJWTRequiresDedicatedSecret(t *testing.T) {
 	}
 }
 
-func TestAuthJWTIsAcceptedByLocalTokenVerifier(t *testing.T) {
+func TestAuthJWTContainsStrictSessionBoundClaims(t *testing.T) {
 	oldAuth, hadAuth := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
-	oldSupabase, hadSupabase := os.LookupEnv("SUPABASE_JWT_SECRET")
 	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("a", 40))
-	_ = os.Unsetenv("SUPABASE_JWT_SECRET")
 	t.Cleanup(func() {
-		if hadAuth {
-			_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", oldAuth)
-		} else {
-			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
-		}
-		if hadSupabase {
-			_ = os.Setenv("SUPABASE_JWT_SECRET", oldSupabase)
-		} else {
-			_ = os.Unsetenv("SUPABASE_JWT_SECRET")
-		}
+		if hadAuth { _ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", oldAuth) } else { _ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET") }
 	})
 	const userID = "123e4567-e89b-42d3-a456-426614174000"
-	token, err := authSignJWT(userID, "user@example.com", 1, "223e4567-e89b-42d3-a456-426614174000")
-	if err != nil {
-		t.Fatal(err)
+	const sessionID = "223e4567-e89b-42d3-a456-426614174000"
+	token, err := authSignJWT(userID, "user@example.com", 7, sessionID)
+	if err != nil { t.Fatal(err) }
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 { t.Fatalf("JWT has %d segments", len(parts)) }
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil { t.Fatal(err) }
+	var claims authClaims
+	if err := json.Unmarshal(payload, &claims); err != nil { t.Fatal(err) }
+	if claims.Subject != userID || claims.SessionID != sessionID || claims.TokenVersion != 7 ||
+		claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" ||
+		claims.Role != "authenticated" || claims.ExpiresAt-claims.IssuedAt != 900 {
+		t.Fatalf("unexpected signed claims: %+v", claims)
 	}
-	got, err := localJWTSubject("Bearer " + token)
-	if err != nil || got != userID {
-		t.Fatalf("locally issued token rejected: subject=%q error=%v", got, err)
-	}
+	mac := hmac.New(sha256.New, []byte(strings.Repeat("a", 40)))
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) { t.Fatal("JWT signature is invalid") }
 }
 
 func TestAuthTokenHashIsNotRawToken(t *testing.T) {
