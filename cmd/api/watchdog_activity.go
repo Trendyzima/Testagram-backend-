@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,10 +13,6 @@ import (
 	"time"
 )
 
-// enqueueWatchdogImpulse sends only a coarse allowlisted event to the private
-// Data Centre control plane. It carries no user ID, email, IP, post content,
-// access token or session identifier. Delivery is best-effort: watchdog
-// outages must never break login, feed reads, publishing or media access.
 func validWatchdogEvent(eventType string) bool {
 	switch eventType {
 	case "login", "feed_open", "post_publish", "media_upload", "media_view", "federation_interaction":
@@ -25,21 +22,8 @@ func validWatchdogEvent(eventType string) bool {
 	}
 }
 
-func watchdogBucketKey(eventType string, now time.Time) string {
-	return "testagram:"+eventType+":"+now.UTC().Truncate(5*time.Minute).Format("20060102T1504")
-}
-
-func validWatchdogEvent(eventType string) bool {
-	switch eventType {
-	case "login", "feed_open", "post_publish", "media_upload", "media_view", "federation_interaction":
-		return true
-	default:
-		return false
-	}
-}
-
-// A shared five-minute bucket bounds queue writes without identifying users.
-// A fresh bucket can extend a service lease while platform-wide activity continues.
+// One platform-wide key per event type and five-minute bucket avoids storing
+// user identifiers and prevents every feed refresh from generating a queue row.
 func watchdogBucketKey(eventType string, at time.Time) string {
 	return "testagram:" + eventType + ":" + at.UTC().Truncate(5*time.Minute).Format("20060102T1504")
 }
@@ -48,6 +32,12 @@ func (s *service) enqueueWatchdogImpulse(eventType string) {
 	if !validWatchdogEvent(eventType) {
 		return
 	}
+	// Activity-driven activation is best-effort and must not add control-plane
+	// latency to login, feed reads, publishing, or media authorization.
+	go s.deliverWatchdogImpulse(eventType)
+}
+
+func (s *service) deliverWatchdogImpulse(eventType string) {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INTERNAL_URL")), "/")
 	token := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_INGRESS_TOKEN"))
 	if base == "" || token == "" {
@@ -60,9 +50,19 @@ func (s *service) enqueueWatchdogImpulse(eventType string) {
 		log.Printf("activity watchdog skipped: invalid private control-plane URL")
 		return
 	}
-	key := watchdogBucketKey(eventType,time.Now())
-	payload, err := json.Marshal(map[string]string{"idempotencyKey":key,"eventType":eventType})
-	if err != nil { return }
+	if parsed.Scheme == "http" {
+		host := strings.ToLower(parsed.Hostname())
+		ip := net.ParseIP(host)
+		if host != "control-plane" && host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			log.Printf("activity watchdog skipped: plaintext control-plane URL must be loopback/private service DNS")
+			return
+		}
+	}
+	key := watchdogBucketKey(eventType, time.Now())
+	payload, err := json.Marshal(map[string]string{"idempotencyKey": key, "eventType": eventType})
+	if err != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/watchdog/impulses", bytes.NewReader(payload))
