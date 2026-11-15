@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import MagicMock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -119,6 +120,31 @@ class WatchdogTests(unittest.TestCase):
         with self.assertRaisesRegex(watchdog.WatchdogError, "desiredState"):
             watchdog.machine_snapshot(api)
 
+    def test_read_only_api_key_uses_x_api_key_header(self):
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return b'{}'
+
+        with patch.object(watchdog, "API_KEY_HEADER", "X-API-Key"), \
+             patch.object(watchdog.urllib.request, "urlopen", return_value=Response()) as urlopen:
+            watchdog.API(base="https://api.instabox.sh", key="read-only-key").request(
+                "GET", "/v1/machines"
+            )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("X-api-key"), "read-only-key")
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_read_only_api_key_cannot_issue_lifecycle_actions(self):
+        with patch.object(watchdog, "API_KEY_HEADER", "X-API-Key"):
+            with self.assertRaisesRegex(watchdog.WatchdogError, "cannot issue lifecycle actions"):
+                watchdog.API(base="https://api.instabox.sh", key="read-only-key").request(
+                    "POST", "/v1/machines/machine-123/start", {}
+                )
+
     def test_lifecycle_uses_idempotency_key_and_polls_operation(self):
         api = FakeAPI()
         watchdog.lifecycle(api, "start")
@@ -224,6 +250,10 @@ class WatchdogTests(unittest.TestCase):
     def test_workflow_uses_separate_write_key_and_canonical_backend_health_urls(self):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
         self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
+        self.assertIn("secrets.INSTABOX_READONLY_API_KEY", workflow)
+        self.assertIn("WATCHDOG_AUTO_RECOVERY_ENABLED", workflow)
+        self.assertIn("INSTABOX_WATCHDOG_API_KEY_HEADER=X-API-Key", workflow)
+        self.assertIn("dedicated INSTABOX_WATCHDOG_API_KEY", workflow)
         self.assertIn("https://api.testagram.site/healthz", workflow)
         self.assertIn("https://api.testagram.site/readyz", workflow)
         self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
