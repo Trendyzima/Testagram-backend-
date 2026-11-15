@@ -41,3 +41,17 @@ The agent never issues `docker compose down`, stop or prune. Backend, PostgreSQL
 - Mastodon-inspired: ActivityPub actor identity, signed federation, followers and remote delivery; public federation remains subject to explicit account consent and the Federation release gates.
 
 Testagram remains the authority for local identity and product permissions. Remote platforms never become authentication providers for local accounts.
+
+
+## Credential boundaries and runtime worker
+
+Use two independent high-entropy secrets:
+
+- `VPS_WATCHDOG_INGRESS_TOKEN`: mounted only in the Backend API and control-plane containers. It authorizes enqueue only.
+- `VPS_WATCHDOG_TOKEN`: mounted only in the control-plane and the designated node-agent. It authorizes claim/ack only.
+
+The API calls the private control-plane over the shared Docker network at `http://control-plane:8787` by default. Never route this internal endpoint through Cloudflare or expose it to Flutter/web clients.
+
+The node-agent worker is disabled by default. Enable it only on the designated Linux activation VPS after the Backend migration and control-plane endpoints have been deployed. Configure `VPS_ENABLE_ACTIVITY_WATCHDOG=true`, `VPS_WATCHDOG_CONTROL_URL`, `VPS_WATCHDOG_TOKEN`, `VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE` and `VPS_WATCHDOG_BACKEND_COMPOSE_FILE` in `/etc/testagram/node-agent.env`. The two Compose paths must be absolute paths to the already-deployed Data Centre and Backend Compose files.
+
+The activation worker calls `POST /v1/watchdog/impulses/claim?limit=10` and `POST /v1/watchdog/impulses/ack`. The control plane retries failed/expired work with exponential backoff and stops after five attempts. The service lease is advisory only; this release never stops services on lease expiry. It does not run migrations, pull images, recreate running containers, accept arbitrary commands or alter public DNS/Cloudflare routes.
