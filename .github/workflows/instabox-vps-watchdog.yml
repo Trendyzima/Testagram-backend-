@@ -47,7 +47,7 @@ jobs:
       - name: Run external Instabox watchdog
         env:
           INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
-          INSTABOX_MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID }}
+          INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
           INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagram' }}
           TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://api.testagram.site/healthz' }}
           WATCHDOG_ALERT_WEBHOOK: ${{ secrets.WATCHDOG_ALERT_WEBHOOK }}
