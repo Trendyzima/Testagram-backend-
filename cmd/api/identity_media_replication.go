@@ -41,6 +41,7 @@ func configureIdentityMediaReplicator(primary *virtualstorage.S3Provider) (*virt
 	primaryBuckets := map[string]string{
 		"media-private": env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))),
 		"media-public":  env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))),
+		"media-metadata-private": env("MINIO_METADATA_BUCKET", "testagram-media-metadata"),
 	}
 	primaryBuckets["identity-evidence-private"] = strings.TrimSpace(os.Getenv("IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
 
@@ -49,12 +50,14 @@ func configureIdentityMediaReplicator(primary *virtualstorage.S3Provider) (*virt
 		"media-public":  replicaBucket("CLOUDFLARE_R2", "public", "CLOUDFLARE_R2_BUCKET"),
 	}
 	r2Buckets["identity-evidence-private"] = strings.TrimSpace(os.Getenv("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
+	r2Buckets["media-metadata-private"] = strings.TrimSpace(os.Getenv("CLOUDFLARE_R2_METADATA_BUCKET"))
 
 	b2Buckets := map[string]string{
 		"media-private": replicaBucket("B2_S3", "private", "B2_S3_BUCKET"),
 		"media-public":  replicaBucket("B2_S3", "public", "B2_S3_BUCKET"),
 	}
 	b2Buckets["identity-evidence-private"] = strings.TrimSpace(os.Getenv("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"))
+	b2Buckets["media-metadata-private"] = strings.TrimSpace(os.Getenv("B2_S3_METADATA_BUCKET"))
 
 	for provider, buckets := range map[string]map[string]string{
 		"instabox-vps":  primaryBuckets,
@@ -64,6 +67,7 @@ func configureIdentityMediaReplicator(primary *virtualstorage.S3Provider) (*virt
 		if err := validateIdentityEvidenceBucketIsolation(provider, buckets); err != nil {
 			return nil, err
 		}
+		if err := validateMediaMetadataBucketIsolation(provider, buckets); err != nil { return nil, err }
 	}
 
 	return virtualstorage.NewReplicator("instabox-vps", primary, primaryBuckets, []virtualstorage.ReplicaTarget{
