@@ -82,7 +82,7 @@ func validateMediaBucketIsolation(provider string, buckets map[string]string) er
 func validateMediaMetadataBucketIsolation(provider string, buckets map[string]string) error {
 	metadata := strings.TrimSpace(buckets["media-metadata-private"])
 	if metadata == "" { return fmt.Errorf("%s private metadata bucket must be configured", provider) }
-	if metadata == strings.TrimSpace(buckets["media-private"]) || metadata == strings.TrimSpace(buckets["media-public"]) {
+	if metadata == strings.TrimSpace(buckets["media-private"]) || metadata == strings.TrimSpace(buckets["media-public"]) || (strings.TrimSpace(buckets["identity-evidence-private"]) != "" && metadata == strings.TrimSpace(buckets["identity-evidence-private"])) {
 		return fmt.Errorf("%s metadata bucket must be distinct from private/public media buckets", provider)
 	}
 	return nil
