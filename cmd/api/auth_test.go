@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,21 +33,26 @@ func fmtHex(value []byte) string {
 
 func TestAuthPasswordHashAndVerify(t *testing.T) {
 	hash, err := authPasswordHash("correct horse battery staple")
-	if err != nil {
-		t.Fatal(err)
+	if err != nil { t.Fatal(err) }
+	if !strings.HasPrefix(hash, "argon2id$v=19$m=65536,t=3,p=2$") {
+		t.Fatalf("new password hash is not Argon2id: %q", hash)
 	}
-	if !authPasswordVerify(hash, "correct horse battery staple") {
-		t.Fatal("correct password rejected")
-	}
-	if authPasswordVerify(hash, "wrong password") {
-		t.Fatal("wrong password accepted")
-	}
-	if _, err := authPasswordHash("short"); err == nil {
-		t.Fatal("short password accepted")
-	}
-	if !strings.HasPrefix(hash, "pbkdf2-sha256$210000$") {
-		t.Fatalf("unexpected hash format %q", hash)
-	}
+	if !authPasswordVerify(hash, "correct horse battery staple") { t.Fatal("correct password rejected") }
+	if authPasswordVerify(hash, "wrong password") { t.Fatal("wrong password accepted") }
+	if _, err := authPasswordHash("short"); err == nil { t.Fatal("short password accepted") }
+	if !authPasswordNeedsRehash("pbkdf2-sha256$210000$legacy$legacy") { t.Fatal("legacy PBKDF2 hash should require upgrade") }
+	if !authPasswordNeedsRehash("argon2id$v=19$m=32768,t=2,p=1$old$old") { t.Fatal("non-current Argon2id parameters should require upgrade") }
+	if authPasswordNeedsRehash(hash) { t.Fatal("current Argon2id parameters should not require upgrade") }
+}
+
+func TestAuthLegacyPBKDF2Verification(t *testing.T) {
+	const password = "correct horse battery staple"
+	salt := []byte("0123456789abcdef")
+	derived := authPBKDF2([]byte(password), salt, authPasswordRounds, 32)
+	legacy := fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", authPasswordRounds,
+		base64.RawURLEncoding.EncodeToString(salt), base64.RawURLEncoding.EncodeToString(derived))
+	if !authPasswordVerify(legacy, password) { t.Fatal("legacy PBKDF2 credential rejected") }
+	if authPasswordVerify(legacy, "incorrect password") { t.Fatal("legacy PBKDF2 accepted incorrect password") }
 }
 
 func TestAuthJWTRequiresDedicatedSecret(t *testing.T) {
