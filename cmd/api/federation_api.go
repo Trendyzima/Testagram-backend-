@@ -246,6 +246,7 @@ func (s *service) federationRemoteFollow(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("REMOTE_FOLLOW_WRITE_FAILED", "Canonical remote follow state could not be persisted", requestID(r)))
 		return
 	}
+	s.enqueueWatchdogImpulse("federation_interaction")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]string{"status": "accepted"}, "error": nil, "request_id": requestID(r)})
 }
 
