@@ -104,14 +104,12 @@ check_http() {
   fi
 }
 
-section "Public HTTPS service probes"
+section "Public HTTPS liveness probes"
+# Dependency readiness is intentionally private and is verified through
+# Docker healthchecks and internal listener probes later in this read-only audit.
 check_http "Backend liveness" "https://api.testagram.site/healthz"
-check_http "Backend readiness" "https://api.testagram.site/readyz"
 check_http "Go CDN liveness" "https://media.testagram.site/healthz"
-check_http "Go CDN readiness" "https://media.testagram.site/readyz"
 check_http "Staff console liveness" "https://ops.testagram.site/healthz"
-check_http "Federation liveness" "https://federation.testagram.site/healthz"
-check_http "Federation readiness" "https://federation.testagram.site/readyz"
 
 section "Private origin probes"
 if curl --silent --show-error --max-time 10 -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then

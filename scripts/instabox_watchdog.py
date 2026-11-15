@@ -14,10 +14,10 @@ from urllib.parse import quote, urlencode, urlparse
 
 API_BASE = os.getenv("INSTABOX_API_BASE_URL", "https://api.instabox.sh").rstrip("/")
 API_KEY = os.getenv("INSTABOX_WATCHDOG_API_KEY", "")
+API_KEY_HEADER = os.getenv("INSTABOX_WATCHDOG_API_KEY_HEADER", "Authorization")
 MACHINE_ID = os.getenv("INSTABOX_MACHINE_ID", "")
 MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagram")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
-READY_URL = os.getenv("TESTAGRAM_READINESS_URL", "")
 STATE_FILE = os.getenv("WATCHDOG_STATE_FILE", ".watchdog-state.json")
 WEBHOOK_URL = os.getenv("WATCHDOG_ALERT_WEBHOOK", "")
 FAILURES_REQUIRED = int(os.getenv("WATCHDOG_FAILURES_REQUIRED", "3"))
@@ -46,8 +46,16 @@ class API:
     def request(self, method: str, path: str, body: dict[str, Any] | None = None,
                 idempotency_key: str | None = None) -> dict[str, Any]:
         if not self.key:
-            raise WatchdogError("INSTABOX_API_KEY is not configured")
-        headers = {"X-API-Key": self.key, "Accept": "application/json"}
+            raise WatchdogError("INSTABOX_WATCHDOG_API_KEY is not configured")
+        headers = {"Accept": "application/json"}
+        if API_KEY_HEADER == "Authorization":
+            headers["Authorization"] = f"Bearer {self.key}"
+        elif API_KEY_HEADER == "X-API-Key":
+            if method != "GET":
+                raise WatchdogError("read-only InstaBox credentials cannot issue lifecycle actions")
+            headers["X-API-Key"] = self.key
+        else:
+            raise WatchdogError("unsupported InstaBox API authentication header")
         payload = None
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -185,26 +193,20 @@ def resolve_machine_id(api: API) -> str:
     return str(matches[0]["id"])
 
 
-def readiness_probe() -> tuple[bool, str]:
-    # The public port agent intentionally does not expose /readyz. Private
-    # dependency readiness is checked by the deployment job inside Docker.
-    if not READY_URL:
-        return True, "skipped (private readiness is not publicly routable)"
-    return probe(READY_URL)
-
-
 def wait_for_service() -> None:
+    # Only public liveness is used to decide whether a machine lifecycle
+    # action succeeded. Dependency readiness is intentionally private and is
+    # enforced by Docker healthchecks inspected by the read-only health audit.
     deadline = time.monotonic() + RECOVERY_HEALTH_TIMEOUT
     while True:
         health_ok, health_detail = probe(HEALTH_URL)
-        ready_ok, ready_detail = readiness_probe()
-        if health_ok and ready_ok:
-            emit(f"recovery verified: health={health_detail}, readiness={ready_detail}")
+        if health_ok:
+            emit(f"recovery verified: public liveness={health_detail}")
             return
         if time.monotonic() >= deadline:
             raise WatchdogError(
-                f"Machine lifecycle completed but Testagram did not become healthy "
-                f"within {RECOVERY_HEALTH_TIMEOUT}s (health={health_detail}, readiness={ready_detail})"
+                f"Machine lifecycle completed but Testagram liveness did not recover "
+                f"within {RECOVERY_HEALTH_TIMEOUT}s (health={health_detail})"
             )
         time.sleep(PROBE_INTERVAL)
 
@@ -273,7 +275,7 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
     save_state(state)
     lifecycle(api, "start")
     wait_for_service()
-    return "started stopped machine; API health and readiness verified"
+    return "started stopped machine; public API liveness verified"
 
 
 def recover_suspended(api: API, state: dict[str, Any]) -> str:
@@ -284,7 +286,7 @@ def recover_suspended(api: API, state: dict[str, Any]) -> str:
     save_state(state)
     lifecycle(api, "resume")
     wait_for_service()
-    return "resumed suspended machine; API health and readiness verified"
+    return "resumed suspended machine; public API liveness verified"
 
 
 def restart_running(api: API, state: dict[str, Any]) -> str:
@@ -298,23 +300,59 @@ def restart_running(api: API, state: dict[str, Any]) -> str:
     lifecycle(api, "stop")
     lifecycle(api, "start")
     wait_for_service()
-    return "power-cycled machine using stop/start; API health and readiness verified"
+    return "power-cycled machine using stop/start; public API liveness verified"
+
+
+def read_only_probe_without_provider_key() -> int:
+    """Check public liveness without provider credentials or lifecycle access."""
+    emit(
+        "Instabox API key is not configured; running public liveness probes only. "
+        "Provider inspection and lifecycle actions are unavailable."
+    )
+    for index in range(FAILURES_REQUIRED):
+        health_ok, health_detail = probe(HEALTH_URL)
+        emit(
+            f"read-only liveness probe {index + 1}/{FAILURES_REQUIRED}: "
+            f"{health_detail}"
+        )
+        if health_ok:
+            emit(
+                "Testagram public liveness is healthy; no provider lifecycle "
+                "operation was attempted."
+            )
+            return 0
+        if index + 1 < FAILURES_REQUIRED:
+            time.sleep(PROBE_INTERVAL)
+    raise WatchdogError(
+        f"All {FAILURES_REQUIRED} read-only public liveness probes failed; "
+        "automatic recovery remains unavailable because "
+        "INSTABOX_WATCHDOG_API_KEY is not configured"
+    )
 
 
 def main() -> int:
     global MACHINE_ID
-    if not API_KEY or (not MACHINE_ID and not MACHINE_NAME) or not HEALTH_URL:
-        raise WatchdogError("Configure INSTABOX_WATCHDOG_API_KEY, INSTABOX_MACHINE_NAME (or INSTABOX_MACHINE_ID), TESTAGRAM_HEALTH_URL (TESTAGRAM_READINESS_URL is optional and must be private-reachable)")
-    for label, value in (("Instabox API", API_BASE), ("health", HEALTH_URL)) + ((("readiness", READY_URL),) if READY_URL else ()):
-
-        if urlparse(value).scheme != "https":
-            raise WatchdogError(f"{label} URL must use HTTPS")
+    if not HEALTH_URL:
+        raise WatchdogError("Configure TESTAGRAM_HEALTH_URL")
+    if urlparse(HEALTH_URL).scheme != "https":
+        raise WatchdogError("Health URL must use HTTPS")
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
     if (FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
             or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1
             or RESTART_COOLDOWN < 300):
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, positive timeouts/intervals and >=300s restart cooldown")
+    if not API_KEY:
+        if DRY_RUN:
+            return read_only_probe_without_provider_key()
+        raise WatchdogError(
+            "INSTABOX_WATCHDOG_API_KEY is required for provider inspection "
+            "or lifecycle actions"
+        )
+    if not MACHINE_ID and not MACHINE_NAME:
+        raise WatchdogError("Configure INSTABOX_MACHINE_NAME or INSTABOX_MACHINE_ID")
+    if urlparse(API_BASE).scheme != "https":
+        raise WatchdogError("Instabox API URL must use HTTPS")
     api = API()
     MACHINE_ID = resolve_machine_id(api)
     state = load_state()
@@ -369,12 +407,11 @@ def main() -> int:
         raise WatchdogError(f"Unrecognized machine state {machine_state!r}; refusing action")
     for index in range(FAILURES_REQUIRED):
         health_ok, health_detail = probe(HEALTH_URL)
-        ready_ok, ready_detail = probe(READY_URL)
-        emit(f"probe {index + 1}/{FAILURES_REQUIRED}: health={health_detail}, readiness={ready_detail}")
-        if health_ok and ready_ok:
+        emit(f"liveness probe {index + 1}/{FAILURES_REQUIRED}: {health_detail}")
+        if health_ok:
             state["last_healthy_at"] = int(time.time())
             save_state(state)
-            emit("Testagram health and readiness are healthy; no recovery action required")
+            emit("Testagram public liveness is healthy; no recovery action required")
             return 0
         if index + 1 < FAILURES_REQUIRED:
             time.sleep(PROBE_INTERVAL)
@@ -389,7 +426,7 @@ def main() -> int:
         return 0
     result = restart_running(api, state)
     if result.startswith("power-cycled"):
-        notify(f"All {FAILURES_REQUIRED} health/readiness probes failed. {result}", "recovery")
+        notify(f"All {FAILURES_REQUIRED} public liveness probes failed. {result}", "recovery")
     else:
         emit(result)
     return 0
