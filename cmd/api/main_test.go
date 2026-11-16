@@ -12,6 +12,13 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 )
 
+func TestNativeAuthenticationIsTheDefaultProvider(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "")
+	if !nativeAuthEnabled() {
+		t.Fatal("native Testagram authentication must be the default when no provider is configured")
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	s := &service{}
 	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
