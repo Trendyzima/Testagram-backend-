@@ -65,6 +65,7 @@ type service struct {
 	algorithmFailures         atomic.Uint64
 	federationInternalToken   string
 	federationOutbox          *federationoutbox.Store
+	federationClient          *federationclient.Client
 	federationPublicBaseURL   string
 	upstream                  *http.Client
 	media                     *media.Signer
@@ -1044,6 +1045,7 @@ func main() {
 	}
 	var federationWorker *federationoutbox.Worker
 	var federationOutboxStore *federationoutbox.Store
+	var federationAPIClient *federationclient.Client
 	federationURL := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_URL"))
 	federationToken := strings.TrimSpace(os.Getenv("FEDERATION_INTERNAL_TOKEN"))
 	if federationURL != "" || federationToken != "" {
@@ -1054,6 +1056,7 @@ func main() {
 		if federationErr != nil {
 			log.Fatalf("configure private Federation publisher: %v", federationErr)
 		}
+		federationAPIClient = publisher
 		outboxStore, storeErr := federationoutbox.NewStore(db)
 		if storeErr != nil {
 			log.Fatalf("configure transactional Federation outbox: %v", storeErr)
@@ -1264,7 +1267,7 @@ func main() {
 		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
-		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore,
+		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
 	log.Printf("Testagram-native manual identity verification is available when private evidence storage and registration policy are configured")
