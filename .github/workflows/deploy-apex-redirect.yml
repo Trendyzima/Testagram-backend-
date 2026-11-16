@@ -40,12 +40,20 @@ jobs:
             echo "::error::Missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID."
             exit 1
           }
+          API="https://api.cloudflare.com/client/v4"
           status="$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
             -o /tmp/token.json -w '%{http_code}' \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify")"
+            "$API/user/tokens/verify")"
           [[ "$status" == "200" ]] && jq -e '.success == true and .result.status == "active"' /tmp/token.json >/dev/null || {
-            echo "::error::Cloudflare token is not active or does not match the selected account."
+            echo "::error::Cloudflare token is not active."
+            exit 1
+          }
+          zone="$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/zones?name=testagram.site")"
+          zone_account="$(jq -r '.result[0].account.id // empty' <<<"$zone")"
+          [[ "$zone_account" == "$CLOUDFLARE_ACCOUNT_ID" ]] || {
+            echo "::error::CLOUDFLARE_ACCOUNT_ID does not own the testagram.site zone."
             exit 1
           }
       - name: Deploy Worker and apex route
