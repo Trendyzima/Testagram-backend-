@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 // socialProfilePosts returns the authenticated viewer's visible page of posts
@@ -35,6 +34,10 @@ func (s *service) socialProfilePosts(w http.ResponseWriter, r *http.Request) {
 	cursor, err := decodeHomeFeedCursor(r.URL.Query().Get("before"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CURSOR", "Profile post cursor is invalid", requestID))
+		return
+	}
+	if !nativeSingleHomeFeedCursor(cursor) {
+		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_SOURCE_MISMATCH", "This endpoint accepts only native post cursors", requestID))
 		return
 	}
 
@@ -86,39 +89,39 @@ LIMIT $5`
 		var mediaRaw []byte
 		var username, displayName, avatarKey string
 		var protected bool
-		if err := rows.Scan(&post.ID,&post.UserID,&post.Content,&post.Visibility,&mediaRaw,
-			&post.Language,&post.CreatedAt,&post.LikesCount,&post.RepliesCount,&post.RepostsCount,
-			&username,&displayName,&avatarKey,&protected); err != nil {
+		if err := rows.Scan(&post.ID, &post.UserID, &post.Content, &post.Visibility, &mediaRaw,
+			&post.Language, &post.CreatedAt, &post.LikesCount, &post.RepliesCount, &post.RepostsCount,
+			&username, &displayName, &avatarKey, &protected); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_POSTS_UNAVAILABLE", "Profile posts could not be decoded", requestID))
 			return
 		}
-		if len(posts)==limit {
-			hasMore=true
+		if len(posts) == limit {
+			hasMore = true
 			break
 		}
-		post.MediaIDs=[]string{}
-		_ = json.Unmarshal(mediaRaw,&post.MediaIDs)
-		post.Author=map[string]any{"id":post.UserID,"username":username,"display_name":displayName,
-			"avatar_key":avatarKey,"avatar_url":publicMediaURL(avatarKey),"protected_account":protected}
-		post.Origin="local"
-		posts=append(posts,post)
-		next=homeFeedCursor{CreatedAt:post.CreatedAt,ID:post.ID}
+		post.MediaIDs = []string{}
+		_ = json.Unmarshal(mediaRaw, &post.MediaIDs)
+		post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName,
+			"avatar_key": avatarKey, "avatar_url": publicMediaURL(avatarKey), "protected_account": protected}
+		post.Origin = "local"
+		posts = append(posts, post)
+		next = homeFeedCursor{CreatedAt: post.CreatedAt, ID: post.ID}
 	}
-	if err:=rows.Err();err!=nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("PROFILE_POSTS_UNAVAILABLE","Profile posts could not be loaded",requestID))
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_POSTS_UNAVAILABLE", "Profile posts could not be loaded", requestID))
 		return
 	}
 	rows.Close()
-	if err:=s.attachHomeFeedMediaURLs(ctx,viewerID,posts);err!=nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("PROFILE_POST_MEDIA_UNAVAILABLE","Profile post media could not be authorized",requestID))
+	if err := s.attachHomeFeedMediaURLs(ctx, viewerID, posts); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_POST_MEDIA_UNAVAILABLE", "Profile post media could not be authorized", requestID))
 		return
 	}
 	var nextCursor string
-	if hasMore && len(posts)>0 {
-		nextCursor=encodeHomeFeedCursor(next)
+	if hasMore && len(posts) > 0 {
+		nextCursor = encodeHomeFeedCursor(next)
 	}
-	writeJSON(w,http.StatusOK,map[string]any{
-		"ok":true,"data":map[string]any{"posts":posts,"has_more":hasMore,"next_cursor":nextCursor},
-		"error":nil,"request_id":requestID,
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "data": map[string]any{"posts": posts, "has_more": hasMore, "next_cursor": nextCursor},
+		"error": nil, "request_id": requestID,
 	})
 }

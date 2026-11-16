@@ -32,6 +32,10 @@ func (s *service) publicHomeFeed(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CURSOR", "Feed cursor is invalid", requestID))
 		return
 	}
+	if !nativeSingleHomeFeedCursor(cursor) {
+		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_SOURCE_MISMATCH", "This endpoint accepts only native post cursors", requestID))
+		return
+	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_STORE_UNAVAILABLE", "Feed storage is unavailable", requestID))
 		return
@@ -144,9 +148,9 @@ LIMIT $3`
 		nextCursor = encodeHomeFeedCursor(homeFeedCursor{CreatedAt: last.CreatedAt, ID: last.ID})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode},
-		"error": nil,
+		"ok":         true,
+		"data":       map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode},
+		"error":      nil,
 		"request_id": requestID,
 	})
 }

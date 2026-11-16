@@ -71,7 +71,10 @@ func TestMetricsCountsRequests(t *testing.T) {
 	s := &service{}
 	public := s.routes()
 	internal := s.internalRoutes()
-	for _, request := range []struct{ handler http.Handler; path string }{
+	for _, request := range []struct {
+		handler http.Handler
+		path    string
+	}{
 		{public, "/healthz"}, {internal, "/metrics"}, {internal, "/metrics"},
 	} {
 		r := httptest.NewRequest(http.MethodGet, request.path, nil)
@@ -494,7 +497,11 @@ func TestUnifiedSearchRPCBodyRejectsUnboundedInput(t *testing.T) {
 }
 
 func TestParseFollowingOnly(t *testing.T) {
-	for _, tc := range []struct { input string; want bool; wantErr bool }{
+	for _, tc := range []struct {
+		input   string
+		want    bool
+		wantErr bool
+	}{
 		{"", false, false}, {"true", true, false}, {"false", false, false}, {"TRUE", true, false}, {"not-a-bool", false, true},
 	} {
 		got, err := parseFollowingOnly(tc.input)
@@ -525,6 +532,57 @@ func TestHomeFeedCursorRoundTripAndValidation(t *testing.T) {
 	}
 	if _, err := decodeHomeFeedCursor("not-a-cursor"); err == nil {
 		t.Fatal("expected invalid cursor rejection")
+	}
+}
+
+func TestHomeFeedCursorSupportsProtocolNativeIdentifiers(t *testing.T) {
+	at := homeFeedCursor{CreatedAt: time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC), Source: homeFeedSourceActivityPub, ID: "https://mastodon.example/objects/01ABC"}
+	decoded, err := decodeHomeFeedCursor(encodeHomeFeedCursor(at))
+	if err != nil || decoded.Source != homeFeedSourceActivityPub || decoded.ID != at.ID {
+		t.Fatalf("ActivityPub cursor round trip = %#v, %v", decoded, err)
+	}
+	bluesky := homeFeedCursor{CreatedAt: at.CreatedAt, Source: homeFeedSourceBluesky, ID: "at://did:plc:222222222222222222222222/app.bsky.feed.post/3lxyz"}
+	decoded, err = decodeHomeFeedCursor(encodeHomeFeedCursor(bluesky))
+	if err != nil || decoded.Source != homeFeedSourceBluesky || decoded.ID != bluesky.ID {
+		t.Fatalf("Bluesky cursor round trip = %#v, %v", decoded, err)
+	}
+	invalid := []homeFeedCursor{
+		{CreatedAt: at.CreatedAt, Source: homeFeedSourceNative, ID: at.ID},
+		{CreatedAt: at.CreatedAt, Source: homeFeedSourceActivityPub, ID: "http://mastodon.example/objects/1"},
+		{CreatedAt: at.CreatedAt, Source: homeFeedSourceBluesky, ID: "at://did:plc:invalid/app.bsky.feed.post/rkey"},
+		{CreatedAt: at.CreatedAt, Source: "unknown", ID: "https://example.test/1"},
+	}
+	for _, cursor := range invalid {
+		if _, err := decodeHomeFeedCursor(encodeHomeFeedCursor(cursor)); err == nil {
+			t.Fatalf("expected invalid source cursor rejection: %#v", cursor)
+		}
+	}
+}
+
+func TestHomeFeedCursorPreservesRankedWindowAndPerSourcePositions(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	cursor := homeFeedCursor{
+		Sources: []homeFeedSourcePosition{
+			{Source: homeFeedSourceNative, CreatedAt: now, ID: "123e4567-e89b-42d3-a456-426614174000"},
+			{Source: homeFeedSourceActivityPub, Cursor: "opaque-ap-cursor"},
+			{Source: homeFeedSourceBluesky, Identity: "did:plc:222222222222222222222222", Cursor: "opaque-at-cursor"},
+		},
+		Pending: []homeFeedPendingIdentity{
+			{Source: homeFeedSourceBluesky, ID: "at://did:plc:222222222222222222222222/app.bsky.feed.post/3lxyz", CreatedAt: now},
+			{Source: homeFeedSourceActivityPub, ID: "https://mastodon.example/objects/01ABC", CreatedAt: now.Add(-time.Minute)},
+		},
+	}
+	decoded, err := decodeHomeFeedCursor(encodeHomeFeedCursor(cursor))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Sources) != 3 || len(decoded.Pending) != 2 || decoded.Pending[0].ID != cursor.Pending[0].ID {
+		t.Fatalf("source positions or ranked pending order were not preserved: %#v", decoded)
+	}
+	duplicatePending := cursor
+	duplicatePending.Pending = append(append([]homeFeedPendingIdentity(nil), cursor.Pending...), cursor.Pending[0])
+	if _, err := decodeHomeFeedCursor(encodeHomeFeedCursor(duplicatePending)); err == nil {
+		t.Fatal("expected duplicate pending identity rejection")
 	}
 }
 
