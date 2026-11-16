@@ -203,8 +203,10 @@ func (c *Client) FetchRemoteObjects(ctx context.Context, input RemoteObjectsRequ
         return RemoteObjectsPage{}, errors.New("invalid Backend-authorized remote actor query")
     }
     seen := make(map[string]struct{}, len(input.ActorURIs))
-    for _, uri := range input.ActorURIs {
-        u, err := url.Parse(strings.TrimSpace(uri))
+    for i, uri := range input.ActorURIs {
+        uri = strings.TrimSpace(uri)
+        input.ActorURIs[i] = uri
+        u, err := url.Parse(uri)
         if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
             return RemoteObjectsPage{}, errors.New("remote actor allowlist contains an invalid HTTPS URI")
         }
@@ -217,7 +219,12 @@ func (c *Client) FetchRemoteObjects(ctx context.Context, input RemoteObjectsRequ
         return RemoteObjectsPage{}, errors.New("Federation returned an invalid remote object page")
     }
     for _, item := range result.Data.Items {
-        if item.ObjectURI == "" || item.ActorURI == "" || (item.Visibility != "public" && item.Visibility != "unlisted") {
+        objectURL, parseErr := url.Parse(item.ObjectURI)
+        if parseErr != nil || objectURL.Scheme != "https" || objectURL.Host == "" || objectURL.User != nil ||
+            objectURL.RawQuery != "" || objectURL.Fragment != "" ||
+            (item.ObjectType != "Note" && item.ObjectType != "Article") ||
+            item.ActorURI == "" || len(item.Content) == 0 || len(item.Content) > 20000 ||
+            (item.Visibility != "public" && item.Visibility != "unlisted") {
             return RemoteObjectsPage{}, errors.New("Federation returned an invalid or non-public remote object")
         }
         if _, ok := seen[item.ActorURI]; !ok { return RemoteObjectsPage{}, errors.New("Federation returned an actor outside the authorized allowlist") }
@@ -250,8 +257,12 @@ func (c *Client) FetchATProtoFeeds(ctx context.Context, input ATProtoFeedRequest
         if _, ok := seen[actor.DID]; !ok || actor.Handle == "" { return nil, errors.New("Federation returned an unauthorized AT Protocol actor") }
         if _, ok := returned[actor.DID]; ok { return nil, errors.New("Federation returned duplicate AT Protocol actors") }
         returned[actor.DID] = struct{}{}
+        if len(actor.Posts) > input.LimitPerActor || len(actor.Cursor) > 512 {
+            return nil, errors.New("Federation returned an oversized AT Protocol feed page")
+        }
         for _, post := range actor.Posts {
-            if post.Author.DID != actor.DID || !strings.HasPrefix(post.URI, "at://"+actor.DID+"/app.bsky.feed.post/") || post.CID == "" {
+            if post.Author.DID != actor.DID || !strings.HasPrefix(post.URI, "at://"+actor.DID+"/app.bsky.feed.post/") ||
+                post.CID == "" || len(post.CID) > 256 || len(post.Text) > 20000 {
                 return nil, errors.New("Federation returned an AT Protocol post with mismatched provenance")
             }
         }
