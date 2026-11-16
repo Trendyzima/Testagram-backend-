@@ -36,49 +36,49 @@ type identityReviewSnapshot struct {
 	PrivacyVersion string `json:"privacy_version"`
 }
 
-func (s *service) identityReviewer(r *http.Request) (appwriteAccount, int, error) {
+type identityReviewerPrincipal struct {
+	ID string
+	Email string
+}
+
+func (s *service) identityReviewer(r *http.Request) (identityReviewerPrincipal, int, error) {
 	if s.db == nil {
-		return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("identity database is unavailable")
+		return identityReviewerPrincipal{}, http.StatusServiceUnavailable, errors.New("identity database is unavailable")
 	}
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	if len(header) < 8 || !strings.EqualFold(header[:7], "Bearer ") {
-		return appwriteAccount{}, http.StatusUnauthorized, errors.New("staff authentication required")
-	}
-	jwt := strings.TrimSpace(header[7:])
-	endpoint := strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT"))
-	projectID := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
-	if endpoint == "" || projectID == "" {
-		return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("Appwrite authentication is not configured")
+		return identityReviewerPrincipal{}, http.StatusUnauthorized, errors.New("native staff authentication required")
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	account, status, err := fetchAppwriteAccount(ctx, s.upstream, endpoint, projectID, jwt)
+	claims, status, err := verifyNativeAccessToken(ctx, s.db, strings.TrimSpace(header[7:]))
 	if err != nil {
-		return appwriteAccount{}, status, err
+		return identityReviewerPrincipal{}, status, errors.New("native staff session is invalid or unavailable")
 	}
-	if !account.EmailVerification {
-		return appwriteAccount{}, http.StatusForbidden, errors.New("verified Appwrite email is required")
-	}
+	var email string
 	var allowed bool
 	err = s.db.QueryRow(ctx, `
-		SELECT EXISTS (
-		  SELECT 1
-		  FROM testagram_auth.staff_roles sr
-		  LEFT JOIN testagram_auth.staff_role_permissions rp
-		    ON rp.role=sr.role AND rp.permission_key='identity.review'
-		  LEFT JOIN testagram_auth.staff_permission_overrides po
-		    ON po.appwrite_user_id=sr.appwrite_user_id AND po.permission_key='identity.review'
-		  WHERE sr.appwrite_user_id=$1 AND sr.access_revoked_at IS NULL
-		    AND (po.granted IS TRUE OR (po.granted IS NULL AND rp.permission_key IS NOT NULL))
+		SELECT i.email, EXISTS(
+			SELECT 1
+			FROM testagram_auth.staff_principals sp
+			JOIN testagram_auth.staff_role_grants g ON g.user_id=sp.user_id
+			WHERE sp.user_id=$1::uuid
+			  AND sp.enabled=TRUE
+			  AND sp.mfa_enrolled_at IS NOT NULL
+			  AND g.role='identity.review'
+			  AND g.revoked_at IS NULL
 		)
-	`, account.ID).Scan(&allowed)
+		FROM testagram_auth.identities i
+		WHERE i.user_id=$1::uuid AND i.disabled_at IS NULL
+		  AND i.email_verified_at IS NOT NULL
+	`, claims.Subject).Scan(&email, &allowed)
 	if err != nil {
-		return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("staff authorization is unavailable")
+		return identityReviewerPrincipal{}, http.StatusServiceUnavailable, errors.New("native staff authorization is unavailable")
 	}
 	if !allowed {
-		return appwriteAccount{}, http.StatusForbidden, errors.New("identity review permission is required")
+		return identityReviewerPrincipal{}, http.StatusForbidden, errors.New("enabled MFA-protected identity review permission is required")
 	}
-	return account, http.StatusOK, nil
+	return identityReviewerPrincipal{ID: claims.Subject, Email: email}, http.StatusOK, nil
 }
 
 func (s *service) identityReviewQueue(w http.ResponseWriter, r *http.Request) {
