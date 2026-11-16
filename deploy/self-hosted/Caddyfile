@@ -68,6 +68,29 @@ testagram.site {
   reverse_proxy media-cache:8081
 }
 
+# InstaBox exposes only high ports through its public-port gateway.
+# This dedicated plaintext listener is reached through InstaBox HTTPS and
+# Cloudflare; it keeps the apex redirect and ActivityPub routes reachable
+# without exposing Caddy's management or internal health listeners.
+:8443 {
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    -Server
+  }
+  @edge_health path /_testagram/edge-health
+  respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200
+  @activitypub path /.well-known/webfinger /users/* /objects/*
+  handle @activitypub {
+    reverse_proxy federation-api:8081
+  }
+  handle {
+    redir https://www.testagram.site{uri} 308
+  }
+}
+
 {$ADMIN_DOMAIN} {
   encode zstd gzip
   header {
