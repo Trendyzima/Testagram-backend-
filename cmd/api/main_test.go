@@ -36,7 +36,7 @@ func TestPublicReplicationProjectionValidatesIdentityAndRequiresDatabase(t *test
 	}
 
 	unavailable := httptest.NewRecorder()
-	handler.ServeHTTP(unavailable, httptest.NewRequest(http.MethodGet, "/api/replication/public/xclone/post/post-123", nil))
+	handler.ServeHTTP(unavailable, httptest.NewRequest(http.MethodGet, "/api/replication/public/untrusted-origin/post/post-123", nil))
 	if unavailable.Code != http.StatusServiceUnavailable {
 		t.Fatalf("projection read without database status = %d, want %d", unavailable.Code, http.StatusServiceUnavailable)
 	}
