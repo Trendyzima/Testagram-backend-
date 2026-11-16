@@ -461,11 +461,14 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			return true
 		}
 		var userID, hash string
-		var verified, disabled, resetRequired bool
+		var verified, disabled, resetRequired, identityProvisioned bool
 		var version int64
-		err = s.db.QueryRow(ctx, `SELECT user_id::text,password_hash,email_verified_at IS NOT NULL,
-			token_version,disabled_at IS NOT NULL,password_reset_required
-			FROM testagram_auth.identities WHERE email_normalized=$1`, email).Scan(&userID, &hash, &verified, &version, &disabled, &resetRequired)
+		err = s.db.QueryRow(ctx, `SELECT i.user_id::text,i.password_hash,i.email_verified_at IS NOT NULL,
+			i.token_version,i.disabled_at IS NOT NULL,i.password_reset_required,
+			EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
+			       WHERE p.user_id=i.user_id AND p.status='active')
+			FROM testagram_auth.identities i WHERE i.email_normalized=$1`, email).Scan(
+			&userID, &hash, &verified, &version, &disabled, &resetRequired, &identityProvisioned)
 		if err != nil || !authPasswordVerify(hash, in.Password) || disabled {
 			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect.", requestID(r)))
 			return true
@@ -474,6 +477,10 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			// A valid password proves control of this account; only then reveal
 			// the actionable verification state rather than enabling enumeration.
 			writeJSON(w, http.StatusForbidden, errorBody("EMAIL_VERIFICATION_REQUIRED", "Verify your Testagram email before signing in.", requestID(r)))
+			return true
+		}
+		if !identityProvisioned {
+			writeJSON(w, http.StatusForbidden, errorBody("IDENTITY_APPROVAL_REQUIRED", "This account has not completed Testagram identity review and two-person account approval.", requestID(r)))
 			return true
 		}
 		if resetRequired {
