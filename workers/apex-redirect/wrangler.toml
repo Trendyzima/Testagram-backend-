@@ -1,0 +1,8 @@
+name = "testagram-apex-redirect"
+main = "src/index.mjs"
+compatibility_date = "2026-11-17"
+workers_dev = false
+
+[[routes]]
+pattern = "testagram.site/*"
+zone_name = "testagram.site"
