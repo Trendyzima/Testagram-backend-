@@ -279,7 +279,6 @@ func (s *service) identityProvisioningRedeem(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-
 // identityApplicationApproveSafe prevents a short-lived provisioning bearer
 // from being returned to staff clients. The applicant obtains a fresh token
 // through the application-token protected provisioning-token endpoint.
