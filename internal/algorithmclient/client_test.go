@@ -70,11 +70,11 @@ func TestRankRejectsNon200AndOversizedCandidateBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Rank(context.Background(), Request{Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
 	if err == nil {
 		t.Fatal("expected upstream error")
 	}
-	_, err = client.Rank(context.Background(), Request{Limit: 1, Candidates: make([]Candidate, 201)})
+	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: make([]Candidate, 201)})
 	if err == nil {
 		t.Fatal("expected candidate bound error")
 	}
@@ -98,7 +98,7 @@ func TestRankDoesNotFollowRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Rank(context.Background(), Request{Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
 	if err == nil {
 		t.Fatal("expected redirect response to be rejected")
 	}
@@ -125,7 +125,7 @@ func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.Rank(context.Background(), Request{Limit: 2, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+			_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 2, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
 			if err == nil {
 				t.Fatal("expected invalid ranker response to be rejected")
 			}
