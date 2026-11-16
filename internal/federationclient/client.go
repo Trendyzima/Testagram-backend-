@@ -41,6 +41,26 @@ type envelope struct {
 }
 
 
+func validATProtoDID(did string) bool {
+	did = strings.TrimSpace(did)
+	if len(did) < 12 || len(did) > 512 || strings.ContainsAny(did, " \t\r\n") {
+		return false
+	}
+	if strings.HasPrefix(did, "did:plc:") {
+		identifier := strings.TrimPrefix(did, "did:plc:")
+		if len(identifier) != 24 { return false }
+		for _, char := range identifier {
+			if !(char >= 'a' && char <= 'z') && !(char >= '2' && char <= '7') { return false }
+		}
+		return true
+	}
+	if strings.HasPrefix(did, "did:web:") {
+		identifier := strings.TrimPrefix(did, "did:web:")
+		return identifier != "" && !strings.ContainsAny(identifier, " /?#@")
+	}
+	return false
+}
+
 type RemoteObjectsRequest struct {
     ActorURIs []string `json:"actor_uris"`
     Limit int `json:"limit"`
@@ -241,7 +261,7 @@ func (c *Client) FetchATProtoFeeds(ctx context.Context, input ATProtoFeedRequest
     }
     seen := make(map[string]struct{}, len(input.ActorDIDs))
     for _, did := range input.ActorDIDs {
-        if len(did) < 12 || len(did) > 512 || (!strings.HasPrefix(did, "did:plc:") && !strings.HasPrefix(did, "did:web:")) || strings.ContainsAny(did, " \t\r\n") {
+        if !validATProtoDID(did) {
             return nil, errors.New("AT Protocol actor list contains an invalid DID")
         }
         if _, ok := seen[did]; ok { return nil, errors.New("AT Protocol actor list contains duplicate DIDs") }
