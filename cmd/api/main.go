@@ -481,6 +481,11 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/me/federation", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/federation", s.federationPreference)
 	mux.HandleFunc("PUT /api/me/federation", s.federationPreference)
+	mux.HandleFunc("OPTIONS /api/federation/subscriptions", s.mediaPreflight)
+	mux.HandleFunc("GET /api/federation/subscriptions", s.remoteAuthorSubscriptions)
+	mux.HandleFunc("POST /api/federation/subscriptions", s.remoteAuthorSubscriptions)
+	mux.HandleFunc("OPTIONS /api/federation/subscriptions/{subscription_id}", s.mediaPreflight)
+	mux.HandleFunc("DELETE /api/federation/subscriptions/{subscription_id}", s.removeRemoteAuthorSubscription)
 	mux.HandleFunc("OPTIONS /api/feed/home", s.mediaPreflight)
 	mux.HandleFunc("GET /api/feed/home", s.homeFeed)
 	mux.HandleFunc("OPTIONS /api/feed/public", s.mediaPreflight)
@@ -646,6 +651,7 @@ func (s *service) internalRoutes() http.Handler {
 	mux.HandleFunc("GET /internal/v1/federation/objects/{post_id}", s.federationObject)
 	mux.HandleFunc("POST /internal/v1/federation/remote-follows", s.federationRemoteFollow)
 	mux.HandleFunc("POST /internal/v1/federation/remote-follows/undo", s.federationRemoteUnfollow)
+	mux.HandleFunc("POST /internal/v1/federation/subscriptions/verify", s.verifyRemoteAuthorSubscription)
 	return s.instrument(mux)
 }
 
