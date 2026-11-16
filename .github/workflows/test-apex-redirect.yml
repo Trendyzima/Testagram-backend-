@@ -1,0 +1,22 @@
+name: Test Testagram apex redirect Worker
+
+on:
+  pull_request:
+    paths:
+      - "workers/apex-redirect/**"
+      - ".github/workflows/test-apex-redirect.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test redirect semantics
+        run: node --test workers/apex-redirect/src/index.test.mjs
