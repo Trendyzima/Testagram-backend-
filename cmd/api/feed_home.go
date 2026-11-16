@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -320,6 +321,20 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	remoteCtx, remoteCancel := context.WithTimeout(r.Context(), 5*time.Second)
+	remotePosts, remoteCandidates, remotePositions, reservedRemoteSlots, remoteOffset, remoteHasMore, remoteErr := s.fetchHomeFeedRemoteCandidates(
+		remoteCtx, userID, cursor, feedMode, limit, videoOnly,
+	)
+	remoteCancel()
+	if remoteErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_SUBSCRIPTIONS_UNAVAILABLE", "Remote feed subscriptions could not be verified", requestID))
+		return
+	}
+	nativeLimit := limit - reservedRemoteSlots
+	if nativeLimit < 1 {
+		nativeLimit = 1
+	}
+
 	queryCtx, queryCancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer queryCancel()
 	query := `
@@ -381,14 +396,19 @@ ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
 	var before any
 	var beforeID any
-	if !nativeSingleHomeFeedCursor(cursor) {
-		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_SOURCE_MISMATCH", "This feed page cursor does not belong to the current native feed window", requestID))
-		return
-	}
 	if cursor != nil {
-		before, beforeID = cursor.CreatedAt, cursor.ID
+		if cursor.ID != "" {
+			before, beforeID = cursor.CreatedAt, cursor.ID
+		} else {
+			for _, position := range cursor.Sources {
+				if position.Source == homeFeedSourceNative {
+					before, beforeID = position.CreatedAt, position.ID
+					break
+				}
+			}
+		}
 	}
-	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly, videoOnly, mediaOnly, discoverOnly)
+	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, nativeLimit+1, followingOnly, videoOnly, mediaOnly, discoverOnly)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
@@ -397,7 +417,7 @@ LIMIT $4`
 
 	posts := make([]homeFeedPost, 0, limit)
 	candidates := make([]algorithmclient.Candidate, 0, limit)
-	hasMore := false
+	nativeHasMore := false
 	for rows.Next() {
 		var post homeFeedPost
 		var mediaRaw []byte
@@ -409,8 +429,8 @@ LIMIT $4`
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_SCAN_FAILED", "Feed could not be loaded", requestID))
 			return
 		}
-		if len(posts) == limit {
-			hasMore = true
+		if len(posts) == nativeLimit {
+			nativeHasMore = true
 			break
 		}
 		post.MediaIDs = []string{}
@@ -430,6 +450,15 @@ LIMIT $4`
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
 	}
+	nativeCandidates := append([]algorithmclient.Candidate(nil), candidates...)
+	posts = append(posts, remotePosts...)
+	candidates = append(candidates, remoteCandidates...)
+	sort.SliceStable(posts, func(i, j int) bool {
+		if posts[i].CreatedAt.Equal(posts[j].CreatedAt) {
+			return posts[i].ID > posts[j].ID
+		}
+		return posts[i].CreatedAt.After(posts[j].CreatedAt)
+	})
 	rankingMode := "chronological"
 	if rankingEnabled && s.algorithm != nil && len(candidates) > 0 {
 		s.algorithmRequests.Add(1)
@@ -454,26 +483,60 @@ LIMIT $4`
 	// Re-check authorization after the external ranker call. A block, mute,
 	// privacy change, or deletion may have happened while ranking was in flight.
 	if len(posts) > 0 {
+		nativePosts := make([]homeFeedPost, 0, len(posts))
+		remotePostsForCheck := make([]homeFeedPost, 0, len(posts))
+		for _, post := range posts {
+			if post.Origin == "" || post.Origin == "local" {
+				nativePosts = append(nativePosts, post)
+			} else {
+				remotePostsForCheck = append(remotePostsForCheck, post)
+			}
+		}
 		checkCtx, checkCancel := context.WithTimeout(r.Context(), 2*time.Second)
-		visible, checkErr := s.recheckHomeFeedVisibility(checkCtx, userID, posts)
+		visibleNative, nativeCheckErr := s.recheckHomeFeedVisibility(checkCtx, userID, nativePosts)
+		visibleRemote, remoteCheckErr := s.recheckRemoteHomeFeedVisibility(checkCtx, userID, remotePostsForCheck)
 		checkCancel()
-		if checkErr != nil {
+		if nativeCheckErr != nil || remoteCheckErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_VISIBILITY_CHECK_FAILED", "Feed permissions could not be verified", requestID))
 			return
 		}
-		posts = visible
+		visibleIDs := make(map[string]struct{}, len(visibleNative)+len(visibleRemote))
+		for _, post := range visibleNative {
+			visibleIDs["native\x00"+post.ID] = struct{}{}
+		}
+		for _, post := range visibleRemote {
+			visibleIDs[post.Origin+"\x00"+post.ID] = struct{}{}
+		}
+		authorized := posts[:0]
+		for _, post := range posts {
+			source := post.Origin
+			if source == "" {
+				source = "native"
+			}
+			if _, ok := visibleIDs[source+"\x00"+post.ID]; ok {
+				authorized = append(authorized, post)
+			}
+		}
+		posts = authorized
 	}
 	if err := s.attachHomeFeedMediaURLs(r.Context(), userID, posts); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_MEDIA_FAILED", "Feed media could not be authorized", requestID))
 		return
 	}
+	hasMore := nativeHasMore || remoteHasMore
+	nextPositions := append([]homeFeedSourcePosition(nil), remotePositions...)
+	if nativeHasMore && len(nativeCandidates) > 0 {
+		// Keep the native boundary independent from remote object identities.
+		last := nativeCandidates[len(nativeCandidates)-1]
+		nextPositions = upsertHomeFeedSourcePosition(nextPositions, homeFeedSourcePosition{
+			Source: homeFeedSourceNative, CreatedAt: last.CreatedAt, ID: last.ID,
+		})
+	}
 	var nextCursor string
-	if hasMore && len(candidates) > 0 {
-		// Cursor is derived from the oldest row in the chronological candidate window,
-		// not from the rank order. This prevents score ordering from corrupting pagination.
-		// Re-fetch the chronological boundary using the last candidate timestamp and ID.
-		last := candidates[len(candidates)-1]
-		nextCursor = encodeHomeFeedCursor(homeFeedCursor{CreatedAt: last.CreatedAt, Source: homeFeedSourceNative, ID: last.ID})
+	if hasMore && len(nextPositions) > 0 {
+		nextCursor = encodeHomeFeedCursor(homeFeedCursor{
+			Sources: nextPositions, RemoteOffset: remoteOffset,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
