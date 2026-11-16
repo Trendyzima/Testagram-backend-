@@ -43,6 +43,8 @@ assert "Apex Caddy ingress passed health, www redirect and WebFinger checks" in 
 assert ":8443 {" in caddy
 assert "respond @edge_health" in caddy
 assert "reverse_proxy federation-api:8081" in caddy
+assert "header_up Host testagram.site" in caddy
+assert "header_up X-Forwarded-Host testagram.site" in caddy
 
 print(
     "Backend origin smoke contract passed: Backend readiness is checked privately; "
