@@ -14,6 +14,7 @@ import (
 )
 
 func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "appwrite")
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is required for PostgreSQL identity provisioning integration")
@@ -278,6 +279,7 @@ func canonicalUserIDFromResult(t *testing.T, result map[string]any) string {
 
 
 func TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "appwrite")
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is required for PostgreSQL identity authorization integration")
