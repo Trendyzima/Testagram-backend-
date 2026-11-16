@@ -1,5 +1,5 @@
 -- Independent Testagram credentials and recovery tokens.
--- Apply after 20261019_testagram_local_accounts_posts.sql. No Supabase auth call is required.
+-- Apply after 20261019_testagram_local_accounts_posts.sql. Authentication remains owned by Testagram.
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS testagram_auth;
 CREATE TABLE IF NOT EXISTS testagram_auth.identities (
