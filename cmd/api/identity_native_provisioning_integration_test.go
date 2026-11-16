@@ -377,7 +377,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	existingSuffix = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(existingSuffix[:16], "-", ""), "_", ""))
 	existingEmail := "existing-native-" + existingSuffix + "@example.test"
-	existingUsername := "existing_native_" + existingSuffix
+	existingUsername := "legacy_" + existingSuffix
 	existingPasswordHash, err := authPasswordHash("ExistingNativePassword-123!")
 	if err != nil {
 		t.Fatal(err)
