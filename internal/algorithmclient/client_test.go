@@ -2,7 +2,7 @@ package algorithmclient
 
 import (
 	"context"
-	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,9 +39,10 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
 			t.Fatal("missing versioned API contract headers")
 		}
-		var payload struct { FeedMode string `json:"feedMode"` }
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.FeedMode != "for_you" {
-			t.Fatalf("rank request omitted or changed required feedMode: %#v, err=%v", payload, err)
+		requestBody, readErr := io.ReadAll(r.Body)
+		if readErr != nil { t.Fatal(readErr) }
+		if !strings.Contains(string(requestBody), `"feedMode":"for_you"`) || !strings.Contains(string(requestBody), `"source":"native"`) {
+			t.Fatalf("missing feed lane or candidate provenance: %s", requestBody)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[{"id":"post-1","score":0.9,"reasons":["recent"]}]}`))
@@ -53,7 +54,7 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 	}
 	got, err := client.Rank(context.Background(), Request{
 		Now: time.Now().UTC(), FeedMode: "for_you", Limit: 1,
-		Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Visible: true, CreatedAt: time.Now().UTC()}},
+		Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Source: "native", Visible: true, CreatedAt: time.Now().UTC()}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +71,7 @@ func TestRankRejectsNon200AndOversizedCandidateBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u", Source: "native"}}})
 	if err == nil {
 		t.Fatal("expected upstream error")
 	}
@@ -98,7 +99,7 @@ func TestRankDoesNotFollowRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u", Source: "native"}}})
 	if err == nil {
 		t.Fatal("expected redirect response to be rejected")
 	}
@@ -125,7 +126,7 @@ func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 2, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+			_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 2, Candidates: []Candidate{{ID: "p", AuthorID: "u", Source: "native"}}})
 			if err == nil {
 				t.Fatal("expected invalid ranker response to be rejected")
 			}

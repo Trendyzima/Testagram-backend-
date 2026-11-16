@@ -269,7 +269,7 @@ LIMIT $4`
 		conversation := math.Min(1, float64(post.RepliesCount)/20)
 		posts = append(posts, post)
 		candidates = append(candidates, algorithmclient.Candidate{
-			ID: post.ID, AuthorID: post.UserID, CreatedAt: post.CreatedAt, Visible: true,
+			ID: post.ID, AuthorID: post.UserID, Source: "native", CreatedAt: post.CreatedAt, Visible: true,
 			Features: algorithmclient.Features{Following: following, Quality: quality, Conversation: conversation},
 		})
 	}
