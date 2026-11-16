@@ -413,6 +413,8 @@ jobs:
           echo "- Machine: ${{ steps.machine.outputs.machine_id || 'not resolved' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- API URL: ${{ steps.publish.outputs.api_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Go CDN URL: ${{ steps.publish_cdn.outputs.cdn_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apex federation edge URL: ${{ steps.publish_apex.outputs.apex_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apex edge: port 8443; ActivityPub/WebFinger proxy and canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend and Go CDN: public /healthz; private /readyz and /metrics on Docker-only port 8082" >> "$GITHUB_STEP_SUMMARY"
           echo "- Appwrite project ID: ${{ secrets.APPWRITE_PROJECT_ID != '' && 'configured' || 'not configured; login-dependent services are skipped' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
