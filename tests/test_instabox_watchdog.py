@@ -1,3 +1,4 @@
+import io
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -63,7 +64,7 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"),
             patch.object(watchdog, "FAILURES_REQUIRED", 2),
             patch.object(watchdog, "PROBE_INTERVAL", 1),
-            patch.object(watchdog, "probe", return_value=(False, "HTTP 503")),
+            patch.object(watchdog, "probe", return_value=(False, "HTTP 500")),
             patch.object(watchdog.time, "sleep"),
             patch.object(watchdog, "API") as api_factory,
         ):
@@ -297,6 +298,70 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("cooldown", result)
         self.assertEqual(api.calls, [])
 
+    def test_probe_identifies_in_progress_insta_box_wake_and_retry_after(self):
+        error = watchdog.urllib.error.HTTPError(
+            "https://example.test/healthz",
+            503,
+            "Service Unavailable",
+            {"Retry-After": "7"},
+            io.BytesIO(b"Sandbox is waking up"),
+        )
+        with patch.object(watchdog.urllib.request, "urlopen", side_effect=error):
+            self.assertEqual(
+                watchdog.probe("https://example.test/healthz"),
+                (False, "WAKE_PENDING Retry-After=7"),
+            )
+
+    def test_probe_identifies_manual_offline_and_cooldown_as_provider_states(self):
+        offline = watchdog.urllib.error.HTTPError(
+            "https://example.test/healthz", 503, "Offline", {},
+            io.BytesIO(b"Sandbox offline"),
+        )
+        cooldown = watchdog.urllib.error.HTTPError(
+            "https://example.test/healthz", 409, "Conflict",
+            {"Retry-After": "90"}, io.BytesIO(b'{"code":"machine_cooldown"}'),
+        )
+        with patch.object(watchdog.urllib.request, "urlopen", side_effect=offline):
+            self.assertEqual(
+                watchdog.probe("https://example.test/healthz"),
+                (False, "PROVIDER_OFFLINE: machine was explicitly stopped or paused"),
+            )
+        with patch.object(watchdog.urllib.request, "urlopen", side_effect=cooldown):
+            self.assertEqual(
+                watchdog.probe("https://example.test/healthz"),
+                (False, "PROVIDER_COOLDOWN Retry-After=90"),
+            )
+
+    def test_running_machine_wake_pending_does_not_trigger_lifecycle_action(self):
+        api = FakeAPI()
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "save_state"),
+            patch.object(watchdog, "probe", return_value=(False, "WAKE_PENDING Retry-After=5")),
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
+            patch.object(watchdog, "FAILURES_REQUIRED", 3),
+        ):
+            self.assertEqual(watchdog.main(), 0)
+        self.assertFalse(any(call[0] == "POST" for call in api.calls))
+
+    def test_running_machine_unreachable_does_not_trigger_lifecycle_action(self):
+        api = FakeAPI()
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "save_state"),
+            patch.object(watchdog, "probe", return_value=(False, "UNREACHABLE: URLError")),
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
+            patch.object(watchdog, "FAILURES_REQUIRED", 3),
+        ):
+            self.assertEqual(watchdog.main(), 0)
+        self.assertFalse(any(call[0] == "POST" for call in api.calls))
+
     def test_workflow_uses_separate_write_key_and_canonical_backend_health_urls(self):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
         self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
@@ -306,10 +371,10 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("dedicated INSTABOX_WATCHDOG_API_KEY", workflow)
         self.assertIn("secrets.INSTABOX_MACHINE_ID", workflow)
         self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagramdb'", workflow)
-        self.assertIn("https://api.testagram.site/healthz", workflow)
+        self.assertIn("https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz", workflow)
         self.assertNotIn("TESTAGRAM_READINESS_URL", workflow)
         self.assertNotIn("/readyz", workflow)
-        self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
+        self.assertIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
         self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true'", workflow)
 
 
