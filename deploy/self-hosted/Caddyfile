@@ -48,7 +48,7 @@ testagram.site {
   }
   @activitypub path /.well-known/webfinger /users/* /objects/*
   handle @activitypub {
-    reverse_proxy federation:8081
+    reverse_proxy federation-api:8081
   }
   handle {
     redir https://www.testagram.site{uri} 308
