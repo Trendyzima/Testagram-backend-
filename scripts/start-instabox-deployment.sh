@@ -175,8 +175,6 @@ GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
 ALERTMANAGER_WEBHOOK_URL=
 MEDIA_USER_QUOTA_BYTES=2147483648
 MEDIA_MODERATION_TOKEN=
-ONSPACE_AI_API_KEY=
-ONSPACE_AI_BASE_URL=https://ai.onspace.ai/v1
 EOF
   chmod 600 "$BASE_ENV"
 fi
@@ -212,7 +210,7 @@ for key in TESTAGRAM_AUTH_JWT_SECRET SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
-for key in APPWRITE_API_KEY ONSPACE_AI_API_KEY ONSPACE_AI_BASE_URL MEDIA_MODERATION_TOKEN MPESA_ENV MPESA_SHORTCODE MPESA_PASSKEY MPESA_CONSUMER_KEY MPESA_CONSUMER_SECRET MPESA_CALLBACK_URL ADMIN_SERVICE_AUTH_KEY; do
+for key in APPWRITE_API_KEY MEDIA_MODERATION_TOKEN MPESA_ENV MPESA_SHORTCODE MPESA_PASSKEY MPESA_CONSUMER_KEY MPESA_CONSUMER_SECRET MPESA_CALLBACK_URL ADMIN_SERVICE_AUTH_KEY; do
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
@@ -308,13 +306,9 @@ if [[ -z "${APPWRITE_PROJECT_ID:-}" ]]; then
   echo "::error::APPWRITE_PROJECT_ID is required for the staff identity-review console and legacy compatibility path."
   exit 1
 fi
-# Moderation is optional for service startup, but never optional for publishing:
-# cmd/api leaves s.moderation nil when no key is configured and social_post_create
-# returns POST_MODERATION_UNAVAILABLE before any post is written. This allows
-# health/CDN recovery without bypassing moderation or silently accepting posts.
-if [[ -z "${ONSPACE_AI_API_KEY:-}" ]]; then
-  echo "Moderation provider key is absent; API health/CDN services may start, but post publishing remains fail-closed."
-fi
+# No third-party AI vendor is part of Testagram deployment. The Backend
+# retains its own fail-closed publishing behavior when moderation is unavailable.
+echo "No external AI moderation provider is configured; protected publishing remains fail-closed."
 
 echo "Starting PostgreSQL, MinIO and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
@@ -699,7 +693,6 @@ payload="$(jq -nc \
   --arg terms_version "$TESTAGRAM_TERMS_VERSION" \
   --arg privacy_version "$TESTAGRAM_PRIVACY_VERSION" \
   --arg appwrite_api_key "${APPWRITE_API_KEY:-}" \
-  --arg onspace_key "${ONSPACE_AI_API_KEY:-}" --arg onspace_base "${ONSPACE_AI_BASE_URL:-}" \
   --arg moderation_token "${MEDIA_MODERATION_TOKEN:-}" \
   --arg mpesa_env "${MPESA_ENV:-}" --arg mpesa_shortcode "${MPESA_SHORTCODE:-}" \
   --arg mpesa_passkey "${MPESA_PASSKEY:-}" --arg mpesa_consumer_key "${MPESA_CONSUMER_KEY:-}" \
@@ -711,7 +704,7 @@ payload="$(jq -nc \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,TESTAGRAM_AUTH_PROVIDER:$auth_provider,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,SMTP_HOST:$smtp_host,SMTP_PORT:$smtp_port,SMTP_USERNAME:$smtp_username,SMTP_PASSWORD:$smtp_password,AUTH_FROM_EMAIL:$auth_from_email,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,ONSPACE_AI_API_KEY:$onspace_key,ONSPACE_AI_BASE_URL:$onspace_base,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,TESTAGRAM_AUTH_PROVIDER:$auth_provider,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,SMTP_HOST:$smtp_host,SMTP_PORT:$smtp_port,SMTP_USERNAME:$smtp_username,SMTP_PASSWORD:$smtp_password,AUTH_FROM_EMAIL:$auth_from_email,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \

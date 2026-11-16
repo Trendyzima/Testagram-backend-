@@ -152,8 +152,6 @@ jobs:
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           AUTH_FROM_EMAIL: ${{ vars.AUTH_FROM_EMAIL }}
-          ONSPACE_AI_API_KEY: ${{ secrets.ONSPACE_AI_API_KEY }}
-          ONSPACE_AI_BASE_URL: ${{ vars.ONSPACE_AI_BASE_URL }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}
           MPESA_ENV: ${{ vars.MPESA_ENV }}
           MPESA_SHORTCODE: ${{ secrets.MPESA_SHORTCODE }}
