@@ -1,0 +1,82 @@
+name: Configure Testagram Cloudflare Pages Flutter build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/configure-pages-build.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: testagram-pages-build-config
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set the verified Flutter Pages build command
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          API=https://api.cloudflare.com/client/v4
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            -o "$tmp/zones.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API/zones?name=testagram.site")"
+          [[ "$status" == "200" ]] || { echo "::error::Cannot read testagram.site zone (HTTP $status)"; exit 1; }
+          account_id="$(jq -r '.result[0].account.id // empty' "$tmp/zones.json")"
+          [[ -n "$account_id" ]] || { echo "::error::Cloudflare account ID missing from zone result"; exit 1; }
+
+          project_url="$API/accounts/$account_id/pages/projects/testagram-flutter-web"
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            -o "$tmp/project.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$project_url")"
+          [[ "$status" == "200" ]] || { echo "::error::Cannot read existing Pages project (HTTP $status)"; exit 1; }
+          jq -e '.success == true and .result.name == "testagram-flutter-web" and .result.production_branch == "main" and .result.source.config.repo_name == "testagram-flutter-client-"' "$tmp/project.json" >/dev/null || {
+            echo "::error::Pages project identity/source did not match the verified Testagram Flutter repository. No change made."
+            jq -c '.result | {name,production_branch,source,domains}' "$tmp/project.json"
+            exit 1
+          }
+
+          payload='{"build_config":{"build_command":"bash cloudflare-pages/build.sh","destination_dir":"build/web","root_dir":"/","build_caching":true}}'
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 45 \
+            -X PATCH -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" --data "$payload" \
+            -o "$tmp/update.json" -w '%{http_code}' "$project_url")"
+          if [[ "$status" -lt 200 || "$status" -ge 300 ]] || ! jq -e '.success == true' "$tmp/update.json" >/dev/null; then
+            echo "::error::Cloudflare Pages build settings were not updated (HTTP $status). The token needs Pages Write permission."
+            jq -c '{errors,messages}' "$tmp/update.json" || true
+            exit 1
+          fi
+
+          curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$project_url" > "$tmp/verify.json"
+          jq -e '.success == true and .result.build_config.build_command == "bash cloudflare-pages/build.sh" and .result.build_config.destination_dir == "build/web" and .result.build_config.root_dir == "/"' "$tmp/verify.json" >/dev/null || {
+            echo "::error::Cloudflare did not retain the expected Flutter Pages build configuration."
+            jq -c '.result.build_config' "$tmp/verify.json"
+            exit 1
+          }
+
+          {
+            echo "## Cloudflare Pages build configuration updated"
+            echo "- Project: testagram-flutter-web"
+            echo "- Source: Trendyzima/testagram-flutter-client- (main)"
+            echo "- Build command: `bash cloudflare-pages/build.sh`"
+            echo "- Output directory: `build/web`"
+            echo "- Root directory: `/`"
+            echo "- DNS records and custom domains: unchanged"
+            echo "- Worker routes, including WebFinger: unchanged"
+            echo ""
+            echo "The next push to the Flutter repository's main branch will build and publish the actual Flutter web shell."
+          } | tee "$GITHUB_STEP_SUMMARY"
