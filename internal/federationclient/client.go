@@ -272,7 +272,7 @@ func (c *Client) FetchATProtoFeeds(ctx context.Context, input ATProtoFeedRequest
         return nil, errors.New("AT Protocol cursor map contains an unauthorized DID")
     }
     for did, cursor := range input.Cursors {
-        if _, ok := seen[did]; !ok || len(cursor) > 512 || strings.ContainsAny(cursor, "\\r\\n") {
+        if _, ok := seen[did]; !ok || len(cursor) > 512 || strings.ContainsAny(cursor, "\r\n") {
             return nil, errors.New("AT Protocol cursor must belong to an authorized DID and be no longer than 512 characters")
         }
     }
