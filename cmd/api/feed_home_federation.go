@@ -216,14 +216,12 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 		}
 		actorDIDs := make([]string, 0, len(selected))
 		cursors := make(map[string]string, len(selected))
-		selectedByDID := make(map[string]homeFeedRemoteSubscription, len(selected))
 		for _, actor := range selected {
 			position, exists := homeFeedSourcePositionFor(cursor, homeFeedSourceBluesky, actor.Identity)
 			if exists && position.Exhausted {
 				continue
 			}
 			actorDIDs = append(actorDIDs, actor.Identity)
-			selectedByDID[actor.Identity] = actor
 			if exists && position.Cursor != "" {
 				cursors[actor.Identity] = position.Cursor
 			}
@@ -293,6 +291,12 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 			remoteOffset = (remoteOffset + 1) % (2 * len(bluesky))
 		} else {
 			remoteOffset = (start + len(selected)) % len(bluesky)
+		}
+	}
+	if len(activityPub) > 0 {
+		position, exists := homeFeedSourcePositionIn(positions, homeFeedSourceActivityPub, "")
+		if !exists || !position.Exhausted {
+			hasMore = true
 		}
 	}
 	for _, actor := range bluesky {
