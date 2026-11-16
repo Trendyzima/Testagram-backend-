@@ -145,8 +145,6 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 
 	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.example")
-	t.Setenv("APPWRITE_ENDPOINT", "")
-	t.Setenv("APPWRITE_PROJECT_ID", "")
 	svc := &service{db: db}
 
 	tokenReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/provisioning-token", nil)
@@ -245,7 +243,6 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal("native session was issued before email verification activated the approved provisioning record")
 	}
 
-	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "native")
 	pendingLogin := httptest.NewRequest(http.MethodPost, "/api/auth/login",
 		strings.NewReader("{\"email\":\""+nativeEmail+"\",\"password\":\"native-ci-password-123\"}"))
 	pendingLoginResp := httptest.NewRecorder()
