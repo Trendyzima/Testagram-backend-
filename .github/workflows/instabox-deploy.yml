@@ -33,7 +33,7 @@ jobs:
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
       APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID || secrets.APPWRITE_PROJECT_ID || '6af01d97002875d6d7bd' }}
-      TESTAGRAM_AUTH_PROVIDER: ${{ vars.TESTAGRAM_AUTH_PROVIDER || 'appwrite' }}
+      TESTAGRAM_AUTH_PROVIDER: ${{ vars.TESTAGRAM_AUTH_PROVIDER || 'native' }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
@@ -144,7 +144,7 @@ jobs:
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
           APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
-          TESTAGRAM_AUTH_PROVIDER: ${{ vars.TESTAGRAM_AUTH_PROVIDER || 'appwrite' }}
+          TESTAGRAM_AUTH_PROVIDER: ${{ vars.TESTAGRAM_AUTH_PROVIDER || 'native' }}
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
