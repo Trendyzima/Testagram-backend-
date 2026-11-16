@@ -88,7 +88,14 @@ testagram.site {
   respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200
   @activitypub path /.well-known/webfinger /users/* /objects/*
   handle @activitypub {
-    reverse_proxy federation-api:8081
+    reverse_proxy federation-api:8081 {
+      # InstaBox's public-port gateway connects through this generic :8443
+      # listener, so the transport Host is the port URL. Federation must see
+      # its canonical identity host exactly as it does on the direct 443 site.
+      header_up Host testagram.site
+      header_up X-Forwarded-Host testagram.site
+      header_up X-Forwarded-Proto https
+    }
   }
   handle {
     redir https://www.testagram.site{uri} 308
