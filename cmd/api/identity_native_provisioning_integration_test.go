@@ -367,4 +367,42 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		!strings.Contains(authResp.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
 		t.Fatalf("ordinary signup bypassed identity review: status=%d body=%s", authResp.Code, authResp.Body.String())
 	}
+	// Existing native identities may predate the approved-registration
+	// ledger. They still require verified email, an enabled account and no
+	// forced password reset, but must not be blocked solely because no
+	// provisioning row exists.
+	existingSuffix, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingSuffix = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(existingSuffix[:16], "-", ""), "_", ""))
+	existingEmail := "existing-native-" + existingSuffix + "@example.test"
+	existingUsername := "existing_native_" + existingSuffix
+	existingPasswordHash, err := authPasswordHash("ExistingNativePassword-123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var existingUserID string
+	if err := db.QueryRow(ctx, `
+		INSERT INTO testagram_auth.identities(email,username,password_hash,email_verified_at)
+		VALUES($1,$2,$3,now())
+		RETURNING user_id::text
+	`, existingEmail, existingUsername, existingPasswordHash).Scan(&existingUserID); err != nil {
+		t.Fatal(err)
+	}
+	var existingTokenVersion int64
+	if err := db.QueryRow(ctx, `
+		SELECT token_version FROM testagram_auth.identities WHERE user_id=$1::uuid
+	`, existingUserID).Scan(&existingTokenVersion); err != nil {
+		t.Fatal(err)
+	}
+	existingTokens, err := issueNativeSession(ctx, db, existingUserID, existingEmail, existingTokenVersion, "native-ci", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("verified existing native identity without a provisioning row could not sign in: %v", err)
+	}
+	if existingTokens.AccessToken == "" || existingTokens.RefreshToken == "" {
+		t.Fatal("existing native identity received an incomplete session")
+	}
+
+
 }
