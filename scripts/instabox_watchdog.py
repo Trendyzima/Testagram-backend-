@@ -150,6 +150,8 @@ def probe(url: str) -> tuple[bool, str]:
             return False, f"HTTP {response.status}"
     except urllib.error.HTTPError as exc:
         body = exc.read(4096).decode("utf-8", "replace")
+        retry_after_header = retry_after_header
+        exc.close()
         lowered = body.lower()
 
         # These statuses are emitted by the InstaBox public-port proxy before
