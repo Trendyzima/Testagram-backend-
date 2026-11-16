@@ -51,7 +51,7 @@ jobs:
           WATCHDOG_AUTO_RECOVERY_ENABLED: ${{ vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'false' }}
           INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
           INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
-          TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://api.testagram.site/healthz' }}
+          TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech/healthz' }}
           WATCHDOG_ALERT_WEBHOOK: ${{ secrets.WATCHDOG_ALERT_WEBHOOK }}
           WATCHDOG_STATE_FILE: .watchdog-state.json
           # Scheduled recovery stays disabled until a restricted key is installed and explicitly enabled.
