@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 )
@@ -30,5 +29,3 @@ func writeAuthFailure(w http.ResponseWriter, status int, cause error, requestID 
 	}
 	writeJSON(w, status, errorBody(code, message, requestID))
 }
-
-var _ = errors.New
