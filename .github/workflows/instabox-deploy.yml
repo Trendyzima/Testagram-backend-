@@ -407,9 +407,9 @@ jobs:
       - name: Canonical hostname verification handoff
         shell: bash
         run: |
-          echo "Backend and Go CDN published origins passed direct health/readiness checks."
-          echo "Run the CDN repository's Restore canonical Testagram API and Go CDN host routing workflow with the API URL and Go CDN URL from this deployment summary."
-          echo "Cloudflare gateway workflow performs the final public api.testagram.site and media.testagram.site identity, liveness, and authorization checks after both origins are deployed; Backend readiness remains private."
+          echo "Backend, Go CDN and apex Caddy origins passed direct health/readiness checks."
+          echo "Run the CDN repository canonical Cloudflare routing workflow with API, Go CDN and apex origins from this deployment summary."
+          echo "The apex origin serves ActivityPub/WebFinger and redirects ordinary web traffic to www.testagram.site; Backend readiness remains private."
 
       - name: Deployment summary
         if: always()
@@ -420,6 +420,8 @@ jobs:
           echo "- Machine: ${{ steps.machine.outputs.machine_id || 'not resolved' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- API URL: ${{ steps.publish.outputs.api_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Go CDN URL: ${{ steps.publish_cdn.outputs.cdn_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apex federation edge URL: ${{ steps.publish_apex.outputs.apex_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apex edge: port 8443; ActivityPub/WebFinger proxy and canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend and Go CDN: public /healthz; private /readyz and /metrics on Docker-only port 8082" >> "$GITHUB_STEP_SUMMARY"
           echo "- Appwrite project ID: ${{ secrets.APPWRITE_PROJECT_ID != '' && 'configured' || 'not configured; login-dependent services are skipped' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
