@@ -47,8 +47,8 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := client.Rank(context.Background(), Request{
-		Now: time.Now().UTC(), Limit: 1,
-		Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Visible: true, CreatedAt: time.Now().UTC()}},
+		Now: time.Now().UTC(), FeedMode: "for_you", Limit: 1,
+		Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Source: "native", Visible: true, CreatedAt: time.Now().UTC()}},
 	})
 	if err != nil {
 		t.Fatal(err)
