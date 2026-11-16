@@ -44,8 +44,38 @@ func TestAuthPasswordHashAndVerify(t *testing.T) {
 	if _, err := authPasswordHash("short"); err == nil {
 		t.Fatal("short password accepted")
 	}
-	if !strings.HasPrefix(hash, "pbkdf2-sha256$210000$") {
-		t.Fatalf("unexpected hash format %q", hash)
+	if !strings.HasPrefix(hash, "argon2id$v=19$m=65536,t=3,p=2$") {
+		t.Fatalf("unexpected Argon2id hash format %q", hash)
+	}
+	if authPasswordNeedsRehash(hash) { t.Fatal("current Argon2id hash incorrectly marked for rehash") }
+}
+
+func TestLegacyPBKDF2CredentialVerifiesAndRequiresUpgrade(t *testing.T) {
+	salt := []byte("0123456789abcdef")
+	key := authPBKDF2([]byte("legacy-correct-password"), salt, 100000, 32)
+	encoded := fmt.Sprintf("pbkdf2-sha256$100000$%s$%s",
+		base64.RawURLEncoding.EncodeToString(salt), base64.RawURLEncoding.EncodeToString(key))
+	if !authPasswordVerify(encoded, "legacy-correct-password") {
+		t.Fatal("valid legacy PBKDF2 credential rejected")
+	}
+	if authPasswordVerify(encoded, "incorrect-password") {
+		t.Fatal("incorrect legacy password accepted")
+	}
+	if !authPasswordNeedsRehash(encoded) {
+		t.Fatal("legacy credential did not request Argon2id upgrade")
+	}
+}
+
+func TestArgon2idRejectsMalformedAndExcessiveParameters(t *testing.T) {
+	for _, encoded := range []string{
+		"argon2id$v=16$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+		"argon2id$v=19$m=999999999,t=3,p=2$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+		"argon2id$v=19$m=65536,t=3,p=2$%%%$YWJj",
+		"argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+	} {
+		if authPasswordVerify(encoded, "any-password") {
+			t.Fatalf("malformed Argon2id hash accepted: %q", encoded)
+		}
 	}
 }
 
