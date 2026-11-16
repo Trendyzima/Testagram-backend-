@@ -245,6 +245,16 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal("native session was issued before email verification activated the approved provisioning record")
 	}
 
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "native")
+	pendingLogin := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader("{\"email\":\""+nativeEmail+"\",\"password\":\"native-ci-password-123\"}"))
+	pendingLoginResp := httptest.NewRecorder()
+	if !svc.authRespond(pendingLoginResp, pendingLogin, "login") ||
+		pendingLoginResp.Code != http.StatusForbidden ||
+		!strings.Contains(pendingLoginResp.Body.String(), "EMAIL_VERIFICATION_REQUIRED") {
+		t.Fatalf("unverified approved identity login status=%d body=%s", pendingLoginResp.Code, pendingLoginResp.Body.String())
+	}
+
 	var previousVerificationHash []byte
 	if err := db.QueryRow(ctx, `
 		SELECT verification_token_hash FROM testagram_auth.identities WHERE user_id=$1::uuid
@@ -335,6 +345,15 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if sessionErr != nil || sessionStatus != http.StatusOK || claims.Subject != userID {
 		t.Fatalf("native session verification subject=%q status=%d err=%v", claims.Subject, sessionStatus, sessionErr)
 	}
+
+	activeLogin := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader("{\"email\":\""+nativeEmail+"\",\"password\":\"native-ci-password-123\"}"))
+	activeLoginResp := httptest.NewRecorder()
+	if !svc.authRespond(activeLoginResp, activeLogin, "login") ||
+		activeLoginResp.Code != http.StatusOK ||
+		!strings.Contains(activeLoginResp.Body.String(), "access_token") {
+		t.Fatalf("approved verified identity login status=%d body=%s", activeLoginResp.Code, activeLoginResp.Body.String())
+	}
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_identity.native_registration_provisioning
 		SET status='disabled',updated_at=now()
@@ -422,6 +441,15 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	if _, status, err := verifyNativeAccessToken(ctx, db, rotatedExistingTokens.AccessToken); err != nil || status != http.StatusOK {
 		t.Fatalf("existing native identity rotated access token status=%d err=%v", status, err)
+	}
+
+	existingLogin := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader("{\"email\":\""+existingEmail+"\",\"password\":\"ExistingNativePassword-123!\"}"))
+	existingLoginResp := httptest.NewRecorder()
+	if !svc.authRespond(existingLoginResp, existingLogin, "login") ||
+		existingLoginResp.Code != http.StatusOK ||
+		!strings.Contains(existingLoginResp.Body.String(), "access_token") {
+		t.Fatalf("verified legacy native identity login status=%d body=%s", existingLoginResp.Code, existingLoginResp.Body.String())
 	}
 
 
