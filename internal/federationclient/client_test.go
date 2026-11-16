@@ -112,7 +112,7 @@ func TestFetchRemoteObjectsRejectsActorOutsideBackendAllowlist(t *testing.T) {
 
 func TestFetchATProtoFeedsVerifiesDIDBoundPosts(t *testing.T) {
     token := strings.Repeat("f", 40)
-    did := "did:plc:abcdefghijklmnopqrstuvwx"
+    did := "did:plc:222222222222222222222222"
     server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         if r.URL.Path != "/internal/v1/atproto/feed" { t.Errorf("unexpected path: %s", r.URL.Path) }
         if r.Header.Get("Authorization") != "Bearer "+token { t.Error("missing private Federation bearer") }
@@ -120,7 +120,7 @@ func TestFetchATProtoFeedsVerifiesDIDBoundPosts(t *testing.T) {
         if err := json.NewDecoder(r.Body).Decode(&input); err != nil { t.Fatal(err) }
         if len(input.ActorDIDs) != 1 || input.ActorDIDs[0] != did { t.Errorf("wrong DID allowlist: %#v", input) }
         w.WriteHeader(http.StatusOK)
-        _, _ = w.Write([]byte(`{"ok":true,"data":{"source":"bluesky-atproto","actors":[{"did":"did:plc:abcdefghijklmnopqrstuvwx","handle":"alice.bsky.social","posts":[{"uri":"at://did:plc:abcdefghijklmnopqrstuvwx/app.bsky.feed.post/1","cid":"bafy1","text":"hello","author":{"did":"did:plc:abcdefghijklmnopqrstuvwx","handle":"alice.bsky.social"}}]}]}}`))
+        _, _ = w.Write([]byte(`{"ok":true,"data":{"source":"bluesky-atproto","actors":[{"did":"did:plc:222222222222222222222222","handle":"alice.bsky.social","posts":[{"uri":"at://did:plc:222222222222222222222222/app.bsky.feed.post/1","cid":"bafy1","text":"hello","author":{"did":"did:plc:222222222222222222222222","handle":"alice.bsky.social"}}]}]}}`))
     }))
     defer server.Close()
     client, err := New(server.URL, token, time.Second)
@@ -133,11 +133,11 @@ func TestFetchATProtoFeedsVerifiesDIDBoundPosts(t *testing.T) {
 func TestFetchATProtoFeedsRejectsDIDSubstitution(t *testing.T) {
     server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
         w.WriteHeader(http.StatusOK)
-        _, _ = w.Write([]byte(`{"ok":true,"data":{"source":"bluesky-atproto","actors":[{"did":"did:plc:zyxwvutsrqponmlkjihgfedcba","handle":"other.bsky.social","posts":[]}]}}`))
+        _, _ = w.Write([]byte(`{"ok":true,"data":{"source":"bluesky-atproto","actors":[{"did":"did:plc:333333333333333333333333","handle":"other.bsky.social","posts":[]}]}}`))
     }))
     defer server.Close()
     client, err := New(server.URL, strings.Repeat("f", 40), time.Second)
     if err != nil { t.Fatal(err) }
-    _, err = client.FetchATProtoFeeds(context.Background(), ATProtoFeedRequest{ActorDIDs: []string{"did:plc:abcdefghijklmnopqrstuvwx"}, LimitPerActor: 10})
+    _, err = client.FetchATProtoFeeds(context.Background(), ATProtoFeedRequest{ActorDIDs: []string{"did:plc:222222222222222222222222"}, LimitPerActor: 10})
     if err == nil { t.Fatal("DID substitution in Federation response was accepted") }
 }
