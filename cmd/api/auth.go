@@ -24,15 +24,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/argon2"
 )
 
 const authPasswordRounds = 210000
 const authTokenTTL = 24 * time.Hour
 
 type authInput struct {
-	Email    string `json:"email"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Email        string `json:"email"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
 	Token        string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
 }
@@ -76,7 +77,13 @@ func authTokenHash(token string) []byte {
 	return sum[:]
 }
 
-// PBKDF2-HMAC-SHA256 password storage; salt and work factor are encoded with the hash.
+// Argon2id is the default password KDF. The encoded format is self-describing so
+// parameters can be upgraded without a schema migration.
+const authArgon2Memory uint32 = 64 * 1024
+const authArgon2Iterations uint32 = 3
+const authArgon2Parallelism uint8 = 2
+const authArgon2KeyLength uint32 = 32
+
 func authPasswordHash(password string) (string, error) {
 	if len(password) < 12 || len(password) > 128 {
 		return "", errors.New("password must be between 12 and 128 bytes")
@@ -85,26 +92,56 @@ func authPasswordHash(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	dk := authPBKDF2([]byte(password), salt, authPasswordRounds, 32)
-	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", authPasswordRounds, base64.RawURLEncoding.EncodeToString(salt), base64.RawURLEncoding.EncodeToString(dk)), nil
+	derived := argon2.IDKey([]byte(password), salt, authArgon2Iterations, authArgon2Memory, authArgon2Parallelism, authArgon2KeyLength)
+	return fmt.Sprintf("argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+		authArgon2Memory, authArgon2Iterations, authArgon2Parallelism,
+		base64.RawURLEncoding.EncodeToString(salt),
+		base64.RawURLEncoding.EncodeToString(derived)), nil
 }
 
+// authPasswordVerify accepts the previous PBKDF2 format only as a migration
+// bridge. A successful legacy login is transparently rehashed by the caller.
 func authPasswordVerify(encoded, password string) bool {
+	if strings.HasPrefix(encoded, "pbkdf2-sha256$") {
+		parts := strings.Split(encoded, "$")
+		if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
+			return false
+		}
+		var rounds int
+		if _, err := fmt.Sscanf(parts[1], "%d", &rounds); err != nil || rounds < 100000 || rounds > 1000000 {
+			return false
+		}
+		salt, saltErr := base64.RawURLEncoding.DecodeString(parts[2])
+		expected, keyErr := base64.RawURLEncoding.DecodeString(parts[3])
+		if saltErr != nil || keyErr != nil || len(salt) < 16 || len(salt) > 64 || len(expected) != 32 {
+			return false
+		}
+		actual := authPBKDF2([]byte(password), salt, rounds, len(expected))
+		return subtle.ConstantTimeCompare(actual, expected) == 1
+	}
+
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
+	if len(parts) != 5 || parts[0] != "argon2id" || parts[1] != "v=19" {
 		return false
 	}
-	var rounds int
-	if _, err := fmt.Sscanf(parts[1], "%d", &rounds); err != nil || rounds < 100000 || rounds > 1000000 {
+	var memory, iterations uint32
+	var parallelism uint16
+	if _, err := fmt.Sscanf(parts[2], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil ||
+		memory < 19*1024 || memory > 128*1024 || iterations < 1 || iterations > 6 ||
+		parallelism < 1 || parallelism > 4 || memory < uint32(parallelism)*8 {
 		return false
 	}
-	salt, err1 := base64.RawURLEncoding.DecodeString(parts[2])
-	expected, err2 := base64.RawURLEncoding.DecodeString(parts[3])
-	if err1 != nil || err2 != nil || len(salt) < 16 || len(expected) != 32 {
+	salt, saltErr := base64.RawURLEncoding.DecodeString(parts[3])
+	expected, keyErr := base64.RawURLEncoding.DecodeString(parts[4])
+	if saltErr != nil || keyErr != nil || len(salt) < 16 || len(salt) > 64 || len(expected) < 16 || len(expected) > 64 {
 		return false
 	}
-	actual := authPBKDF2([]byte(password), salt, rounds, len(expected))
+	actual := argon2.IDKey([]byte(password), salt, iterations, memory, uint8(parallelism), uint32(len(expected)))
 	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func authPasswordNeedsRehash(encoded string) bool {
+	return !strings.HasPrefix(encoded, "argon2id$v=19$m=65536,t=3,p=2$")
 }
 
 func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
@@ -437,6 +474,24 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusForbidden, errorBody("PASSWORD_RESET_REQUIRED", "Reset your password before signing in.", requestID(r)))
 			return true
 		}
+		if authPasswordNeedsRehash(hash) {
+			upgradedHash, hashErr := authPasswordHash(in.Password)
+			if hashErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("CREDENTIAL_UPGRADE_FAILED", "Secure credential upgrade could not be completed", requestID(r)))
+				return true
+			}
+			result, updateErr := s.db.Exec(ctx, `UPDATE testagram_auth.identities SET password_hash=$2,updated_at=now() WHERE user_id=$1::uuid AND password_hash=$3`, userID, upgradedHash, hash)
+			if updateErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("CREDENTIAL_UPGRADE_FAILED", "Secure credential upgrade could not be completed", requestID(r)))
+				return true
+			}
+			if result.RowsAffected() != 1 {
+				// The password or account state changed while the legacy hash was
+				// being upgraded. Do not continue with a potentially stale login.
+				writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect, or email verification is pending.", requestID(r)))
+				return true
+			}
+		}
 		tokens, err := issueNativeSession(ctx, s.db, userID, email, version, r.UserAgent(), ip)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("SESSION_CREATE_FAILED", "A secure session could not be created", requestID(r)))
@@ -515,7 +570,9 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				`, email, authTokenHash(token), authFingerprint(ip)).Scan(&savedEmail)
 				txErr = err
 			}
-			if txErr == nil { txErr = tx.Commit(ctx) }
+			if txErr == nil {
+				txErr = tx.Commit(ctx)
+			}
 		}
 		if txErr == nil && savedEmail != "" {
 			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
