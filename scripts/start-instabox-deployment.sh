@@ -201,6 +201,7 @@ done
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
+write_env_value TESTAGRAM_AUTH_PROVIDER native
 write_env_value VIRTUAL_STORAGE_ENABLED true
 write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-private
 write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
@@ -276,8 +277,10 @@ if [[ "$CDN_MEDIA_BASE_URL" != https://* ]]; then
   exit 1
 fi
 
-fi
 
+set -a
+# shellcheck disable=SC1090
+source "$BASE_ENV"
 set -a
 # shellcheck disable=SC1090
 source "$BASE_ENV"
