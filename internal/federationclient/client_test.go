@@ -119,13 +119,14 @@ func TestFetchATProtoFeedsVerifiesDIDBoundPosts(t *testing.T) {
         var input ATProtoFeedRequest
         if err := json.NewDecoder(r.Body).Decode(&input); err != nil { t.Fatal(err) }
         if len(input.ActorDIDs) != 1 || input.ActorDIDs[0] != did { t.Errorf("wrong DID allowlist: %#v", input) }
+        if input.Cursors[did] != "cursor-page-2" { t.Errorf("wrong per-DID cursor: %#v", input.Cursors) }
         w.WriteHeader(http.StatusOK)
-        _, _ = w.Write([]byte(`{"ok":true,"data":{"source":"bluesky-atproto","actors":[{"did":"did:plc:222222222222222222222222","handle":"alice.bsky.social","posts":[{"uri":"at://did:plc:222222222222222222222222/app.bsky.feed.post/1","cid":"bafy1","text":"hello","author":{"did":"did:plc:222222222222222222222222","handle":"alice.bsky.social"}}]}]}}`))
+        _, _ = w.Write([]byte(`{"ok":true,"data":{"source":"bluesky-atproto","actors":[{"did":"did:plc:222222222222222222222222","handle":"alice.bsky.social","cursor":"cursor-page-3","posts":[{"uri":"at://did:plc:222222222222222222222222/app.bsky.feed.post/1","cid":"bafy1","text":"hello","author":{"did":"did:plc:222222222222222222222222","handle":"alice.bsky.social"}}]}]}}`))
     }))
     defer server.Close()
     client, err := New(server.URL, token, time.Second)
     if err != nil { t.Fatal(err) }
-    feeds, err := client.FetchATProtoFeeds(context.Background(), ATProtoFeedRequest{ActorDIDs: []string{did}, LimitPerActor: 10})
+    feeds, err := client.FetchATProtoFeeds(context.Background(), ATProtoFeedRequest{ActorDIDs: []string{did}, LimitPerActor: 10, Cursors: map[string]string{did: "cursor-page-2"}})
     if err != nil { t.Fatal(err) }
     if len(feeds) != 1 || len(feeds[0].Posts) != 1 || feeds[0].Posts[0].Author.DID != did { t.Fatalf("unexpected AT Protocol feed: %#v", feeds) }
 }
@@ -140,4 +141,20 @@ func TestFetchATProtoFeedsRejectsDIDSubstitution(t *testing.T) {
     if err != nil { t.Fatal(err) }
     _, err = client.FetchATProtoFeeds(context.Background(), ATProtoFeedRequest{ActorDIDs: []string{"did:plc:222222222222222222222222"}, LimitPerActor: 10})
     if err == nil { t.Fatal("DID substitution in Federation response was accepted") }
+}
+
+
+func TestFetchATProtoFeedsRejectsCursorForUnauthorizedDID(t *testing.T) {
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+        t.Fatal("unauthorized cursor must be rejected before network access")
+    }))
+    defer server.Close()
+    client, err := New(server.URL, strings.Repeat("f", 40), time.Second)
+    if err != nil { t.Fatal(err) }
+    _, err = client.FetchATProtoFeeds(context.Background(), ATProtoFeedRequest{
+        ActorDIDs: []string{"did:plc:222222222222222222222222"},
+        LimitPerActor: 10,
+        Cursors: map[string]string{"did:plc:333333333333333333333333": "foreign"},
+    })
+    if err == nil { t.Fatal("cursor for a DID outside the authorized list was accepted") }
 }

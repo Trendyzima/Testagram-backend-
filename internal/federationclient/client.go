@@ -83,6 +83,7 @@ type RemoteObjectsPage struct {
 type ATProtoFeedRequest struct {
     ActorDIDs []string `json:"actor_dids"`
     LimitPerActor int `json:"limit_per_actor"`
+    Cursors map[string]string `json:"cursors,omitempty"`
 }
 type ATProtoProfile struct {
     DID string `json:"did"`
@@ -266,6 +267,14 @@ func (c *Client) FetchATProtoFeeds(ctx context.Context, input ATProtoFeedRequest
         }
         if _, ok := seen[did]; ok { return nil, errors.New("AT Protocol actor list contains duplicate DIDs") }
         seen[did] = struct{}{}
+    }
+    if len(input.Cursors) > len(seen) {
+        return nil, errors.New("AT Protocol cursor map contains an unauthorized DID")
+    }
+    for did, cursor := range input.Cursors {
+        if _, ok := seen[did]; !ok || len(cursor) > 512 || strings.ContainsAny(cursor, "\r\n") {
+            return nil, errors.New("AT Protocol cursor must belong to an authorized DID and be no longer than 512 characters")
+        }
     }
     var result atprotoFeedsEnvelope
     if err := c.postInternalJSON(ctx, "/internal/v1/atproto/feed", input, &result); err != nil { return nil, err }
