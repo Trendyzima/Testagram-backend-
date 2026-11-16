@@ -157,7 +157,6 @@ LIMIT $5`, nullableUUID(viewerID), pattern, before, beforeID, limit+1)
 	})
 }
 
-
 // socialHashtagFollow adds a private viewer-interest signal for Explore ranking.
 func (s *service) socialHashtagFollow(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialAuth(w, r)
