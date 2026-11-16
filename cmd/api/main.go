@@ -25,7 +25,6 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
-	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
@@ -53,7 +52,6 @@ type upstreamMetric struct {
 
 type service struct {
 	db                        *pgxpool.Pool
-	moderation                freshapi.ContentModeration
 	metricsMu                 sync.Mutex
 	routeMetrics              map[string]*requestMetric
 	capabilityMetrics         map[string]*requestMetric
@@ -1247,25 +1245,12 @@ func main() {
 	if federationBackendToken != "" && len(federationBackendToken) < 32 {
 		log.Fatal("FEDERATION_BACKEND_INTERNAL_TOKEN must contain at least 32 characters")
 	}
-	moderation := freshapi.ContentModeration(nil)
-	moderationKey := strings.TrimSpace(os.Getenv("ONSPACE_AI_API_KEY"))
-	if moderationKey != "" {
-		moderationBase := env("ONSPACE_AI_BASE_URL", "https://ai.onspace.ai/v1")
-		configured, moderationErr := freshapi.NewHTTPModerationService(moderationBase, moderationKey, nil)
-		if moderationErr != nil {
-			log.Fatalf("configure social post moderation: %v", moderationErr)
-		}
-		moderation = configured
-		log.Printf("native social post moderation enabled")
-	} else {
-		log.Printf("native social post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
-	}
 	federationPublicBaseURL, federationURLerr := normalizeFederationPublicBaseURL(env("FEDERATION_PUBLIC_BASE_URL", "https://federation.testagram.site"))
 	if federationURLerr != nil {
 		log.Fatalf("configure public Federation origin: %v", federationURLerr)
 	}
 	svc := &service{
-		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
+		db: db, upstream: &http.Client{Timeout: 8 * time.Second},
 		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
