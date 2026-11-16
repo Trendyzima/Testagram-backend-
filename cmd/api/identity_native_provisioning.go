@@ -46,6 +46,12 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		return
 	}
 
+	preflightID, preflightErr := s.identityApplicationToken(r)
+	if preflightErr != nil || preflightID != applicationID {
+		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	allowed, rateErr := s.authRateAllowed(ctx, "identity-provisioning-ip", authClientIP(r), 8)
@@ -379,13 +385,18 @@ func (s *service) identityProvisioningResendVerification(w http.ResponseWriter, 
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the application is awaiting email verification, a new link will be sent."})
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	allowed, rateErr := s.authRateAllowed(ctx, "identity-verification-resend-ip", authClientIP(r), 5)
+	if rateErr != nil || !allowed {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the application is awaiting email verification, a new link will be sent."})
+		return
+	}
 	token, err := authRandomToken()
 	if err != nil {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the application is awaiting email verification, a new link will be sent."})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification email could not be requested", requestID(r)))
