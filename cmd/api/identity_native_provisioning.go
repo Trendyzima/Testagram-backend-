@@ -139,7 +139,7 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "provisioned", "canonical_user_id": userID,
 			"email_verification_required": provisioningStatus == "verification_pending",
-			"idempotent_replay": true,
+			"idempotent_replay":           true,
 		})
 		return
 	}
@@ -463,8 +463,8 @@ func (s *service) identityProvisioningResendVerification(w http.ResponseWriter, 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"ok": true,
+		"ok":                     true,
 		"email_delivery_pending": mailErr != nil,
-		"message": "If the application is awaiting email verification, a new link will be sent.",
+		"message":                "If the application is awaiting email verification, a new link will be sent.",
 	})
 }
