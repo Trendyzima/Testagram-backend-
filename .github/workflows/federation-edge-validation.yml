@@ -1,0 +1,39 @@
+name: Federation apex edge validation
+
+on:
+  pull_request:
+    paths:
+      - "deploy/self-hosted/Caddyfile"
+      - ".github/workflows/federation-edge-validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/self-hosted/Caddyfile"
+      - ".github/workflows/federation-edge-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  caddy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate canonical Caddy edge configuration
+        env:
+          API_DOMAIN: api.testagram.site
+          MEDIA_DOMAIN: media.testagram.site
+          ADMIN_DOMAIN: ops.testagram.site
+          ACME_EMAIL: ci@example.invalid
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e API_DOMAIN -e MEDIA_DOMAIN -e ADMIN_DOMAIN -e ACME_EMAIL \
+            -v "$PWD/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          grep -Fq 'testagram.site {' deploy/self-hosted/Caddyfile
+          grep -Fq 'path /.well-known/webfinger /users/* /objects/*' deploy/self-hosted/Caddyfile
+          grep -Fq 'reverse_proxy federation:8081' deploy/self-hosted/Caddyfile
+          grep -Fq 'redir https://www.testagram.site{uri} 308' deploy/self-hosted/Caddyfile
+          echo "Apex ActivityPub routing and www frontend preservation: PASS"
