@@ -1056,7 +1056,11 @@ func main() {
 		if federationErr != nil {
 			log.Fatalf("configure private Federation publisher: %v", federationErr)
 		}
-		federationAPIClient = publisher
+		resolverClient, resolverErr := federationclient.New(federationURL, federationToken, 18*time.Second)
+		if resolverErr != nil {
+			log.Fatalf("configure private Federation identity resolver: %v", resolverErr)
+		}
+		federationAPIClient = resolverClient
 		outboxStore, storeErr := federationoutbox.NewStore(db)
 		if storeErr != nil {
 			log.Fatalf("configure transactional Federation outbox: %v", storeErr)
