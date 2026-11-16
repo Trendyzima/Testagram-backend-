@@ -53,12 +53,11 @@ func issueNativeSession(ctx context.Context, db interface {
 	var emailVerified, accountEnabled, resetNotRequired, identityProvisioned bool
 	if err := tx.QueryRow(ctx, `
 		SELECT i.email_normalized, i.token_version, i.email_verified_at IS NOT NULL,
-			i.disabled_at IS NULL, NOT i.password_reset_required,
-			EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
-			       WHERE p.user_id=i.user_id AND p.status='active')
+			i.disabled_at IS NULL, NOT i.password_reset_required,p.status='active'
 		FROM testagram_auth.identities i
+		JOIN testagram_identity.native_registration_provisioning p ON p.user_id=i.user_id
 		WHERE i.user_id=$1::uuid
-		FOR UPDATE
+		FOR UPDATE OF i,p
 	`, userID).Scan(&currentEmail, &currentVersion, &emailVerified, &accountEnabled, &resetNotRequired, &identityProvisioned); err != nil {
 		return nativeSessionTokens{}, err
 	}
@@ -180,12 +179,12 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 	err = tx.QueryRow(ctx, `
 		SELECT s.session_id::text,s.user_id::text,s.family_id::text,s.token_version,s.expires_at,
 		       s.revoked_at IS NOT NULL,i.email,i.disabled_at IS NOT NULL,i.email_verified_at IS NOT NULL,
-		       EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
-		              WHERE p.user_id=i.user_id AND p.status='active')
+		       p.status='active'
 		FROM testagram_auth.sessions s
 		JOIN testagram_auth.identities i ON i.user_id=s.user_id
+		JOIN testagram_identity.native_registration_provisioning p ON p.user_id=i.user_id
 		WHERE s.refresh_token_hash=$1
-		FOR UPDATE OF s,i
+		FOR UPDATE OF s,i,p
 	`, authTokenHash(raw)).Scan(&oldID, &userID, &familyID, &version, &expires, &revoked, &email, &disabled, &verified, &identityProvisioned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nativeSessionTokens{}, errors.New("invalid refresh token")
