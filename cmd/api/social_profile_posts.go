@@ -108,7 +108,7 @@ LIMIT $5`
 		next = homeFeedCursor{CreatedAt: post.CreatedAt, ID: post.ID}
 	}
 	if err := rows.Err(); err != nil {
-		writeJSON(w,http.StatusServiceUnavailable,errorBody("PROFILE_POSTS_UNAVAILABLE","Profile posts could not be loaded",requestID))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_POSTS_UNAVAILABLE", "Profile posts could not be loaded", requestID))
 		return
 	}
 	rows.Close()
