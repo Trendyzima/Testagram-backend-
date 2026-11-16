@@ -33,16 +33,30 @@ func fmtHex(value []byte) string {
 
 func TestAuthPasswordHashAndVerify(t *testing.T) {
 	hash, err := authPasswordHash("correct horse battery staple")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasPrefix(hash, "argon2id$v=19$m=65536,t=3,p=2$") {
 		t.Fatalf("new password hash is not Argon2id: %q", hash)
 	}
-	if !authPasswordVerify(hash, "correct horse battery staple") { t.Fatal("correct password rejected") }
-	if authPasswordVerify(hash, "wrong password") { t.Fatal("wrong password accepted") }
-	if _, err := authPasswordHash("short"); err == nil { t.Fatal("short password accepted") }
-	if !authPasswordNeedsRehash("pbkdf2-sha256$210000$legacy$legacy") { t.Fatal("legacy PBKDF2 hash should require upgrade") }
-	if !authPasswordNeedsRehash("argon2id$v=19$m=32768,t=2,p=1$old$old") { t.Fatal("non-current Argon2id parameters should require upgrade") }
-	if authPasswordNeedsRehash(hash) { t.Fatal("current Argon2id parameters should not require upgrade") }
+	if !authPasswordVerify(hash, "correct horse battery staple") {
+		t.Fatal("correct password rejected")
+	}
+	if authPasswordVerify(hash, "wrong password") {
+		t.Fatal("wrong password accepted")
+	}
+	if _, err := authPasswordHash("short"); err == nil {
+		t.Fatal("short password accepted")
+	}
+	if !authPasswordNeedsRehash("pbkdf2-sha256$210000$legacy$legacy") {
+		t.Fatal("legacy PBKDF2 hash should require upgrade")
+	}
+	if !authPasswordNeedsRehash("argon2id$v=19$m=32768,t=2,p=1$old$old") {
+		t.Fatal("non-current Argon2id parameters should require upgrade")
+	}
+	if authPasswordNeedsRehash(hash) {
+		t.Fatal("current Argon2id parameters should not require upgrade")
+	}
 }
 
 func TestAuthLegacyPBKDF2Verification(t *testing.T) {
@@ -51,8 +65,12 @@ func TestAuthLegacyPBKDF2Verification(t *testing.T) {
 	derived := authPBKDF2([]byte(password), salt, authPasswordRounds, 32)
 	legacy := fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", authPasswordRounds,
 		base64.RawURLEncoding.EncodeToString(salt), base64.RawURLEncoding.EncodeToString(derived))
-	if !authPasswordVerify(legacy, password) { t.Fatal("legacy PBKDF2 credential rejected") }
-	if authPasswordVerify(legacy, "incorrect password") { t.Fatal("legacy PBKDF2 accepted incorrect password") }
+	if !authPasswordVerify(legacy, password) {
+		t.Fatal("legacy PBKDF2 credential rejected")
+	}
+	if authPasswordVerify(legacy, "incorrect password") {
+		t.Fatal("legacy PBKDF2 accepted incorrect password")
+	}
 }
 
 func TestArgon2idRejectsMalformedAndExcessiveParameters(t *testing.T) {
@@ -89,18 +107,26 @@ func TestAuthJWTContainsStrictSessionBoundClaims(t *testing.T) {
 	oldAuth, hadAuth := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
 	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("a", 40))
 	t.Cleanup(func() {
-		if hadAuth { _ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", oldAuth) } else { _ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET") }
+		if hadAuth {
+			_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", oldAuth)
+		} else {
+			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
+		}
 	})
 	const userID = "123e4567-e89b-42d3-a456-426614174000"
 	const sessionID = "223e4567-e89b-42d3-a456-426614174000"
 	token, err := authSignJWT(userID, "user@example.com", 7, sessionID)
 	if err != nil { t.Fatal(err) }
 	parts := strings.Split(token, ".")
-	if len(parts) != 3 { t.Fatalf("JWT has %d segments", len(parts)) }
+	if len(parts) != 3 {
+		t.Fatalf("JWT has %d segments", len(parts))
+	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil { t.Fatal(err) }
 	var claims authClaims
-	if err := json.Unmarshal(payload, &claims); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
 	if claims.Subject != userID || claims.SessionID != sessionID || claims.TokenVersion != 7 ||
 		claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" ||
 		claims.Role != "authenticated" || claims.ExpiresAt-claims.IssuedAt != 900 {
@@ -109,7 +135,9 @@ func TestAuthJWTContainsStrictSessionBoundClaims(t *testing.T) {
 	mac := hmac.New(sha256.New, []byte(strings.Repeat("a", 40)))
 	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) { t.Fatal("JWT signature is invalid") }
+	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) {
+		t.Fatal("JWT signature is invalid")
+	}
 }
 
 func TestAuthTokenHashIsNotRawToken(t *testing.T) {
@@ -169,12 +197,15 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 	}
 }
 
-
 func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 	old, had := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
 	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
 	t.Cleanup(func() {
-		if had { _ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", old) } else { _ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET") }
+		if had {
+			_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", old)
+		} else {
+			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
+		}
 	})
 	handler := (&service{}).routes()
 	for _, path := range []string{
