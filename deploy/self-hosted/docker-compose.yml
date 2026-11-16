@@ -142,6 +142,7 @@ services:
       dockerfile: Dockerfile
     environment:
       LISTEN_ADDR: ":8080"
+      TESTAGRAM_AUTH_PROVIDER: native
       INTERNAL_LISTEN_ADDR: ":8082"
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
       TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:-}
