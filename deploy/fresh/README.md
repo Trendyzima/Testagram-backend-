@@ -1,8 +1,8 @@
 # Fresh Appwrite API deployment
 
-This deployment is intentionally separate from the legacy PostgreSQL/Supabase API. Build the new binary with the repository's Dockerfile.fresh and run only this service for the fresh environment.
+This deployment is an isolated Testagram API runtime with its own configuration and release process. Build the new binary with the repository's Dockerfile.fresh and run only this service for the fresh environment.
 
-1. Create a new Appwrite project and database; do not reuse a legacy project or Supabase identifiers.
+1. Create a new Appwrite project and database; do not reuse identifiers from another environment.
 2. Create the collections and indexes described in docs/fresh-appwrite-database-schema.md.
 3. Create a server API key scoped only to the required database document read/write operations. Keep it in the deployment secret store.
 4. Copy .env.example to the deployment environment and fill the Appwrite values. Do not commit secrets.
