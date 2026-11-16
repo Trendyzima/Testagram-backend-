@@ -86,15 +86,16 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&sessionID); err != nil {
 		t.Fatal(err)
 	}
+	sessionTokenHash := authTokenHash("native-verification-session-" + suffix)
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_sessions
 		  (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
 		   evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
 		   verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_appwrite_user_id)
-		VALUES($1::uuid,$2::uuid,decode(repeat('a',64),'hex'),'age_assurance',18,'verified',
+		VALUES($1::uuid,$2::uuid,$5,'age_assurance',18,'verified',
 		       'opaque-native-provisioning-evidence',decode($3,'hex'),'document_review','reviewed',
 		       TRUE,now()+interval '1 day',now(),now(),$4)
-	`, sessionID, applicationID, fingerprint, reviewerOne); err != nil {
+	`, sessionID, applicationID, fingerprint, reviewerOne, sessionTokenHash); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
