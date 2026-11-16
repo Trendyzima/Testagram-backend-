@@ -1,0 +1,77 @@
+name: Testagram Pages and origin routing inspection
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/pages-origin-inspection.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: testagram-pages-origin-inspection
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Inspect Pages deployment, DNS targets and edge routes
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          API=https://api.cloudflare.com/client/v4
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          get() {
+            local path="$1" out="$2" status
+            status="$(curl -sS --connect-timeout 10 --max-time 45 -o "$out" -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API$path")"
+            if [[ "$status" -lt 200 || "$status" -ge 300 ]] || ! jq -e '.success == true' "$out" >/dev/null; then
+              echo "::error::Cloudflare GET failed for $path (HTTP $status)"
+              jq -c '{errors,messages}' "$out" || true
+              return 1
+            fi
+          }
+
+          get "/zones?name=testagram.site" "$tmp/zone.json"
+          zone_id="$(jq -r '.result[0].id // empty' "$tmp/zone.json")"
+          account_id="$(jq -r '.result[0].account.id // empty' "$tmp/zone.json")"
+          [[ -n "$zone_id" && -n "$account_id" ]] || { echo "::error::Zone/account lookup failed"; exit 1; }
+
+          get "/zones/$zone_id/dns_records?per_page=100" "$tmp/dns.json"
+          get "/zones/$zone_id/workers/routes" "$tmp/routes.json"
+          get "/accounts/$account_id/pages/projects/testagram-flutter-web" "$tmp/project.json"
+          get "/accounts/$account_id/pages/projects/testagram-flutter-web/deployments?per_page=10" "$tmp/deployments.json"
+          get "/accounts/$account_id/pages/projects/testagram-flutter-web/domains" "$tmp/domains.json"
+
+          {
+            echo "## Testagram production routing inspection"
+            echo ""
+            echo "### Relevant DNS targets (public record values only)"
+            echo "| Hostname | Type | Target | Proxied |"
+            echo "|---|---|---|---|"
+            jq -r '.result[]? | select(.name == "testagram.site" or .name == "www.testagram.site" or .name == "api.testagram.site") | "| " + .name + " | " + .type + " | " + (if (.type == "CNAME" or .type == "A" or .type == "AAAA") then (.content // "") else "(omitted)" end) + " | " + ((.proxied // false)|tostring) + " |"' "$tmp/dns.json"
+            echo ""
+            echo "### Worker routes"
+            echo "| Pattern | Script |"
+            echo "|---|---|"
+            jq -r '.result[]? | "| " + (.pattern // "") + " | " + (.script // "(none)") + " |"' "$tmp/routes.json"
+            echo ""
+            echo "### Pages project"
+            jq -c '.result | {name,production_branch,canonical_deployment,latest_deployment,created_on,modified_on}' "$tmp/project.json"
+            echo ""
+            echo "### Latest Pages deployments"
+            echo "| ID | Environment | Status | URL | Created |"
+            echo "|---|---|---|---|---|"
+            jq -r '.result[]? | "| " + (.id // "") + " | " + (.environment // "") + " | " + ((.latest_stage.status // .status // "unknown")|tostring) + " | " + (.url // "") + " | " + (.created_on // "") + " |"' "$tmp/deployments.json"
+            echo ""
+            echo "### Pages custom domains"
+            echo "| Hostname | Status | Validation | Verification |"
+            echo "|---|---|---|---|"
+            jq -r '.result[]? | "| " + (.name // "") + " | " + (.status // "unknown") + " | " + (.validation_data.status // "unknown") + " | " + (.verification_data.status // "unknown") + " |"' "$tmp/domains.json"
+          } | tee "$GITHUB_STEP_SUMMARY"
