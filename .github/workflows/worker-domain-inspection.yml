@@ -1,0 +1,45 @@
+name: Testagram Workers custom-domain inspection
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/worker-domain-inspection.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: testagram-worker-domain-inspection
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: List Worker custom domains and script metadata
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          API=https://api.cloudflare.com/client/v4
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing token"; exit 1; }
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/zones?name=testagram.site" > "$tmp/zone.json"
+          account="$(jq -r '.result[0].account.id // empty' "$tmp/zone.json")"
+          [[ -n "$account" ]] || { echo "::error::Cloudflare account lookup failed"; exit 1; }
+          domains_status="$(curl -sS -o "$tmp/domains.json" -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/accounts/$account/workers/domains")"
+          {
+            echo "## Testagram Worker custom domains"
+            echo "Cloudflare API HTTP status: $domains_status"
+            if [[ "$domains_status" == "200" ]] && jq -e '.success == true' "$tmp/domains.json" >/dev/null; then
+              echo "| Hostname | Service | Environment |"
+              echo "|---|---|---|"
+              jq -r '.result[]? | "| " + (.hostname // .name // "") + " | " + (.service // .script // "") + " | " + (.environment // "") + " |"' "$tmp/domains.json"
+            else
+              jq -c '{errors,messages}' "$tmp/domains.json" || true
+            fi
+          } | tee "$GITHUB_STEP_SUMMARY"
