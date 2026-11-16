@@ -55,6 +55,21 @@ func TestAuthLegacyPBKDF2Verification(t *testing.T) {
 	if authPasswordVerify(legacy, "incorrect password") { t.Fatal("legacy PBKDF2 accepted incorrect password") }
 }
 
+func TestArgon2idRejectsMalformedAndExcessiveParameters(t *testing.T) {
+	for _, encoded := range []string{
+		"argon2id$v=16$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+		"argon2id$v=19$m=999999999,t=3,p=2$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+		"argon2id$v=19$m=65536,t=99,p=2$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+		"argon2id$v=19$m=65536,t=3,p=255$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+		"argon2id$v=19$m=65536,t=3,p=2$%%%$YWJj",
+		"argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0MTIzNA$YWJj",
+	} {
+		if authPasswordVerify(encoded, "any-password") {
+			t.Fatalf("malformed Argon2id hash accepted: %q", encoded)
+		}
+	}
+}
+
 func TestAuthJWTRequiresDedicatedSecret(t *testing.T) {
 	old, had := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
 	_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
