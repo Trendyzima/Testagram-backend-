@@ -1,6 +1,20 @@
 set -euo pipefail
 API="https://api.instabox.sh"
 MACHINE_ID="${MACHINE_ID:?machine output is required}"
+TESTAGRAM_AUTH_PROVIDER="${TESTAGRAM_AUTH_PROVIDER:-appwrite}"
+AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
+SMTP_PORT="${SMTP_PORT:-587}"
+case "$TESTAGRAM_AUTH_PROVIDER" in
+  appwrite|native) ;;
+  *) echo "::error::TESTAGRAM_AUTH_PROVIDER must be appwrite or native."; exit 1 ;;
+esac
+if [[ "$TESTAGRAM_AUTH_PROVIDER" == "native" ]]; then
+  [[ ${#TESTAGRAM_AUTH_JWT_SECRET:-0} -ge 32 ]] || { echo "::error::Native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
+  [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
+  for key in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_FROM_EMAIL; do
+    [[ -n "${!key:-}" ]] || { echo "::error::Native authentication requires $key for verification and password recovery."; exit 1; }
+  done
+fi
 case "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" in
   true|false) ;;
   *) echo "::error::TESTAGRAM_IDENTITY_REGISTRATION_ENABLED must be true or false."; exit 1 ;;
@@ -121,6 +135,14 @@ B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
 APPWRITE_ENDPOINT=${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
 APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
+TESTAGRAM_AUTH_PROVIDER=$TESTAGRAM_AUTH_PROVIDER
+TESTAGRAM_AUTH_JWT_SECRET=${TESTAGRAM_AUTH_JWT_SECRET:-}
+AUTH_PUBLIC_BASE_URL=$AUTH_PUBLIC_BASE_URL
+SMTP_HOST=${SMTP_HOST:-}
+SMTP_PORT=$SMTP_PORT
+SMTP_USERNAME=${SMTP_USERNAME:-}
+SMTP_PASSWORD=${SMTP_PASSWORD:-}
+AUTH_FROM_EMAIL=${AUTH_FROM_EMAIL:-}
 ALGORITHM_URL=http://algorithm:8092
 ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
 FEDERATION_INTERNAL_URL=http://federation:8081
@@ -182,6 +204,13 @@ ensure_random_secret FEDERATION_INGRESS_TOKEN
 # Registration and three-provider replication remain fail-closed until
 # a separate staging acceptance and explicit operator activation.
 write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"
+write_env_value TESTAGRAM_AUTH_PROVIDER "$TESTAGRAM_AUTH_PROVIDER"
+write_env_value AUTH_PUBLIC_BASE_URL "$AUTH_PUBLIC_BASE_URL"
+write_env_value SMTP_PORT "$SMTP_PORT"
+for key in TESTAGRAM_AUTH_JWT_SECRET SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_FROM_EMAIL; do
+  value="${!key:-}"
+  if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
+done
 for key in APPWRITE_API_KEY ONSPACE_AI_API_KEY ONSPACE_AI_BASE_URL MEDIA_MODERATION_TOKEN MPESA_ENV MPESA_SHORTCODE MPESA_PASSKEY MPESA_CONSUMER_KEY MPESA_CONSUMER_SECRET MPESA_CALLBACK_URL ADMIN_SERVICE_AUTH_KEY; do
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
@@ -273,9 +302,9 @@ set -a
 source "$BASE_ENV"
 set +a
 
-# Appwrite identity configuration is required for the enabled login path.
+# Appwrite remains the separate staff-reviewer identity dependency during the migration window.
 if [[ -z "${APPWRITE_PROJECT_ID:-}" ]]; then
-  echo "::error::APPWRITE_PROJECT_ID is required for Appwrite registration and login."
+  echo "::error::APPWRITE_PROJECT_ID is required for the staff identity-review console and legacy compatibility path."
   exit 1
 fi
 # Moderation is optional for service startup, but never optional for publishing:
@@ -654,6 +683,12 @@ payload="$(jq -nc \
   --arg cmd "$REMOTE_COMMAND" \
   --arg appwrite_endpoint "$APPWRITE_ENDPOINT" \
   --arg appwrite "${APPWRITE_PROJECT_ID:-}" \
+  --arg auth_provider "$TESTAGRAM_AUTH_PROVIDER" \
+  --arg auth_jwt_secret "${TESTAGRAM_AUTH_JWT_SECRET:-}" \
+  --arg auth_public_base_url "$AUTH_PUBLIC_BASE_URL" \
+  --arg smtp_host "${SMTP_HOST:-}" --arg smtp_port "$SMTP_PORT" \
+  --arg smtp_username "${SMTP_USERNAME:-}" --arg smtp_password "${SMTP_PASSWORD:-}" \
+  --arg auth_from_email "${AUTH_FROM_EMAIL:-}" \
   --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
   --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
   --arg media_replication_enabled "$MEDIA_REPLICATION_ENABLED" \
@@ -674,7 +709,7 @@ payload="$(jq -nc \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,ONSPACE_AI_API_KEY:$onspace_key,ONSPACE_AI_BASE_URL:$onspace_base,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,TESTAGRAM_AUTH_PROVIDER:$auth_provider,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,SMTP_HOST:$smtp_host,SMTP_PORT:$smtp_port,SMTP_USERNAME:$smtp_username,SMTP_PASSWORD:$smtp_password,AUTH_FROM_EMAIL:$auth_from_email,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,ONSPACE_AI_API_KEY:$onspace_key,ONSPACE_AI_BASE_URL:$onspace_base,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \
