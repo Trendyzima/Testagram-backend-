@@ -282,7 +282,7 @@ LIMIT $4`
 		s.algorithmRequests.Add(1)
 		rankCtx, cancel := context.WithTimeout(r.Context(), 1400*time.Millisecond)
 		ranked, rankErr := s.algorithm.Rank(rankCtx, algorithmclient.Request{
-			Now: time.Now().UTC(), Candidates: candidates, Limit: limit, AllowSensitive: false,
+			Now: time.Now().UTC(), FeedMode: feedMode, Candidates: candidates, Limit: limit, AllowSensitive: false,
 		})
 		cancel()
 		if rankErr == nil {
