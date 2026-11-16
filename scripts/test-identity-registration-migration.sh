@@ -57,8 +57,6 @@ psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
-psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
-psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
 
