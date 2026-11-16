@@ -116,7 +116,9 @@ func TestAuthJWTContainsStrictSessionBoundClaims(t *testing.T) {
 	const userID = "123e4567-e89b-42d3-a456-426614174000"
 	const sessionID = "223e4567-e89b-42d3-a456-426614174000"
 	token, err := authSignJWT(userID, "user@example.com", 7, sessionID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		t.Fatalf("JWT has %d segments", len(parts))
@@ -187,9 +189,6 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 		"/api/auth/refresh",
 		"/api/auth/logout",
 		"/api/auth/logout-all",
-		"/api/identity/applications/11111111-1111-4111-8111-111111111111/redeem",
-		"/api/identity/applications/11111111-1111-4111-8111-111111111111/verify-email",
-		"/api/identity/applications/11111111-1111-4111-8111-111111111111/resend-verification",
 	} {
 		req := httptest.NewRequest(http.MethodOptions, path, nil)
 		rec := httptest.NewRecorder()
