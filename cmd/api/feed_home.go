@@ -48,12 +48,13 @@ func parseHomeFeedMode(value string) (string, error) {
 // Native IDs remain UUIDs; ActivityPub uses canonical HTTPS object URIs and
 // Bluesky uses AT URIs. Never coerce a remote identifier into a UUID.
 type homeFeedCursor struct {
-	Version   int                       `json:"v,omitempty"`
-	CreatedAt time.Time                 `json:"created_at,omitempty"`
-	Source    string                    `json:"source,omitempty"`
-	ID        string                    `json:"id,omitempty"`
-	Sources   []homeFeedSourcePosition  `json:"sources,omitempty"`
-	Pending   []homeFeedPendingIdentity `json:"pending,omitempty"`
+	Version      int                       `json:"v,omitempty"`
+	CreatedAt    time.Time                 `json:"created_at,omitempty"`
+	Source       string                    `json:"source,omitempty"`
+	ID           string                    `json:"id,omitempty"`
+	Sources      []homeFeedSourcePosition  `json:"sources,omitempty"`
+	Pending      []homeFeedPendingIdentity `json:"pending,omitempty"`
+	RemoteOffset int                       `json:"remote_offset,omitempty"`
 }
 
 // Sources stores the last fetched position for each source. Pending stores the
@@ -67,6 +68,7 @@ type homeFeedSourcePosition struct {
 	Cursor    string    `json:"cursor,omitempty"`
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	ID        string    `json:"id,omitempty"`
+	Exhausted bool      `json:"exhausted,omitempty"`
 }
 
 type homeFeedPendingIdentity struct {
@@ -147,6 +149,7 @@ type homeFeedPost struct {
 	Origin            string            `json:"origin"`
 	RankingScore      float64           `json:"ranking_score,omitempty"`
 	RankingReasons    []string          `json:"ranking_reasons,omitempty"`
+	Capabilities      map[string]bool   `json:"capabilities,omitempty"`
 }
 
 func encodeHomeFeedCursor(cursor homeFeedCursor) string {
@@ -177,6 +180,9 @@ func decodeHomeFeedCursor(value string) (*homeFeedCursor, error) {
 		cursor.Version = 1
 	}
 	if cursor.Version != 1 && cursor.Version != 2 {
+		return nil, errors.New("invalid feed cursor")
+	}
+	if cursor.RemoteOffset < 0 || cursor.RemoteOffset > 500 {
 		return nil, errors.New("invalid feed cursor")
 	}
 	if cursor.Source == "" {
@@ -210,11 +216,11 @@ func decodeHomeFeedCursor(value string) (*homeFeedCursor, error) {
 				return nil, errors.New("invalid feed cursor")
 			}
 		case homeFeedSourceActivityPub:
-			if position.Identity != "" || position.Cursor == "" {
+			if position.Identity != "" || (position.Exhausted && position.Cursor != "") {
 				return nil, errors.New("invalid feed cursor")
 			}
 		case homeFeedSourceBluesky:
-			if !validHomeFeedDID(position.Identity) || position.Cursor == "" || position.ID != "" {
+			if !validHomeFeedDID(position.Identity) || position.ID != "" || (position.Exhausted && position.Cursor != "") {
 				return nil, errors.New("invalid feed cursor")
 			}
 		}
