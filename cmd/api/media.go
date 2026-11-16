@@ -92,7 +92,7 @@ func (s *service) mediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, id)
+		writeAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaUploadIntentRequest
@@ -255,7 +255,7 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, id)
+		writeAuthFailure(w, status, err, id)
 		return
 	}
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
@@ -550,7 +550,7 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, id)
+		writeAuthFailure(w, status, err, id)
 		return
 	}
 	var body privateMediaDownloadRequest
@@ -608,7 +608,7 @@ func (s *service) mediaList(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, id)
+		writeAuthFailure(w, status, err, id)
 		return
 	}
 	rows, err := s.db.Query(r.Context(), `select object_key, visibility, content_type, original_name, size_bytes, created_at, storage_namespace, storage_provider
@@ -685,7 +685,7 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, id)
+		writeAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaCompleteRequest
@@ -967,15 +967,12 @@ func (s *service) authenticatedMediaUser(r *http.Request) (string, int, error) {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 || len(parts[1]) > 8192 {
 		return "", http.StatusUnauthorized, errors.New("missing bearer token")
 	}
-	if nativeAuthEnabled() {
-		if s.db == nil { return "", http.StatusServiceUnavailable, errors.New("native identity store is unavailable") }
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		claims, status, err := verifyNativeAccessToken(ctx, s.db, parts[1])
-		if err != nil { return "", status, err }
-		return claims.Subject, http.StatusOK, nil
-	}
-	return s.authenticatedAppwriteUser(r, parts[1])
+	if s.db == nil { return "", http.StatusServiceUnavailable, errors.New("native identity store is unavailable") }
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	claims, status, err := verifyNativeAccessToken(ctx, s.db, parts[1])
+	if err != nil { return "", status, err }
+	return claims.Subject, http.StatusOK, nil
 }
 
 func strconvFormatInt(value int64) string {
@@ -1097,7 +1094,7 @@ func (s *service) mediaAttach(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, id)
+		writeAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaAttachRequest
@@ -1247,7 +1244,7 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, id)
+		writeAuthFailure(w, status, err, id)
 		return
 	}
 	var body mediaDeleteRequest
