@@ -89,7 +89,7 @@ func TestValidAppwriteUserID(t *testing.T) {
 }
 
 func TestAppwriteAuthenticationFailsClosedWhenNotConfigured(t *testing.T) {
-	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "")
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "appwrite")
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
 	service := &service{upstream: &http.Client{Timeout: time.Second}}
@@ -103,6 +103,7 @@ func TestAppwriteAuthenticationFailsClosedWhenNotConfigured(t *testing.T) {
 
 
 func TestAuthenticatedAppwriteUserRejectsUnverifiedEmailBeforeIdentityLookup(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "appwrite")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/account" {
 			t.Errorf("path = %q", r.URL.Path)
