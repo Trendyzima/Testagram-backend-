@@ -400,9 +400,9 @@ jobs:
       - name: Canonical hostname verification handoff
         shell: bash
         run: |
-          echo "Backend and Go CDN published origins passed direct health/readiness checks."
-          echo "Run the CDN repository's Restore canonical Testagram API and Go CDN host routing workflow with the API URL and Go CDN URL from this deployment summary."
-          echo "Cloudflare gateway workflow performs the final public api.testagram.site and media.testagram.site identity, liveness, and authorization checks after both origins are deployed; Backend readiness remains private."
+          echo "Backend, Go CDN and apex Caddy origins passed direct health/readiness checks."
+          echo "Run the CDN repository canonical Cloudflare routing workflow with API, Go CDN and apex origins from this deployment summary."
+          echo "The apex origin serves ActivityPub/WebFinger and redirects ordinary web traffic to www.testagram.site; Backend readiness remains private."
 
       - name: Deployment summary
         if: always()
