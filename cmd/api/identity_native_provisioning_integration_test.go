@@ -390,6 +390,15 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	`, existingEmail, existingUsername, existingPasswordHash).Scan(&existingUserID); err != nil {
 		t.Fatal(err)
 	}
+	var existingProvisioningRows int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_identity.native_registration_provisioning WHERE user_id=$1::uuid
+	`, existingUserID).Scan(&existingProvisioningRows); err != nil {
+		t.Fatal(err)
+	}
+	if existingProvisioningRows != 0 {
+		t.Fatalf("existing native identity unexpectedly has %d registration provisioning rows", existingProvisioningRows)
+	}
 	var existingTokenVersion int64
 	if err := db.QueryRow(ctx, `
 		SELECT token_version FROM testagram_auth.identities WHERE user_id=$1::uuid
