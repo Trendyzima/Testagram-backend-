@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/url"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
