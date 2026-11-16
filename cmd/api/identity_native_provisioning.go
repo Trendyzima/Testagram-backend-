@@ -225,11 +225,21 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusConflict, errorBody("APPLICATION_STATE_CHANGED", "Application changed before provisioning could be committed", requestID(r)))
 		return
 	}
+	var verificationSessionID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text FROM testagram_identity.verification_sessions
+		WHERE application_id=$1::uuid AND purpose='age_assurance' AND status='verified'
+		ORDER BY decided_at DESC LIMIT 1
+		FOR UPDATE
+	`, applicationID).Scan(&verificationSessionID); err != nil {
+		writeJSON(w, http.StatusConflict, errorBody("VERIFIED_EVIDENCE_SESSION_REQUIRED", "The approved application has no completed evidence-review session", requestID(r)))
+		return
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,request_id,ip_hash,metadata)
-		VALUES($1::uuid,'auth.identity_provisioned','success',$2,$3,
-		       jsonb_build_object('application_id',$4,'email_verification_required',true))
-	`, userID, requestID(r), authFingerprint(authClientIP(r)), applicationID); err != nil {
+		INSERT INTO testagram_identity.verification_events(session_id,event_type,actor_type,actor_reference,request_id,metadata)
+		VALUES($1::uuid,'account_provisioned','system','testagram-native-provisioning',$2,
+		       jsonb_build_object('native_user_id',$3,'application_id',$4))
+	`, verificationSessionID, requestID(r), userID, applicationID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Provisioning audit could not be committed", requestID(r)))
 		return
 	}
@@ -323,10 +333,20 @@ func (s *service) identityProvisioningVerifyEmail(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusConflict, errorBody("PROVISIONING_STATE_CHANGED", "Account activation could not be committed", requestID(r)))
 		return
 	}
+	var verificationSessionID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id::text FROM testagram_identity.verification_sessions
+		WHERE application_id=$1::uuid AND purpose='age_assurance'
+		ORDER BY created_at DESC LIMIT 1
+		FOR UPDATE
+	`, applicationID).Scan(&verificationSessionID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Verification audit session is unavailable", requestID(r)))
+		return
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,request_id,ip_hash,metadata)
-		VALUES($1::uuid,'auth.email_verified','success',$2,$3,jsonb_build_object('application_id',$4))
-	`, userID, requestID(r), authFingerprint(authClientIP(r)), applicationID); err != nil {
+		INSERT INTO testagram_identity.verification_events(session_id,event_type,actor_type,actor_reference,request_id,metadata)
+		VALUES($1::uuid,'email_verified','applicant',$2,$3,jsonb_build_object('native_user_id',$4))
+	`, verificationSessionID, userID, requestID(r), userID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Email verification audit could not be committed", requestID(r)))
 		return
 	}
