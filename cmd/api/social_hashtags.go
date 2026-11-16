@@ -111,9 +111,9 @@ LIMIT $5`, nullableUUID(viewerID), pattern, before, beforeID, limit+1)
 		var mediaRaw []byte
 		var username, displayName, avatarKey string
 		var protected bool
-		if err := rows.Scan(&post.ID,&post.UserID,&post.Content,&post.Visibility,&mediaRaw,
-			&post.Language,&post.CreatedAt,&post.LikesCount,&post.RepliesCount,&post.RepostsCount,
-			&username,&displayName,&avatarKey,&protected); err != nil {
+		if err := rows.Scan(&post.ID, &post.UserID, &post.Content, &post.Visibility, &mediaRaw,
+			&post.Language, &post.CreatedAt, &post.LikesCount, &post.RepliesCount, &post.RepostsCount,
+			&username, &displayName, &avatarKey, &protected); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("HASHTAG_QUERY_FAILED", "Hashtag posts could not be decoded", requestID))
 			return
 		}
@@ -123,11 +123,11 @@ LIMIT $5`, nullableUUID(viewerID), pattern, before, beforeID, limit+1)
 		}
 		post.MediaIDs = []string{}
 		_ = json.Unmarshal(mediaRaw, &post.MediaIDs)
-		post.Author = map[string]any{"id":post.UserID,"username":username,"display_name":displayName,
-			"avatar_key":avatarKey,"avatar_url":publicMediaURL(avatarKey),"protected_account":protected}
+		post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName,
+			"avatar_key": avatarKey, "avatar_url": publicMediaURL(avatarKey), "protected_account": protected}
 		post.Origin = "local"
 		posts = append(posts, post)
-		next = homeFeedCursor{CreatedAt:post.CreatedAt,ID:post.ID}
+		next = homeFeedCursor{CreatedAt: post.CreatedAt, ID: post.ID}
 	}
 	if err := rows.Err(); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("HASHTAG_QUERY_FAILED", "Hashtag posts could not be loaded", requestID))
@@ -151,8 +151,8 @@ LIMIT $5`, nullableUUID(viewerID), pattern, before, beforeID, limit+1)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{"tag": tag, "posts": posts, "has_more": hasMore, "next_cursor": nextCursor, "is_following": isFollowing},
+		"ok":    true,
+		"data":  map[string]any{"tag": tag, "posts": posts, "has_more": hasMore, "next_cursor": nextCursor, "is_following": isFollowing},
 		"error": nil, "request_id": requestID,
 	})
 }
@@ -328,8 +328,8 @@ LIMIT 200`, nullableUUID(viewerID))
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{"items": items, "window": "7d", "ranking": rankingMode},
+		"ok":    true,
+		"data":  map[string]any{"items": items, "window": "7d", "ranking": rankingMode},
 		"error": nil, "request_id": requestID,
 	})
 }
