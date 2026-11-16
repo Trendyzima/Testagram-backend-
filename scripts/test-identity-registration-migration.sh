@@ -411,6 +411,10 @@ CREATE TABLE IF NOT EXISTS testagram_local.accounts (
 );
 SQL
 
+# Native session tables depend on the canonical local account table above.
+psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
 
