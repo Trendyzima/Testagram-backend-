@@ -103,7 +103,7 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
 		return
 	}
-	if applicationStatus != "approved" && applicationStatus != "verification_pending" {
+	if applicationStatus != "approved" && applicationStatus != "verification_pending" && applicationStatus != "verified" {
 		writeJSON(w, http.StatusConflict, errorBody("APPLICATION_NOT_APPROVED", "Application has not completed both approval stages", requestID(r)))
 		return
 	}
@@ -354,6 +354,15 @@ func (s *service) identityProvisioningVerifyEmail(w http.ResponseWriter, r *http
 		VALUES($1::uuid,'email_verified','applicant',$2,$3,jsonb_build_object('native_user_id',$4))
 	`, verificationSessionID, userID, requestID(r), userID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Email verification audit could not be committed", requestID(r)))
+		return
+	}
+	tag, err = tx.Exec(ctx, `
+		UPDATE testagram_identity.identity_applications
+		SET status='verified',updated_at=now()
+		WHERE id=$1::uuid AND status='verification_pending'
+	`, applicationID)
+	if err != nil || tag.RowsAffected() != 1 {
+		writeJSON(w, http.StatusConflict, errorBody("APPLICATION_STATE_CHANGED", "Approved application state changed before activation", requestID(r)))
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
