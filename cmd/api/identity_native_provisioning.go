@@ -247,7 +247,7 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_events(session_id,event_type,actor_type,actor_reference,request_id,metadata)
 		VALUES($1::uuid,'account_provisioned','system','testagram-native-provisioning',$2,
-		       jsonb_build_object('native_user_id',$3,'application_id',$4))
+		       jsonb_build_object('native_user_id',$3::text,'application_id',$4::text))
 	`, verificationSessionID, requestID(r), userID, applicationID); err != nil {
 		log.Printf("native identity provisioning audit insert failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Provisioning audit could not be committed", requestID(r)))
@@ -355,7 +355,7 @@ func (s *service) identityProvisioningVerifyEmail(w http.ResponseWriter, r *http
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_events(session_id,event_type,actor_type,actor_reference,request_id,metadata)
-		VALUES($1::uuid,'email_verified','applicant',$2,$3,jsonb_build_object('native_user_id',$4))
+		VALUES($1::uuid,'email_verified','applicant',$2,$3,jsonb_build_object('native_user_id',$4::text))
 	`, verificationSessionID, userID, requestID(r), userID); err != nil {
 		log.Printf("native email verification audit insert failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Email verification audit could not be committed", requestID(r)))
