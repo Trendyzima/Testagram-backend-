@@ -144,3 +144,4 @@ jobs:
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Audit completed. DNS record values/content and all credentials were intentionally excluded from the summary." >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
