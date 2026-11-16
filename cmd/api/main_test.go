@@ -71,7 +71,10 @@ func TestMetricsCountsRequests(t *testing.T) {
 	s := &service{}
 	public := s.routes()
 	internal := s.internalRoutes()
-	for _, request := range []struct{ handler http.Handler; path string }{
+	for _, request := range []struct {
+		handler http.Handler
+		path    string
+	}{
 		{public, "/healthz"}, {internal, "/metrics"}, {internal, "/metrics"},
 	} {
 		r := httptest.NewRequest(http.MethodGet, request.path, nil)
@@ -494,7 +497,11 @@ func TestUnifiedSearchRPCBodyRejectsUnboundedInput(t *testing.T) {
 }
 
 func TestParseFollowingOnly(t *testing.T) {
-	for _, tc := range []struct { input string; want bool; wantErr bool }{
+	for _, tc := range []struct {
+		input   string
+		want    bool
+		wantErr bool
+	}{
 		{"", false, false}, {"true", true, false}, {"false", false, false}, {"TRUE", true, false}, {"not-a-bool", false, true},
 	} {
 		got, err := parseFollowingOnly(tc.input)
@@ -578,7 +585,6 @@ func TestHomeFeedCursorPreservesRankedWindowAndPerSourcePositions(t *testing.T) 
 		t.Fatal("expected duplicate pending identity rejection")
 	}
 }
-
 
 func TestPublicHomeFeedIsAnonymousButRequiresCanonicalStore(t *testing.T) {
 	s := &service{}
