@@ -468,7 +468,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", s.identityReviewDecision)
 	mux.HandleFunc("OPTIONS /api/admin/identity/applications/{application_id}/approve", s.mediaPreflight)
 	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", s.identityApplicationApproveSafe)
-	// Independent authentication routes use Testagram PostgreSQL only; Redis, Upstash and Supabase are not in this request path.
+	// Independent authentication routes use the Testagram PostgreSQL data plane.
 	for _, action := range []string{"signup", "resend-verification", "verify-email", "login", "refresh", "logout", "logout-all", "forgot-password", "reset-password"} {
 		action := action
 		mux.HandleFunc("OPTIONS /api/auth/"+action, func(w http.ResponseWriter, r *http.Request) { s.authRespond(w, r, action) })
@@ -689,7 +689,7 @@ func (s *service) publicReplicationProjection(w http.ResponseWriter, r *http.Req
 	origin := r.PathValue("origin")
 	entityType := r.PathValue("entity_type")
 	entityID := r.PathValue("entity_id")
-	if (origin != "xclone" && origin != "testagram-vps") ||
+	if origin != "testagram-vps" ||
 		(entityType != "account" && entityType != "post" && entityType != "media") ||
 		!replicationReadIdentity.MatchString(entityID) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid public projection identity"})
@@ -935,7 +935,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fresh-mode capability dispatch is Backend-owned. Never proxy unknown
-	// capabilities to the retired Supabase RPC gateway.
+	// capabilities to an external RPC service.
 	writeJSON(w, http.StatusNotImplemented, errorBody("CAPABILITY_NOT_IMPLEMENTED", "This capability has not yet been migrated to the Testagram Backend", id))
 	return
 }
