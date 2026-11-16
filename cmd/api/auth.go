@@ -104,27 +104,39 @@ func authPasswordHash(password string) (string, error) {
 func authPasswordVerify(encoded, password string) bool {
 	if strings.HasPrefix(encoded, "pbkdf2-sha256$") {
 		parts := strings.Split(encoded, "$")
-		if len(parts) != 4 || parts[0] != "pbkdf2-sha256" { return false }
+		if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
+			return false
+		}
 		var rounds int
-		if _, err := fmt.Sscanf(parts[1], "%d", &rounds); err != nil || rounds < 100000 || rounds > 1000000 { return false }
-		salt, err1 := base64.RawURLEncoding.DecodeString(parts[2])
-		expected, err2 := base64.RawURLEncoding.DecodeString(parts[3])
-		if err1 != nil || err2 != nil || len(salt) < 16 || len(expected) != 32 { return false }
+		if _, err := fmt.Sscanf(parts[1], "%d", &rounds); err != nil || rounds < 100000 || rounds > 1000000 {
+			return false
+		}
+		salt, saltErr := base64.RawURLEncoding.DecodeString(parts[2])
+		expected, keyErr := base64.RawURLEncoding.DecodeString(parts[3])
+		if saltErr != nil || keyErr != nil || len(salt) < 16 || len(salt) > 64 || len(expected) != 32 {
+			return false
+		}
 		actual := authPBKDF2([]byte(password), salt, rounds, len(expected))
 		return subtle.ConstantTimeCompare(actual, expected) == 1
 	}
+
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 5 || parts[0] != "argon2id" || parts[1] != "v=19" { return false }
-	var memory, iterations uint32
-	var parallelism uint8
-	if _, err := fmt.Sscanf(parts[2], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil ||
-		memory < 8*1024 || memory > 256*1024 || iterations < 1 || iterations > 10 || parallelism < 1 || parallelism > 8 {
+	if len(parts) != 5 || parts[0] != "argon2id" || parts[1] != "v=19" {
 		return false
 	}
-	salt, err1 := base64.RawURLEncoding.DecodeString(parts[3])
-	expected, err2 := base64.RawURLEncoding.DecodeString(parts[4])
-	if err1 != nil || err2 != nil || len(salt) < 16 || len(salt) > 64 || len(expected) != int(authArgon2KeyLength) { return false }
-	actual := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(expected)))
+	var memory, iterations uint32
+	var parallelism uint16
+	if _, err := fmt.Sscanf(parts[2], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil ||
+		memory < 19*1024 || memory > 128*1024 || iterations < 1 || iterations > 6 ||
+		parallelism < 1 || parallelism > 4 || memory < uint32(parallelism)*8 {
+		return false
+	}
+	salt, saltErr := base64.RawURLEncoding.DecodeString(parts[3])
+	expected, keyErr := base64.RawURLEncoding.DecodeString(parts[4])
+	if saltErr != nil || keyErr != nil || len(salt) < 16 || len(salt) > 64 || len(expected) < 16 || len(expected) > 64 {
+		return false
+	}
+	actual := argon2.IDKey([]byte(password), salt, iterations, memory, uint8(parallelism), uint32(len(expected)))
 	return subtle.ConstantTimeCompare(actual, expected) == 1
 }
 
