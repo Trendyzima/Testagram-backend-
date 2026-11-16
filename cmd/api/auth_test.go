@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
