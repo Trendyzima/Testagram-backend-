@@ -29,16 +29,19 @@ type Features struct {
 }
 
 type Candidate struct {
-	ID        string    `json:"id"`
-	AuthorID  string    `json:"authorId"`
-	CreatedAt time.Time `json:"createdAt"`
-	Visible   bool      `json:"visible"`
-	Sensitive bool      `json:"sensitive"`
-	Features  Features  `json:"features"`
+	ID             string    `json:"id"`
+	AuthorID       string    `json:"authorId"`
+	Source         string    `json:"source"`
+	SourceIdentity string    `json:"sourceIdentity,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	Visible        bool      `json:"visible"`
+	Sensitive      bool      `json:"sensitive"`
+	Features       Features  `json:"features"`
 }
 
 type Request struct {
 	Now              time.Time   `json:"now"`
+	FeedMode         string      `json:"feedMode"`
 	Candidates       []Candidate `json:"candidates"`
 	SeenIDs          []string    `json:"seenIds"`
 	BlockedAuthorIDs []string    `json:"blockedAuthorIds"`
@@ -141,6 +144,21 @@ func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	}
 	if input.Limit < 1 || input.Limit > 50 {
 		return Response{}, errors.New("algorithm result limit must be between 1 and 50")
+	}
+	switch input.FeedMode {
+	case "for_you", "following", "latest", "media", "discover", "federated":
+	default:
+		return Response{}, errors.New("algorithm feed mode is invalid")
+	}
+	for _, candidate := range input.Candidates {
+		switch candidate.Source {
+		case "native", "activitypub", "atproto":
+		default:
+			return Response{}, errors.New("algorithm candidate source is invalid")
+		}
+		if len(candidate.ID) > 256 || len(candidate.AuthorID) > 512 || len(candidate.SourceIdentity) > 2048 {
+			return Response{}, errors.New("algorithm candidate provenance exceeds bounds")
+		}
 	}
 	payload, err := json.Marshal(input)
 	if err != nil {
