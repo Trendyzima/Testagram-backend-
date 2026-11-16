@@ -10,8 +10,7 @@ BEGIN
     GRANT SELECT,INSERT,UPDATE ON
       testagram_auth.identities,
       testagram_auth.sessions,
-      testagram_auth.password_reset_tokens,
-      testagram_auth.rate_limits
+      testagram_auth.password_reset_tokens
     TO testagram_app;
     GRANT SELECT,INSERT ON testagram_auth.security_audit TO testagram_app;
     GRANT USAGE,SELECT ON SEQUENCE testagram_auth.security_audit_event_id_seq TO testagram_app;
@@ -22,8 +21,7 @@ BEGIN
     GRANT SELECT,INSERT,UPDATE ON
       testagram_auth.identities,
       testagram_auth.sessions,
-      testagram_auth.password_reset_tokens,
-      testagram_auth.rate_limits
+      testagram_auth.password_reset_tokens
     TO service_role;
     GRANT SELECT,INSERT ON testagram_auth.security_audit TO service_role;
     GRANT USAGE,SELECT ON SEQUENCE testagram_auth.security_audit_event_id_seq TO service_role;
