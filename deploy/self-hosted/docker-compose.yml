@@ -335,7 +335,7 @@ services:
       - caddy-config:/config
     depends_on: [api, media-cache, control-plane, admin-console]
     restart: unless-stopped
-    networks: [edge, control-plane]
+    networks: [edge, control-plane, platform]
 
   node-exporter:
     image: prom/node-exporter:v1.9.1
