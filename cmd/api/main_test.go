@@ -152,73 +152,7 @@ func testMediaSigner(t *testing.T) *media.Signer {
 	return signer
 }
 
-func testAppwriteAuthServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Header.Get("X-Appwrite-Project") != "test-project" {
-			http.Error(w, "bad project", http.StatusUnauthorized)
-			return
-		}
-		if r.Header.Get("X-Appwrite-JWT") != "valid-session-token" {
-			http.Error(w, "bad session", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"$id":"appwrite-user-123","email":"person@example.com","emailVerification":true,"status":true}`))
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("APPWRITE_ENDPOINT", server.URL)
-	t.Setenv("APPWRITE_PROJECT_ID", "test-project")
-	return server
-}
-
-func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
-	testAppwriteAuthServer(t)
-	s := &service{media: testMediaSigner(t)}
-	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":100}"))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func TestMediaUploadIntentFailsClosedWithoutIdentityDatabase(t *testing.T) {
-	upstream := testAppwriteAuthServer(t)
-	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
-	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":1024}"))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer valid-session-token")
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "AUTH_BACKEND_UNAVAILABLE") {
-		t.Fatalf("expected fail-closed identity database error, got %s", w.Body.String())
-	}
-}
-
-func TestPrivateMediaDownloadURLFailsClosedWithoutIdentityDatabase(t *testing.T) {
-	upstream := testAppwriteAuthServer(t)
-	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
-	r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef"}`))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer valid-session-token")
-	w := httptest.NewRecorder()
-	s.routes().ServeHTTP(w, r)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "AUTH_BACKEND_UNAVAILABLE") {
-		t.Fatalf("expected fail-closed identity database error, got %s", w.Body.String())
-	}
-}
+// External-provider authentication tests were retired; native session tests cover the supported path.
 
 func TestMediaQuarantineRequiresOperatorToken(t *testing.T) {
 	t.Setenv("MEDIA_MODERATION_TOKEN", "")
