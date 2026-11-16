@@ -200,9 +200,6 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 	if blueskySlots > len(bluesky) {
 		blueskySlots = len(bluesky)
 	}
-	if len(bluesky) > 0 && blueskySlots == 0 {
-		hasMore = true
-	}
 	if alternateSingleSlot && apSlot {
 		remoteOffset = (remoteOffset + 1) % (2 * len(bluesky))
 	}
@@ -292,13 +289,17 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 				}
 			}
 		}
-		if len(selected) < len(bluesky) {
-			hasMore = true
-		}
 		if alternateSingleSlot {
 			remoteOffset = (remoteOffset + 1) % (2 * len(bluesky))
 		} else {
 			remoteOffset = (start + len(selected)) % len(bluesky)
+		}
+	}
+	for _, actor := range bluesky {
+		position, exists := homeFeedSourcePositionIn(positions, homeFeedSourceBluesky, actor.Identity)
+		if !exists || !position.Exhausted {
+			hasMore = true
+			break
 		}
 	}
 	// Keep the source positions bounded and deterministic in the encoded cursor.
@@ -309,6 +310,15 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 		return positions[i].Identity < positions[j].Identity
 	})
 	return posts, candidates, positions, reserved, remoteOffset, hasMore, nil
+}
+
+func homeFeedSourcePositionIn(positions []homeFeedSourcePosition, source, identity string) (homeFeedSourcePosition, bool) {
+	for _, position := range positions {
+		if position.Source == source && position.Identity == identity {
+			return position, true
+		}
+	}
+	return homeFeedSourcePosition{}, false
 }
 
 func cursorPositions(cursor *homeFeedCursor) []homeFeedSourcePosition {
