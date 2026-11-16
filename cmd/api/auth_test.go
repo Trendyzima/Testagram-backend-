@@ -187,6 +187,9 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 		"/api/auth/refresh",
 		"/api/auth/logout",
 		"/api/auth/logout-all",
+		"/api/identity/applications/11111111-1111-4111-8111-111111111111/redeem",
+		"/api/identity/applications/11111111-1111-4111-8111-111111111111/verify-email",
+		"/api/identity/applications/11111111-1111-4111-8111-111111111111/resend-verification",
 	} {
 		req := httptest.NewRequest(http.MethodOptions, path, nil)
 		rec := httptest.NewRecorder()
