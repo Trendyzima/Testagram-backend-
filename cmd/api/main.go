@@ -1249,19 +1249,10 @@ func main() {
 	if federationBackendToken != "" && len(federationBackendToken) < 32 {
 		log.Fatal("FEDERATION_BACKEND_INTERNAL_TOKEN must contain at least 32 characters")
 	}
-	moderation := freshapi.ContentModeration(nil)
-	moderationKey := strings.TrimSpace(os.Getenv("ONSPACE_AI_API_KEY"))
-	if moderationKey != "" {
-		moderationBase := env("ONSPACE_AI_BASE_URL", "https://ai.onspace.ai/v1")
-		configured, moderationErr := freshapi.NewHTTPModerationService(moderationBase, moderationKey, nil)
-		if moderationErr != nil {
-			log.Fatalf("configure social post moderation: %v", moderationErr)
-		}
-		moderation = configured
-		log.Printf("native social post moderation enabled")
-	} else {
-		log.Printf("native social post publishing is fail-closed: ONSPACE_AI_API_KEY is not configured")
-	}
+	// No external moderation vendor is configured. Post creation remains fail-closed
+	// until a Testagram-owned moderation implementation is explicitly enabled.
+	var moderation freshapi.ContentModeration
+	log.Printf("social post publishing is fail-closed: Testagram-owned moderation is not enabled")
 	federationPublicBaseURL, federationURLerr := normalizeFederationPublicBaseURL(env("FEDERATION_PUBLIC_BASE_URL", "https://federation.testagram.site"))
 	if federationURLerr != nil {
 		log.Fatalf("configure public Federation origin: %v", federationURLerr)
