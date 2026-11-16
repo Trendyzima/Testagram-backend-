@@ -37,6 +37,7 @@ schema_ready() {
         AND to_regclass('\''testagram_identity.legal_consent_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.sessions'\'') IS NOT NULL
+        AND to_regclass('\\''testagram_auth.rate_limits'\\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.legacy_account_reconciliation'\'') IS NOT NULL
