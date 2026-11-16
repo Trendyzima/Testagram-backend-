@@ -127,7 +127,6 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 		}
 	}
 	if apSlot {
-		reserved++
 		actorURIs := make([]string, 0, len(activityPub))
 		handleByActor := make(map[string]string, len(activityPub))
 		for _, actor := range activityPub {
@@ -177,6 +176,7 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 					Capabilities: map[string]bool{"like": false, "reply": false, "repost": false, "quote": false, "bookmark": false},
 				}
 				posts = append(posts, post)
+				reserved++
 				candidates = append(candidates, algorithmclient.Candidate{
 					ID: post.ID, AuthorID: post.UserID, Source: homeFeedSourceActivityPub,
 					SourceIdentity: post.UserID, CreatedAt: post.CreatedAt, Visible: true,
@@ -224,7 +224,6 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 			if exists && position.Cursor != "" {
 				cursors[actor.Identity] = position.Cursor
 			}
-			reserved++
 		}
 		if len(actorDIDs) > 0 {
 			feeds, fetchErr := s.federationClient.FetchATProtoFeeds(ctx, federationclient.ATProtoFeedRequest{
@@ -274,6 +273,7 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 						Capabilities: map[string]bool{"like": false, "reply": false, "repost": false, "quote": false, "bookmark": false},
 					}
 					posts = append(posts, post)
+					reserved++
 					quality := 0.0
 					if remote.LikeCount+remote.ReplyCount+remote.RepostCount > 0 {
 						quality = 0.2
