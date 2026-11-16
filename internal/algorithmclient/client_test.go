@@ -71,7 +71,7 @@ func TestRankRejectsNon200AndOversizedCandidateBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u", Source: "native"}}})
 	if err == nil {
 		t.Fatal("expected upstream error")
 	}
@@ -99,7 +99,7 @@ func TestRankDoesNotFollowRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+	_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 1, Candidates: []Candidate{{ID: "p", AuthorID: "u", Source: "native"}}})
 	if err == nil {
 		t.Fatal("expected redirect response to be rejected")
 	}
@@ -126,7 +126,7 @@ func TestRankRejectsInvalidScoresAndDuplicateIDs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 2, Candidates: []Candidate{{ID: "p", AuthorID: "u"}}})
+			_, err = client.Rank(context.Background(), Request{FeedMode: "for_you", Limit: 2, Candidates: []Candidate{{ID: "p", AuthorID: "u", Source: "native"}}})
 			if err == nil {
 				t.Fatal("expected invalid ranker response to be rejected")
 			}
