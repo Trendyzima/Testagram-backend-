@@ -158,7 +158,7 @@ class WatchdogTests(unittest.TestCase):
         with patch.object(watchdog.urllib.request, "urlopen", side_effect=error):
             self.assertEqual(
                 watchdog.probe("https://api.example.test/healthz"),
-                (False, "HTTP 503"),
+                (False, "UNCLASSIFIED_503: refusing automatic lifecycle action"),
             )
 
     def test_machine_snapshot_rejects_wrong_machine_id(self):
