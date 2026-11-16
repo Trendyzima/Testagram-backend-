@@ -35,6 +35,26 @@
     }
   }
 }
+# The apex is the canonical Fediverse identity domain. The web frontend
+# remains hosted on www.testagram.site; only ActivityPub discovery and
+# protocol resources are routed to the private Federation service.
+testagram.site {
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+    -Server
+  }
+  @activitypub path /.well-known/webfinger /users/* /objects/*
+  handle @activitypub {
+    reverse_proxy federation:8081
+  }
+  handle {
+    redir https://www.testagram.site{uri} 308
+  }
+}
+
 {$MEDIA_DOMAIN} {
   @internal_observability path /readyz /metrics
   respond @internal_observability 404
