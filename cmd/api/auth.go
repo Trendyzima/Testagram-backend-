@@ -486,8 +486,9 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("PASSWORD_UPGRADE_FAILED", "Unable to securely upgrade password storage.", requestID(r)))
 				return true
 			}
-			if _, updateErr := s.db.Exec(ctx, "UPDATE testagram_auth.identities SET password_hash=$1,updated_at=now() WHERE user_id=$2::uuid AND password_hash=$3", upgraded, userID, hash); updateErr != nil {
-				writeJSON(w, http.StatusServiceUnavailable, errorBody("PASSWORD_UPGRADE_FAILED", "Unable to securely upgrade password storage.", requestID(r)))
+			upgradeTag, updateErr := s.db.Exec(ctx, "UPDATE testagram_auth.identities SET password_hash=$1,updated_at=now() WHERE user_id=$2::uuid AND password_hash=$3", upgraded, userID, hash)
+			if updateErr != nil || upgradeTag.RowsAffected() != 1 {
+				writeJSON(w, http.StatusUnauthorized, errorBody("CREDENTIAL_CHANGED", "Credentials changed during sign-in. Please try again.", requestID(r)))
 				return true
 			}
 		}
