@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -43,10 +44,91 @@ func parseHomeFeedMode(value string) (string, error) {
 	}
 }
 
+// homeFeedCursor identifies a position in one source's canonical keyspace.
+// Native IDs remain UUIDs; ActivityPub uses canonical HTTPS object URIs and
+// Bluesky uses AT URIs. Never coerce a remote identifier into a UUID.
 type homeFeedCursor struct {
-	CreatedAt time.Time `json:"created_at"`
-	ID        string    `json:"id"`
+	Version   int                       `json:"v,omitempty"`
+	CreatedAt time.Time                 `json:"created_at,omitempty"`
+	Source    string                    `json:"source,omitempty"`
+	ID        string                    `json:"id,omitempty"`
+	Sources   []homeFeedSourcePosition  `json:"sources,omitempty"`
+	Pending   []homeFeedPendingIdentity `json:"pending,omitempty"`
 }
+
+// Sources stores the last fetched position for each source. Pending stores the
+// already-ranked remainder of that bounded candidate window. Source positions
+// must not advance past a window until every pending identity has been served
+// or re-authorized and discarded; this prevents ranked pagination from skipping
+// candidates when rank order differs from chronological order.
+type homeFeedSourcePosition struct {
+	Source    string    `json:"source"`
+	Identity  string    `json:"identity,omitempty"`
+	Cursor    string    `json:"cursor,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
+	ID        string    `json:"id,omitempty"`
+}
+
+type homeFeedPendingIdentity struct {
+	Source    string    `json:"source"`
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+const (
+	homeFeedSourceNative      = "native"
+	homeFeedSourceActivityPub = "activitypub"
+	homeFeedSourceBluesky     = "bluesky"
+)
+
+func validHomeFeedDID(did string) bool {
+	if strings.HasPrefix(did, "did:plc:") {
+		identifier := strings.TrimPrefix(did, "did:plc:")
+		if len(identifier) != 24 {
+			return false
+		}
+		for _, char := range identifier {
+			if !(char >= 'a' && char <= 'z') && !(char >= '2' && char <= '7') {
+				return false
+			}
+		}
+		return true
+	}
+	if strings.HasPrefix(did, "did:web:") {
+		identifier := strings.TrimPrefix(did, "did:web:")
+		return identifier != "" && !strings.ContainsAny(identifier, " /?#@\")
+	}
+	return false
+}
+
+func validHomeFeedCursorIdentity(source, id string) bool {
+	switch source {
+	case "", homeFeedSourceNative:
+		return localUUIDPattern.MatchString(id)
+	case homeFeedSourceActivityPub:
+		if len(id) < 12 || len(id) > 2048 || strings.ContainsAny(id, "
+	 ") {
+			return false
+		}
+		u, err := url.Parse(id)
+		return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+	case homeFeedSourceBluesky:
+		if !strings.HasPrefix(id, "at://") || len(id) > 2048 || strings.ContainsAny(id, "
+	 ") {
+			return false
+		}
+		parts := strings.Split(strings.TrimPrefix(id, "at://"), "/")
+		return len(parts) == 3 && validHomeFeedDID(parts[0]) && parts[1] == "app.bsky.feed.post" && parts[2] != ""
+	default:
+		return false
+	}
+}
+
+func nativeSingleHomeFeedCursor(cursor *homeFeedCursor) bool {
+	return cursor == nil || (cursor.Source == homeFeedSourceNative && cursor.ID != "" &&
+		!cursor.CreatedAt.IsZero() && len(cursor.Sources) == 0 && len(cursor.Pending) == 0)
+}
+
 
 type homeFeedPost struct {
 	ID                string            `json:"id"`
@@ -71,6 +153,10 @@ type homeFeedPost struct {
 }
 
 func encodeHomeFeedCursor(cursor homeFeedCursor) string {
+	if cursor.Source == "" {
+		cursor.Source = homeFeedSourceNative
+	}
+	cursor.Version = 2
 	raw, _ := json.Marshal(cursor)
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
@@ -80,12 +166,72 @@ func decodeHomeFeedCursor(value string) (*homeFeedCursor, error) {
 		return nil, nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil || len(raw) > 1024 {
+	if err != nil || len(raw) > 16384 {
 		return nil, errors.New("invalid feed cursor")
 	}
 	var cursor homeFeedCursor
-	if err := json.Unmarshal(raw, &cursor); err != nil || cursor.CreatedAt.IsZero() || !localUUIDPattern.MatchString(cursor.ID) {
+	if err := json.Unmarshal(raw, &cursor); err != nil {
 		return nil, errors.New("invalid feed cursor")
+	}
+	// Version 1 cursors predate source identity and are native-only. Accept
+	// them for existing clients, but emit version 2 on the next page.
+	if cursor.Version == 0 {
+		cursor.Source = homeFeedSourceNative
+		cursor.Version = 1
+	}
+	if cursor.Version != 1 && cursor.Version != 2 {
+		return nil, errors.New("invalid feed cursor")
+	}
+	if cursor.Source == "" {
+		cursor.Source = homeFeedSourceNative
+	}
+	if cursor.ID != "" && (cursor.CreatedAt.IsZero() || !validHomeFeedCursorIdentity(cursor.Source, cursor.ID)) {
+		return nil, errors.New("invalid feed cursor")
+	}
+	if cursor.ID == "" && len(cursor.Sources) == 0 {
+		return nil, errors.New("invalid feed cursor")
+	}
+	if len(cursor.Sources) > 120 || len(cursor.Pending) > 150 {
+		return nil, errors.New("invalid feed cursor")
+	}
+	seenSources := make(map[string]struct{}, len(cursor.Sources))
+	for _, position := range cursor.Sources {
+		if position.Source != homeFeedSourceNative && position.Source != homeFeedSourceActivityPub && position.Source != homeFeedSourceBluesky {
+			return nil, errors.New("invalid feed cursor")
+		}
+		if len(position.Identity) > 2048 || len(position.Cursor) > 2048 {
+			return nil, errors.New("invalid feed cursor")
+		}
+		key := position.Source + "\x00" + position.Identity
+		if _, exists := seenSources[key]; exists {
+			return nil, errors.New("invalid feed cursor")
+		}
+		seenSources[key] = struct{}{}
+		switch position.Source {
+		case homeFeedSourceNative:
+			if position.Identity != "" || position.Cursor != "" || position.CreatedAt.IsZero() || !validHomeFeedCursorIdentity(position.Source, position.ID) {
+				return nil, errors.New("invalid feed cursor")
+			}
+		case homeFeedSourceActivityPub:
+			if position.Identity != "" || position.Cursor == "" {
+				return nil, errors.New("invalid feed cursor")
+			}
+		case homeFeedSourceBluesky:
+			if !validHomeFeedDID(position.Identity) || position.Cursor == "" || position.ID != "" {
+				return nil, errors.New("invalid feed cursor")
+			}
+		}
+	}
+	seenPending := make(map[string]struct{}, len(cursor.Pending))
+	for _, item := range cursor.Pending {
+		if item.CreatedAt.IsZero() || !validHomeFeedCursorIdentity(item.Source, item.ID) {
+			return nil, errors.New("invalid feed cursor")
+		}
+		key := item.Source + "\x00" + item.ID
+		if _, exists := seenPending[key]; exists {
+			return nil, errors.New("invalid feed cursor")
+		}
+		seenPending[key] = struct{}{}
 	}
 	return &cursor, nil
 }
@@ -232,6 +378,10 @@ ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
 	var before any
 	var beforeID any
+	if !nativeSingleHomeFeedCursor(cursor) {
+		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_SOURCE_MISMATCH", "This feed page cursor does not belong to the current native feed window", requestID))
+		return
+	}
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
@@ -320,7 +470,7 @@ LIMIT $4`
 		// not from the rank order. This prevents score ordering from corrupting pagination.
 		// Re-fetch the chronological boundary using the last candidate timestamp and ID.
 		last := candidates[len(candidates)-1]
-		nextCursor = encodeHomeFeedCursor(homeFeedCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+		nextCursor = encodeHomeFeedCursor(homeFeedCursor{CreatedAt: last.CreatedAt, Source: homeFeedSourceNative, ID: last.ID})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
