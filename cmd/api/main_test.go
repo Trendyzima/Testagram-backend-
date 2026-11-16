@@ -12,10 +12,13 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 )
 
-func TestNativeAuthenticationIsTheDefaultProvider(t *testing.T) {
-	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "")
-	if !nativeAuthEnabled() {
-		t.Fatal("native Testagram authentication must be the default when no provider is configured")
+func TestProductionDeploymentPinsNativeAuthentication(t *testing.T) {
+	workflow, err := os.ReadFile("../../.github/workflows/instabox-deploy.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workflow), "TESTAGRAM_AUTH_PROVIDER: native") {
+		t.Fatal("InstaBox production deployment must explicitly select Testagram native authentication")
 	}
 }
 
