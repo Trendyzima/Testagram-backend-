@@ -241,7 +241,7 @@ func (c *Client) FetchATProtoFeeds(ctx context.Context, input ATProtoFeedRequest
     }
     seen := make(map[string]struct{}, len(input.ActorDIDs))
     for _, did := range input.ActorDIDs {
-        if len(did) < 12 || len(did) > 512 || (!strings.HasPrefix(did, "did:plc:") && !strings.HasPrefix(did, "did:web:")) || strings.ContainsAny(did, " \\t\\r\\n") {
+        if len(did) < 12 || len(did) > 512 || (!strings.HasPrefix(did, "did:plc:") && !strings.HasPrefix(did, "did:web:")) || strings.ContainsAny(did, " \t\r\n") {
             return nil, errors.New("AT Protocol actor list contains an invalid DID")
         }
         if _, ok := seen[did]; ok { return nil, errors.New("AT Protocol actor list contains duplicate DIDs") }
