@@ -24,9 +24,10 @@ type nativeSessionTokens struct {
 	User         map[string]any `json:"user"`
 }
 
-func nativeAuthEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "appwrite")), "native")
-}
+// Native Testagram authentication is the sole supported identity provider.
+// This deliberately ignores legacy provider environment variables so an old
+// deployment setting can never reactivate a third-party authentication path.
+func nativeAuthEnabled() bool { return true }
 
 func authFingerprint(value string) []byte {
 	sum := sha256.Sum256([]byte(value))
