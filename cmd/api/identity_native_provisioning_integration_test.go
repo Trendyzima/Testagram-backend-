@@ -451,6 +451,4 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		!strings.Contains(existingLoginResp.Body.String(), "access_token") {
 		t.Fatalf("verified legacy native identity login status=%d body=%s", existingLoginResp.Code, existingLoginResp.Body.String())
 	}
-
-
 }
