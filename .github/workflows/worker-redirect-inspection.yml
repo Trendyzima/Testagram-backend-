@@ -27,7 +27,7 @@ jobs:
           status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
             -o "$tmp/worker.bin" -w '%{http_code}' \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "$API/accounts/77dbe7a859196105dc84fbb6b7094019/workers/scripts/testagram-domain-release")"
+            "$API/accounts/77dbe7a859196105dc84fbb6b7094019/workers/scripts/testagram-domain-release/content/v2")"
           echo "## Existing apex Worker source inspection" >> "$GITHUB_STEP_SUMMARY"
           echo "- Cloudflare API status: $status" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$status" != "200" ]]; then
