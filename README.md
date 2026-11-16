@@ -15,20 +15,19 @@ The native Go application API and PostgreSQL data plane for Testagram.
 ## Runtime boundaries
 
 - Appwrite is the only client identity provider. The Backend validates Appwrite session JWTs against the Appwrite Account API and resolves the Appwrite ID through the PostgreSQL identity bridge.
-- PostgreSQL is the canonical product database. The API does not proxy product reads/writes to Supabase or PostgREST.
+- PostgreSQL is the canonical product database. The API owns product reads and writes; clients do not connect directly to the product database.
 - Media metadata and post references are native PostgreSQL records. `posts.media_ids` stores ordered `testagram_media.assets.object_key` values; no external media UUID bridge is used.
 - Object bytes are stored through the virtual-storage/S3-compatible boundary. The Backend owns authorization, quotas, checksums, signed upload/download and durable deletion jobs.
 - Capability rate limiting uses PostgreSQL fixed-window counters.
 - Durable asynchronous work uses domain-owned PostgreSQL transactional outboxes and idempotent workers.
-- Supabase, Redis/Valkey and Upstash are not runtime dependencies. Do not add their SDKs, credentials, URLs, cache wrappers or generic queue clients.
-- No copied Supabase Edge Functions or browser PostgREST clients are part of the supported runtime.
+- Product data, rate limits and durable asynchronous work use Testagram-owned PostgreSQL schemas, transactional outboxes and idempotent workers.
 
 ## Important API surfaces
 
 - `/api/social/*`: posts, profiles, followers/following, replies, reactions, reposts, bookmarks, polls and interaction lists.
 - `/api/media/*`: upload intents, completion, attachment to native posts, private downloads and durable deletion.
 - `/api/search`: privacy-filtered product search.
-- `/api/capability`: bounded, allow-listed capability dispatch. Unimplemented capabilities fail closed; there is no Supabase RPC fallback.
+- `/api/capability`: bounded, allow-listed capability dispatch. Unimplemented capabilities fail closed; there is no external RPC fallback.
 - `/healthz`, `/readyz`, `/metrics`: health and operational metrics.
 
 ## Local development
@@ -49,7 +48,7 @@ Requirements: Go version declared by `go.mod`, PostgreSQL 17+, and Appwrite proj
 See [deploy/self-hosted](deploy/self-hosted/README.md). The stack uses PostgreSQL,
 S3-compatible object storage, the Go API, the PostgreSQL-backed platform API,
 control-plane services, the Appwrite-authenticated staff console, and monitoring.
-It does not deploy Supabase, Redis/Valkey or Upstash.
+It does not deploy external cache or queue services.
 
 ## Migration status
 
