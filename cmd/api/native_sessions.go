@@ -50,19 +50,49 @@ func issueNativeSession(ctx context.Context, db interface {
 	// session with an old token version.
 	var currentEmail string
 	var currentVersion int64
-	var emailVerified, accountEnabled, resetNotRequired, identityProvisioned bool
+	var emailVerified, accountEnabled, resetNotRequired bool
 	if err := tx.QueryRow(ctx, `
-		SELECT i.email_normalized, i.token_version, i.email_verified_at IS NOT NULL,
-			i.disabled_at IS NULL, NOT i.password_reset_required,p.status='active'
-		FROM testagram_auth.identities i
-		JOIN testagram_identity.native_registration_provisioning p ON p.user_id=i.user_id
-		WHERE i.user_id=$1::uuid
-		FOR UPDATE OF i,p
-	`, userID).Scan(&currentEmail, &currentVersion, &emailVerified, &accountEnabled, &resetNotRequired, &identityProvisioned); err != nil {
+		SELECT email_normalized, token_version, email_verified_at IS NOT NULL,
+			disabled_at IS NULL, NOT password_reset_required
+		FROM testagram_auth.identities
+		WHERE user_id=$1::uuid
+		FOR UPDATE
+	`, userID).Scan(&currentEmail, &currentVersion, &emailVerified, &accountEnabled, &resetNotRequired); err != nil {
 		return nativeSessionTokens{}, err
 	}
+
+	// New approved registrations remain locked until every provisioning
+	// record for the identity is active. Existing native identities created
+	// before this workflow have no provisioning row and remain eligible once
+	// their email and account state have been verified.
+	provisioningRows, err := tx.Query(ctx, `
+		SELECT status
+		FROM testagram_identity.native_registration_provisioning
+		WHERE user_id=$1::uuid
+		FOR UPDATE
+	`, userID)
+	if err != nil {
+		return nativeSessionTokens{}, err
+	}
+	provisioningReady := true
+	for provisioningRows.Next() {
+		var status string
+		if err := provisioningRows.Scan(&status); err != nil {
+			provisioningRows.Close()
+			return nativeSessionTokens{}, err
+		}
+		if status != "active" {
+			provisioningReady = false
+		}
+	}
+	rowsErr := provisioningRows.Err()
+	provisioningRows.Close()
+	if rowsErr != nil {
+		return nativeSessionTokens{}, rowsErr
+	}
+
 	if currentEmail != strings.ToLower(strings.TrimSpace(email)) || currentVersion != version ||
-		!emailVerified || !accountEnabled || !resetNotRequired || !identityProvisioned {
+		!emailVerified || !accountEnabled || !resetNotRequired || !provisioningReady {
 		return nativeSessionTokens{}, errors.New("identity changed during sign-in")
 	}
 	var sessionID, familyID string
