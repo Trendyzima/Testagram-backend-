@@ -28,8 +28,8 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	defer db.Close()
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
-	reviewerOne := "native-reviewer-one-" + suffix
-	reviewerTwo := "native-reviewer-two-" + suffix
+	reviewerOne := "nr1-" + suffix
+	reviewerTwo := "nr2-" + suffix
 	applicantEmail := "native-" + suffix + "@example.test"
 	username := "n" + suffix[len(suffix)-17:]
 	applicationToken := strings.Repeat("A", 43)
