@@ -35,7 +35,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	applicationToken := strings.Repeat("A", 43)
 	approvalToken := strings.Repeat("B", 43)
 	jti := strings.Repeat("C", 43)
-	fingerprint := strings.Repeat("d", 64)
+	fingerprint := fmt.Sprintf("%064x", time.Now().UTC().UnixNano())
 
 	for _, reviewer := range []string{reviewerOne, reviewerTwo} {
 		if _, err := db.Exec(ctx, `
