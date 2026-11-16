@@ -77,8 +77,9 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 	cursor *homeFeedCursor,
 	feedMode string,
 	limit int,
+	videoOnly bool,
 ) ([]homeFeedPost, []algorithmclient.Candidate, []homeFeedSourcePosition, int, int, bool, error) {
-	if s.federationClient == nil || feedMode == "media" || feedMode == "discover" || limit <= 1 {
+	if s.federationClient == nil || feedMode == "media" || feedMode == "discover" || videoOnly || limit <= 1 {
 		return nil, nil, nil, 0, 0, false, nil
 	}
 	subscriptions, err := s.loadHomeFeedRemoteSubscriptions(ctx, userID)
@@ -201,6 +202,9 @@ func (s *service) fetchHomeFeedRemoteCandidates(
 	}
 	if len(bluesky) > 0 && blueskySlots == 0 {
 		hasMore = true
+	}
+	if alternateSingleSlot && apSlot {
+		remoteOffset = (remoteOffset + 1) % (2 * len(bluesky))
 	}
 	if blueskySlots > 0 {
 		start := remoteOffset
