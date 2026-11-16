@@ -268,6 +268,16 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatalf("verification state active=%d identity_verified=%d", activeCount, verifiedCount)
 	}
 
+	var finalApplicationStatus string
+	if err := db.QueryRow(ctx, `
+		SELECT status FROM testagram_identity.identity_applications WHERE id=$1::uuid
+	`, applicationID).Scan(&finalApplicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if finalApplicationStatus != "verified" {
+		t.Fatalf("application status after native email verification=%q; want verified", finalApplicationStatus)
+	}
+
 	tokens, err := issueNativeSession(ctx, db, userID, nativeEmail, tokenVersion, "native-ci", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("native session after approved email verification: %v", err)
