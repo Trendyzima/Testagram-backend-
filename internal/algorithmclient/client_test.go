@@ -2,6 +2,7 @@ package algorithmclient
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,6 +38,11 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		}
 		if r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
 			t.Fatal("missing versioned API contract headers")
+		}
+		requestBody, readErr := io.ReadAll(r.Body)
+		if readErr != nil { t.Fatal(readErr) }
+		if !strings.Contains(string(requestBody), `"feedMode":"for_you"`) || !strings.Contains(string(requestBody), `"source":"native"`) {
+			t.Fatalf("missing feed lane or candidate provenance: %s", requestBody)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[{"id":"post-1","score":0.9,"reasons":["recent"]}]}`))
