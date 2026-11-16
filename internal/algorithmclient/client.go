@@ -39,6 +39,7 @@ type Candidate struct {
 
 type Request struct {
 	Now              time.Time   `json:"now"`
+	FeedMode         string      `json:"feedMode"`
 	Candidates       []Candidate `json:"candidates"`
 	SeenIDs          []string    `json:"seenIds"`
 	BlockedAuthorIDs []string    `json:"blockedAuthorIds"`
@@ -135,6 +136,11 @@ func (c *Client) Ready(ctx context.Context) error {
 func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 	if c == nil {
 		return Response{}, errors.New("algorithm client is not configured")
+	}
+	switch input.FeedMode {
+	case "for_you", "following", "media", "discover":
+	default:
+		return Response{}, errors.New("algorithm feed mode must be for_you, following, media or discover")
 	}
 	if len(input.Candidates) == 0 || len(input.Candidates) > 200 {
 		return Response{}, errors.New("algorithm candidate count must be between 1 and 200")
