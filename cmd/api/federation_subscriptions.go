@@ -11,9 +11,9 @@ import (
 )
 
 type remoteAuthorSubscriptionRequest struct {
-	Protocol  string `json:"protocol"`
-	Identity  string `json:"identity"`
-	Handle    string `json:"handle,omitempty"`
+	Protocol string `json:"protocol"`
+	Identity string `json:"identity"`
+	Handle   string `json:"handle,omitempty"`
 }
 
 type remoteAuthorVerificationRequest struct {
