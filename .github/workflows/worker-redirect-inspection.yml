@@ -49,3 +49,4 @@ jobs:
               print(f"- {label}: {'yes' if re.search(pattern, data, re.I) else 'no'}")
           print("- No Worker code, secrets, or bindings were modified.")
           PY
+          cat "$GITHUB_STEP_SUMMARY"
