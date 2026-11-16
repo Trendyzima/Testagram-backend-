@@ -126,7 +126,7 @@ func New(baseURL, token string, timeout time.Duration) (*Client, error) {
 	if len(token) < 32 || strings.ContainsAny(token, "\r\n") {
 		return nil, errors.New("Federation service token must contain at least 32 characters")
 	}
-	if timeout <= 0 || timeout > 8*time.Second {
+	if timeout <= 0 || timeout > 20*time.Second {
 		timeout = 3 * time.Second
 	}
 	return &Client{baseURL: baseURL, token: token, http: &http.Client{
