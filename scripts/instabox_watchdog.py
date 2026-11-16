@@ -149,6 +149,28 @@ def probe(url: str) -> tuple[bool, str]:
                 return True, f"HTTP {response.status}"
             return False, f"HTTP {response.status}"
     except urllib.error.HTTPError as exc:
+        body = exc.read(4096).decode("utf-8", "replace")
+        lowered = body.lower()
+
+        # These statuses are emitted by the InstaBox public-port proxy before
+        # the request reaches Testagram. They describe provider lifecycle, not
+        # an unhealthy application, and must never trigger stop/start.
+        if exc.code == 503 and "sandbox is waking up" in lowered:
+            retry_after = (exc.headers.get("Retry-After") if exc.headers else None) or "unknown"
+            return False, f"WAKE_PENDING Retry-After={retry_after}"
+        if exc.code == 503 and "sandbox offline" in lowered:
+            return False, "PROVIDER_OFFLINE: machine was explicitly stopped or paused"
+        if exc.code == 409 and "machine_cooldown" in lowered:
+            retry_after = (exc.headers.get("Retry-After") if exc.headers else None) or "unknown"
+            return False, f"PROVIDER_COOLDOWN Retry-After={retry_after}"
+
+        # A gateway failure or unclassified 503 is ambiguous: it is not proof
+        # that a running machine needs a destructive restart.
+        if exc.code == 502:
+            return False, "PROVIDER_GATEWAY_UNAVAILABLE"
+        if exc.code == 503:
+            return False, "UNCLASSIFIED_503: refusing automatic lifecycle action"
+
         # A 4xx response is an endpoint, routing, or authorization problem.
         # Never interpret it as machine failure: an enabled watchdog must not
         # stop/start a healthy VPS because its probe URL is wrong or blocked.
@@ -159,7 +181,9 @@ def probe(url: str) -> tuple[bool, str]:
             ) from exc
         return False, f"HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError) as exc:
-        return False, type(exc).__name__
+        # DNS, TLS, routing and transport failures cannot establish whether
+        # the VM or the application is unhealthy. Alert/observe; do not reboot.
+        return False, f"UNREACHABLE: {type(exc).__name__}"
 
 
 def resolve_machine_id(api: API) -> str:
@@ -321,6 +345,15 @@ def read_only_probe_without_provider_key() -> int:
                 "operation was attempted."
             )
             return 0
+        if health_detail.startswith((
+            "WAKE_PENDING", "PROVIDER_OFFLINE", "PROVIDER_COOLDOWN",
+            "PROVIDER_GATEWAY_UNAVAILABLE", "UNCLASSIFIED_503", "UNREACHABLE",
+        )):
+            emit(
+                f"provider/transport state is {health_detail}; no lifecycle action "
+                "is available or appropriate in read-only mode"
+            )
+            return 0
         if index + 1 < FAILURES_REQUIRED:
             time.sleep(PROBE_INTERVAL)
     raise WatchdogError(
@@ -412,6 +445,15 @@ def main() -> int:
             state["last_healthy_at"] = int(time.time())
             save_state(state)
             emit("Testagram public liveness is healthy; no recovery action required")
+            return 0
+        if health_detail.startswith((
+            "WAKE_PENDING", "PROVIDER_OFFLINE", "PROVIDER_COOLDOWN",
+            "PROVIDER_GATEWAY_UNAVAILABLE", "UNCLASSIFIED_503", "UNREACHABLE",
+        )):
+            emit(
+                f"provider/transport state is {health_detail}; this is not an application "
+                "failure, so no stop/start lifecycle action will be attempted"
+            )
             return 0
         if index + 1 < FAILURES_REQUIRED:
             time.sleep(PROBE_INTERVAL)
