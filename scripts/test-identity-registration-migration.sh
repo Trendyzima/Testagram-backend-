@@ -41,7 +41,6 @@ for migration in \
   migrations/20261114_native_identity_integrity.sql \
   migrations/20261115_identity_evidence_access_audit.sql \
   migrations/20261115_native_identity_status_access.sql \
-  migrations/20261116_native_approved_identity_provisioning.sql \
   migrations/20261114_appwrite_registration_consent.sql; do
   psql_ci < "$migration"
 done
@@ -411,9 +410,39 @@ CREATE TABLE IF NOT EXISTS testagram_local.accounts (
 );
 SQL
 
-# Native session tables depend on the canonical local account table above.
+# Apply the complete native-auth schema only after the canonical local account table exists.
 psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
 psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+
+# Re-apply all three migrations to verify idempotence and assert the exact runtime grant surface.
+psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
+psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+psql_ci <<'SQL'
+DO $native_auth_schema$
+BEGIN
+  IF to_regclass('testagram_auth.rate_limits') IS NULL
+     OR to_regclass('testagram_auth.sessions') IS NULL
+     OR to_regclass('testagram_auth.password_reset_tokens') IS NULL
+     OR to_regclass('testagram_auth.security_audit') IS NULL
+     OR to_regclass('testagram_auth.legacy_account_reconciliation') IS NULL
+     OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL THEN
+    RAISE EXCEPTION 'native authentication schema is incomplete';
+  END IF;
+  IF NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.sessions','UPDATE')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.security_audit','INSERT') THEN
+    RAISE EXCEPTION 'Backend runtime role lacks native auth grants';
+  END IF;
+  IF has_table_privilege('testagram_app','testagram_auth.staff_role_grants','SELECT')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','SELECT') THEN
+    RAISE EXCEPTION 'native auth runtime role unexpectedly has staff authorization access';
+  END IF;
+END;
+$native_auth_schema$;
+SQL
 
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
