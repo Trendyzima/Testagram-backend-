@@ -25,7 +25,7 @@ type nativeSessionTokens struct {
 }
 
 func nativeAuthEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "native")), "native")
+	return true
 }
 
 func authFingerprint(value string) []byte {
