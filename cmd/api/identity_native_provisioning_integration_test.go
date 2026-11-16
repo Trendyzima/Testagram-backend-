@@ -237,6 +237,19 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if verifyResp.Code != http.StatusOK {
 		t.Fatalf("native email verification status=%d body=%s", verifyResp.Code, verifyResp.Body.String())
 	}
+	// Native sessions must remain impossible before email activation.
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
+	var nativeEmail string
+	var tokenVersion int64
+	if err := db.QueryRow(ctx, `
+		SELECT email,token_version FROM testagram_auth.identities WHERE user_id=$1::uuid
+	`, userID).Scan(&nativeEmail, &tokenVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := issueNativeSession(ctx, db, userID, nativeEmail, tokenVersion, "native-ci", "127.0.0.1"); err == nil {
+		t.Fatal("native session was issued before email verification activated the approved provisioning record")
+	}
+
 	var activeCount, verifiedCount int
 	if err := db.QueryRow(ctx, `
 		SELECT count(*) FROM testagram_identity.native_registration_provisioning
@@ -253,6 +266,29 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	if activeCount != 1 || verifiedCount != 1 {
 		t.Fatalf("verification state active=%d identity_verified=%d", activeCount, verifiedCount)
+	}
+
+	tokens, err := issueNativeSession(ctx, db, userID, nativeEmail, tokenVersion, "native-ci", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("native session after approved email verification: %v", err)
+	}
+	claims, sessionStatus, sessionErr := verifyNativeAccessToken(ctx, db, tokens.AccessToken)
+	if sessionErr != nil || sessionStatus != http.StatusOK || claims.Subject != userID {
+		t.Fatalf("native session verification subject=%q status=%d err=%v", claims.Subject, sessionStatus, sessionErr)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_identity.native_registration_provisioning
+		SET status='disabled',updated_at=now()
+		WHERE application_id=$1::uuid AND user_id=$2::uuid AND status='active'
+	`, applicationID, userID); err != nil {
+		t.Fatal(err)
+	}
+	_, disabledStatus, disabledErr := verifyNativeAccessToken(ctx, db, tokens.AccessToken)
+	if disabledErr == nil || disabledStatus != http.StatusUnauthorized {
+		t.Fatalf("disabled provisioning retained native access: status=%d err=%v", disabledStatus, disabledErr)
+	}
+	if _, err := svc.rotateNativeRefresh(ctx, tokens.RefreshToken, "native-ci", "127.0.0.1"); err == nil {
+		t.Fatal("disabled provisioning retained refresh-token access")
 	}
 
 	replayVerifyReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/verify-email",
