@@ -1,11 +1,13 @@
 name: Configure Testagram Cloudflare Pages Flutter build
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/configure-pages-build.yml"
   workflow_dispatch:
+    inputs:
+      confirm_pages_build_config_update:
+        description: Confirm the apex redirect is live and Pages should build the Flutter web output.
+        required: true
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -15,37 +17,53 @@ concurrency:
 
 jobs:
   configure:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_pages_build_config_update == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment: production
     steps:
-      - name: Set the verified Flutter Pages build command
+      - name: Verify apex redirect and WebFinger ownership before changing Pages
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           set -euo pipefail
           set +x
-          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing CLOUDFLARE_API_TOKEN"; exit 1; }
-          API=https://api.cloudflare.com/client/v4
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] || { echo "::error::Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          API="https://api.cloudflare.com/client/v4"
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
 
-          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
-            -o "$tmp/zones.json" -w '%{http_code}' \
+          curl --silent --show-error --connect-timeout 10 --max-time 30 \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "$API/zones?name=testagram.site")"
-          [[ "$status" == "200" ]] || { echo "::error::Cannot read testagram.site zone (HTTP $status)"; exit 1; }
-          account_id="$(jq -r '.result[0].account.id // empty' "$tmp/zones.json")"
-          [[ -n "$account_id" ]] || { echo "::error::Cloudflare account ID missing from zone result"; exit 1; }
+            "$API/zones?name=testagram.site" > "$tmp/zone.json"
+          zone_id="$(jq -r '.result[0].id // empty' "$tmp/zone.json")"
+          account_id="$(jq -r '.result[0].account.id // empty' "$tmp/zone.json")"
+          [[ -n "$zone_id" && -n "$account_id" ]] || { echo "::error::Testagram zone/account lookup failed"; exit 1; }
+
+          curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API/zones/$zone_id/workers/routes" > "$tmp/routes.json"
+          jq -e '.success == true and (.result | any(.pattern == "testagram.site/*" and .script == "testagram-apex-redirect")) and (.result | any(.pattern == "testagram.site/.well-known/webfinger*" and .script == "testagram-web"))' "$tmp/routes.json" >/dev/null || {
+            echo "::error::The verified apex redirect route or dedicated WebFinger route is missing. Pages settings were not changed."
+            jq -c '.result[]? | select(.pattern | startswith("testagram.site")) | {pattern,script}' "$tmp/routes.json"
+            exit 1
+          }
+
+          apex_url="$API/accounts/$account_id/pages/projects/testagram-flutter-web/domains/testagram.site"
+          apex_status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 -o "$tmp/apex.json" -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$apex_url")"
+          [[ "$apex_status" == "404" ]] || {
+            echo "::error::Apex is still attached to Pages or its state cannot be verified (HTTP $apex_status). Pages settings were not changed."
+            jq -c '{success,errors,messages,result}' "$tmp/apex.json" || true
+            exit 1
+          }
 
           project_url="$API/accounts/$account_id/pages/projects/testagram-flutter-web"
-          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
-            -o "$tmp/project.json" -w '%{http_code}' \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$project_url")"
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 -o "$tmp/project.json" -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$project_url")"
           [[ "$status" == "200" ]] || { echo "::error::Cannot read existing Pages project (HTTP $status)"; exit 1; }
           jq -e '.success == true and .result.name == "testagram-flutter-web" and .result.production_branch == "main" and .result.source.config.repo_name == "testagram-flutter-client-"' "$tmp/project.json" >/dev/null || {
             echo "::error::Pages project identity/source did not match the verified Testagram Flutter repository. No change made."
-            jq -c '.result | {name,production_branch,source,domains}' "$tmp/project.json"
+            jq -c '.result | {name,production_branch,source}' "$tmp/project.json"
             exit 1
           }
 
@@ -75,8 +93,7 @@ jobs:
             echo "- Build command: `bash cloudflare-pages/build.sh`"
             echo "- Output directory: `build/web`"
             echo "- Root directory: `/`"
-            echo "- DNS records and custom domains: unchanged"
-            echo "- Worker routes, including WebFinger: unchanged"
-            echo ""
-            echo "The next push to the Flutter repository's main branch will build and publish the actual Flutter web shell."
+            echo "- Apex redirect and WebFinger routes: verified before change"
+            echo "- Apex Pages association: verified absent"
+            echo "- DNS records: unchanged"
           } | tee "$GITHUB_STEP_SUMMARY"
