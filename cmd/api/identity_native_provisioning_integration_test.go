@@ -32,9 +32,18 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	reviewerTwo := "nr2-" + suffix
 	applicantEmail := "native-" + suffix + "@example.test"
 	username := "n" + suffix[len(suffix)-17:]
-	applicationToken := strings.Repeat("A", 43)
-	approvalToken := strings.Repeat("B", 43)
-	jti := strings.Repeat("C", 43)
+	applicationToken, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalToken, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	jti, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	fingerprint := fmt.Sprintf("%064x", time.Now().UTC().UnixNano())
 
 	for _, reviewer := range []string{reviewerOne, reviewerTwo} {
@@ -222,7 +231,10 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 			identityCount, profileCount, pendingCount, consumedCount, strings.Split(passwordHash, "$")[0])
 	}
 
-	verifyToken := strings.Repeat("V", 43)
+	verifyToken, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.identities
 		SET verification_token_hash=$2,verification_expires_at=now()+interval '1 hour'
