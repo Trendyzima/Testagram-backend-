@@ -227,6 +227,7 @@ func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 }
 
 func TestNativePasswordEndpointsRemainDisabledOutsideNativeMode(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "appwrite")
 	handler := (&service{}).routes()
 	for _, path := range []string{
 		"/api/auth/login",
