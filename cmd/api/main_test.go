@@ -139,6 +139,49 @@ func TestCapabilityGatewayRejectsUntrustedOrigin(t *testing.T) {
 	}
 }
 
+func TestAuthPreflightAllowsFlutterOriginAndExposesRetryAfter(t *testing.T) {
+	r := httptest.NewRequest(http.MethodOptions, "/api/auth/login", nil)
+	r.Header.Set("Origin", "https://www.testagram.site")
+	r.Header.Set("Access-Control-Request-Method", "POST")
+	r.Header.Set("Access-Control-Request-Headers", "content-type")
+	w := httptest.NewRecorder()
+
+	(&service{}).routes().ServeHTTP(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("auth preflight status = %d, want %d: %s", w.Code, http.StatusNoContent, w.Body.String())
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://www.testagram.site" {
+		t.Fatalf("allow-origin = %q, want production Flutter origin", got)
+	}
+	if !strings.Contains(strings.ToLower(w.Header().Get("Access-Control-Allow-Headers")), "content-type") {
+		t.Fatalf("allow-headers does not include content-type: %q", w.Header().Get("Access-Control-Allow-Headers"))
+	}
+	if !strings.Contains(strings.ToLower(w.Header().Get("Access-Control-Expose-Headers")), "retry-after") {
+		t.Fatalf("expose-headers does not include Retry-After: %q", w.Header().Get("Access-Control-Expose-Headers"))
+	}
+}
+
+func TestAuthErrorResponseCarriesCORSExposeHeaders(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "native")
+	r := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader("{"))
+	r.Header.Set("Origin", "https://www.testagram.site")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	(&service{}).routes().ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid auth JSON status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://www.testagram.site" {
+		t.Fatalf("allow-origin = %q, want production Flutter origin", got)
+	}
+	if !strings.Contains(strings.ToLower(w.Header().Get("Access-Control-Expose-Headers")), "retry-after") {
+		t.Fatalf("expose-headers does not include Retry-After: %q", w.Header().Get("Access-Control-Expose-Headers"))
+	}
+}
+
 func testMediaSigner(t *testing.T) *media.Signer {
 	t.Helper()
 	signer, err := media.NewSigner(media.Config{
