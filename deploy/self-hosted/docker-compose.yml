@@ -57,6 +57,9 @@ services:
       - ../../migrations/20261114_media_replication_publication_gate.sql:/docker-entrypoint-initdb.d/046_media_replication_publication_gate.sql:ro
       - ../../migrations/20261114_appwrite_registration_consent.sql:/docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql:ro
       - ../../migrations/20261115_vps_storage_pool_40_gib.sql:/docker-entrypoint-initdb.d/048_vps_storage_pool_40_gib.sql:ro
+      - ../../migrations/20261115_testagram_native_auth_cutover_foundation.sql:/docker-entrypoint-initdb.d/049_native_auth_cutover_foundation.sql:ro
+      - ../../migrations/20261116_native_approved_identity_provisioning.sql:/docker-entrypoint-initdb.d/050_native_approved_identity_provisioning.sql:ro
+      - ../../migrations/20261116_native_auth_runtime_grants.sql:/docker-entrypoint-initdb.d/051_native_auth_runtime_grants.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -145,6 +148,14 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
+      TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:-appwrite}
+      TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:-}
+      AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      AUTH_FROM_EMAIL: ${AUTH_FROM_EMAIL:-}
       ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       FEDERATION_INTERNAL_URL: ${FEDERATION_INTERNAL_URL:-http://federation-api:8081}

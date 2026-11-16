@@ -5,6 +5,17 @@ BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS testagram_auth;
 
+-- Shared per-minute authentication and capability throttling buckets.
+-- Store only a one-way identity digest; never persist raw email, IP or token values.
+CREATE TABLE IF NOT EXISTS testagram_auth.rate_limits (
+  action TEXT NOT NULL CHECK (length(action) BETWEEN 2 AND 64),
+  bucket_hash TEXT NOT NULL CHECK (length(bucket_hash)=64 AND bucket_hash=lower(bucket_hash)),
+  window_start TIMESTAMPTZ NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 1 CHECK (attempts > 0),
+  PRIMARY KEY (action,bucket_hash,window_start)
+);
+CREATE INDEX IF NOT EXISTS testagram_auth_rate_limits_window
+  ON testagram_auth.rate_limits(window_start);
 ALTER TABLE testagram_auth.identities
   ADD COLUMN IF NOT EXISTS password_reset_required BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;

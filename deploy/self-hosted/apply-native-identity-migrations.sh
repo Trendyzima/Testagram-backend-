@@ -36,11 +36,29 @@ schema_ready() {
         AND to_regclass('\''testagram_identity.verification_evidence'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.legal_consent_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.sessions'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.rate_limits'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.security_audit'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.legacy_account_reconciliation'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_identity'\''
             AND table_name='\''identity_applications'\''
             AND column_name='\''status_access_token_sha256'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_approval_tokens'\''
+            AND column_name='\''consumed_by_native_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_auth'\''
+            AND table_name='\''identities'\''
+            AND column_name='\''password_reset_required'\''
         )
         AND EXISTS (
           SELECT 1 FROM pg_trigger
@@ -129,7 +147,10 @@ for file in \
   043_native_identity_integrity.sql \
   044_identity_evidence_access_audit.sql \
   045_native_identity_status_access.sql \
-  047_appwrite_registration_consent.sql; do
+  047_appwrite_registration_consent.sql \
+  049_native_auth_cutover_foundation.sql \
+  050_native_approved_identity_provisioning.sql \
+  051_native_auth_runtime_grants.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -149,11 +170,14 @@ apply_migration 043_native_identity_integrity.sql
 apply_migration 044_identity_evidence_access_audit.sql
 apply_migration 045_native_identity_status_access.sql
 apply_migration 047_appwrite_registration_consent.sql
+apply_migration 049_native_auth_cutover_foundation.sql
+apply_migration 050_native_approved_identity_provisioning.sql
+apply_migration 051_native_auth_runtime_grants.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, provisioning, evidence audit, status access, and consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
