@@ -127,7 +127,6 @@ func nativeSingleHomeFeedCursor(cursor *homeFeedCursor) bool {
 		!cursor.CreatedAt.IsZero() && len(cursor.Sources) == 0 && len(cursor.Pending) == 0)
 }
 
-
 type homeFeedPost struct {
 	ID                string            `json:"id"`
 	UserID            string            `json:"user_id"`
