@@ -1,0 +1,51 @@
+name: Inspect existing Testagram apex redirect Worker
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/worker-redirect-inspection.yml"
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: testagram-worker-redirect-inspection
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read existing Worker source without changing it
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          API="https://api.cloudflare.com/client/v4"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            -o "$tmp/worker.bin" -w '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API/accounts/77dbe7a859196105dc84fbb6b7094019/workers/scripts/testagram-domain-release")"
+          echo "## Existing apex Worker source inspection" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Cloudflare API status: $status" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" != "200" ]]; then
+            echo "Could not read Worker source with this token. No changes were made." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 - "$tmp/worker.bin" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import re, sys
+          data = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
+          patterns = {
+              "contains canonical www hostname": r"www\.testagram\.site",
+              "uses Response.redirect": r"Response\.redirect",
+              "contains permanent redirect status 308": r"\b308\b",
+              "preserves request path/query": r"request\.url|URL\(",
+              "contains WebFinger-specific logic": r"webfinger",
+          }
+          print(f"- Source payload bytes: {len(data.encode())}")
+          for label, pattern in patterns.items():
+              print(f"- {label}: {'yes' if re.search(pattern, data, re.I) else 'no'}")
+          print("- No Worker code, secrets, or bindings were modified.")
+          PY
