@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS testagram_identity.native_registration_provisioning (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   verified_at TIMESTAMPTZ,
-  CHECK ((status='active') = (verified_at IS NOT NULL))
+  CHECK ((status='verification_pending' AND verified_at IS NULL) OR
+         (status IN ('active','disabled') AND verified_at IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS native_registration_provisioning_status_idx
