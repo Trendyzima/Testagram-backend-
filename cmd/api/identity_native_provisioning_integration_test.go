@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -229,6 +230,31 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		!strings.HasPrefix(passwordHash, "argon2id$v=19$") {
 		t.Fatalf("native provisioning invariants identity=%d profile=%d pending=%d consumed=%d hash_prefix=%q",
 			identityCount, profileCount, pendingCount, consumedCount, strings.Split(passwordHash, "$")[0])
+	}
+
+	var previousVerificationHash []byte
+	if err := db.QueryRow(ctx, `
+		SELECT verification_token_hash FROM testagram_auth.identities WHERE user_id=$1::uuid
+	`, userID).Scan(&previousVerificationHash); err != nil {
+		t.Fatal(err)
+	}
+	resendReq := httptest.NewRequest(http.MethodPost,
+		"/api/identity/applications/"+applicationID+"/resend-verification", nil)
+	resendReq.SetPathValue("application_id", applicationID)
+	resendReq.Header.Set("X-Application-Token", applicationToken)
+	resendResp := httptest.NewRecorder()
+	svc.identityProvisioningResendVerification(resendResp, resendReq)
+	if resendResp.Code != http.StatusAccepted {
+		t.Fatalf("native verification resend status=%d body=%s", resendResp.Code, resendResp.Body.String())
+	}
+	var rotatedVerificationHash []byte
+	if err := db.QueryRow(ctx, `
+		SELECT verification_token_hash FROM testagram_auth.identities WHERE user_id=$1::uuid
+	`, userID).Scan(&rotatedVerificationHash); err != nil {
+		t.Fatal(err)
+	}
+	if len(rotatedVerificationHash) != 32 || bytes.Equal(previousVerificationHash, rotatedVerificationHash) {
+		t.Fatal("application-scoped resend did not rotate the stored email-verification capability")
 	}
 
 	verifyToken, err := authRandomToken()
