@@ -71,17 +71,6 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_JSON", "Request body is invalid", requestID(r)))
 		return
 	}
-	passwordHash, err := authPasswordHash(input.Password)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PASSWORD", "Password must be 12–128 bytes", requestID(r)))
-		return
-	}
-	verificationToken, err := authRandomToken()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Email verification could not be initialized", requestID(r)))
-		return
-	}
-
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Account provisioning is unavailable", requestID(r)))
@@ -184,6 +173,19 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		approvalCount != 2 || distinctApprovers != 2 ||
 		matchingApprovers != 2 || matchingReviewers != 2 || !requestExpires.After(time.Now()) {
 		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_LEDGER_INVALID", "Two independent identity reviewers and two independent account approvers are required", requestID(r)))
+		return
+	}
+
+	// Perform the expensive password KDF only after the application-scoped
+	// capability and both independent approval ledgers have been validated.
+	passwordHash, err := authPasswordHash(input.Password)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PASSWORD", "Password must be 12–128 bytes", requestID(r)))
+		return
+	}
+	verificationToken, err := authRandomToken()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Email verification could not be initialized", requestID(r)))
 		return
 	}
 
