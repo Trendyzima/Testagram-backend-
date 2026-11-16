@@ -45,10 +45,6 @@ func TestRankSendsAuthenticatedBoundedContract(t *testing.T) {
 		if !strings.Contains(string(requestBody), `"feedMode":"for_you"`) || !strings.Contains(string(requestBody), `"source":"native"`) {
 			t.Fatalf("missing feed lane or candidate provenance: %s", requestBody)
 		}
-		var payload struct { FeedMode string `json:"feedMode"` }
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.FeedMode != "for_you" {
-			t.Fatalf("rank request omitted or changed required feedMode: %#v, err=%v", payload, err)
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[{"id":"post-1","score":0.9,"reasons":["recent"]}]}`))
 	}))
