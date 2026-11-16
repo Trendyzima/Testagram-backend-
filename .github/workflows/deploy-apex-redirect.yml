@@ -1,0 +1,109 @@
+name: Deploy Testagram apex redirect Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production_apex_redirect:
+        description: Deploy the apex-to-www Worker route and detach apex from Pages after live redirect verification.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-apex-redirect-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_production_apex_redirect == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test redirect before deployment
+        run: node --test workers/apex-redirect/src/index.test.mjs
+      - name: Validate Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]] || {
+            echo "::error::Missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID."
+            exit 1
+          }
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            -o /tmp/token.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify")"
+          [[ "$status" == "200" ]] && jq -e '.success == true and .result.status == "active"' /tmp/token.json >/dev/null || {
+            echo "::error::Cloudflare token is not active or does not match the selected account."
+            exit 1
+          }
+      - name: Deploy Worker and apex route
+        run: npx --yes wrangler@4 deploy --config workers/apex-redirect/wrangler.toml --account-id "$CLOUDFLARE_ACCOUNT_ID"
+      - name: Verify route precedence and live redirect before detaching Pages apex
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.cloudflare.com/client/v4"
+          zone="$(curl --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/zones?name=testagram.site")"
+          zone_id="$(jq -r '.result[0].id // empty' <<<"$zone")"
+          [[ -n "$zone_id" ]] || { echo "::error::Could not resolve Testagram zone."; exit 1; }
+          routes="$(curl --silent --show-error --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/zones/$zone_id/workers/routes")"
+          jq -e '.success == true and (.result | any(.pattern == "testagram.site/*" and .script == "testagram-apex-redirect")) and (.result | any(.pattern == "testagram.site/.well-known/webfinger*" and .script == "testagram-web"))' <<<"$routes" >/dev/null || {
+            echo "::error::Apex redirect route or the existing WebFinger route is missing. Pages apex will not be detached."
+            jq -c '.result[]? | select(.pattern | startswith("testagram.site")) | {pattern,script}' <<<"$routes"
+            exit 1
+          }
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "$headers" "$body"' EXIT
+          status="$(curl --silent --show-error --max-time 25 -D "$headers" -o "$body" -w '%{http_code}' "https://testagram.site/__redirect_probe/path?source=smoke&keep=1" || true)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print}' "$headers" | tail -n1)"
+          expected="https://www.testagram.site/__redirect_probe/path?source=smoke&keep=1"
+          [[ "$status" == "308" && "$location" == "$expected" ]] || {
+            echo "::error::Apex redirect verification failed (HTTP $status, Location=${location:-none}). Pages apex will not be detached."
+            exit 1
+          }
+          webfinger="$(curl --silent --show-error --max-time 25 -o /dev/null -w '%{http_code}' "https://testagram.site/.well-known/webfinger?resource=acct:nonexistent-probe@invalid.testagram.site" || true)"
+          case "$webfinger" in
+            200|400|404) ;;
+            *) echo "::error::WebFinger route is not responding through the federation Worker (HTTP $webfinger). Pages apex will not be detached."; exit 1 ;;
+          esac
+      - name: Detach apex from Pages only after redirect is live
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/testagram-flutter-web/domains/testagram.site"
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 -o /tmp/apex-domain.json -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$endpoint")"
+          if [[ "$status" == "200" ]] && jq -e '.success == true' /tmp/apex-domain.json >/dev/null; then
+            deleted="$(curl --silent --show-error --connect-timeout 10 --max-time 30 -X DELETE -o /tmp/delete-apex.json -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$endpoint")"
+            [[ "$deleted" == "200" ]] && jq -e '.success == true' /tmp/delete-apex.json >/dev/null || {
+              echo "::error::Verified redirect is live, but Pages apex association could not be removed (HTTP $deleted)."
+              jq -c '{errors,messages}' /tmp/delete-apex.json || true
+              exit 1
+            }
+          elif [[ "$status" != "404" ]]; then
+            echo "::error::Could not safely verify the Pages apex association (HTTP $status)."
+            exit 1
+          fi
+          verify="$(curl --silent --show-error --connect-timeout 10 --max-time 30 -o /tmp/apex-verify.json -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$endpoint")"
+          [[ "$verify" == "404" ]] || { echo "::error::Pages apex association still exists or could not be verified."; exit 1; }
+          {
+            echo "## Apex redirect deployed and verified"
+            echo "- Worker: testagram-apex-redirect"
+            echo "- Route: testagram.site/*"
+            echo "- WebFinger route: preserved on testagram-web"
+            echo "- Live redirect: HTTP 308 with path and query preserved"
+            echo "- Pages apex association: removed only after successful live redirect verification"
+            echo "- DNS records: unchanged"
+          } | tee "$GITHUB_STEP_SUMMARY"
