@@ -2,6 +2,9 @@ name: Cloudflare read-only infrastructure audit
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/cloudflare-readonly-audit.yml"
 
 permissions: {}
 
@@ -83,6 +86,19 @@ jobs:
                   jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + ((.proxied // false)|tostring) + " |"' "$tmp/dns.json"
                 } >> "$GITHUB_STEP_SUMMARY"
               fi
+              if cf_get "/zones/$zone_id/workers/routes" "$tmp/routes.json"; then
+                {
+                  echo ""
+                  echo "#### Worker routes: $zone_name"
+                  echo "| Pattern | Script |"
+                  echo "|---|---|"
+                  jq -r '.result[]? | "| " + (.pattern // "") + " | " + (.script // "(service binding/none)") + " |"' "$tmp/routes.json"
+                } >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+                echo "#### Worker routes: $zone_name" >> "$GITHUB_STEP_SUMMARY"
+                echo "Unavailable with this token's current permissions." >> "$GITHUB_STEP_SUMMARY"
+              fi
               printf '| %s | %s | %s |\n' "$zone_name" "$zone_status" "$dns_count" >> "$GITHUB_STEP_SUMMARY"
             done < "$tmp/zones.tsv"
           else
@@ -107,6 +123,20 @@ jobs:
             if cf_get "/accounts/$account_id/pages/projects" "$tmp/pages.json"; then
               echo "- Pages projects: $(jq -r '.result | length' "$tmp/pages.json")" >> "$GITHUB_STEP_SUMMARY"
               jq -r '.result[]? | "- Pages project: " + (.name // "unnamed")' "$tmp/pages.json" >> "$GITHUB_STEP_SUMMARY"
+              while IFS= read -r project; do
+                [[ -z "$project" ]] && continue
+                if cf_get "/accounts/$account_id/pages/projects/$project/domains" "$tmp/pages-domains.json"; then
+                  {
+                    echo ""
+                    echo "##### Pages domains: $project"
+                    echo "| Hostname | Status | Validation | Verification |"
+                    echo "|---|---|---|---|"
+                    jq -r '.result[]? | "| " + (.name // "") + " | " + (.status // "unknown") + " | " + (.validation_data.status // "unknown") + " | " + (.verification_data.status // "unknown") + " |"' "$tmp/pages-domains.json"
+                  } >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo "- Pages domain inventory unavailable for $project with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+                fi
+              done < <(jq -r '.result[]?.name // empty' "$tmp/pages.json")
             else
               echo "- Pages projects: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
             fi
