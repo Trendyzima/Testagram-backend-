@@ -9,7 +9,8 @@ case "$TESTAGRAM_AUTH_PROVIDER" in
   *) echo "::error::TESTAGRAM_AUTH_PROVIDER must be appwrite or native."; exit 1 ;;
 esac
 if [[ "$TESTAGRAM_AUTH_PROVIDER" == "native" ]]; then
-  [[ ${#TESTAGRAM_AUTH_JWT_SECRET:-0} -ge 32 ]] || { echo "::error::Native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
+  TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
+  [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
   [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
   for key in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_FROM_EMAIL; do
     [[ -n "${!key:-}" ]] || { echo "::error::Native authentication requires $key for verification and password recovery."; exit 1; }
