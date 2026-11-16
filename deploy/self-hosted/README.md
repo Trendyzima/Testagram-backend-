@@ -7,15 +7,15 @@ private networks created by this stack.
 ## Base services
 
 - PostgreSQL 17: canonical product, identity bridge, media metadata, security counters and transactional outboxes.
-- Testagram Go API: deployment-selected end-user authentication (Testagram-native sessions or transitional Appwrite compatibility), canonical identity, social/search/media APIs and service orchestration.
+- Testagram Go API: Testagram-native end-user authentication and sessions, canonical identity, social/search/media APIs and service orchestration.
 - Control plane: node/workload inventory and hosting operations.
 - S3-compatible object storage: private and public media buckets.
-- Appwrite-authenticated staff console: server-side PostgreSQL role checks.
+- Testagram-native staff console: server-side PostgreSQL role checks.
 - Go CDN media delivery/cache, Caddy, Prometheus, Alertmanager and Grafana.
 
 The base stack creates two stable networks for cross-repository services:
 `testagram-platform` (private database/service traffic) and
-`testagram-egress` (controlled outbound Appwrite access). The Data Centre
+`testagram-egress` (controlled outbound integrations). The Data Centre
 overlay owns the private Algorithm ranker, Federation protocol service,
 platform API, video, notification and background worker services.
 
@@ -27,11 +27,11 @@ service-owned PostgreSQL outboxes and idempotent workers.
 
 1. Copy `.env.example` to `.env`.
 2. Set strong unique values for PostgreSQL, MinIO, control-plane, media and admin session secrets.
-3. Set `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID` for the separate staff identity-review console and transitional compatibility path. Set `APPWRITE_API_KEY` only if owners will issue staff invitations; restrict it to user-management operations.
-4. Keep `TESTAGRAM_AUTH_PROVIDER=appwrite` during shadow verification. Native activation requires the forward-only migrations, an audited account reconciliation/import, a unique `TESTAGRAM_AUTH_JWT_SECRET` (at least 32 characters), HTTPS `AUTH_PUBLIC_BASE_URL`, and working SMTP settings (`SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `AUTH_FROM_EMAIL`). Configure these values through protected VPS/GitHub secrets; never commit them.
+3. Configure Testagram-native staff authorization and SMTP verification/recovery settings. No external identity-provider credentials are accepted.
+4. Configure a unique `TESTAGRAM_AUTH_JWT_SECRET` (at least 32 characters), HTTPS `AUTH_PUBLIC_BASE_URL`, and working SMTP settings (`SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `AUTH_FROM_EMAIL`). Native authentication is mandatory; there is no external-provider fallback. Configure these values through protected VPS/GitHub secrets; never commit them.
 5. Set the production `ONSPACE_AI_API_KEY` secret for content moderation. The Backend rejects post publishing when moderation is unavailable.
-6. Keep `TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=false` until private evidence storage, two-person review, VPS/R2/B2 replication and restore acceptance pass. Native registration is the application/review/provisioning workflow; the legacy Appwrite consent route is compatibility-only and does not provision accounts.
-7. Confirm the Appwrite identity bridge, native identity review, native session/provisioning and runtime-grant migrations are included. For an existing PostgreSQL volume, use the explicit migration workflow; it creates and restore-tests a backup before applying the additive chain. Account credential import is a separate reviewed operation using `scripts/migrate-appwrite-identities.sql`; Appwrite passwords are not exportable, so imported users must reset passwords before native sign-in.
+6. Keep `TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=false` until private evidence storage, two-person review, VPS/R2/B2 replication and restore acceptance pass. Registration remains fail-closed until these controls pass.
+7. Confirm the Testagram-native identity review, session/provisioning and runtime-grant schema is present. Do not import, reconcile, or depend on external identity-provider accounts. Existing accounts require a separately designed owner-approved recovery process; this deployment does not migrate external credentials.
 8. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
 9. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
 10. Start the Backend base stack:
@@ -44,7 +44,7 @@ docker compose --env-file .env -f docker-compose.yml ps
 
 8. Clone the Data Centre repository on the same host. Copy
    `backend/.env.example` to `backend/.env`; set `DATABASE_URL` to the same
-   PostgreSQL user/password/database as this stack, use the same Appwrite
+   PostgreSQL user/password/database as this stack, use the same external identity provider
    endpoint/project ID, and generate independent platform/notification/video
    secrets.
 9. Start the Data Centre overlay. Its migration runner applies the
@@ -91,9 +91,9 @@ The callback URL must be public HTTPS and registered with the matching Daraja ap
 ## Authentication and authorization
 
 - Flutter uses Testagram-owned sign-in, refresh, logout and password-recovery pages. In native mode it sends short-lived Backend-issued access tokens; the rotating refresh credential is stored in platform secure storage.
-- `TESTAGRAM_AUTH_PROVIDER` selects exactly one end-user validation mode: `native` or transitional `appwrite`. Native-token failure never falls back to Appwrite.
+- Testagram-native authentication is the only end-user validation mode. Invalid or expired native credentials fail closed; no external identity fallback exists.
 - Backend owns canonical account identity, account activation, authorization and product records. An imported legacy account remains blocked from native login until the audited import is complete and its required password reset has been completed.
-- Appwrite remains a separate staff-reviewer identity dependency during this migration window. The staff console checks server-side PostgreSQL permissions; browser metadata cannot grant staff privileges. Do not remove the reviewer dependency until the separate native staff-auth workflow is approved.
+- Staff access is authenticated and authorized by Testagram-native sessions and server-side PostgreSQL role checks. Browser metadata cannot grant staff privileges.
 - Data Centre APIs are private service interfaces authenticated with service credentials; they must not become an alternative end-user identity authority.
 - No Supabase JWT secret, PostgREST service key, or cross-provider fallback is accepted.
 
@@ -148,7 +148,7 @@ For the exact B2/R2 secret names, bucket separation requirements, deployment-pat
 - Back up PostgreSQL with a consistent snapshot and test restores regularly.
 - Back up MinIO/object storage and the Data Centre video media root; preserve checksums and namespace metadata.
 - Back up Caddy data/config, Grafana/Prometheus data where required, and all deployment secrets.
-- Preserve `ADMIN_SESSION_KEY`, the native `TESTAGRAM_AUTH_JWT_SECRET` when enabled, SMTP credentials, Appwrite staff-reviewer project configuration and any server-only Appwrite API key securely.
+- Preserve `ADMIN_SESSION_KEY`, the native `TESTAGRAM_AUTH_JWT_SECRET` when enabled, SMTP credentials, Testagram-native staff-authentication and session secrets securely.
 - No Redis/Valkey queue state exists to back up; transactional outbox rows are in PostgreSQL.
 
 ## Network and operations
