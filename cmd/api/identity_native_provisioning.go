@@ -159,10 +159,10 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		        WHERE sa.request_id=sar.id AND sa.decision='approved'),
 		       (SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved'
-		          AND sa.approver_appwrite_user_id IN ($2,$3)),
+		          AND sa.approver_appwrite_user_id IN ($2::text,$3::text)),
 		       (SELECT count(DISTINCT ar.reviewer_appwrite_user_id) FROM testagram_identity.identity_application_reviews ar
 		        WHERE ar.application_id=$4::uuid AND ar.decision='approved'
-		          AND ar.reviewer_appwrite_user_id IN ($2,$3))
+		          AND ar.reviewer_appwrite_user_id IN ($2::text,$3::text))
 		FROM testagram_auth.sensitive_action_requests sar
 		WHERE sar.id=$1::uuid
 		FOR UPDATE
