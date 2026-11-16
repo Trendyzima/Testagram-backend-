@@ -221,7 +221,7 @@ func decodeHomeFeedCursor(value string) (*homeFeedCursor, error) {
 				return nil, errors.New("invalid feed cursor")
 			}
 		case homeFeedSourceBluesky:
-			if !validHomeFeedDID(position.Identity) || position.ID != "" || (position.Exhausted && position.Cursor != "") {
+			if !validHomeFeedDID(position.Identity) || position.ID != "" || len(position.Cursor) > 512 || (position.Exhausted && position.Cursor != "") {
 				return nil, errors.New("invalid feed cursor")
 			}
 		}
