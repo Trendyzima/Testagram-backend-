@@ -403,7 +403,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"ok": true, "application_id": applicationID, "application_token": applicationToken,
-		"verification_session_id": sessionID, "verification_session_token": sessionToken,
+		"verification_session_id":      sessionID, "verification_session_token": sessionToken,
 		"status": "verification_pending", "adult_verification_status": "pending",
 		"verification_method": "manual_review", "expires_in_seconds": int(nativeIdentitySessionTTL.Seconds()),
 	})
