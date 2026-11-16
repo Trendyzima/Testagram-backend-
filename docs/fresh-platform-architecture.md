@@ -1,7 +1,7 @@
 # Testagram native platform architecture
 
 The retained Testagram runtime is Appwrite-authenticated and PostgreSQL-owned.
-Legacy XClone/Supabase systems are not runtime dependencies.
+The runtime is Testagram-owned and uses only the services described in this architecture.
 
 ## Identity
 
@@ -31,12 +31,10 @@ Legacy XClone/Supabase systems are not runtime dependencies.
 - Data Centre video and notification endpoints validate Appwrite sessions and
   resolve the same canonical identity bridge.
 
-## Removed legacy dependencies
+## Runtime-owned infrastructure
 
-Supabase Auth, PostgREST, Storage, Realtime and Edge Functions are not part of
-the retained runtime. Redis/Valkey and Upstash are also excluded. Rate limiting
-uses PostgreSQL fixed-window counters; durable asynchronous work uses
-transactional outboxes and idempotent PostgreSQL workers.
+Rate limiting uses PostgreSQL fixed-window counters. Durable asynchronous work
+uses Testagram-owned transactional outboxes and idempotent PostgreSQL workers.
 
 ## Release gates
 
