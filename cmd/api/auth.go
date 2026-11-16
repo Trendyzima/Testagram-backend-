@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/argon2"
 )
 
 const authPasswordRounds = 210000
@@ -76,20 +77,61 @@ func authTokenHash(token string) []byte {
 	return sum[:]
 }
 
-// PBKDF2-HMAC-SHA256 password storage; salt and work factor are encoded with the hash.
+// Argon2id is the current password-storage format. Parameters are deliberately
+// encoded with each hash so future upgrades can be performed without invalidating
+// existing credentials. Legacy PBKDF2 hashes remain verifiable for lazy migration.
+const (
+	authArgon2Memory      uint32 = 64 * 1024 // KiB
+	authArgon2Iterations  uint32 = 3
+	authArgon2Parallelism uint8  = 2
+	authArgon2SaltBytes          = 16
+	authArgon2KeyBytes           = 32
+)
+
 func authPasswordHash(password string) (string, error) {
 	if len(password) < 12 || len(password) > 128 {
 		return "", errors.New("password must be between 12 and 128 bytes")
 	}
-	salt := make([]byte, 16)
+	salt := make([]byte, authArgon2SaltBytes)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	dk := authPBKDF2([]byte(password), salt, authPasswordRounds, 32)
-	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", authPasswordRounds, base64.RawURLEncoding.EncodeToString(salt), base64.RawURLEncoding.EncodeToString(dk)), nil
+	key := argon2.IDKey([]byte(password), salt, authArgon2Iterations, authArgon2Memory, authArgon2Parallelism, authArgon2KeyBytes)
+	return fmt.Sprintf("argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+		authArgon2Memory, authArgon2Iterations, authArgon2Parallelism,
+		base64.RawURLEncoding.EncodeToString(salt),
+		base64.RawURLEncoding.EncodeToString(key)), nil
 }
 
 func authPasswordVerify(encoded, password string) bool {
+	if strings.HasPrefix(encoded, "argon2id$") {
+		return authArgon2PasswordVerify(encoded, password)
+	}
+	return authLegacyPBKDF2Verify(encoded, password)
+}
+
+func authArgon2PasswordVerify(encoded, password string) bool {
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 5 || parts[0] != "argon2id" || parts[1] != "v=19" {
+		return false
+	}
+	var memory, iterations uint32
+	var parallelism uint16
+	if _, err := fmt.Sscanf(parts[2], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil ||
+		memory < 19*1024 || memory > 256*1024 || iterations < 1 || iterations > 10 ||
+		parallelism < 1 || parallelism > 8 || memory < uint32(parallelism)*8 {
+		return false
+	}
+	salt, saltErr := base64.RawURLEncoding.DecodeString(parts[3])
+	expected, keyErr := base64.RawURLEncoding.DecodeString(parts[4])
+	if saltErr != nil || keyErr != nil || len(salt) < 16 || len(salt) > 64 || len(expected) < 16 || len(expected) > 64 {
+		return false
+	}
+	actual := argon2.IDKey([]byte(password), salt, iterations, memory, uint8(parallelism), uint32(len(expected)))
+	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func authLegacyPBKDF2Verify(encoded, password string) bool {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
 		return false
@@ -100,11 +142,15 @@ func authPasswordVerify(encoded, password string) bool {
 	}
 	salt, err1 := base64.RawURLEncoding.DecodeString(parts[2])
 	expected, err2 := base64.RawURLEncoding.DecodeString(parts[3])
-	if err1 != nil || err2 != nil || len(salt) < 16 || len(expected) != 32 {
+	if err1 != nil || err2 != nil || len(salt) < 16 || len(salt) > 64 || len(expected) != 32 {
 		return false
 	}
 	actual := authPBKDF2([]byte(password), salt, rounds, len(expected))
 	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func authPasswordNeedsRehash(encoded string) bool {
+	return !strings.HasPrefix(encoded, "argon2id$")
 }
 
 func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
@@ -119,9 +165,7 @@ func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
 			mac = hmac.New(sha256.New, password)
 			_, _ = mac.Write(u)
 			u = mac.Sum(nil)
-			for j := range t {
-				t[j] ^= u[j]
-			}
+			for j := range t { t[j] ^= u[j] }
 		}
 		out = append(out, t...)
 	}
@@ -432,6 +476,20 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		if err != nil || !authPasswordVerify(hash, in.Password) || !verified || disabled {
 			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect, or email verification is pending.", requestID(r)))
 			return true
+		}
+		// Upgrade a valid legacy PBKDF2 credential in place after successful
+		// authentication. Compare the old encoded hash to avoid overwriting a
+		// concurrent password reset/change.
+		if authPasswordNeedsRehash(hash) {
+			upgraded, hashErr := authPasswordHash(in.Password)
+			if hashErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("PASSWORD_UPGRADE_FAILED", "Unable to securely upgrade password storage.", requestID(r)))
+				return true
+			}
+			if _, updateErr := s.db.Exec(ctx, "UPDATE testagram_auth.identities SET password_hash=$1,updated_at=now() WHERE user_id=$2::uuid AND password_hash=$3", upgraded, userID, hash); updateErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("PASSWORD_UPGRADE_FAILED", "Unable to securely upgrade password storage.", requestID(r)))
+				return true
+			}
 		}
 		if resetRequired {
 			writeJSON(w, http.StatusForbidden, errorBody("PASSWORD_RESET_REQUIRED", "Reset your password before signing in.", requestID(r)))
