@@ -318,6 +318,7 @@ fi
 
 echo "Starting PostgreSQL, MinIO and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
 # Existing PostgreSQL volumes do not replay initdb mounts. The shared
 # preflight skips a complete schema, otherwise it fails closed unless the
@@ -327,7 +328,7 @@ sudo env \
   CONFIRM_NATIVE_IDENTITY_MIGRATIONS="${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
   COMPOSE_FILE="$BASE_COMPOSE" ENV_FILE="$BASE_ENV" BACKUP_DIR="$ROOT/backups" \
   bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api caddy
 
 echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" pull media-cache

@@ -35,7 +35,16 @@ assert 'curl -fsS "$CDN_ORIGIN/healthz"' in workflow
 assert 'curl -fsS "$CDN_ORIGIN/readyz"' not in workflow
 
 assert "Canonical hostname verification handoff" in workflow
-assert "Cloudflare gateway workflow performs the final public" in workflow
+assert "canonical Cloudflare routing workflow with API, Go CDN and apex origins" in workflow
+assert "steps.publish_apex.outputs.apex_url" in workflow
+assert "testagram-apex-edge" in workflow
+assert "Apex Caddy ingress passed health, www redirect and WebFinger checks" in workflow
+
+assert ":8443 {" in caddy
+assert "respond @edge_health" in caddy
+assert "reverse_proxy federation-api:8081" in caddy
+assert "header_up Host testagram.site" in caddy
+assert "header_up X-Forwarded-Host testagram.site" in caddy
 
 print(
     "Backend origin smoke contract passed: Backend readiness is checked privately; "
