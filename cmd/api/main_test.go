@@ -637,3 +637,55 @@ func TestCurrentUserProfileRouteIsRegisteredAndUsesCanonicalSessionIdentity(t *t
 		t.Fatalf("current profile preflight status = %d, want %d", preflight.Code, http.StatusNoContent)
 	}
 }
+
+func TestRemoteAuthorIdentityIsProtocolSpecific(t *testing.T) {
+	valid := []struct {
+		protocol string
+		identity string
+	}{
+		{"activitypub", "https://mastodon.example/users/alice"},
+		{"bluesky", "did:plc:222222222222222222222222"},
+		{"bluesky", "did:web:alice.example"},
+	}
+	for _, item := range valid {
+		if !validRemoteAuthorIdentity(item.protocol, item.identity) {
+			t.Errorf("expected %s identity %q to be valid", item.protocol, item.identity)
+		}
+	}
+	invalid := []struct {
+		protocol string
+		identity string
+	}{
+		{"activitypub", "http://mastodon.example/users/alice"},
+		{"activitypub", "https://user:password@mastodon.example/users/alice"},
+		{"activitypub", "https://mastodon.example/users/alice?x=1"},
+		{"bluesky", "alice.bsky.social"},
+		{"bluesky", "at://did:plc:222222222222222222222222/app.bsky.feed.post/3lxyz"},
+		{"unknown", "https://mastodon.example/users/alice"},
+	}
+	for _, item := range invalid {
+		if validRemoteAuthorIdentity(item.protocol, item.identity) {
+			t.Errorf("expected %s identity %q to be rejected", item.protocol, item.identity)
+		}
+	}
+}
+
+func TestRemoteAuthorSubscriptionRoutesAreRegistered(t *testing.T) {
+	s := &service{}
+	handler := s.routes()
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodOptions, "/api/federation/subscriptions"},
+		{http.MethodGet, "/api/federation/subscriptions"},
+		{http.MethodPost, "/api/federation/subscriptions"},
+		{http.MethodDelete, "/api/federation/subscriptions/123e4567-e89b-42d3-a456-426614174000"},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(request.method, request.path, nil))
+		if response.Code == http.StatusNotFound {
+			t.Errorf("route %s %s was not registered", request.method, request.path)
+		}
+	}
+}
