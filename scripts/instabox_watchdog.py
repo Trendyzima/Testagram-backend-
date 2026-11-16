@@ -150,7 +150,7 @@ def probe(url: str) -> tuple[bool, str]:
             return False, f"HTTP {response.status}"
     except urllib.error.HTTPError as exc:
         body = exc.read(4096).decode("utf-8", "replace")
-        retry_after_header = retry_after_header
+        retry_after_header = (exc.headers.get("Retry-After") if exc.headers else None) or "unknown"
         exc.close()
         lowered = body.lower()
 
@@ -158,7 +158,7 @@ def probe(url: str) -> tuple[bool, str]:
         # the request reaches Testagram. They describe provider lifecycle, not
         # an unhealthy application, and must never trigger stop/start.
         if exc.code == 503 and "sandbox is waking up" in lowered:
-            retry_after = (exc.headers.get("Retry-After") if exc.headers else None) or "unknown"
+            retry_after = retry_after_header
             return False, f"WAKE_PENDING Retry-After={retry_after}"
         if exc.code == 503 and "sandbox offline" in lowered:
             return False, "PROVIDER_OFFLINE: machine was explicitly stopped or paused"
