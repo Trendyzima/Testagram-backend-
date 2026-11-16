@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -48,7 +49,7 @@ func (s *service) remoteAuthorSubscriptions(w http.ResponseWriter, r *http.Reque
 	}
 	switch r.Method {
 	case http.MethodGet:
-		ctx, cancel := requestContext(r, 3*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		rows, err := s.db.Query(ctx, `SELECT id::text,protocol,canonical_identity,display_handle,
 			verification_status,subscription_status,created_at,updated_at
@@ -99,7 +100,7 @@ func (s *service) remoteAuthorSubscriptions(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_REMOTE_HANDLE", "The Bluesky handle is invalid", requestIDValue))
 			return
 		}
-		ctx, cancel := requestContext(r, 3*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		var id, verification string
 		err := s.db.QueryRow(ctx, `INSERT INTO testagram_local.remote_author_subscriptions
@@ -143,7 +144,7 @@ func (s *service) removeRemoteAuthorSubscription(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_STORE_UNAVAILABLE", "Remote subscriptions are unavailable", requestIDValue))
 		return
 	}
-	ctx, cancel := requestContext(r, 3*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	tag, err := s.db.Exec(ctx, `UPDATE testagram_local.remote_author_subscriptions
 		SET subscription_status='removed',updated_at=now()
@@ -180,7 +181,7 @@ func (s *service) verifyRemoteAuthorSubscription(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_STORE_UNAVAILABLE", "Remote subscriptions are unavailable", requestID(r)))
 		return
 	}
-	ctx, cancel := requestContext(r, 3*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	var status string
 	err := s.db.QueryRow(ctx, `UPDATE testagram_local.remote_author_subscriptions
