@@ -62,10 +62,11 @@ func (s *service) identityReviewer(r *http.Request) (identityReviewerPrincipal, 
 			SELECT 1
 			FROM testagram_auth.staff_principals sp
 			JOIN testagram_auth.staff_role_grants g ON g.user_id=sp.user_id
+			JOIN testagram_auth.staff_role_permissions rp
+			  ON rp.role=g.role AND rp.permission_key='identity.review'
 			WHERE sp.user_id=$1::uuid
 			  AND sp.enabled=TRUE
 			  AND sp.mfa_enrolled_at IS NOT NULL
-			  AND g.role='identity.review'
 			  AND g.revoked_at IS NULL
 		)
 		FROM testagram_auth.identities i
