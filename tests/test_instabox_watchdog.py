@@ -134,7 +134,7 @@ class WatchdogTests(unittest.TestCase):
 
     def test_wait_for_service_requires_public_liveness_only(self):
         with patch.object(watchdog, "probe", side_effect=[
-            (False, "HTTP 503"), (True, "HTTP 200")
+            (False, "UNCLASSIFIED_503: refusing automatic lifecycle action"), (True, "HTTP 200")
         ]) as probe, patch.object(watchdog.time, "sleep"):
             watchdog.wait_for_service()
         self.assertEqual(probe.call_count, 2)
