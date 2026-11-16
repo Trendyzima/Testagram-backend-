@@ -96,25 +96,24 @@ func validHomeFeedDID(did string) bool {
 	}
 	if strings.HasPrefix(did, "did:web:") {
 		identifier := strings.TrimPrefix(did, "did:web:")
-		return identifier != "" && !strings.ContainsAny(identifier, " /?#@\")
+		return identifier != "" && !strings.ContainsAny(identifier, " /?#@") && !strings.Contains(identifier, string([]byte{92}))
 	}
 	return false
 }
 
 func validHomeFeedCursorIdentity(source, id string) bool {
+	unsafeWhitespace := string([]byte{13, 10, 9, 32})
 	switch source {
 	case "", homeFeedSourceNative:
 		return localUUIDPattern.MatchString(id)
 	case homeFeedSourceActivityPub:
-		if len(id) < 12 || len(id) > 2048 || strings.ContainsAny(id, "
-	 ") {
+		if len(id) < 12 || len(id) > 2048 || strings.ContainsAny(id, unsafeWhitespace) {
 			return false
 		}
 		u, err := url.Parse(id)
 		return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
 	case homeFeedSourceBluesky:
-		if !strings.HasPrefix(id, "at://") || len(id) > 2048 || strings.ContainsAny(id, "
-	 ") {
+		if !strings.HasPrefix(id, "at://") || len(id) > 2048 || strings.ContainsAny(id, unsafeWhitespace) {
 			return false
 		}
 		parts := strings.Split(strings.TrimPrefix(id, "at://"), "/")
@@ -123,7 +122,6 @@ func validHomeFeedCursorIdentity(source, id string) bool {
 		return false
 	}
 }
-
 func nativeSingleHomeFeedCursor(cursor *homeFeedCursor) bool {
 	return cursor == nil || (cursor.Source == homeFeedSourceNative && cursor.ID != "" &&
 		!cursor.CreatedAt.IsZero() && len(cursor.Sources) == 0 && len(cursor.Pending) == 0)
