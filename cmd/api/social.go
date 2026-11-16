@@ -80,7 +80,7 @@ func (s *service) socialAuth(w http.ResponseWriter, r *http.Request) (string, st
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, requestID)
+		writeAuthFailure(w, status, err, requestID)
 		return "", requestID, false
 	}
 	if !socialUUIDPattern.MatchString(userID) {
