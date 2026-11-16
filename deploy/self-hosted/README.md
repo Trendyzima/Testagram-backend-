@@ -7,7 +7,7 @@ private networks created by this stack.
 ## Base services
 
 - PostgreSQL 17: canonical product, identity bridge, media metadata, security counters and transactional outboxes.
-- Testagram Go API: Appwrite JWT verification, social/search/media APIs and service orchestration.
+- Testagram Go API: deployment-selected end-user authentication (Testagram-native sessions or transitional Appwrite compatibility), canonical identity, social/search/media APIs and service orchestration.
 - Control plane: node/workload inventory and hosting operations.
 - S3-compatible object storage: private and public media buckets.
 - Appwrite-authenticated staff console: server-side PostgreSQL role checks.
@@ -27,12 +27,14 @@ service-owned PostgreSQL outboxes and idempotent workers.
 
 1. Copy `.env.example` to `.env`.
 2. Set strong unique values for PostgreSQL, MinIO, control-plane, media and admin session secrets.
-3. Set `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`. Set `APPWRITE_API_KEY` only if owners will issue staff invitations; restrict it to user-management operations.
-4. Set the production `ONSPACE_AI_API_KEY` secret for content moderation. The Backend deliberately rejects post publishing when this key is missing or the moderation service is unavailable. Ordinary Appwrite self-service registration records age/Terms/Privacy consent in the Backend before canonical account provisioning; it does not enable the separate high-assurance two-person review workflow.
-5. Confirm the Appwrite identity bridge, registration-consent, native media-link and staff-role migrations are included.
-6. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
-7. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
-8. Start the Backend base stack:
+3. Set `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID` for the separate staff identity-review console and transitional compatibility path. Set `APPWRITE_API_KEY` only if owners will issue staff invitations; restrict it to user-management operations.
+4. Keep `TESTAGRAM_AUTH_PROVIDER=appwrite` during shadow verification. Native activation requires the forward-only migrations, an audited account reconciliation/import, a unique `TESTAGRAM_AUTH_JWT_SECRET` (at least 32 characters), HTTPS `AUTH_PUBLIC_BASE_URL`, and working SMTP settings (`SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `AUTH_FROM_EMAIL`). Configure these values through protected VPS/GitHub secrets; never commit them.
+5. Set the production `ONSPACE_AI_API_KEY` secret for content moderation. The Backend rejects post publishing when moderation is unavailable.
+6. Keep `TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=false` until private evidence storage, two-person review, VPS/R2/B2 replication and restore acceptance pass. Native registration is the application/review/provisioning workflow; the legacy Appwrite consent route is compatibility-only and does not provision accounts.
+7. Confirm the Appwrite identity bridge, native identity review, native session/provisioning and runtime-grant migrations are included. For an existing PostgreSQL volume, use the explicit migration workflow; it creates and restore-tests a backup before applying the additive chain. Account credential import is a separate reviewed operation using `scripts/migrate-appwrite-identities.sql`; Appwrite passwords are not exportable, so imported users must reset passwords before native sign-in.
+8. Configure DNS for `API_DOMAIN`, `MEDIA_DOMAIN` and `ADMIN_DOMAIN`, then set `ACME_EMAIL`.
+9. Review `VPS_ALLOWED_WORKLOAD_IMAGES`; an empty value intentionally disables workload scheduling.
+10. Start the Backend base stack:
 
 ```sh
 docker compose --env-file .env -f docker-compose.yml config
@@ -88,13 +90,12 @@ The callback URL must be public HTTPS and registered with the matching Daraja ap
 
 ## Authentication and authorization
 
-- Flutter obtains an Appwrite session and sends its JWT to the Backend.
-- The Backend validates the JWT with Appwrite and resolves the canonical Testagram UUID in PostgreSQL.
-- Data Centre video and notification services use the same Appwrite validation and identity bridge.
-- The Data Centre platform API uses PostgreSQL and a private internal token.
-- The staff console validates Appwrite sessions and reads roles from
-  `testagram_auth.staff_roles`; browser metadata cannot grant staff privileges.
-- No Supabase JWT secret, PostgREST service key, or provider fallback is accepted.
+- Flutter uses Testagram-owned sign-in, refresh, logout and password-recovery pages. In native mode it sends short-lived Backend-issued access tokens; the rotating refresh credential is stored in platform secure storage.
+- `TESTAGRAM_AUTH_PROVIDER` selects exactly one end-user validation mode: `native` or transitional `appwrite`. Native-token failure never falls back to Appwrite.
+- Backend owns canonical account identity, account activation, authorization and product records. An imported legacy account remains blocked from native login until the audited import is complete and its required password reset has been completed.
+- Appwrite remains a separate staff-reviewer identity dependency during this migration window. The staff console checks server-side PostgreSQL permissions; browser metadata cannot grant staff privileges. Do not remove the reviewer dependency until the separate native staff-auth workflow is approved.
+- Data Centre APIs are private service interfaces authenticated with service credentials; they must not become an alternative end-user identity authority.
+- No Supabase JWT secret, PostgREST service key, or cross-provider fallback is accepted.
 
 ## Media lifecycle
 
@@ -147,7 +148,7 @@ For the exact B2/R2 secret names, bucket separation requirements, deployment-pat
 - Back up PostgreSQL with a consistent snapshot and test restores regularly.
 - Back up MinIO/object storage and the Data Centre video media root; preserve checksums and namespace metadata.
 - Back up Caddy data/config, Grafana/Prometheus data where required, and all deployment secrets.
-- Preserve `ADMIN_SESSION_KEY`, Appwrite project configuration and server-only Appwrite API key securely.
+- Preserve `ADMIN_SESSION_KEY`, the native `TESTAGRAM_AUTH_JWT_SECRET` when enabled, SMTP credentials, Appwrite staff-reviewer project configuration and any server-only Appwrite API key securely.
 - No Redis/Valkey queue state exists to back up; transactional outbox rows are in PostgreSQL.
 
 ## Network and operations
