@@ -31,9 +31,9 @@ const authPasswordRounds = 210000
 const authTokenTTL = 24 * time.Hour
 
 type authInput struct {
-	Email    string `json:"email"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Email        string `json:"email"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
 	Token        string `json:"token"`
 	RefreshToken string `json:"refresh_token"`
 }
@@ -156,7 +156,9 @@ func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
 			mac = hmac.New(sha256.New, password)
 			_, _ = mac.Write(u)
 			u = mac.Sum(nil)
-			for j := range t { t[j] ^= u[j] }
+			for j := range t {
+				t[j] ^= u[j]
+			}
 		}
 		out = append(out, t...)
 	}
@@ -568,7 +570,9 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				`, email, authTokenHash(token), authFingerprint(ip)).Scan(&savedEmail)
 				txErr = err
 			}
-			if txErr == nil { txErr = tx.Commit(ctx) }
+			if txErr == nil {
+				txErr = tx.Commit(ctx)
+			}
 		}
 		if txErr == nil && savedEmail != "" {
 			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
