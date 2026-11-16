@@ -124,7 +124,9 @@ func TestAuthJWTContainsStrictSessionBoundClaims(t *testing.T) {
 		t.Fatalf("JWT has %d segments", len(parts))
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var claims authClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		t.Fatal(err)
