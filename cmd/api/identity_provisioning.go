@@ -50,6 +50,17 @@ func (s *service) identityProvisioningToken(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	allowed, rateErr := s.authRateAllowed(ctx, "identity-provisioning-token-ip", authClientIP(r), 5)
+	if rateErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Provisioning authorization is temporarily unavailable", requestID(r)))
+		return
+	}
+	if !allowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many provisioning authorization requests. Try again later.", requestID(r)))
+		return
+	}
 	token, err := authRandomToken()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Provisioning authorization could not be issued", requestID(r)))
@@ -60,9 +71,6 @@ func (s *service) identityProvisioningToken(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Provisioning authorization could not be issued", requestID(r)))
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Provisioning authorization is unavailable", requestID(r)))
@@ -270,7 +278,6 @@ func (s *service) identityProvisioningRedeem(w http.ResponseWriter, r *http.Requ
 		"email_verification_required": !account.EmailVerification,
 	})
 }
-
 
 // identityApplicationApproveSafe prevents a short-lived provisioning bearer
 // from being returned to staff clients. The applicant obtains a fresh token

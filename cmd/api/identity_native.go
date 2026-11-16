@@ -25,25 +25,25 @@ var identityIdempotencyKeyPattern = regexp.MustCompile("^[A-Za-z0-9_-]{43}$")
 
 const (
 	maxIdentityApplicationBody = 16 << 10
-	maxIdentityEvidenceBytes = int64(15 << 20)
-	identityAdultThreshold = 18
-	nativeIdentitySessionTTL = 24 * time.Hour
-	identityEvidenceNamespace = "identity-evidence-private"
+	maxIdentityEvidenceBytes   = int64(15 << 20)
+	identityAdultThreshold     = 18
+	nativeIdentitySessionTTL   = 24 * time.Hour
+	identityEvidenceNamespace  = "identity-evidence-private"
 )
 
 type identityApplicationInput struct {
-	Email string `json:"email"`
-	Username string `json:"username"`
-	DisplayName string `json:"display_name"`
-	AdultConfirmed bool `json:"adult_confirmed"`
-	TermsAccepted bool `json:"terms_accepted"`
-	PrivacyAccepted bool `json:"privacy_accepted"`
+	Email           string `json:"email"`
+	Username        string `json:"username"`
+	DisplayName     string `json:"display_name"`
+	AdultConfirmed  bool   `json:"adult_confirmed"`
+	TermsAccepted   bool   `json:"terms_accepted"`
+	PrivacyAccepted bool   `json:"privacy_accepted"`
 }
 
 type identityEvidenceUploadInput struct {
 	ContentType string `json:"content_type"`
-	SizeBytes int64 `json:"size_bytes"`
-	SHA256 string `json:"sha256"`
+	SizeBytes   int64  `json:"size_bytes"`
+	SHA256      string `json:"sha256"`
 }
 
 type identityEvidenceSubmitInput struct {
@@ -52,9 +52,9 @@ type identityEvidenceSubmitInput struct {
 
 type identitySessionAccess struct {
 	ApplicationID string
-	Email string
-	Status string
-	Purpose string
+	Email         string
+	Status        string
+	Purpose       string
 }
 
 func identityDerivedCapabilityToken(idempotencyKey, purpose, resourceID string) string {
@@ -426,13 +426,13 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	var status, verificationStatus, sessionID string
+	var status, verificationStatus, sessionID, provisioningStatus string
 	var threshold int
 	var updatedAt time.Time
 	var storedHash []byte
 	err := s.db.QueryRow(ctx, `
 		SELECT a.status,COALESCE(v.status,'pending'),COALESCE(v.requested_minimum_age,18),a.updated_at,
-		       a.status_access_token_sha256,COALESCE(v.id::text,'')
+		       a.status_access_token_sha256,COALESCE(v.id::text,''),COALESCE(nrp.status,'')
 		FROM testagram_identity.identity_applications a
 		LEFT JOIN LATERAL (
 		  SELECT id,status,requested_minimum_age
@@ -440,8 +440,9 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 		  WHERE application_id=a.id AND purpose='age_assurance'
 		  ORDER BY created_at DESC LIMIT 1
 		) v ON true
+		LEFT JOIN testagram_identity.native_registration_provisioning nrp ON nrp.application_id=a.id
 		WHERE a.id=$1::uuid AND a.status_access_token_expires_at>now()
-	`, applicationID).Scan(&status, &verificationStatus, &threshold, &updatedAt, &storedHash, &sessionID)
+	`, applicationID).Scan(&status, &verificationStatus, &threshold, &updatedAt, &storedHash, &sessionID, &provisioningStatus)
 	if err != nil || subtle.ConstantTimeCompare(storedHash, authTokenHash(token)) != 1 {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
 		return
@@ -449,10 +450,11 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"application_id": applicationID, "status": status,
-		"adult_verification_status": verificationStatus,
+		"adult_verification_status":    verificationStatus,
 		"adult_verification_threshold": threshold,
-		"verification_session_id": sessionID,
-		"updated_at": updatedAt.UTC().Format(time.RFC3339),
+		"verification_session_id":      sessionID,
+		"account_provisioning_status":  provisioningStatus,
+		"updated_at":                   updatedAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -509,8 +511,8 @@ func (s *service) identitySessionStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id": sessionID, "application_id": access.ApplicationID,
 		"purpose": access.Purpose, "status": access.Status,
-		"created_at": createdAt.UTC().Format(time.RFC3339),
-		"expires_at": expiresAt.UTC().Format(time.RFC3339),
+		"created_at":   createdAt.UTC().Format(time.RFC3339),
+		"expires_at":   expiresAt.UTC().Format(time.RFC3339),
 		"submitted_at": submittedAt,
 	})
 }
@@ -806,4 +808,3 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "manual_review", "message": "Evidence was securely received and queued for manual review."})
 }
-

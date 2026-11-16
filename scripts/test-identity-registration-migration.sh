@@ -41,6 +41,7 @@ for migration in \
   migrations/20261114_native_identity_integrity.sql \
   migrations/20261115_identity_evidence_access_audit.sql \
   migrations/20261115_native_identity_status_access.sql \
+  migrations/20261116_native_approved_identity_provisioning.sql \
   migrations/20261114_appwrite_registration_consent.sql; do
   psql_ci < "$migration"
 done
@@ -57,6 +58,8 @@ psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
 
@@ -408,8 +411,12 @@ CREATE TABLE IF NOT EXISTS testagram_local.accounts (
 );
 SQL
 
+# Native session tables depend on the canonical local account table above.
+psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
 
 # Exercise the actual Appwrite session -> current-consent -> canonical account path.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent$' -count=1
