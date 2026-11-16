@@ -148,9 +148,9 @@ LIMIT $3`
 		nextCursor = encodeHomeFeedCursor(homeFeedCursor{CreatedAt: last.CreatedAt, ID: last.ID})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode},
-		"error": nil,
+		"ok":         true,
+		"data":       map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode},
+		"error":      nil,
 		"request_id": requestID,
 	})
 }
