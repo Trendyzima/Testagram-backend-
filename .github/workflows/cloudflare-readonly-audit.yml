@@ -1,0 +1,116 @@
+name: Cloudflare read-only infrastructure audit
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: testagram-cloudflare-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Inventory Cloudflare zones, DNS, Workers and Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify token and collect read-only inventory
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN. Add the token value in GitHub Actions secrets; never put it in workflow code."
+            exit 1
+          fi
+
+          API="https://api.cloudflare.com/client/v4"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          cf_get() {
+            local path="$1" output="$2" status
+            status="$(curl --silent --show-error --output "$output" --write-out '%{http_code}' \
+              --connect-timeout 10 --max-time 45 \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Accept: application/json" "$API$path")"
+            if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+              echo "Cloudflare GET failed (HTTP $status): $path" >&2
+              jq -r '(.errors // [])[]? | .message // "Cloudflare API error"' "$output" >&2 || true
+              return 1
+            fi
+            jq -e '.success == true' "$output" >/dev/null
+          }
+
+          cf_get "/user/tokens/verify" "$tmp/token.json"
+          token_status="$(jq -r '.result.status // "unknown"' "$tmp/token.json")"
+          if [[ "$token_status" != "active" ]]; then
+            echo "::error::Cloudflare token is not active (status: $token_status)."
+            exit 1
+          fi
+
+          echo "## Cloudflare read-only audit" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Token verification: active" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Audit mode: GET requests only; no DNS, Worker, Pages, zone, or account mutations." >> "$GITHUB_STEP_SUMMARY"
+
+          : > "$tmp/accounts.txt"
+          page=1
+          while :; do
+            cf_get "/zones?per_page=50&page=$page" "$tmp/zones-$page.json"
+            jq -r '.result[]? | [.id, .name, (.status // "unknown"), (.account.id // "")] | @tsv' "$tmp/zones-$page.json" >> "$tmp/zones.tsv"
+            jq -r '.result[]?.account.id // empty' "$tmp/zones-$page.json" >> "$tmp/accounts.txt"
+            pages="$(jq -r '.result_info.total_pages // 1' "$tmp/zones-$page.json")"
+            [[ "$page" -ge "$pages" ]] && break
+            page=$((page + 1))
+          done
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Zones" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -s "$tmp/zones.tsv" ]]; then
+            printf '| Zone | Status | DNS records |\n|---|---|---:|\n' >> "$GITHUB_STEP_SUMMARY"
+            while IFS=$'\t' read -r zone_id zone_name zone_status account_id; do
+              dns_count="unavailable"
+              if cf_get "/zones/$zone_id/dns_records?per_page=100" "$tmp/dns.json"; then
+                dns_count="$(jq -r '.result_info.total_count // (.result | length)' "$tmp/dns.json")"
+                {
+                  echo ""
+                  echo "#### DNS inventory: $zone_name"
+                  echo "| Record | Type | Proxied |"
+                  echo "|---|---|---|"
+                  jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + ((.proxied // false)|tostring) + " |"' "$tmp/dns.json"
+                } >> "$GITHUB_STEP_SUMMARY"
+              fi
+              printf '| %s | %s | %s |\n' "$zone_name" "$zone_status" "$dns_count" >> "$GITHUB_STEP_SUMMARY"
+            done < "$tmp/zones.tsv"
+          else
+            echo "No zones were returned for this token." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          sort -u "$tmp/accounts.txt" -o "$tmp/accounts.txt"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Account services" >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r account_id; do
+            [[ -z "$account_id" ]] && continue
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "#### Account $account_id" >> "$GITHUB_STEP_SUMMARY"
+
+            if cf_get "/accounts/$account_id/workers/scripts" "$tmp/workers.json"; then
+              echo "- Workers scripts: $(jq -r '.result | length' "$tmp/workers.json")" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.result[]? | "- Worker: " + (.id // .name // "unnamed")' "$tmp/workers.json" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- Workers scripts: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            if cf_get "/accounts/$account_id/pages/projects" "$tmp/pages.json"; then
+              echo "- Pages projects: $(jq -r '.result | length' "$tmp/pages.json")" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.result[]? | "- Pages project: " + (.name // "unnamed")' "$tmp/pages.json" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- Pages projects: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < "$tmp/accounts.txt"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Audit completed. DNS record values/content and all credentials were intentionally excluded from the summary." >> "$GITHUB_STEP_SUMMARY"
