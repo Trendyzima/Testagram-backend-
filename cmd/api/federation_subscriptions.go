@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -115,9 +116,21 @@ func (s *service) remoteAuthorSubscriptions(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REMOTE_SUBSCRIPTION_WRITE_FAILED", "Remote subscription could not be saved", requestIDValue))
 			return
 		}
+		resolvedHandle := input.Handle
+		if s.federationClient != nil {
+			resolveCtx, resolveCancel := context.WithTimeout(r.Context(), 18*time.Second)
+			resolved, resolveErr := s.federationClient.ResolveRemoteAuthor(resolveCtx, federationclient.ResolveRemoteAuthorRequest{
+				LocalUserID: userID, Protocol: input.Protocol, Identity: input.Identity,
+			})
+			resolveCancel()
+			if resolveErr == nil {
+				verification = resolved.VerificationStatus
+				resolvedHandle = resolved.Handle
+			}
+		}
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"ok": true, "data": map[string]any{"id": id, "protocol": input.Protocol,
-				"identity": input.Identity, "handle": input.Handle,
+				"identity": input.Identity, "handle": resolvedHandle,
 				"verification_status": verification, "status": "active"},
 			"error": nil, "request_id": requestIDValue,
 		})
