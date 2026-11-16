@@ -34,6 +34,6 @@ jobs:
             caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           grep -Fq 'testagram.site {' deploy/self-hosted/Caddyfile
           grep -Fq 'path /.well-known/webfinger /users/* /objects/*' deploy/self-hosted/Caddyfile
-          grep -Fq 'reverse_proxy federation:8081' deploy/self-hosted/Caddyfile
+          grep -Fq 'reverse_proxy federation-api:8081' deploy/self-hosted/Caddyfile
           grep -Fq 'redir https://www.testagram.site{uri} 308' deploy/self-hosted/Caddyfile
           echo "Apex ActivityPub routing and www frontend preservation: PASS"
