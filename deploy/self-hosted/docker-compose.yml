@@ -24,9 +24,7 @@ services:
       - ../../migrations/20261019_testagram_local_accounts_posts.sql:/docker-entrypoint-initdb.d/013_testagram_local_accounts_posts.sql:ro
       - ../../migrations/20261019_testagram_independent_auth.sql:/docker-entrypoint-initdb.d/014_testagram_independent_auth.sql:ro
       - ../../migrations/20261019_testagram_media_replication_producers.sql:/docker-entrypoint-initdb.d/015_testagram_media_replication_producers.sql:ro
-      - ../../migrations/20261106_appwrite_identity_bridge.sql:/docker-entrypoint-initdb.d/016_appwrite_identity_bridge.sql:ro
       - ../../migrations/20261106_tv_health_postgres.sql:/docker-entrypoint-initdb.d/017_tv_health_postgres.sql:ro
-      - ../../migrations/20261106_appwrite_identity_link_audit.sql:/docker-entrypoint-initdb.d/018_appwrite_identity_link_audit.sql:ro
       - ../../migrations/20261106_social_core.sql:/docker-entrypoint-initdb.d/019_social_core.sql:ro
       - ../../migrations/20261110_native_media_post_links.sql:/docker-entrypoint-initdb.d/020_native_media_post_links.sql:ro
       - ../../migrations/20261110_staff_roles.sql:/docker-entrypoint-initdb.d/021_staff_roles.sql:ro
@@ -55,7 +53,6 @@ services:
       - ../../migrations/20261115_identity_evidence_access_audit.sql:/docker-entrypoint-initdb.d/044_identity_evidence_access_audit.sql:ro
       - ../../migrations/20261115_native_identity_status_access.sql:/docker-entrypoint-initdb.d/045_native_identity_status_access.sql:ro
       - ../../migrations/20261114_media_replication_publication_gate.sql:/docker-entrypoint-initdb.d/046_media_replication_publication_gate.sql:ro
-      - ../../migrations/20261114_appwrite_registration_consent.sql:/docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql:ro
       - ../../migrations/20261115_vps_storage_pool_40_gib.sql:/docker-entrypoint-initdb.d/048_vps_storage_pool_40_gib.sql:ro
       - ../../migrations/20261115_testagram_native_auth_cutover_foundation.sql:/docker-entrypoint-initdb.d/049_native_auth_cutover_foundation.sql:ro
       - ../../migrations/20261116_native_approved_identity_provisioning.sql:/docker-entrypoint-initdb.d/050_native_approved_identity_provisioning.sql:ro
@@ -112,7 +109,7 @@ services:
     volumes: [object-data:/data]
     ports: ["127.0.0.1:9000:9000"]
     restart: unless-stopped
-    networks: [data, egress, platform]
+    networks: [data, platform]
 
   object-init:
     build:
@@ -147,9 +144,6 @@ services:
       LISTEN_ADDR: ":8080"
       INTERNAL_LISTEN_ADDR: ":8082"
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
-      TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:-appwrite}
       TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:-}
       AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -241,7 +235,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [edge, data, monitoring, platform, egress]
+    networks: [edge, data, monitoring, platform]
 
   admin-console:
     build:
@@ -254,9 +248,6 @@ services:
       ADMIN_SERVICE_AUTH_KEY: ${ADMIN_SERVICE_AUTH_KEY:-}
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
-      APPWRITE_API_KEY: ${APPWRITE_API_KEY:-}
       PROMETHEUS_URL: http://prometheus:9090
       API_HEALTH_URL: http://api:8082/readyz
       BACKEND_INTERNAL_URL: http://api:8080
@@ -433,9 +424,6 @@ networks:
   platform:
     name: testagram-platform
     internal: true
-  # Egress-only network for services that must validate Appwrite sessions.
-  egress:
-    name: testagram-egress
   notifications:
   control-plane:
     internal: true
