@@ -297,6 +297,15 @@ func (s *service) identityProvisioningVerifyEmail(w http.ResponseWriter, r *http
 
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
+	allowed, rateErr := s.authRateAllowed(ctx, "identity-email-verification-ip", authClientIP(r), 20)
+	if rateErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("RATE_LIMIT_UNAVAILABLE", "Email verification is temporarily unavailable", requestID(r)))
+		return
+	}
+	if !allowed {
+		writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many email verification attempts. Try again later.", requestID(r)))
+		return
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Email verification is unavailable", requestID(r)))
@@ -447,8 +456,15 @@ func (s *service) identityProvisioningResendVerification(w http.ResponseWriter, 
 	}
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 	link := base + "/verify-email?application_id=" + url.QueryEscape(applicationID) + "&token=" + url.QueryEscape(token)
-	_ = s.authSendEmail(ctx, email, "Verify your Testagram account",
+	mailErr := s.authSendEmail(ctx, email, "Verify your Testagram account",
 		"<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours and can only be used once.</p>")
+	if mailErr != nil {
+		log.Printf("native identity verification resend delivery failed request_id=%s: %v", requestID(r), mailErr)
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the application is awaiting email verification, a new link will be sent."})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok": true,
+		"email_delivery_pending": mailErr != nil,
+		"message": "If the application is awaiting email verification, a new link will be sent.",
+	})
 }
