@@ -52,16 +52,6 @@ spec:
                 secretKeyRef:
                   name: testagram-backend-secrets
                   key: database-url
-            - name: SUPABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: testagram-backend-secrets
-                  key: supabase-url
-            - name: SUPABASE_PUBLISHABLE_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: testagram-backend-secrets
-                  key: supabase-publishable-key
             - name: ALLOWED_ORIGINS
               value: "https://testagram.site,https://www.testagram.site"
           resources:
