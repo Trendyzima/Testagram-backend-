@@ -25,25 +25,25 @@ var identityIdempotencyKeyPattern = regexp.MustCompile("^[A-Za-z0-9_-]{43}$")
 
 const (
 	maxIdentityApplicationBody = 16 << 10
-	maxIdentityEvidenceBytes = int64(15 << 20)
-	identityAdultThreshold = 18
-	nativeIdentitySessionTTL = 24 * time.Hour
-	identityEvidenceNamespace = "identity-evidence-private"
+	maxIdentityEvidenceBytes   = int64(15 << 20)
+	identityAdultThreshold     = 18
+	nativeIdentitySessionTTL   = 24 * time.Hour
+	identityEvidenceNamespace  = "identity-evidence-private"
 )
 
 type identityApplicationInput struct {
-	Email string `json:"email"`
-	Username string `json:"username"`
-	DisplayName string `json:"display_name"`
-	AdultConfirmed bool `json:"adult_confirmed"`
-	TermsAccepted bool `json:"terms_accepted"`
-	PrivacyAccepted bool `json:"privacy_accepted"`
+	Email           string `json:"email"`
+	Username        string `json:"username"`
+	DisplayName     string `json:"display_name"`
+	AdultConfirmed  bool   `json:"adult_confirmed"`
+	TermsAccepted   bool   `json:"terms_accepted"`
+	PrivacyAccepted bool   `json:"privacy_accepted"`
 }
 
 type identityEvidenceUploadInput struct {
 	ContentType string `json:"content_type"`
-	SizeBytes int64 `json:"size_bytes"`
-	SHA256 string `json:"sha256"`
+	SizeBytes   int64  `json:"size_bytes"`
+	SHA256      string `json:"sha256"`
 }
 
 type identityEvidenceSubmitInput struct {
@@ -52,9 +52,9 @@ type identityEvidenceSubmitInput struct {
 
 type identitySessionAccess struct {
 	ApplicationID string
-	Email string
-	Status string
-	Purpose string
+	Email         string
+	Status        string
+	Purpose       string
 }
 
 func identityDerivedCapabilityToken(idempotencyKey, purpose, resourceID string) string {
@@ -343,7 +343,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"ok": true, "application_id": applicationID, "application_token": applicationToken,
-			"verification_session_id": sessionID, "verification_session_token": sessionToken,
+			"verification_session_id":      sessionID, "verification_session_token": sessionToken,
 			"status": "verification_pending", "adult_verification_status": "pending",
 			"verification_method": "manual_review", "expires_in_seconds": expiresInSeconds,
 		})
@@ -450,11 +450,11 @@ func (s *service) identityApplicationStatus(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"application_id": applicationID, "status": status,
-		"adult_verification_status": verificationStatus,
+		"adult_verification_status":    verificationStatus,
 		"adult_verification_threshold": threshold,
 		"verification_session_id": sessionID,
-		"account_provisioning_status": provisioningStatus,
-		"updated_at": updatedAt.UTC().Format(time.RFC3339),
+		"account_provisioning_status":  provisioningStatus,
+		"updated_at":                   updatedAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -511,8 +511,8 @@ func (s *service) identitySessionStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id": sessionID, "application_id": access.ApplicationID,
 		"purpose": access.Purpose, "status": access.Status,
-		"created_at": createdAt.UTC().Format(time.RFC3339),
-		"expires_at": expiresAt.UTC().Format(time.RFC3339),
+		"created_at":   createdAt.UTC().Format(time.RFC3339),
+		"expires_at":   expiresAt.UTC().Format(time.RFC3339),
 		"submitted_at": submittedAt,
 	})
 }
@@ -808,4 +808,3 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "status": "manual_review", "message": "Evidence was securely received and queued for manual review."})
 }
-
