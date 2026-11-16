@@ -82,7 +82,12 @@ jobs:
             sleep 2
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' testagram-cdn-ci)" = "healthy"
-          docker exec testagram-cdn-ci /app/healthcheck
+          healthcheck_command="$(docker inspect --format '{{json .Config.Healthcheck.Test}}' testagram-cdn-ci | python3 -c 'import json,sys; test=json.load(sys.stdin); print(test[1] if len(test) == 2 and test[0] == "CMD" else "")')"
+          if [[ -z "$healthcheck_command" || "$healthcheck_command" != /* ]]; then
+            echo "CDN image must declare one absolute executable healthcheck command." >&2
+            exit 1
+          fi
+          docker exec testagram-cdn-ci "$healthcheck_command"
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.10"
