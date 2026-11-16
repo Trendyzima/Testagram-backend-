@@ -50,18 +50,20 @@ func issueNativeSession(ctx context.Context, db interface {
 	// session with an old token version.
 	var currentEmail string
 	var currentVersion int64
-	var emailVerified, accountEnabled, resetNotRequired bool
+	var emailVerified, accountEnabled, resetNotRequired, identityProvisioned bool
 	if err := tx.QueryRow(ctx, `
-		SELECT email_normalized, token_version, email_verified_at IS NOT NULL,
-			disabled_at IS NULL, NOT password_reset_required
-		FROM testagram_auth.identities
-		WHERE user_id=$1::uuid
+		SELECT i.email_normalized, i.token_version, i.email_verified_at IS NOT NULL,
+			i.disabled_at IS NULL, NOT i.password_reset_required,
+			EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
+			       WHERE p.user_id=i.user_id AND p.status='active')
+		FROM testagram_auth.identities i
+		WHERE i.user_id=$1::uuid
 		FOR UPDATE
-	`, userID).Scan(&currentEmail, &currentVersion, &emailVerified, &accountEnabled, &resetNotRequired); err != nil {
+	`, userID).Scan(&currentEmail, &currentVersion, &emailVerified, &accountEnabled, &resetNotRequired, &identityProvisioned); err != nil {
 		return nativeSessionTokens{}, err
 	}
 	if currentEmail != strings.ToLower(strings.TrimSpace(email)) || currentVersion != version ||
-		!emailVerified || !accountEnabled || !resetNotRequired {
+		!emailVerified || !accountEnabled || !resetNotRequired || !identityProvisioned {
 		return nativeSessionTokens{}, errors.New("identity changed during sign-in")
 	}
 	var sessionID, familyID string
@@ -146,6 +148,8 @@ func verifyNativeAccessToken(ctx context.Context, db interface {
 			  AND s.token_version=$3 AND s.revoked_at IS NULL AND s.expires_at>now()
 			  AND i.token_version=$3 AND i.disabled_at IS NULL
 			  AND i.email_verified_at IS NOT NULL
+			  AND EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
+			             WHERE p.user_id=i.user_id AND p.status='active')
 		)
 	`, claims.SessionID, claims.Subject, claims.TokenVersion).Scan(&active)
 	if err != nil {
@@ -172,14 +176,17 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 	var revoked bool
 	var disabled bool
 	var verified bool
+	var identityProvisioned bool
 	err = tx.QueryRow(ctx, `
 		SELECT s.session_id::text,s.user_id::text,s.family_id::text,s.token_version,s.expires_at,
-		       s.revoked_at IS NOT NULL,i.email,i.disabled_at IS NOT NULL,i.email_verified_at IS NOT NULL
+		       s.revoked_at IS NOT NULL,i.email,i.disabled_at IS NOT NULL,i.email_verified_at IS NOT NULL,
+		       EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
+		              WHERE p.user_id=i.user_id AND p.status='active')
 		FROM testagram_auth.sessions s
 		JOIN testagram_auth.identities i ON i.user_id=s.user_id
 		WHERE s.refresh_token_hash=$1
 		FOR UPDATE OF s,i
-	`, authTokenHash(raw)).Scan(&oldID, &userID, &familyID, &version, &expires, &revoked, &email, &disabled, &verified)
+	`, authTokenHash(raw)).Scan(&oldID, &userID, &familyID, &version, &expires, &revoked, &email, &disabled, &verified, &identityProvisioned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nativeSessionTokens{}, errors.New("invalid refresh token")
 	}
@@ -193,7 +200,7 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token reuse detected; session family revoked")
 	}
-	if !expires.After(time.Now()) || disabled || !verified {
+	if !expires.After(time.Now()) || disabled || !verified || !identityProvisioned {
 		_, _ = tx.Exec(ctx, "UPDATE testagram_auth.sessions SET revoked_at=now(),revoke_reason='refresh_invalidated' WHERE family_id=$1::uuid AND revoked_at IS NULL", familyID)
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token is expired or account is disabled")
