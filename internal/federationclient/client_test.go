@@ -143,7 +143,6 @@ func TestFetchATProtoFeedsRejectsDIDSubstitution(t *testing.T) {
     if err == nil { t.Fatal("DID substitution in Federation response was accepted") }
 }
 
-
 func TestFetchATProtoFeedsRejectsCursorForUnauthorizedDID(t *testing.T) {
     server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
         t.Fatal("unauthorized cursor must be rejected before network access")
