@@ -466,8 +466,14 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		err = s.db.QueryRow(ctx, `SELECT user_id::text,password_hash,email_verified_at IS NOT NULL,
 			token_version,disabled_at IS NOT NULL,password_reset_required
 			FROM testagram_auth.identities WHERE email_normalized=$1`, email).Scan(&userID, &hash, &verified, &version, &disabled, &resetRequired)
-		if err != nil || !authPasswordVerify(hash, in.Password) || !verified || disabled {
-			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect, or email verification is pending.", requestID(r)))
+		if err != nil || !authPasswordVerify(hash, in.Password) || disabled {
+			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect.", requestID(r)))
+			return true
+		}
+		if !verified {
+			// A valid password proves control of this account; only then reveal
+			// the actionable verification state rather than enabling enumeration.
+			writeJSON(w, http.StatusForbidden, errorBody("EMAIL_VERIFICATION_REQUIRED", "Verify your Testagram email before signing in.", requestID(r)))
 			return true
 		}
 		if resetRequired {
@@ -488,7 +494,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			if result.RowsAffected() != 1 {
 				// The password or account state changed while the legacy hash was
 				// being upgraded. Do not continue with a potentially stale login.
-				writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect, or email verification is pending.", requestID(r)))
+				writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect.", requestID(r)))
 				return true
 			}
 		}
