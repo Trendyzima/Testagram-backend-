@@ -37,6 +37,10 @@ func (s *service) socialProfilePosts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_CURSOR", "Profile post cursor is invalid", requestID))
 		return
 	}
+	if !nativeSingleHomeFeedCursor(cursor) {
+		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_SOURCE_MISMATCH", "This endpoint accepts only native post cursors", requestID))
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
