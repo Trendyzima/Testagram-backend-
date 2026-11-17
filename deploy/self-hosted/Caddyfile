@@ -46,7 +46,7 @@ testagram.site {
     Referrer-Policy no-referrer
     -Server
   }
-  @activitypub path /.well-known/webfinger /users/* /objects/*
+  @activitypub path /.well-known/webfinger* /.well-known/nodeinfo* /nodeinfo/* /users/* /inbox /outbox /objects/*
   handle @activitypub {
     reverse_proxy federation-api:8081 {
       header_up Host testagram.site
@@ -92,7 +92,7 @@ testagram.site {
   handle @www_frontend {
     reverse_proxy flutter-web:8080
   }
-  @activitypub path /.well-known/webfinger /users/* /objects/*
+  @activitypub path /.well-known/webfinger* /.well-known/nodeinfo* /nodeinfo/* /users/* /inbox /outbox /objects/*
   handle @activitypub {
     reverse_proxy federation-api:8081 {
       # InstaBox's public-port gateway connects through this generic :8443
