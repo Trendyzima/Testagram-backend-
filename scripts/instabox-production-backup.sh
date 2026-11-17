@@ -15,8 +15,13 @@ BACKEND="$ROOT/repos/backend"
 
 # Use a private subdirectory on InstaBox's persistent /data/tmp filesystem,
 # not the RAM-backed /tmp tmpfs. Never chmod the shared parent directory.
-TMP_ROOT="${TMPDIR:-/data/tmp}"
+TMP_ROOT="${BACKUP_TMP_PARENT:-/data/tmp}"
 mkdir -p "$TMP_ROOT"
+TMP_ROOT="$(realpath "$TMP_ROOT")"
+case "$TMP_ROOT" in
+  /data|/data/*) ;;
+  *) die "backup staging parent must be on InstaBox persistent /data storage, not tmpfs" ;;
+esac
 BACKUP_TMP_ROOT="$TMP_ROOT/testagram-production-backup"
 mkdir -p "$BACKUP_TMP_ROOT"
 chmod 700 "$BACKUP_TMP_ROOT"
