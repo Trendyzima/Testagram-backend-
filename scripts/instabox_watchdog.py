@@ -326,6 +326,36 @@ def check_running_service(api: API, state: dict[str, Any]) -> str:
     return result
 
 
+def recover_suspended(api: API, state: dict[str, Any]) -> str:
+    """Force-resume a paused InstaBox machine after explicit operator authorization."""
+    now = int(time.time())
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: suspended machine detected; would force provider resume"
+    last_action_at = state.get("last_action_at", 0)
+    try:
+        last_action_at = int(last_action_at)
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not resuming machine"
+
+    latest = machine_snapshot(api)
+    if latest["state"] != "suspended":
+        return (f"machine state changed during wake request "
+                f"(state={latest['state']}, desiredState={latest['desiredState']}); no action")
+    if latest.get("operationId"):
+        return f"machine has active operation {latest['operationId']}; no resume"
+
+    state.update(last_action_at=now, last_action="resume")
+    save_state(state)
+    lifecycle(api, "resume")
+    wait_for_service()
+    return "resumed suspended machine; public API liveness verified"
+
+
 def recover_stopped(api: API, state: dict[str, Any]) -> str:
     now = int(time.time())
     # Enforce the recovery approval boundary in the program itself, not only
@@ -392,9 +422,10 @@ def main() -> int:
         emit(f"machine has active operation {machine['operationId']}; leaving it undisturbed")
         return 0
 
-    # Respect explicit provider/operator intent. Recovery only applies when
-    # the desired state remains running; never undo an intentional stop/pause.
-    if desired != "running":
+    # A suspended InstaBox machine is the provider's paused/stopped state for
+    # this deployment. Operator authorization requires waking it even when
+    # desiredState still reports "suspended".
+    if desired != "running" and machine_state != "suspended":
         emit(f"desiredState={desired}; respecting provider/operator intent")
         return 0
 
@@ -406,10 +437,11 @@ def main() -> int:
             emit(result)
         return 0
     if machine_state == "suspended":
-        # InstaBox suspends idle machines intentionally. Do not issue a
-        # scheduled resume or synthetic HTTP/SSH ping: real application
-        # traffic or an operator's Paradev SSH connection wakes the box.
-        emit("machine is idle-suspended; leaving provider auto-wake enabled for real requests/SSH")
+        result = recover_suspended(api, state)
+        if result.startswith("resumed"):
+            notify(result, "recovery")
+        else:
+            emit(result)
         return 0
     if machine_state in ("creating", "starting", "stopping", "suspending", "resuming", "deleting"):
         emit(f"machine lifecycle is already {machine_state}; waiting for next scheduled check")
