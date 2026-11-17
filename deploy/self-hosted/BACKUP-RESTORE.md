@@ -95,13 +95,15 @@ its back.
 
 Configure these GitHub repository variables:
 
-- `TESTAGRAM_BACKUP_S3_ENDPOINT`: HTTPS endpoint origin only. For R2 this is
+- `TESTAGRAM_BACKUP_S3_ENDPOINT`: optional HTTPS endpoint origin only. If
+  omitted, the workflow uses the existing `B2_S3_ENDPOINT`, then
+  `CLOUDFLARE_R2_ENDPOINT`. For R2 this is
   `https://<account-id>.r2.cloudflarestorage.com`; for B2 use the S3 endpoint
   for the bucket's region.
-- `TESTAGRAM_BACKUP_S3_BUCKET`: the dedicated bucket name, e.g.
+- `TESTAGRAM_BACKUP_S3_BUCKET`: required dedicated bucket name, e.g.
   `testagram-backups`.
-- `TESTAGRAM_BACKUP_S3_REGION`: `auto` for R2, or the B2 region (e.g.
-  `us-west-004`).
+- `TESTAGRAM_BACKUP_S3_REGION`: optional; defaults to the existing B2/R2
+  region, then `auto` for R2. B2 uses its bucket region (e.g. `us-west-004`).
 - `INSTABOX_MACHINE_ID`: optional; defaults to the verified current machine
   ID. Set it if the machine is ever replaced.
 - `TESTAGRAM_PRODUCTION_BACKUP_ENABLED`: set to `true` only after the first
@@ -111,12 +113,15 @@ Configure these GitHub repository variables:
 
 Configure these GitHub repository secrets:
 
-- `INSTABOX_BACKUP_API_KEY`: an InstaBox API key with `machines:write` (or
-  legacy `machines:exec`) for the production machine. Do not paste it into
-  chat or commit it.
+- `INSTABOX_BACKUP_API_KEY`: recommended dedicated InstaBox API key with
+  `machines:write` (or legacy `machines:exec`) for this machine. If omitted,
+  the workflow falls back to the existing `TESTAGRAM_DB_API` deployment
+  secret. Do not paste either key into chat or commit it.
 - `TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID` and
-  `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`: the dedicated bucket-scoped S3
-  credentials.
+  `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`: recommended dedicated credentials
+  scoped to the backup bucket. If omitted, the workflow can fall back to the
+  existing B2 key, then R2 key, provided that key has access to the new bucket.
+  A bucket-scoped key is strongly preferred over reusing a media key.
 - `TESTAGRAM_BACKUP_RESTIC_PASSWORD`: a strong independent password; generate
   it locally with `openssl rand -hex 32` and store it in a password manager as
   well as GitHub Secrets. Losing it makes the encrypted repository
