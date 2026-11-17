@@ -53,36 +53,46 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	call := func(method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader(body))
 		req.RemoteAddr = "192.0.2.41:4567"
-		for key, value := range headers { req.Header.Set(key, value) }
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		return rec
 	}
 	headers := map[string]string{"Content-Type": "application/json", "Idempotency-Key": idempotencyKey}
 	first := call(http.MethodPost, "/api/identity/applications", body, headers)
-	if first.Code != http.StatusAccepted { t.Fatalf("application create status=%d body=%s", first.Code, first.Body.String()) }
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("application create status=%d body=%s", first.Code, first.Body.String())
+	}
 	var created struct {
-		ApplicationID string `json:"application_id"`
+		ApplicationID    string `json:"application_id"`
 		ApplicationToken string `json:"application_token"`
-		SessionID string `json:"verification_session_id"`
-		SessionToken string `json:"verification_session_token"`
+		SessionID        string `json:"verification_session_id"`
+		SessionToken     string `json:"verification_session_token"`
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(first.Body.Bytes(), &created); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(first.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
 	if created.ApplicationID == "" || len(created.ApplicationToken) < 32 || created.SessionID == "" ||
 		len(created.SessionToken) < 32 || created.Status != "verification_pending" {
 		t.Fatalf("application intake returned incomplete capability/state: %#v", created)
 	}
 
 	replay := call(http.MethodPost, "/api/identity/applications", body, headers)
-	if replay.Code != http.StatusAccepted { t.Fatalf("application recovery status=%d body=%s", replay.Code, replay.Body.String()) }
+	if replay.Code != http.StatusAccepted {
+		t.Fatalf("application recovery status=%d body=%s", replay.Code, replay.Body.String())
+	}
 	var recovered struct {
 		ApplicationID string `json:"application_id"`
 		ApplicationToken string `json:"application_token"`
 		SessionID string `json:"verification_session_id"`
 		SessionToken string `json:"verification_session_token"`
 	}
-	if err := json.Unmarshal(replay.Body.Bytes(), &recovered); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(replay.Body.Bytes(), &recovered); err != nil {
+		t.Fatal(err)
+	}
 	if recovered.ApplicationID != created.ApplicationID || recovered.ApplicationToken != created.ApplicationToken ||
 		recovered.SessionID != created.SessionID || recovered.SessionToken != created.SessionToken {
 		t.Fatalf("idempotent recovery changed application/session capabilities: first=%#v replay=%#v", created, recovered)
@@ -105,10 +115,16 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	}
 	unauthorized := call(http.MethodGet, "/api/identity/applications/"+created.ApplicationID, nil,
 		map[string]string{"X-Application-Token": strings.Repeat("x", 43)})
-	if unauthorized.Code != http.StatusNotFound { t.Fatalf("application status leaked without capability: %d %s", unauthorized.Code, unauthorized.Body.String()) }
+	if unauthorized.Code != http.StatusNotFound {
+		t.Fatalf("application status leaked without capability: %d %s", unauthorized.Code, unauthorized.Body.String())
+	}
 
 	var applicationCount, sessionCount, consentCount, nativeIdentityCount, provisioningCount int
-	checks := []struct { query string; args []any; target *int }{
+	checks := []struct {
+		query  string
+		args   []any
+		target *int
+	}{
 		{`SELECT count(*) FROM testagram_identity.identity_applications WHERE id=$1::uuid AND submission_key_sha256=$2`, []any{created.ApplicationID, authTokenHash(idempotencyKey)}, &applicationCount},
 		{`SELECT count(*) FROM testagram_identity.verification_sessions WHERE id=$1::uuid AND application_id=$2::uuid AND purpose='age_assurance'`, []any{created.SessionID, created.ApplicationID}, &sessionCount},
 		{`SELECT count(*) FROM testagram_identity.legal_consent_audit WHERE application_id=$1::uuid`, []any{created.ApplicationID}, &consentCount},
@@ -116,7 +132,9 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		{`SELECT count(*) FROM testagram_identity.native_registration_provisioning WHERE application_id=$1::uuid`, []any{created.ApplicationID}, &provisioningCount},
 	}
 	for _, check := range checks {
-		if err := db.QueryRow(ctx, check.query, check.args...).Scan(check.target); err != nil { t.Fatal(err) }
+		if err := db.QueryRow(ctx, check.query, check.args...).Scan(check.target); err != nil {
+		t.Fatal(err)
+	}
 	}
 	if applicationCount != 1 || sessionCount != 1 || consentCount != 3 || nativeIdentityCount != 0 || provisioningCount != 0 {
 		t.Fatalf("intake invariants applications=%d sessions=%d consents=%d native_identities=%d provisioning=%d",
@@ -125,7 +143,9 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 
 	// Simulate a committed evidence submission whose HTTP response was lost.
 	evidenceUUID := ""
-	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceUUID); err != nil { t.Fatal(err) }
+	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceUUID); err != nil {
+		t.Fatal(err)
+	}
 	digest := bytes.Repeat([]byte{0x42}, 32)
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_evidence
@@ -145,7 +165,9 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	`, created.ApplicationID, "identity-evidence:"+evidenceUUID, digest); err != nil { t.Fatal(err) }
 
 	var eventCountBefore int
-	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.verification_events WHERE session_id=$1::uuid", created.SessionID).Scan(&eventCountBefore); err != nil { t.Fatal(err) }
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.verification_events WHERE session_id=$1::uuid", created.SessionID).Scan(&eventCountBefore); err != nil {
+		t.Fatal(err)
+	}
 	submitBody, _ := json.Marshal(map[string]string{"evidence_id": evidenceUUID})
 	submitReplay := call(http.MethodPost, "/api/identity/sessions/"+created.SessionID+"/evidence/submit", submitBody,
 		map[string]string{"Content-Type":"application/json", "X-Verification-Session-Token":created.SessionToken})
@@ -153,6 +175,10 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		t.Fatalf("evidence submission replay status=%d body=%s", submitReplay.Code, submitReplay.Body.String())
 	}
 	var eventCountAfter int
-	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.verification_events WHERE session_id=$1::uuid", created.SessionID).Scan(&eventCountAfter); err != nil { t.Fatal(err) }
-	if eventCountAfter != eventCountBefore { t.Fatalf("evidence replay duplicated audit events: before=%d after=%d", eventCountBefore, eventCountAfter) }
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.verification_events WHERE session_id=$1::uuid", created.SessionID).Scan(&eventCountAfter); err != nil {
+		t.Fatal(err)
+	}
+	if eventCountAfter != eventCountBefore {
+		t.Fatalf("evidence replay duplicated audit events: before=%d after=%d", eventCountBefore, eventCountAfter)
+	}
 }
