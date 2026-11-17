@@ -203,6 +203,13 @@ func authClientIP(r *http.Request) string {
 	return host
 }
 
+func (s *service) sendAuthEmail(ctx context.Context, recipient, subject, html string) error {
+	if s.authEmailSender != nil {
+		return s.authEmailSender(ctx, recipient, subject, html)
+	}
+	return s.authSendEmail(ctx, recipient, subject, html)
+}
+
 func (s *service) authSendEmail(ctx context.Context, recipient, subject, html string) error {
 	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
 	port := strings.TrimSpace(env("SMTP_PORT", "587"))
@@ -360,7 +367,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		}
 		base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 		link := base + "/verify-email?token=" + url.QueryEscape(token)
-		if err := s.authSendEmail(ctx, email, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>"); err != nil {
+		if err := s.sendAuthEmail(ctx, email, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>"); err != nil {
 			// Keep the token persisted for retry by a future delivery worker; never log it.
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Account created but verification email could not be delivered. Configure email delivery and request another verification.", requestID(r)))
 			return true
@@ -383,7 +390,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 					if updateErr == nil {
 						base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 						link := base + "/verify-email?token=" + url.QueryEscape(token)
-						_ = s.authSendEmail(ctx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
+						_ = s.sendAuthEmail(ctx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
 					}
 				}
 			}
@@ -582,7 +589,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		if txErr == nil && savedEmail != "" {
 			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 			link := base + "/reset-password?token=" + url.QueryEscape(token)
-			if sendErr := s.authSendEmail(ctx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>"); sendErr != nil {
+			if sendErr := s.sendAuthEmail(ctx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>"); sendErr != nil {
 				// Keep the response indistinguishable from an unknown account, but
 				// leave a request-correlated operational signal for delivery repair.
 				log.Printf("password recovery email delivery failed request_id=%s: %v", requestID(r), sendErr)

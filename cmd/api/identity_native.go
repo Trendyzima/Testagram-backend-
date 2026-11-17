@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"path"
 	"regexp"
@@ -161,12 +162,14 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	} else {
+		log.Printf("identity application preflight lookup failed request_id=%s: %v", requestID(r), preflightErr)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Application recovery state is unavailable", requestID(r)))
 		return
 	}
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
+		log.Printf("identity application tx begin failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
@@ -180,6 +183,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	if _, err := tx.Exec(ctx, `
 		SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
 	`, submissionHash); err != nil {
+		log.Printf("identity application advisory lock failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
@@ -196,11 +200,13 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		log.Printf("identity application row lookup failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
 	if !existing {
 		if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
+			log.Printf("identity application UUID generation failed request_id=%s: %v", requestID(r), err)
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 			return
 		}
@@ -252,6 +258,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		`, applicationID, email, username, displayName, "native-session-pending:"+applicationID,
 			termsVersion, privacyVersion, submissionHash, applicationTokenHash)
 		if err != nil {
+			log.Printf("identity application insert failed request_id=%s: %v", requestID(r), err)
 			if identityApplicationConflict(err) {
 				// Duplicate email/username constraints receive the same neutral
 				// acceptance as an ineligible application to prevent enumeration.
@@ -266,6 +273,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 				INSERT INTO testagram_identity.legal_consent_audit(application_id,consent_type,policy_version,accepted_at,request_id)
 				VALUES ($1::uuid,$2,$3,now(),$4)
 			`, applicationID, consent.kind, consent.version, requestID(r)); err != nil {
+				log.Printf("identity consent audit insert failed request_id=%s: %v", requestID(r), err)
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("CONSENT_AUDIT_FAILED", "Registration consent could not be recorded", requestID(r)))
 				return
 			}
@@ -376,6 +384,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		  (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,expires_at,assurance_method)
 		VALUES ($1::uuid,$2::uuid,$3,'age_assurance',18,'in_progress',now()+interval '24 hours','manual_review')
 	`, sessionID, applicationID, sessionTokenHash); err != nil {
+		log.Printf("identity verification session insert failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification session could not be created", requestID(r)))
 		return
 	}
@@ -390,13 +399,15 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
-		SET evidence_reference=$3,status='verification_pending',updated_at=now()
+		SET evidence_reference=$2,status='verification_pending',updated_at=now()
 		WHERE id=$1::uuid
-	`, applicationID, sessionID, "native-session-pending:"+sessionID); err != nil {
+	`, applicationID, "native-session-pending:"+sessionID); err != nil {
+		log.Printf("identity application session link failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification session could not be linked", requestID(r)))
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
+		log.Printf("identity application create commit failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
@@ -699,12 +710,8 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	access, err := s.identitySessionAccess(r)
-	if err != nil || (access.Status != "in_progress" && access.Status != "created") {
+	if err != nil || (access.Status != "in_progress" && access.Status != "created" && access.Status != "manual_review") {
 		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
-		return
-	}
-	if s.virtualStorage == nil || s.mediaReplicator == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -716,6 +723,37 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
+
+	// A client may lose the response after the transaction commits. Recognize
+	// only the exact evidence item already linked to this session/application;
+	// never accept a different upload after the session enters manual review.
+	if access.Status == "manual_review" {
+		var evidenceStatus, sessionEvidenceReference, applicationStatus string
+		err := s.db.QueryRow(ctx, `
+			SELECT e.status,v.evidence_reference,a.status
+			FROM testagram_identity.verification_evidence e
+			JOIN testagram_identity.verification_sessions v ON v.id=e.session_id
+			JOIN testagram_identity.identity_applications a ON a.id=v.application_id
+			WHERE e.id=$1::uuid AND e.session_id=$2::uuid
+			  AND v.status='manual_review'
+		`, input.EvidenceID, r.PathValue("session_id")).Scan(&evidenceStatus, &sessionEvidenceReference, &applicationStatus)
+		if err == nil && evidenceStatus == "verified" &&
+			sessionEvidenceReference == "identity-evidence:"+input.EvidenceID &&
+			applicationStatus == "under_review" {
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"ok": true, "status": "manual_review", "idempotent_replay": true,
+				"message": "Evidence was securely received and queued for manual review.",
+			})
+			return
+		}
+		writeJSON(w, http.StatusConflict, errorBody("SESSION_NOT_SUBMITTABLE", "Verification session is no longer accepting evidence", requestID(r)))
+		return
+	}
+	if s.virtualStorage == nil || s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
+		return
+	}
 	var objectKey, contentType string
 	var size int64
 	var digest []byte
@@ -789,8 +827,9 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_events(session_id,event_type,actor_type,actor_reference,request_id,metadata)
-		VALUES ($1::uuid,'evidence_submitted','applicant',$2,$3,jsonb_build_object('evidence_id',$4))
+		VALUES ($1::uuid,'evidence_submitted','applicant',$2,$3,jsonb_build_object('evidence_id',$4::text))
 	`, r.PathValue("session_id"), access.ApplicationID, requestID(r), input.EvidenceID); err != nil {
+		log.Printf("identity evidence audit insert failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Evidence submission audit could not be recorded", requestID(r)))
 		return
 	}
@@ -798,6 +837,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		INSERT INTO testagram_identity.verification_events(session_id,event_type,actor_type,actor_reference,request_id)
 		VALUES ($1::uuid,'review_requested','system','testagram-identity-service',$2)
 	`, r.PathValue("session_id"), requestID(r)); err != nil {
+		log.Printf("identity review-request audit insert failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Review request audit could not be recorded", requestID(r)))
 		return
 	}

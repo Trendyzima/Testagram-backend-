@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -144,11 +145,13 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
-		VALUES($1::uuid,$2::uuid,'approved','First independent account approval'),
-		      ($1::uuid,$3::uuid,'approved','Second independent account approval')
-	`, requestID, reviewerOne, reviewerTwo); err != nil {
+		VALUES($1::uuid,$2::uuid,'approved','First independent account approval')
+	`, requestID, reviewerOne); err != nil {
 		t.Fatal(err)
 	}
+	// The approval request can reach its decision state, but the database must
+	// refuse to mint a provisioning capability until both independent account
+	// approvals exist. The trigger protects the capability issuance boundary.
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
 		WHERE id=$1::uuid
@@ -161,25 +164,83 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	`, applicationID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, `
+
+	// Exercise the real provisioning-token HTTP endpoint with only one
+	// account approver. It must not mint or return a capability.
+	singleApprovalRouter := (&service{db: db}).routes()
+	singleApprovalReq := httptest.NewRequest(http.MethodPost,
+		"/api/identity/applications/"+applicationID+"/provisioning-token", nil)
+	singleApprovalReq.Header.Set("X-Application-Token", applicationToken)
+	singleApprovalResp := httptest.NewRecorder()
+	singleApprovalRouter.ServeHTTP(singleApprovalResp, singleApprovalReq)
+	if singleApprovalResp.Code != http.StatusConflict ||
+		strings.Contains(singleApprovalResp.Body.String(), "approval_token") {
+		t.Fatalf("provisioning token issued before second independent approval: status=%d body=%s",
+			singleApprovalResp.Code, singleApprovalResp.Body.String())
+	}
+	approvalTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approvalTx.Exec(ctx, "SAVEPOINT single_approval_attempt"); err != nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := approvalTx.Exec(ctx, `
+		INSERT INTO testagram_identity.identity_approval_tokens
+		  (token_sha256,jti_sha256,application_id,first_approver_user_id,
+		   second_approver_user_id,expires_at)
+		VALUES($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
+	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, reviewerOne, reviewerTwo); err == nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal("database issued provisioning capability with only one account approver")
+	}
+	if _, err := approvalTx.Exec(ctx, "ROLLBACK TO SAVEPOINT single_approval_attempt"); err != nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := approvalTx.Exec(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
+		VALUES($1::uuid,$2::uuid,'approved','Second independent account approval')
+	`, requestID, reviewerTwo); err != nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := approvalTx.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_approval_tokens
 		  (token_sha256,jti_sha256,application_id,first_approver_user_id,
 		   second_approver_user_id,expires_at)
 		VALUES($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
 	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, reviewerOne, reviewerTwo); err != nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := approvalTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.example")
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
-	svc := &service{db: db}
+	type deliveredEmail struct {
+		recipient string
+		subject   string
+		html      string
+	}
+	mailDeliveries := make(chan deliveredEmail, 4)
+	svc := &service{
+		db: db,
+		authEmailSender: func(_ context.Context, recipient, subject, html string) error {
+			mailDeliveries <- deliveredEmail{recipient: recipient, subject: subject, html: html}
+			return nil
+		},
+	}
+	router := svc.routes()
 
 	tokenReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/provisioning-token", nil)
-	tokenReq.SetPathValue("application_id", applicationID)
 	tokenReq.Header.Set("X-Application-Token", applicationToken)
 	tokenResp := httptest.NewRecorder()
-	svc.identityProvisioningToken(tokenResp, tokenReq)
+	router.ServeHTTP(tokenResp, tokenReq)
 	if tokenResp.Code != http.StatusOK {
 		t.Fatalf("native grant issue status=%d body=%s", tokenResp.Code, tokenResp.Body.String())
 	}
@@ -196,12 +257,11 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	redeem := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/redeem",
 			strings.NewReader("{\"password\":\"native-ci-password-123\"}"))
-		req.SetPathValue("application_id", applicationID)
 		req.Header.Set("X-Application-Token", applicationToken)
 		req.Header.Set("X-Identity-Approval-Token", issuedApproval)
 		req.Header.Set("X-Identity-Approval-JTI", issuedJTI)
 		rec := httptest.NewRecorder()
-		svc.identityProvisioningRedeemNative(rec, req)
+		router.ServeHTTP(rec, req)
 		return rec
 	}
 
@@ -227,6 +287,17 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		}
 		userID = got
 	}
+
+	initialEmail := <-mailDeliveries
+	if initialEmail.recipient != applicantEmail || initialEmail.subject != "Verify your Testagram account" {
+		t.Fatalf("initial verification email recipient/subject mismatch: %#v", initialEmail)
+	}
+	tokenPattern := regexp.MustCompile(`[?&]token=([A-Za-z0-9_-]{32,128})`)
+	initialTokenMatch := tokenPattern.FindStringSubmatch(initialEmail.html)
+	if len(initialTokenMatch) != 2 || len(mailDeliveries) != 0 {
+		t.Fatalf("expected exactly one initial verification email with a token, html=%q pending=%d", initialEmail.html, len(mailDeliveries))
+	}
+	initialVerificationToken := initialTokenMatch[1]
 
 	var identityCount, profileCount, pendingCount, consumedCount int
 	var passwordHash string
@@ -289,10 +360,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	resendReq := httptest.NewRequest(http.MethodPost,
 		"/api/identity/applications/"+applicationID+"/resend-verification", nil)
-	resendReq.SetPathValue("application_id", applicationID)
 	resendReq.Header.Set("X-Application-Token", applicationToken)
 	resendResp := httptest.NewRecorder()
-	svc.identityProvisioningResendVerification(resendResp, resendReq)
+	router.ServeHTTP(resendResp, resendReq)
 	if resendResp.Code != http.StatusAccepted {
 		t.Fatalf("native verification resend status=%d body=%s", resendResp.Code, resendResp.Body.String())
 	}
@@ -306,22 +376,28 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal("application-scoped resend did not rotate the stored email-verification capability")
 	}
 
-	verifyToken, err := authRandomToken()
-	if err != nil {
-		t.Fatal(err)
+	resentEmail := <-mailDeliveries
+	if resentEmail.recipient != applicantEmail || resentEmail.subject != "Verify your Testagram account" {
+		t.Fatalf("resend verification email recipient/subject mismatch: %#v", resentEmail)
 	}
-	if _, err := db.Exec(ctx, `
-		UPDATE testagram_auth.identities
-		SET verification_token_hash=$2,verification_expires_at=now()+interval '1 hour'
-		WHERE user_id=$1::uuid
-	`, userID, authTokenHash(verifyToken)); err != nil {
-		t.Fatal(err)
+	resentTokenMatch := tokenPattern.FindStringSubmatch(resentEmail.html)
+	if len(resentTokenMatch) != 2 {
+		t.Fatalf("resend email did not contain a verification capability: %q", resentEmail.html)
+	}
+	verifyToken := resentTokenMatch[1]
+	if len(previousVerificationHash) != 32 || len(rotatedVerificationHash) != 32 ||
+		bytes.Equal(previousVerificationHash, rotatedVerificationHash) ||
+		!bytes.Equal(previousVerificationHash, authTokenHash(initialVerificationToken)) ||
+		!bytes.Equal(rotatedVerificationHash, authTokenHash(verifyToken)) {
+		t.Fatal("initial delivery/resend did not persist and rotate the exact emailed verification capabilities")
+	}
+	if len(mailDeliveries) != 0 {
+		t.Fatalf("unexpected duplicate verification email deliveries: %d", len(mailDeliveries))
 	}
 	verifyReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/verify-email",
 		strings.NewReader(fmt.Sprintf("{\"token\":%q}", verifyToken)))
-	verifyReq.SetPathValue("application_id", applicationID)
 	verifyResp := httptest.NewRecorder()
-	svc.identityProvisioningVerifyEmail(verifyResp, verifyReq)
+	router.ServeHTTP(verifyResp, verifyReq)
 	if verifyResp.Code != http.StatusOK {
 		t.Fatalf("native email verification status=%d body=%s", verifyResp.Code, verifyResp.Body.String())
 	}

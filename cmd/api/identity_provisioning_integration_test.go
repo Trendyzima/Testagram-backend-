@@ -249,7 +249,7 @@ func TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals(t *t
 
 	createFixture := func(email, username, fingerprint string) (string, string) {
 		t.Helper()
-		var applicationID, requestID string
+		var applicationID, requestID, sessionID string
 		if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
 			t.Fatal(err)
 		}
@@ -261,6 +261,20 @@ func TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals(t *t
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_applications(id,email,username,display_name,adult_confirmed_at,adult_verified_at,adult_verification_provider,adult_verification_reference,adult_verification_checked_at,evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,terms_accepted_at,privacy_accepted_at,status,sensitive_action_request_id) VALUES($1::uuid,$2,$3,'Concurrent Review',now(),now(),'testagram_manual','concurrent-adult-ref',now(),'opaque-concurrent-evidence-ref',decode($4,'hex'),'terms-v1','privacy-v1',now(),now(),'verified',$5::uuid)", applicationID, email, username, fingerprint, requestID); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&sessionID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_identity.verification_sessions
+			  (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
+			   evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
+			   verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_user_id)
+			VALUES($1::uuid,$2::uuid,$3,'age_assurance',18,'verified',
+			       'opaque-concurrent-evidence-ref',decode($4,'hex'),'document_review','reviewed',
+			       TRUE,now()+interval '1 day',now(),now(),$5::uuid)
+		`, sessionID, applicationID, authTokenHash("concurrent-session:"+applicationID), fingerprint, reviewerOneID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','concurrent-audit-01'),($1::uuid,$3,'approved','Second independent evidence review','concurrent-audit-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {

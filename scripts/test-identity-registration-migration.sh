@@ -50,7 +50,8 @@ for migration in \
   migrations/20261117_native_staff_reviewer_grants.sql \
   migrations/20261118_native_admin_console.sql \
   migrations/20261119_native_identity_approval_ledger.sql \
-  migrations/20261120_native_verification_decider.sql; do
+  migrations/20261120_native_verification_decider.sql \
+  migrations/20261121_native_identity_intake_optional_fingerprint.sql; do
   psql_ci < "$migration"
 done
 
@@ -81,6 +82,7 @@ psql_ci < migrations/20261118_native_admin_console.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
+psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 
 psql_ci <<'SQL'
@@ -128,6 +130,7 @@ DO $registration$
 DECLARE
   app_id uuid := gen_random_uuid();
   action_id uuid := gen_random_uuid();
+  session_id uuid := gen_random_uuid();
   provisioning_id uuid;
   premature_token_rejected boolean := FALSE;
 BEGIN
@@ -150,6 +153,18 @@ BEGIN
      'testagram_manual','ci-adult-evidence-ref',now(),
      'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
      decode(repeat('2',64),'hex'),action_id);
+
+  -- Approval token guards require evidence to be linked to a verified
+  -- age-assurance session, even in this pending-approval fixture.
+  INSERT INTO testagram_identity.verification_sessions
+    (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
+     evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
+     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_user_id)
+  VALUES
+    (session_id,app_id,decode(repeat('5',64),'hex'),'age_assurance',18,'verified',
+     'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'document_review','reviewed',
+     TRUE,now()+interval '1 day',now(),now(),
+     '123e4567-e89b-42d3-a456-426614174101');
 
   -- A token cannot be issued while the ledger is still pending.
   BEGIN
@@ -490,7 +505,7 @@ $native_auth_schema$;
 SQL
 
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
 
 # Exercise the actual Appwrite session -> current-consent -> canonical account path.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent$' -count=1
