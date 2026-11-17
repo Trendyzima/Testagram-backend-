@@ -180,6 +180,12 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
+		UPDATE testagram_identity.identity_applications SET status='approved'
+		WHERE id=$1::uuid
+	`, applicationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_approval_tokens
 		  (token_sha256,jti_sha256,application_id,first_approver_user_id,
 		   second_approver_user_id,expires_at)
