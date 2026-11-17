@@ -167,6 +167,8 @@ fi
     postgres_user="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_USER | tr -d '\r')"
     postgres_primary_db="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')"
     [[ "$postgres_user" =~ ^[A-Za-z0-9_]+$ && "$postgres_primary_db" =~ ^[A-Za-z0-9_]+$ ]] || die "PostgreSQL user/database names are missing or unsupported"
+    extra_postgres_roles="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND rolname NOT IN ('postgres', '$postgres_user') ORDER BY rolname")"
+    [[ -z "$extra_postgres_roles" ]] || die "additional PostgreSQL roles detected ($extra_postgres_roles); add a tested globals backup/restore before relying on this backup"
     postgres_database_names="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")"
     [[ -n "$postgres_database_names" ]] || die "PostgreSQL returned no connectable databases"
     grep -Fxq "$postgres_primary_db" <<< "$postgres_database_names" || die "primary PostgreSQL database is absent from the database inventory"
