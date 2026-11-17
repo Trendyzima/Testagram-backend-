@@ -22,7 +22,7 @@ mkdir -p "$BACKUP_TMP_ROOT"
 chmod 700 "$BACKUP_TMP_ROOT"
 export TMPDIR="$BACKUP_TMP_ROOT"
 
-# Restic and jq are not guaranteed on every InstaBox template. Install
+# Restic, jq and Python are not guaranteed on every InstaBox template. Install
 # only these small backup utilities when missing; do not upgrade the OS or
 # restart production services as part of a backup.
 if ! command -v restic >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
