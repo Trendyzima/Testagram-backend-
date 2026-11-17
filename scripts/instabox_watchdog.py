@@ -20,10 +20,8 @@ MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagram")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
 STATE_FILE = os.getenv("WATCHDOG_STATE_FILE", ".watchdog-state.json")
 WEBHOOK_URL = os.getenv("WATCHDOG_ALERT_WEBHOOK", "")
-FAILURES_REQUIRED = int(os.getenv("WATCHDOG_FAILURES_REQUIRED", "3"))
 PROBE_INTERVAL = int(os.getenv("WATCHDOG_PROBE_INTERVAL_SECONDS", "15"))
 PROBE_TIMEOUT = int(os.getenv("WATCHDOG_PROBE_TIMEOUT_SECONDS", "10"))
-RESTART_COOLDOWN = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "1800"))
 OPERATION_TIMEOUT = int(os.getenv("WATCHDOG_OPERATION_TIMEOUT_SECONDS", "300"))
 RECOVERY_HEALTH_TIMEOUT = int(os.getenv("WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS", "300"))
 DRY_RUN = os.getenv("WATCHDOG_DRY_RUN", "false").lower() == "true"
@@ -278,58 +276,6 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
     return "started stopped machine; public API liveness verified"
 
 
-def recover_suspended(api: API, state: dict[str, Any]) -> str:
-    now = int(time.time())
-    if DRY_RUN:
-        return "DRY RUN: would resume suspended machine"
-    state.update(last_action_at=now, last_action="resume")
-    save_state(state)
-    lifecycle(api, "resume")
-    wait_for_service()
-    return "resumed suspended machine; public API liveness verified"
-
-
-def restart_running(api: API, state: dict[str, Any]) -> str:
-    now = int(time.time())
-    if now - int(state.get("last_restart_at", 0)) < RESTART_COOLDOWN:
-        return "health checks failed, but restart cooldown is active"
-    if DRY_RUN:
-        return "DRY RUN: would stop then start the running machine"
-    state.update(last_action_at=now, last_restart_at=now, last_action="stop-start")
-    save_state(state)
-    lifecycle(api, "stop")
-    lifecycle(api, "start")
-    wait_for_service()
-    return "power-cycled machine using stop/start; public API liveness verified"
-
-
-def read_only_probe_without_provider_key() -> int:
-    """Check public liveness without provider credentials or lifecycle access."""
-    emit(
-        "Instabox API key is not configured; running public liveness probes only. "
-        "Provider inspection and lifecycle actions are unavailable."
-    )
-    for index in range(FAILURES_REQUIRED):
-        health_ok, health_detail = probe(HEALTH_URL)
-        emit(
-            f"read-only liveness probe {index + 1}/{FAILURES_REQUIRED}: "
-            f"{health_detail}"
-        )
-        if health_ok:
-            emit(
-                "Testagram public liveness is healthy; no provider lifecycle "
-                "operation was attempted."
-            )
-            return 0
-        if index + 1 < FAILURES_REQUIRED:
-            time.sleep(PROBE_INTERVAL)
-    raise WatchdogError(
-        f"All {FAILURES_REQUIRED} read-only public liveness probes failed; "
-        "automatic recovery remains unavailable because "
-        "INSTABOX_WATCHDOG_API_KEY is not configured"
-    )
-
-
 def main() -> int:
     global MACHINE_ID
     if not HEALTH_URL:
@@ -338,16 +284,14 @@ def main() -> int:
         raise WatchdogError("Health URL must use HTTPS")
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
-    if (FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
-            or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1
-            or RESTART_COOLDOWN < 300):
-        raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, positive timeouts/intervals and >=300s restart cooldown")
+    if (PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
+            or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1):
+        raise WatchdogError("Unsafe watchdog thresholds: require positive probe intervals and operation/recovery timeouts")
     if not API_KEY:
-        if DRY_RUN:
-            return read_only_probe_without_provider_key()
         raise WatchdogError(
-            "INSTABOX_WATCHDOG_API_KEY is required for provider inspection "
-            "or lifecycle actions"
+            "An InstaBox API key is required for provider-state monitoring. "
+            "Configure INSTABOX_READONLY_API_KEY for read-only mode or "
+            "INSTABOX_WATCHDOG_API_KEY for explicitly enabled recovery."
         )
     if not MACHINE_ID and not MACHINE_NAME:
         raise WatchdogError("Configure INSTABOX_MACHINE_NAME or INSTABOX_MACHINE_ID")
@@ -390,11 +334,10 @@ def main() -> int:
             emit(result)
         return 0
     if machine_state == "suspended":
-        result = recover_suspended(api, state)
-        if result.startswith("resumed"):
-            notify(result, "recovery")
-        else:
-            emit(result)
+        # InstaBox suspends idle machines intentionally. Do not issue a
+        # scheduled resume or synthetic HTTP/SSH ping: real application
+        # traffic or an operator's Paradev SSH connection wakes the box.
+        emit("machine is idle-suspended; leaving provider auto-wake enabled for real requests/SSH")
         return 0
     if machine_state in ("creating", "starting", "stopping", "suspending", "resuming", "deleting"):
         emit(f"machine lifecycle is already {machine_state}; waiting for next scheduled check")
@@ -405,30 +348,13 @@ def main() -> int:
         raise WatchdogError("Machine is in provider error state; refusing automatic stop/start")
     if machine_state != "running":
         raise WatchdogError(f"Unrecognized machine state {machine_state!r}; refusing action")
-    for index in range(FAILURES_REQUIRED):
-        health_ok, health_detail = probe(HEALTH_URL)
-        emit(f"liveness probe {index + 1}/{FAILURES_REQUIRED}: {health_detail}")
-        if health_ok:
-            state["last_healthy_at"] = int(time.time())
-            save_state(state)
-            emit("Testagram public liveness is healthy; no recovery action required")
-            return 0
-        if index + 1 < FAILURES_REQUIRED:
-            time.sleep(PROBE_INTERVAL)
-
-    # Re-read provider state immediately before destructive lifecycle actions.
-    latest = machine_snapshot(api)
-    if latest["state"] != "running" or latest.get("operationId"):
-        emit("machine state changed during probing; skipping restart")
-        return 0
-    if latest["desiredState"] != "running":
-        emit("provider desiredState changed during probing; skipping restart")
-        return 0
-    result = restart_running(api, state)
-    if result.startswith("power-cycled"):
-        notify(f"All {FAILURES_REQUIRED} public liveness probes failed. {result}", "recovery")
-    else:
-        emit(result)
+    # A scheduled HTTP probe would wake an idle-suspended Free-plan box and
+    # can defeat InstaBox's idle policy. Keep routine monitoring provider-side:
+    # GET machine state is non-waking. App liveness is checked only after an
+    # explicit recovery start, never as a periodic keepalive.
+    state["last_provider_running_at"] = int(time.time())
+    save_state(state)
+    emit("provider reports machine running; no synthetic liveness request or lifecycle action issued")
     return 0
 
 
