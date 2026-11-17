@@ -290,7 +290,8 @@ jobs:
         run: |
           grep -q 'REPLACE_WITH_LONG_RANDOM_POSTGRES_PASSWORD' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_MINIO_PASSWORD' deploy/self-hosted/.env.example
-          grep -q 'REPLACE_WITH_SERVER_ONLY_APPWRITE_USERS_WRITE_KEY' deploy/self-hosted/.env.example
+          grep -q 'TESTAGRAM_AUTH_JWT_SECRET=REPLACE_WITH_AT_LEAST_32_RANDOM_BYTES' deploy/self-hosted/.env.example
+          grep -q 'ADMIN_SESSION_KEY=REPLACE_WITH_64_HEX_CHAR_RANDOM_KEY' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_VPS_INTERNAL_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_NODE_BOOTSTRAP_TOKEN' deploy/self-hosted/.env.example
           grep -q 'REPLACE_WITH_LONG_RANDOM_GRAFANA_PASSWORD' deploy/self-hosted/.env.example
