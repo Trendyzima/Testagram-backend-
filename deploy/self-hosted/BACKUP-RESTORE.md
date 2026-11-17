@@ -169,14 +169,17 @@ task, and the machine can return to its normal 30-minute idle-pause behavior
 after it completes.
 
 The current helper deliberately fails closed if `DATA_CENTRE_MEDIA_ENABLED`,
-`MEDIA_REPLICATION_ENABLED`, or `FRESH_MEDIA_ENABLED` is enabled, or if
-`MEDIA_S3_ENDPOINT` points to an external primary provider in the production
-`.env`. In that configuration, external B2/R2 object storage may
-contain canonical or replicated bytes that are not in MinIO. Do not disable
-that guard or declare backups complete until a separate encrypted mirror for
-every active external bucket has been added and restore-tested. With the
-current local MinIO configuration, the backup includes private media, public
-media, identity-evidence objects, and the metadata sidecar bucket. The free plan has a fixed 20 GiB machine disk and includes
+`MEDIA_REPLICATION_ENABLED`, or `FRESH_MEDIA_ENABLED` is enabled; if
+`MEDIA_S3_ENDPOINT`, legacy `R2_S3_ENDPOINT`, or `MINIO_PUBLIC_ENDPOINT`
+overrides the bundled MinIO origin; or if the separate Data Centre client is
+configured through `DATA_CENTRE_MEDIA_API_URL` or
+`FRESH_DATA_CENTRE_INTERNAL_TOKEN`. In those configurations, canonical or
+previously uploaded media may live outside the four local MinIO buckets. Do
+not disable those guards or declare backups complete until every active
+external media store has its own encrypted backup and restore-tested path.
+With the supported local-MinIO configuration, the backup includes private
+media, public media, identity-evidence objects, and the metadata sidecar
+bucket. The free plan has a fixed 20 GiB machine disk and includes
 100 GiB of egress per month; monitor the first backup and storage-provider
 usage, especially if media grows. InstaBox's free plan also has a 200 GiB
 stored-data cap and five snapshots. This workflow does not create machine
