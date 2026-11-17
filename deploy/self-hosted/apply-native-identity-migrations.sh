@@ -75,6 +75,30 @@ schema_ready() {
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_auth'\''
+            AND table_name='\''sensitive_action_approvals'\''
+            AND column_name='\''approver_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_auth'\''
+            AND table_name='\''admin_security_audit'\''
+            AND column_name='\''actor_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_approval_tokens'\''
+            AND column_name='\''first_approver_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_approval_tokens'\''
+            AND column_name='\''second_approver_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_auth'\''
             AND table_name='\''identities'\''
             AND column_name='\''password_reset_required'\''
         )
