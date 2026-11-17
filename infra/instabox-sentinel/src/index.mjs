@@ -199,38 +199,26 @@ export class EventLedger {
     }
     if (!event?.deliveryId || !event?.event) return json({ error: "invalid internal event" }, 400);
 
+    // Persist before acknowledging InstaBox. The alarm performs provider I/O
+    // asynchronously, so a transient Durable Object failure returns non-2xx
+    // and lets InstaBox retry instead of losing an already-acknowledged event.
     const result = await this.state.blockConcurrencyWhile(async () => {
       const key = `event:${event.deliveryId}`;
       const record = await this.state.storage.get(key);
       if (record?.status === "complete" || record?.status === "failed") {
         return { duplicate: true, status: record.status, result: record.result };
       }
-
-      const pending = { status: "pending", deliveryId: event.deliveryId, event: event.event, attempts: record?.attempts || 0, updatedAt: Date.now() };
-      await this.state.storage.put(key, pending);
-      // Arm the retry before the external request so an isolate crash cannot strand a pending event.
-      await this.state.storage.setAlarm(Date.now() + 30_000);
-      try {
-        const outcome = await reconcileStoppedEvent(this.env, event.event, event.deliveryId);
+      if (!record) {
         await this.state.storage.put(key, {
-          status: "complete", deliveryId: event.deliveryId, result: outcome,
-          updatedAt: Date.now(), expiresAt: Date.now() + EVENT_TTL_MS,
+          status: "pending",
+          deliveryId: event.deliveryId,
+          event: event.event,
+          attempts: 0,
+          updatedAt: Date.now(),
         });
-        return { duplicate: false, result: outcome };
-      } catch (error) {
-        const attempts = pending.attempts + 1;
-        const exhausted = attempts >= MAX_EVENT_ATTEMPTS;
-        const message = error instanceof Error ? error.message : "unknown error";
-        await this.state.storage.put(key, { ...pending, attempts, status: exhausted ? "failed" : "pending", lastError: message });
-        if (exhausted) {
-          console.error("Testagram Sentinel stopped retrying an event after the retry limit", { eventId: event.deliveryId, attempts, error: message });
-        } else {
-          const delay = Math.min(30 * 60_000, 30_000 * (2 ** (attempts - 1)));
-          await this.state.storage.setAlarm(Date.now() + delay);
-          console.warn("Testagram Sentinel scheduled a provider retry", { eventId: event.deliveryId, attempts, error: message });
-        }
-        return { duplicate: false, retryScheduled: !exhausted, failed: exhausted };
       }
+      await this.state.storage.setAlarm(Date.now() + 1_000);
+      return { duplicate: Boolean(record), status: "pending", queued: true };
     });
     return json(result, 202);
   }
@@ -272,7 +260,7 @@ export class EventLedger {
 }
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
       return json({ service: "testagram-instabox-sentinel", status: "ok" });
@@ -291,13 +279,23 @@ export default {
 
     const machineId = String(verified.event.data.sandbox.id);
     const ledger = env.EVENT_LEDGER.get(env.EVENT_LEDGER.idFromName(machineId));
-    ctx.waitUntil(ledger.fetch("https://ledger/process", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deliveryId: verified.deliveryId, event: verified.event }),
-    }).catch(() => {
-      // The durable object's alarm retries pending events; never log credentials or payloads.
-    }));
-    return json({ accepted: true, action: "queued" }, 202);
+    try {
+      const persisted = await ledger.fetch("https://ledger/process", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deliveryId: verified.deliveryId, event: verified.event }),
+      });
+      if (!persisted.ok) {
+        console.error("Testagram Sentinel could not persist a verified delivery", { eventId: verified.deliveryId, status: persisted.status });
+        return json({ error: "recovery event could not be persisted" }, 503);
+      }
+      return json({ accepted: true, action: "queued" }, 202);
+    } catch (error) {
+      console.error("Testagram Sentinel Durable Object persistence failed", {
+        eventId: verified.deliveryId,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+      return json({ error: "recovery event could not be persisted" }, 503);
+    }
   },
 };
