@@ -30,7 +30,7 @@ export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-${HOME}/.cache/restic-testagram}"
 restore_parent="${RESTORE_STAGE_DIR:-${TMPDIR:-/tmp}}"
 mkdir -p "$restore_parent"
 [[ -d "$restore_parent" && -w "$restore_parent" ]] || die "RESTORE_STAGE_DIR must be a writable directory"
-restore_size_json="$(restic stats latest --tag testagram --json)"
+restore_size_json="$(restic stats --host testagram-self-hosted latest --tag testagram --json)"
 restore_bytes="$(jq -er '.total_size | select(type == "number" and . >= 0)' <<< "$restore_size_json")"
 available_restore_bytes="$(df -PB1 "$restore_parent" | awk 'NR == 2 { print $4 }')"
 [[ "$available_restore_bytes" =~ ^[0-9]+$ ]] || die "could not determine free restore staging space"
@@ -51,7 +51,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 printf 'Restoring the latest tagged backup to private temporary storage...\n'
-restic restore latest --tag testagram --target "$restore_dir"
+restic restore --host testagram-self-hosted latest --tag testagram --target "$restore_dir"
 dump_path="$(find "$restore_dir" -type f -name postgres.dump -print -quit)"
 [[ -n "$dump_path" && -s "$dump_path" ]] || die "snapshot does not contain a non-empty PostgreSQL dump"
 dump_bytes="$(stat -c '%s' "$dump_path")"
