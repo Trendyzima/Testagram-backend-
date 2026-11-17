@@ -19,8 +19,8 @@ have both been verified.
   `chmod 600 /path/to/restic-password`. Keep a second copy of the password in
   a separate secure password manager; losing it makes the repository
   unrecoverable.
-- Ensure the machine has enough temporary disk space for a PostgreSQL dump and
-  a full working copy of all four MinIO buckets. The script uses a mode-0700
+- Ensure the machine has enough temporary disk space for a PostgreSQL dump,
+  all four MinIO buckets, and any detected Data Centre video/node-storage files. The script uses a mode-0700
   temporary directory and deletes it on exit, but the staged files are plaintext
   while the backup runs. Use an encrypted host disk and a protected temporary
   filesystem.
