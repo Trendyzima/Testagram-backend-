@@ -1,6 +1,11 @@
 name: Instabox VPS Watchdog
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/instabox-vps-watchdog.yml"
+      - "scripts/instabox_watchdog.py"
+      - "tests/test_instabox_watchdog.py"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -47,14 +52,13 @@ jobs:
       - name: Run external Instabox watchdog
         env:
           INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
-          INSTABOX_READONLY_API_KEY: ${{ secrets.INSTABOX_READONLY_API_KEY }}
           WATCHDOG_AUTO_RECOVERY_ENABLED: ${{ vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'false' }}
           INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
           INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
           TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://api.testagram.site/healthz' }}
           WATCHDOG_ALERT_WEBHOOK: ${{ secrets.WATCHDOG_ALERT_WEBHOOK }}
           WATCHDOG_STATE_FILE: .watchdog-state.json
-          # Scheduled recovery stays disabled until a restricted key is installed and explicitly enabled.
+          # Reuse the existing InstaBox API secret; lifecycle actions remain gated by the recovery switch.
           WATCHDOG_DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true' }}
           WATCHDOG_PROBE_INTERVAL_SECONDS: "15"
           WATCHDOG_OPERATION_TIMEOUT_SECONDS: "300"
@@ -66,20 +70,11 @@ jobs:
             true|false) ;;
             *) echo "::error::WATCHDOG_AUTO_RECOVERY_ENABLED must be true or false."; exit 1 ;;
           esac
-          if [[ "$WATCHDOG_AUTO_RECOVERY_ENABLED" == "true" ]]; then
-            if [[ -z "${INSTABOX_WATCHDOG_API_KEY:-}" ]]; then
-              echo "::error::Automatic recovery requires the dedicated INSTABOX_WATCHDOG_API_KEY. The read-only key will not be substituted."
-              exit 1
-            fi
-            export INSTABOX_WATCHDOG_API_KEY_HEADER=Authorization
-          else
-            if [[ -z "${INSTABOX_READONLY_API_KEY:-}" ]]; then
-              echo "::error::Read-only watchdog inspection requires INSTABOX_READONLY_API_KEY."
-              exit 1
-            fi
-            export INSTABOX_WATCHDOG_API_KEY="$INSTABOX_READONLY_API_KEY"
-            export INSTABOX_WATCHDOG_API_KEY_HEADER=X-API-Key
+          if [[ -z "${INSTABOX_WATCHDOG_API_KEY:-}" ]]; then
+            echo "::error::The existing INSTABOX_WATCHDOG_API_KEY GitHub secret is required."
+            exit 1
           fi
+          export INSTABOX_WATCHDOG_API_KEY_HEADER=Authorization
           python3 scripts/instabox_watchdog.py
       - name: Ensure watchdog state file exists
         if: always()
