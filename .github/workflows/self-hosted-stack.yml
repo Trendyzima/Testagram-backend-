@@ -146,6 +146,19 @@ jobs:
               raise SystemExit("Go CDN must depend on the Backend API service.")
           if "edge" not in cdn.get("networks", []):
               raise SystemExit("Go CDN must share only the private edge bridge with Caddy and Backend.")
+          web = services.get("flutter-web", {})
+          web_image = str(web.get("image", ""))
+          web_expose = [str(port) for port in web.get("expose", [])]
+          web_env_image = re.search(r"(?m)^TESTAGRAM_WEB_IMAGE=(\\S+)$", env_example)
+          if "TESTAGRAM_WEB_IMAGE" not in web_image or not web_env_image or web_env_image.group(1) != "ghcr.io/trendyzima/testagram-web:main":
+              raise SystemExit("Self-hosted Flutter web must use the reviewed GHCR release tag, resolved to a digest by the deployment script.")
+          if "8080" not in web_expose or "ports" in web or "edge" not in web.get("networks", []):
+              raise SystemExit("Flutter web must expose only its private 8080 listener on the Caddy edge network.")
+          if "flutter-web" not in services.get("caddy", {}).get("depends_on", []):
+              raise SystemExit("Caddy must wait for the Flutter web origin.")
+          caddyfile = pathlib.Path("Caddyfile").read_text(encoding="utf-8")
+          if "www.testagram.site {" not in caddyfile or "@www_frontend header X-Forwarded-Host www.testagram.site" not in caddyfile or "reverse_proxy flutter-web:8080" not in caddyfile:
+              raise SystemExit("Caddy must serve www.testagram.site through the private Flutter web origin.")
           health = cdn.get("healthcheck", {}).get("test", [])
           if "/app/healthcheck" not in health:
               raise SystemExit("Go CDN healthcheck must use the scratch-compatible static probe.")
@@ -174,6 +187,8 @@ jobs:
           subprocess.run(["bash", "-n", str(deploy_script_path)], check=True)
           if "ensure_random_secret CDN_PURGE_TOKEN" not in deploy_source or "CDN_PURGE_URL" not in deploy_source:
               raise SystemExit("Instabox must provision and wire a distinct CDN purge credential.")
+          if 'docker pull --platform linux/amd64 "$web_image_ref"' not in deploy_source or "TESTAGRAM_WEB_IMAGE" not in deploy_source or "docker image inspect --format=" not in deploy_source:
+              raise SystemExit("Instabox must pull the Flutter web release and pin its resolved immutable registry digest.")
           if "ONSPACE_AI_API_KEY is required" in deploy_source:
               raise SystemExit("Missing moderation credentials must not block Backend/CDN health recovery deployment.")
           post_source = pathlib.Path("../../cmd/api/social_post_create.go").read_text(encoding="utf-8")
@@ -230,6 +245,9 @@ jobs:
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           grep -q '@internal_observability path /metrics /readyz' Caddyfile
           grep -q 'respond @internal_observability 404' Caddyfile
+          grep -q 'www.testagram.site {' Caddyfile
+          grep -q '@www_frontend header X-Forwarded-Host www.testagram.site' Caddyfile
+          grep -q 'reverse_proxy flutter-web:8080' Caddyfile
       - name: Smoke-test fresh PostgreSQL migrations
         working-directory: deploy/self-hosted
         run: |
