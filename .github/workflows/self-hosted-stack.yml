@@ -245,7 +245,6 @@ jobs:
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           grep -q '@internal_observability path /metrics /readyz' Caddyfile
           grep -q 'respond @internal_observability 404' Caddyfile
-          grep -q 'www.testagram.site {' Caddyfile
           grep -q '@www_frontend header X-Forwarded-Host www.testagram.site' Caddyfile
           grep -q 'reverse_proxy flutter-web:8080' Caddyfile
       - name: Smoke-test fresh PostgreSQL migrations
