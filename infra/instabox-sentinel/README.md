@@ -15,14 +15,15 @@ An external Cloudflare Worker that receives signed InstaBox lifecycle webhooks a
 
 ## Deploy
 
-The GitHub Actions workflow `.github/workflows/deploy-instabox-sentinel.yml` deploys this directory when changes land on `main`. Configure these GitHub Actions secrets first:
+The GitHub Actions workflow `.github/workflows/deploy-instabox-sentinel.yml` deploys this directory when changes land on `main`. Configure these GitHub Actions secrets:
 
-- `CLOUDFLARE_API_TOKEN`: scoped to Workers Scripts read/edit and the required account permissions.
-- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID.
-- `INSTABOX_WATCHDOG_API_KEY`: the existing Testagram secret already used by the five-minute watchdog. The deploy workflow transfers its value directly into the Worker as the encrypted `INSTABOX_API_KEY` secret; it is never printed or committed.
-- `INSTABOX_WEBHOOK_SECRET`: add this after creating the InstaBox webhook. The deployment workflow will transfer it into the Worker on the next deploy. Until then, the public webhook endpoint fails closed with HTTP 503.
+- `CLOUDFLARE_API_TOKEN`: your existing token, scoped to Workers Scripts read/edit and the required account permissions.
+- `INSTABOX_API_KEY`: reuse the existing Testagram InstaBox API key. The workflow transfers it directly into the Worker as the encrypted `INSTABOX_API_KEY` secret; it is never printed or committed. This key must permit machine read and start operations for the workspace containing `testagramdb`.
+- `INSTABOX_WEBHOOK_SECRET`: the one-time `whsec_...` signing secret issued by InstaBox when the webhook endpoint is created. This is a separate webhook-signature credential, not another InstaBox API key. Save it as a GitHub Actions secret and re-run the deploy workflow so it is uploaded to the Worker. The Worker fails closed until this secret is configured.
 
-The workflow uploads the existing `INSTABOX_WATCHDOG_API_KEY` as an encrypted Worker secret during deployment. Reuse that same restricted key; it must have `machines:read` and `machines:write` for the workspace containing `testagramdb`. Do not create a second provider key solely for this Worker. The webhook signing secret is separate: add the one-time `whsec_...` value as the GitHub Actions secret `INSTABOX_WEBHOOK_SECRET` after creating the endpoint, then re-run the deploy workflow so it is uploaded as an encrypted Worker secret. Never paste either value into chat, source code, issues, or repository variables.
+The Cloudflare Account ID is a non-secret identifier and belongs in `wrangler.toml` as `account_id`; it does not need to be stored as a GitHub secret. Do not use the read-only or backup API keys for recovery: the Worker must be able to read the machine and request its start.
+
+Never paste credential values into chat, source code, issues, or repository variables.
 
 ## Register the InstaBox webhook
 
