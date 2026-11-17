@@ -74,8 +74,8 @@ testagram.site {
 
 # InstaBox exposes only high ports through its public-port gateway.
 # This dedicated plaintext listener is reached through InstaBox HTTPS and
-# Cloudflare; it keeps the apex redirect and ActivityPub routes reachable
-# without exposing Caddy's management or internal health listeners.
+# Cloudflare; it serves the www frontend and preserves apex ActivityPub routes
+# and redirects without exposing Caddy's management or internal health listeners.
 :8443 {
   encode zstd gzip
   header {
@@ -86,6 +86,12 @@ testagram.site {
   }
   @edge_health path /_testagram/edge-health
   respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200
+  # The Worker strips untrusted forwarding headers and sets this value
+  # from the incoming public hostname. The web origin shares this edge listener.
+  @www_frontend header X-Forwarded-Host www.testagram.site
+  handle @www_frontend {
+    reverse_proxy flutter-web:8080
+  }
   @activitypub path /.well-known/webfinger /users/* /objects/*
   handle @activitypub {
     reverse_proxy federation-api:8081 {
