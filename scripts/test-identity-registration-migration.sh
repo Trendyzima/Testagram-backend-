@@ -36,7 +36,6 @@ for migration in \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
   migrations/20261113_identity_registration_hardening.sql \
-  migrations/20261113_identity_idswyft_intake.sql \
   migrations/20261113_native_identity_verification.sql \
   migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
@@ -51,13 +50,13 @@ for migration in \
   migrations/20261117_native_staff_reviewer_grants.sql \
   migrations/20261118_native_admin_console.sql \
   migrations/20261119_native_identity_approval_ledger.sql \
-  migrations/20261120_native_verification_decider.sql; do
+  migrations/20261120_native_verification_decider.sql \
+  migrations/20261121_native_identity_intake_optional_fingerprint.sql; do
   psql_ci < "$migration"
 done
 
 # Re-apply the new migration to prove idempotent DDL behavior.
 psql_ci < migrations/20261113_identity_registration_hardening.sql
-psql_ci < migrations/20261113_identity_idswyft_intake.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261114_native_identity_evidence.sql
@@ -83,6 +82,7 @@ psql_ci < migrations/20261118_native_admin_console.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
+psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 
 psql_ci <<'SQL'
