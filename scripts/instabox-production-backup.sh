@@ -70,9 +70,10 @@ for file in scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh s
   if ! git diff --quiet -- "$file" || ! git diff --cached --quiet -- "$file"; then
     die "local edits to $file differ from the approved main-branch backup helper; review them before refreshing"
   fi
-  git show "FETCH_HEAD:$file" > "$BACKEND/$file.new"
-  chmod 700 "$BACKEND/$file.new"
-  mv "$BACKEND/$file.new" "$BACKEND/$file"
+  tmp_file="$BACKUP_TMP_ROOT/$(basename "$file").new"
+  git show "FETCH_HEAD:$file" > "$tmp_file"
+  chmod 700 "$tmp_file"
+  mv "$tmp_file" "$BACKEND/$file"
 done
 
 # Initialize only an empty/uninitialized repository. Existing repositories are
