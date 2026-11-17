@@ -52,28 +52,47 @@ trap cleanup EXIT INT TERM
 
 printf 'Restoring the latest tagged backup to private temporary storage...\n'
 restic restore --host testagram-self-hosted latest --tag testagram --target "$restore_dir"
-dump_path="$(find "$restore_dir" -type f -name postgres.dump -print -quit)"
-[[ -n "$dump_path" && -s "$dump_path" ]] || die "snapshot does not contain a non-empty PostgreSQL dump"
-dump_bytes="$(stat -c '%s' "$dump_path")"
+manifest_path="$(find "$restore_dir" -type f -name manifest.txt -print -quit)"
+[[ -n "$manifest_path" ]] || die "snapshot is missing its backup manifest"
+backup_root="$(dirname "$manifest_path")"
+database_names_path="$backup_root/postgres-databases.txt"
+[[ -s "$database_names_path" ]] || die "snapshot is missing its PostgreSQL database inventory"
+restore_db_user="$(awk -F= '$1 == "postgres_user" { sub(/^[^=]*=/, ""); print; exit }' "$manifest_path")"
+restore_primary_db="$(awk -F= '$1 == "postgres_primary_database" { sub(/^[^=]*=/, ""); print; exit }' "$manifest_path")"
+postgres_source_bytes="$(awk -F= '$1 == "postgres_source_bytes" { sub(/^[^=]*=/, ""); print; exit }' "$manifest_path")"
+[[ "$restore_db_user" =~ ^[A-Za-z0-9_]+$ && "$restore_primary_db" =~ ^[A-Za-z0-9_]+$ ]] || die "backup manifest has invalid PostgreSQL user/database names"
+[[ "$postgres_source_bytes" =~ ^[0-9]+$ ]] || die "backup manifest has no valid PostgreSQL source size"
+grep -Fxq "$restore_primary_db" "$database_names_path" || die "primary PostgreSQL database is absent from the backup inventory"
+
+database_count=0
+dump_bytes=0
+while IFS= read -r database_name; do
+  [[ "$database_name" =~ ^[A-Za-z0-9_]+$ ]] || die "backup contains an unsupported PostgreSQL database name"
+  dump_path="$backup_root/postgres-$database_name.dump"
+  [[ -s "$dump_path" && -s "$dump_path.list" ]] || die "snapshot is missing a validated dump for PostgreSQL database $database_name"
+  dump_bytes=$(( dump_bytes + $(stat -c '%s' "$dump_path") ))
+  database_count=$(( database_count + 1 ))
+done < "$database_names_path"
+(( database_count > 0 )) || die "snapshot contains no PostgreSQL databases"
+
 docker_root="$("${DOCKER[@]}" info --format '{{.DockerRootDir}}')"
 available_docker_bytes="$(df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
-required_docker_bytes=$(( dump_bytes * 120 / 100 + 1073741824 ))
+required_docker_bytes=$(( postgres_source_bytes * 120 / 100 + 1073741824 ))
 [[ "$available_docker_bytes" =~ ^[0-9]+$ ]] || die "could not determine free Docker storage"
-(( available_docker_bytes >= required_docker_bytes )) || die "insufficient Docker storage for an isolated PostgreSQL restore; refusing to create the container"
+(( available_docker_bytes >= required_docker_bytes )) || die "insufficient Docker storage for the full isolated PostgreSQL cluster restore; refusing to create the container"
 
 db_password="$(openssl rand -hex 24)"
 "${DOCKER[@]}" volume create "$volume_name" >/dev/null
 "${DOCKER[@]}" run --detach --name "$container_name" --network none \
-  --env POSTGRES_USER=testagram \
-  --env POSTGRES_PASSWORD="$db_password" \
-  --env POSTGRES_DB=testagram \
+  --env "POSTGRES_USER=$restore_db_user" \
+  --env "POSTGRES_PASSWORD=$db_password" \
+  --env "POSTGRES_DB=$restore_primary_db" \
   --volume "$volume_name:/var/lib/postgresql/data" \
-  --volume "$dump_path:/tmp/postgres.dump:ro" \
   postgres:17-alpine >/dev/null
 
 ready=0
 for _ in $(seq 1 60); do
-  if "${DOCKER[@]}" exec "$container_name" pg_isready -U testagram -d testagram >/dev/null 2>&1; then
+  if "${DOCKER[@]}" exec "$container_name" pg_isready -U "$restore_db_user" -d "$restore_primary_db" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -81,22 +100,28 @@ for _ in $(seq 1 60); do
 done
 [[ "$ready" == "1" ]] || die "isolated PostgreSQL did not become ready within 60 seconds"
 
-printf 'Restoring the database dump into isolated PostgreSQL...\n'
-"${DOCKER[@]}" exec "$container_name" pg_restore --exit-on-error --no-owner --no-acl \
-  --dbname="postgresql://testagram:${db_password}@127.0.0.1:5432/testagram?sslmode=disable" \
-  /tmp/postgres.dump
+printf 'Restoring %s PostgreSQL databases into isolated PostgreSQL...\n' "$database_count"
+while IFS= read -r database_name; do
+  dump_path="$backup_root/postgres-$database_name.dump"
+  if [[ "$database_name" != "$restore_primary_db" && "$database_name" != "postgres" ]]; then
+    "${DOCKER[@]}" exec "$container_name" createdb -U "$restore_db_user" "$database_name"
+  fi
+  "${DOCKER[@]}" exec -i "$container_name" pg_restore --exit-on-error --no-owner --no-acl \
+    --dbname="postgresql://${restore_db_user}:${db_password}@127.0.0.1:5432/${database_name}?sslmode=disable" < "$dump_path"
+  database_exists="$("${DOCKER[@]}" exec "$container_name" psql -U "$restore_db_user" -d postgres -Atqc \
+    "SELECT 1 FROM pg_database WHERE datname = '$database_name'")"
+  [[ "$database_exists" == "1" ]] || die "restored PostgreSQL database $database_name is missing"
+done < "$database_names_path"
 
-table_count="$("${DOCKER[@]}" exec "$container_name" psql -U testagram -d testagram -Atqc \
+table_count="$("${DOCKER[@]}" exec "$container_name" psql -U "$restore_db_user" -d "$restore_primary_db" -Atqc \
   "select count(*) from pg_tables where schemaname not in ('pg_catalog','information_schema')")"
-[[ "$table_count" =~ ^[0-9]+$ && "$table_count" -gt 0 ]] || die "restored database contains no application tables"
+[[ "$table_count" =~ ^[0-9]+$ && "$table_count" -gt 0 ]] || die "restored primary database contains no application tables"
 
 for bucket_dir in minio-private minio-public minio-identity-evidence minio-metadata; do
   restored_bucket="$(find "$restore_dir" -type d -name "$bucket_dir" -print -quit)"
   [[ -n "$restored_bucket" ]] || die "snapshot is missing the $bucket_dir backup directory"
 done
 
-manifest_path="$(find "$restore_dir" -type f -name manifest.txt -print -quit)"
-[[ -n "$manifest_path" ]] || die "snapshot is missing its backup manifest"
 if grep -qx 'data_centre_video_media_included=true' "$manifest_path"; then
   restored_video="$(find "$restore_dir" -type d -name data-centre-video-media -print -quit)"
   [[ -n "$restored_video" ]] || die "manifest requires Data Centre video media but the snapshot is missing it"
@@ -112,5 +137,5 @@ identity_count="$(find "$restore_dir" -type f -path '*/minio-identity-evidence/*
 metadata_count="$(find "$restore_dir" -type f -path '*/minio-metadata/*' | wc -l | tr -d ' ')"
 video_count="$(find "$restore_dir" -type f -path '*/data-centre-video-media/*' | wc -l | tr -d ' ')"
 node_count="$(find "$restore_dir" -type f -path '*/data-centre-node-storage/*' | wc -l | tr -d ' ')"
-printf 'Restore drill passed: application_tables=%s private_media_files=%s public_media_files=%s identity_evidence_files=%s metadata_files=%s data_centre_video_files=%s node_storage_files=%s\n' "$table_count" "$private_count" "$public_count" "$identity_count" "$metadata_count" "$video_count" "$node_count"
+printf 'Restore drill passed: PostgreSQL_databases=%s primary_application_tables=%s private_media_files=%s public_media_files=%s identity_evidence_files=%s metadata_files=%s data_centre_video_files=%s node_storage_files=%s (validated_dump_bytes=%s)\n' "$database_count" "$table_count" "$private_count" "$public_count" "$identity_count" "$metadata_count" "$video_count" "$node_count" "$dump_bytes"
 printf 'This validates a database restore in isolation; it does not switch traffic or restore a live MinIO service.\n'
