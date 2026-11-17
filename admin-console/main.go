@@ -689,6 +689,7 @@ func (a *app) identityProxy(w http.ResponseWriter, r *http.Request, backendPath 
 	}
 	var err error
 	var body []byte
+	var err error
 	if r.Method == http.MethodPost {
 		body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 		if err != nil {
