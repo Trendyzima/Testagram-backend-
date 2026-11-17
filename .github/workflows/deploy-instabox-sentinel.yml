@@ -56,7 +56,7 @@ jobs:
           npx --yes wrangler@4 deploy --config wrangler.toml --secrets-file .worker-secrets.json
 
       - name: Register or rotate the Testagram InstaBox webhook and verify delivery
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'ops(sentinel): register webhook')
+        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'ops(sentinel)')
         working-directory: infra/instabox-sentinel
         env:
           INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
