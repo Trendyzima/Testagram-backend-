@@ -566,6 +566,7 @@ jobs:
       - name: Validate Compose configuration
         env:
           POSTGRES_PASSWORD: ci-only-password-not-for-production
+          TESTAGRAM_AUTH_JWT_SECRET: ci-testagram-native-auth-secret-at-least-32-bytes
           MINIO_ROOT_USER: ci-only-minio-user
           MINIO_ROOT_PASSWORD: ci-only-minio-password-not-for-production
           ACME_EMAIL: ci-only@example.invalid
