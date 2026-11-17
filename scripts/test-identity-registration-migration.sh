@@ -48,7 +48,7 @@ for migration in \
   migrations/20261116_native_approved_identity_provisioning.sql \
   migrations/20261116_native_auth_runtime_grants.sql \
   migrations/20261117_native_staff_reviewer_grants.sql \
-  migrations/20261118_native_admin_console.sql \\
+  migrations/20261118_native_admin_console.sql \
   migrations/20261119_native_identity_approval_ledger.sql; do
   psql_ci < "$migration"
 done
