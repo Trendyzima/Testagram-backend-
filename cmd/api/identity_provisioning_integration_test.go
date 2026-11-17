@@ -278,7 +278,7 @@ func canonicalUserIDFromResult(t *testing.T, result map[string]any) string {
 }
 
 
-func TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval(t *testing.T) {
+func TestExternalIdentityTokenCannotCreateOrAuthorizeTestagramAccount(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is required for PostgreSQL identity authorization integration")
@@ -294,49 +294,30 @@ func TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval(t *testing.T)
 		t.Fatal(err)
 	}
 
-	appwriteID := "unapproved-" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
-	email := appwriteID + "@example.test"
-	jwt := "unapproved-appwrite-session-jwt"
-	project := "identity-gate-ci-project"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account" ||
-			r.Header.Get("X-Appwrite-Project") != project ||
-			r.Header.Get("X-Appwrite-JWT") != jwt {
-			http.Error(w, "invalid test Appwrite request", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"$id": appwriteID, "email": email, "emailVerification": true, "status": true,
-		})
-	}))
-	defer server.Close()
-	t.Setenv("APPWRITE_ENDPOINT", server.URL+"/v1")
-	t.Setenv("APPWRITE_PROJECT_ID", project)
-
-	svc := &service{db: db, upstream: server.Client()}
+	externalID := "external-" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	email := externalID + "@example.test"
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("a", 64))
+	svc := &service{db: db}
 	canonicalID, status, err := svc.authenticatedAppwriteUser(
-		httptest.NewRequest(http.MethodGet, "/api/me/profile", nil), jwt,
+		httptest.NewRequest(http.MethodGet, "/api/me/profile", nil), "external-provider-session-token",
 	)
-	if status != http.StatusForbidden || err == nil ||
-		!strings.Contains(err.Error(), "two-person account approval") {
-		t.Fatalf("unapproved verified Appwrite account canonical=%q status=%d err=%v; want explicit approval denial",
-			canonicalID, status, err)
+	if status != http.StatusUnauthorized || err == nil {
+		t.Fatalf("external provider token canonical=%q status=%d err=%v; native Testagram auth must reject it", canonicalID, status, err)
 	}
 
 	var mappings, canonicalAccounts int
 	if err := db.QueryRow(ctx, `
 		SELECT count(*) FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1
-	`, appwriteID).Scan(&mappings); err != nil {
+	`, externalID).Scan(&mappings); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(ctx, `
 		SELECT count(*) FROM testagram_local.accounts WHERE username LIKE $1
-	`, appwriteDefaultUsername(email, appwriteID)).Scan(&canonicalAccounts); err != nil {
+	`, appwriteDefaultUsername(email, externalID)).Scan(&canonicalAccounts); err != nil {
 		t.Fatal(err)
 	}
 	if mappings != 0 || canonicalAccounts != 0 {
-		t.Fatalf("unapproved login created account state: mappings=%d canonical_accounts=%d", mappings, canonicalAccounts)
+		t.Fatalf("external provider attempt created Testagram account state: mappings=%d canonical_accounts=%d", mappings, canonicalAccounts)
 	}
 }
 
