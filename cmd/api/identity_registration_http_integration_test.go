@@ -70,7 +70,7 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		ApplicationToken string `json:"application_token"`
 		SessionID        string `json:"verification_session_id"`
 		SessionToken     string `json:"verification_session_token"`
-		Status string `json:"status"`
+		Status           string `json:"status"`
 	}
 	if err := json.Unmarshal(first.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
@@ -85,10 +85,10 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		t.Fatalf("application recovery status=%d body=%s", replay.Code, replay.Body.String())
 	}
 	var recovered struct {
-		ApplicationID string `json:"application_id"`
+		ApplicationID    string `json:"application_id"`
 		ApplicationToken string `json:"application_token"`
-		SessionID string `json:"verification_session_id"`
-		SessionToken string `json:"verification_session_token"`
+		SessionID        string `json:"verification_session_id"`
+		SessionToken     string `json:"verification_session_token"`
 	}
 	if err := json.Unmarshal(replay.Body.Bytes(), &recovered); err != nil {
 		t.Fatal(err)
@@ -133,8 +133,8 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	}
 	for _, check := range checks {
 		if err := db.QueryRow(ctx, check.query, check.args...).Scan(check.target); err != nil {
-		t.Fatal(err)
-	}
+			t.Fatal(err)
+		}
 	}
 	if applicationCount != 1 || sessionCount != 1 || consentCount != 3 || nativeIdentityCount != 0 || provisioningCount != 0 {
 		t.Fatalf("intake invariants applications=%d sessions=%d consents=%d native_identities=%d provisioning=%d",
@@ -151,7 +151,9 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		INSERT INTO testagram_identity.verification_evidence
 		  (id,session_id,object_key,content_type,size_bytes,sha256,status,uploaded_at,verified_at)
 		VALUES($1::uuid,$2::uuid,$3,'application/pdf',9,$4,'verified',now(),now())
-	`, evidenceUUID, created.SessionID, "identity/"+created.SessionID+"/evidence.pdf", digest); err != nil { t.Fatal(err) }
+	`, evidenceUUID, created.SessionID, "identity/"+created.SessionID+"/evidence.pdf", digest); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_identity.verification_sessions
 		SET status='manual_review',evidence_reference=$2,evidence_fingerprint_sha256=$3,
@@ -170,7 +172,7 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	}
 	submitBody, _ := json.Marshal(map[string]string{"evidence_id": evidenceUUID})
 	submitReplay := call(http.MethodPost, "/api/identity/sessions/"+created.SessionID+"/evidence/submit", submitBody,
-		map[string]string{"Content-Type":"application/json", "X-Verification-Session-Token":created.SessionToken})
+		map[string]string{"Content-Type": "application/json", "X-Verification-Session-Token": created.SessionToken})
 	if submitReplay.Code != http.StatusAccepted || !strings.Contains(submitReplay.Body.String(), `"idempotent_replay":true`) {
 		t.Fatalf("evidence submission replay status=%d body=%s", submitReplay.Code, submitReplay.Body.String())
 	}
