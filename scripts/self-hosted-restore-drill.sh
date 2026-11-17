@@ -40,7 +40,7 @@ printf 'Restore estimate: %s bytes; staging free: %s bytes.\n' "$restore_bytes" 
 
 restore_dir="$(mktemp -d "${restore_parent%/}/testagram-restore-drill.XXXXXXXX")"
 chmod 700 "$restore_dir"
-suffix="$"
+suffix="${BASHPID}"
 container_name="testagram-restore-drill-$suffix"
 volume_name="testagram-restore-drill-$suffix"
 cleanup() {
