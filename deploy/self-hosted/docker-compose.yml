@@ -280,6 +280,21 @@ services:
     restart: unless-stopped
     networks: [edge, monitoring, platform]
 
+  flutter-web:
+    image: ${TESTAGRAM_WEB_IMAGE:?Set TESTAGRAM_WEB_IMAGE to the published immutable Flutter web image}
+    restart: unless-stopped
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    networks: [edge]
+
   media-cache:
     image: ${TESTAGRAM_CDN_IMAGE:?Set TESTAGRAM_CDN_IMAGE to the reviewed Go CDN image digest}
     environment:
@@ -333,7 +348,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [api, media-cache, control-plane, admin-console]
+    depends_on: [api, media-cache, control-plane, admin-console, flutter-web]
     restart: unless-stopped
     networks: [edge, control-plane, platform]
 
