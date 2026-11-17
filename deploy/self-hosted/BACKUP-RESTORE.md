@@ -1,6 +1,6 @@
 # Testagram self-hosted backup and restore
 
-This runbook backs up PostgreSQL metadata, all four MinIO buckets
+This runbook backs up every connectable non-template PostgreSQL database, all four MinIO buckets
 (private media, public media, identity evidence, and metadata), plus detected
 Data Centre video and node-storage directories, into an encrypted [restic](https://restic.net/) repository. Valkey is intentionally not
 backed up: its cache and queue data are operational state and must be rebuilt or
