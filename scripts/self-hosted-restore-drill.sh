@@ -75,6 +75,11 @@ table_count="$("${DOCKER[@]}" exec "$container_name" psql -U testagram -d testag
   "select count(*) from pg_tables where schemaname not in ('pg_catalog','information_schema')")"
 [[ "$table_count" =~ ^[0-9]+$ && "$table_count" -gt 0 ]] || die "restored database contains no application tables"
 
+for bucket_dir in minio-private minio-public minio-identity-evidence minio-metadata; do
+  restored_bucket="$(find "$restore_dir" -type d -name "$bucket_dir" -print -quit)"
+  [[ -n "$restored_bucket" ]] || die "snapshot is missing the $bucket_dir backup directory"
+done
+
 private_count="$(find "$restore_dir" -type f -path '*/minio-private/*' | wc -l | tr -d ' ')"
 public_count="$(find "$restore_dir" -type f -path '*/minio-public/*' | wc -l | tr -d ' ')"
 identity_count="$(find "$restore_dir" -type f -path '*/minio-identity-evidence/*' | wc -l | tr -d ' ')"
