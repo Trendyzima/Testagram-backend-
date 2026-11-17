@@ -24,6 +24,7 @@ PROBE_INTERVAL = int(os.getenv("WATCHDOG_PROBE_INTERVAL_SECONDS", "15"))
 PROBE_TIMEOUT = int(os.getenv("WATCHDOG_PROBE_TIMEOUT_SECONDS", "10"))
 OPERATION_TIMEOUT = int(os.getenv("WATCHDOG_OPERATION_TIMEOUT_SECONDS", "300"))
 RECOVERY_HEALTH_TIMEOUT = int(os.getenv("WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS", "300"))
+RESTART_COOLDOWN = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "900"))
 AUTO_RECOVERY_RAW = os.getenv("WATCHDOG_AUTO_RECOVERY_ENABLED", "false").lower()
 DRY_RUN = os.getenv("WATCHDOG_DRY_RUN", "false").lower() == "true"
 
@@ -272,6 +273,16 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
     # in GitHub Actions. Direct/manual invocations remain read-only by default.
     if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
         return "DRY RUN: recovery is not explicitly enabled; would start stopped machine"
+    last_action_at = state.get("last_action_at", 0)
+    try:
+        last_action_at = int(last_action_at)
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not starting machine"
     state.update(last_action_at=now, last_action="start")
     save_state(state)
     lifecycle(api, "start")
@@ -288,8 +299,9 @@ def main() -> int:
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
     if (PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
-            or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1):
-        raise WatchdogError("Unsafe watchdog thresholds: require positive probe intervals and operation/recovery timeouts")
+            or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1
+            or RESTART_COOLDOWN < 0):
+        raise WatchdogError("Unsafe watchdog thresholds: require positive probe/operation/recovery timeouts and a non-negative restart cooldown")
     if AUTO_RECOVERY_RAW not in ("true", "false"):
         raise WatchdogError("WATCHDOG_AUTO_RECOVERY_ENABLED must be exactly true or false")
     if not API_KEY:
