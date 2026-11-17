@@ -122,7 +122,7 @@ class WatchdogTests(unittest.TestCase):
         with self.assertRaisesRegex(watchdog.WatchdogError, "desiredState"):
             watchdog.machine_snapshot(api)
 
-    def test_existing_watchdog_secret_uses_authorization_for_provider_requests(self):
+    def test_read_only_api_key_uses_x_api_key_header(self):
         class Response:
             def __enter__(self):
                 return self
@@ -131,13 +131,21 @@ class WatchdogTests(unittest.TestCase):
             def read(self):
                 return b'{}'
 
-        with patch.object(watchdog.urllib.request, "urlopen", return_value=Response()) as urlopen:
-            watchdog.API(base="https://api.instabox.sh", key="existing-secret").request(
+        with patch.object(watchdog, "API_KEY_HEADER", "X-API-Key"), \
+             patch.object(watchdog.urllib.request, "urlopen", return_value=Response()) as urlopen:
+            watchdog.API(base="https://api.instabox.sh", key="read-only-key").request(
                 "GET", "/v1/machines"
             )
         request = urlopen.call_args.args[0]
-        self.assertEqual(request.get_header("Authorization"), "Bearer existing-secret")
-        self.assertIsNone(request.get_header("X-api-key"))
+        self.assertEqual(request.get_header("X-api-key"), "read-only-key")
+        self.assertIsNone(request.get_header("Authorization"))
+
+    def test_read_only_api_key_cannot_issue_lifecycle_actions(self):
+        with patch.object(watchdog, "API_KEY_HEADER", "X-API-Key"):
+            with self.assertRaisesRegex(watchdog.WatchdogError, "cannot issue lifecycle actions"):
+                watchdog.API(base="https://api.instabox.sh", key="read-only-key").request(
+                    "POST", "/v1/machines/machine-123/start", {}
+                )
 
     def test_lifecycle_uses_idempotency_key_and_polls_operation(self):
         api = FakeAPI()
@@ -190,11 +198,13 @@ class WatchdogTests(unittest.TestCase):
             "desiredState": "running", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
-             patch.object(watchdog, "load_state", return_value={"last_action_at": __import__("time").time()}), \
+             patch.object(watchdog, "load_state", return_value={}), \
              patch.object(watchdog, "save_state"), \
              patch.object(watchdog, "notify") as notify, \
              patch.object(watchdog, "wait_for_service"), \
              patch.object(watchdog, "API_KEY", "test-key"), \
+             patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"), \
+             patch.object(watchdog, "DRY_RUN", False), \
              patch.object(watchdog, "MACHINE_ID", "machine-123"), \
              patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"):
 
@@ -202,7 +212,34 @@ class WatchdogTests(unittest.TestCase):
         self.assertTrue(any(call[0] == "POST" and call[1].endswith("/start") for call in api.calls))
         notify.assert_called_once()
 
-    def test_dry_run_does_not_start_unexpectedly_stopped_machine(self):
+
+
+    def test_recent_recovery_attempt_obeys_local_cooldown(self):
+        api = FakeAPI({
+            "id": "machine-123", "name": "testagramdb", "state": "stopped",
+            "desiredState": "running", "operationId": None
+        })
+        with (
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
+            patch.object(watchdog, "DRY_RUN", False),
+            patch.object(watchdog, "RESTART_COOLDOWN", 900),
+            patch.object(watchdog.time, "time", return_value=10_000),
+            patch.object(watchdog, "save_state"),
+        ):
+            result = watchdog.recover_stopped(api, {"last_action_at": 9_500})
+        self.assertIn("local recovery cooldown active", result)
+        self.assertFalse(any(call[0] == "POST" for call in api.calls))
+
+    def test_invalid_future_state_timestamp_fails_closed(self):
+        with (
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
+            patch.object(watchdog, "DRY_RUN", False),
+            patch.object(watchdog.time, "time", return_value=10_000),
+        ):
+            with self.assertRaisesRegex(watchdog.WatchdogError, "timestamp is in the future"):
+                watchdog.recover_stopped(FakeAPI(), {"last_action_at": 20_000})
+
+    def test_stopped_machine_stays_read_only_without_explicit_recovery_approval(self):
         api = FakeAPI({
             "id": "machine-123", "name": "testagramdb", "state": "stopped",
             "desiredState": "running", "operationId": None
@@ -211,14 +248,28 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "API", return_value=api),
             patch.object(watchdog, "load_state", return_value={}),
             patch.object(watchdog, "save_state"),
-            patch.object(watchdog, "DRY_RUN", True),
+            patch.object(watchdog, "notify") as notify,
             patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "false"),
+            patch.object(watchdog, "DRY_RUN", False),
             patch.object(watchdog, "MACHINE_ID", "machine-123"),
             patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
         ):
             self.assertEqual(watchdog.main(), 0)
-        self.assertEqual(len(api.calls), 1)
-        self.assertFalse(any(call[0] == "POST" for call in api.calls))
+        self.assertEqual([call[0] for call in api.calls], ["GET"])
+        notify.assert_not_called()
+
+    def test_invalid_recovery_switch_fails_closed(self):
+        with (
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "yes"),
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
+        ):
+            with self.assertRaisesRegex(
+                watchdog.WatchdogError,
+                "must be exactly true or false",
+            ):
+                watchdog.main()
 
     def test_running_machine_is_monitored_without_synthetic_http_probes(self):
         api = FakeAPI()
@@ -254,7 +305,28 @@ class WatchdogTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
         probe.assert_not_called()
 
-    def test_workflow_reuses_existing_secret_and_canonical_backend_health_urls(self):
+    def test_existing_watchdog_secret_uses_authorization_for_provider_requests(self):
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return b'{}'
+
+        with patch.object(watchdog.urllib.request, "urlopen", return_value=Response()) as urlopen:
+            watchdog.API(base="https://api.instabox.sh", key="existing-secret").request(
+                "GET", "/v1/machines"
+            )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer existing-secret")
+        self.assertIsNone(request.get_header("X-api-key"))
+
+    def test_default_machine_name_is_testagramdb(self):
+        source = Path("scripts/instabox_watchdog.py").read_text()
+        self.assertIn('MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagramdb")', source)
+
+    def test_workflow_reuses_existing_secret_and_preserves_pr_validation(self):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
         self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
         self.assertIn("WATCHDOG_AUTO_RECOVERY_ENABLED", workflow)

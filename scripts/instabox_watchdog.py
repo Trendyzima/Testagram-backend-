@@ -14,7 +14,7 @@ from urllib.parse import quote, urlencode, urlparse
 
 API_BASE = os.getenv("INSTABOX_API_BASE_URL", "https://api.instabox.sh").rstrip("/")
 API_KEY = os.getenv("INSTABOX_WATCHDOG_API_KEY", "")
-API_KEY_HEADER = "Authorization"
+API_KEY_HEADER = os.getenv("INSTABOX_WATCHDOG_API_KEY_HEADER", "Authorization")
 MACHINE_ID = os.getenv("INSTABOX_MACHINE_ID", "")
 MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagramdb")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
@@ -24,6 +24,8 @@ PROBE_INTERVAL = int(os.getenv("WATCHDOG_PROBE_INTERVAL_SECONDS", "15"))
 PROBE_TIMEOUT = int(os.getenv("WATCHDOG_PROBE_TIMEOUT_SECONDS", "10"))
 OPERATION_TIMEOUT = int(os.getenv("WATCHDOG_OPERATION_TIMEOUT_SECONDS", "300"))
 RECOVERY_HEALTH_TIMEOUT = int(os.getenv("WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS", "300"))
+RESTART_COOLDOWN = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "900"))
+AUTO_RECOVERY_RAW = os.getenv("WATCHDOG_AUTO_RECOVERY_ENABLED", "false").lower()
 DRY_RUN = os.getenv("WATCHDOG_DRY_RUN", "false").lower() == "true"
 
 
@@ -46,7 +48,14 @@ class API:
         if not self.key:
             raise WatchdogError("INSTABOX_WATCHDOG_API_KEY is not configured")
         headers = {"Accept": "application/json"}
-        headers["Authorization"] = f"Bearer {self.key}"
+        if API_KEY_HEADER == "Authorization":
+            headers["Authorization"] = f"Bearer {self.key}"
+        elif API_KEY_HEADER == "X-API-Key":
+            if method != "GET":
+                raise WatchdogError("read-only InstaBox credentials cannot issue lifecycle actions")
+            headers["X-API-Key"] = self.key
+        else:
+            raise WatchdogError("unsupported InstaBox API authentication header")
         payload = None
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -260,8 +269,20 @@ def lifecycle(api: API, action: str) -> None:
 
 def recover_stopped(api: API, state: dict[str, Any]) -> str:
     now = int(time.time())
-    if DRY_RUN:
-        return "DRY RUN: would start stopped machine"
+    # Enforce the recovery approval boundary in the program itself, not only
+    # in GitHub Actions. Direct/manual invocations remain read-only by default.
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: recovery is not explicitly enabled; would start stopped machine"
+    last_action_at = state.get("last_action_at", 0)
+    try:
+        last_action_at = int(last_action_at)
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not starting machine"
     state.update(last_action_at=now, last_action="start")
     save_state(state)
     lifecycle(api, "start")
@@ -278,12 +299,13 @@ def main() -> int:
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
     if (PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
-            or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1):
-        raise WatchdogError("Unsafe watchdog thresholds: require positive probe intervals and operation/recovery timeouts")
+            or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1
+            or RESTART_COOLDOWN < 0):
+        raise WatchdogError("Unsafe watchdog thresholds: require positive probe/operation/recovery timeouts and a non-negative restart cooldown")
+    if AUTO_RECOVERY_RAW not in ("true", "false"):
+        raise WatchdogError("WATCHDOG_AUTO_RECOVERY_ENABLED must be exactly true or false")
     if not API_KEY:
-        raise WatchdogError(
-            "INSTABOX_WATCHDOG_API_KEY is required for provider-state monitoring and recovery."
-        )
+        raise WatchdogError("INSTABOX_WATCHDOG_API_KEY is required for provider-state monitoring")
     if not MACHINE_ID and not MACHINE_NAME:
         raise WatchdogError("Configure INSTABOX_MACHINE_NAME or INSTABOX_MACHINE_ID")
     if urlparse(API_BASE).scheme != "https":
