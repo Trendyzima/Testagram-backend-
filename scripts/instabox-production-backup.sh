@@ -8,6 +8,7 @@ ROOT=/data/home/testagram
 BACKEND="$ROOT/repos/backend"
 [[ -d "$BACKEND/.git" ]] || die "the deployed Backend Git checkout is missing"
 command -v flock >/dev/null || die "flock is required to prevent overlapping production backup runs"
+command -v realpath >/dev/null || die "realpath is required to validate persistent backup staging"
 exec 9>"$ROOT/production-backup.lock"
 flock -n 9 || die "another Testagram production backup is already running"
 [[ -f "$BACKEND/deploy/self-hosted/.env" ]] || die "the production Compose environment file is missing"
