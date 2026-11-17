@@ -85,14 +85,14 @@
         <div class="content-grid">
           <section id="stepup-panel" class="panel">
             <div class="panel-heading"><div><div class="eyebrow">PRIVILEGED ACTIONS</div><h2>Confirm your identity</h2></div><span class="panel-symbol">⌁</span></div>
-            <p class="field-help">Re-enter your Appwrite password to unlock sensitive actions for five minutes. This is password re-authentication, not a substitute for MFA.</p>
+            <p class="field-help">Re-enter your Testagram password to unlock sensitive actions for five minutes. This is password re-authentication, not a substitute for MFA.</p>
             <form id="stepup-form" class="form compact"><label for="stepup-password">Current password</label><input id="stepup-password" type="password" autocomplete="current-password" required maxlength="1024"><button class="button button-primary full" type="submit">Re-authenticate</button></form>
             <p id="stepup-state" class="field-help" aria-live="polite">Sensitive controls remain locked until re-authentication.</p>
           </section>
           <section id="permission-panel" class="panel hidden">
             <div class="panel-heading"><div><div class="eyebrow">MASTER CONTROLS</div><h2>Assign a permission</h2></div><span class="panel-symbol">♙</span></div>
             <form id="permission-form" class="form compact">
-              <label for="permission-user">Staff Appwrite user ID</label><input id="permission-user" required maxlength="36" placeholder="Exact Appwrite user ID">
+              <label for="permission-user">Staff Testagram user ID</label><input id="permission-user" required maxlength="36" placeholder="Canonical Testagram UUID">
               <label for="permission-key">Permission</label><select id="permission-key">
                 <option value="identity.review">Identity review and approval</option><option value="finance.read">Financial reports</option><option value="finance.initiate">Initiate financial operations</option><option value="finance.approve">Approve financial operations</option><option value="security.manage">Security policy and incident controls</option><option value="deployment.request">Request production deployment</option><option value="deployment.approve">Approve production deployment</option><option value="moderation.manage">Content moderation</option><option value="advertising.manage">Advertising</option><option value="marketplace.manage">Marketplace</option><option value="tv.manage">TV catalogue and publishing</option><option value="engineering.read">Engineering diagnostics</option><option value="operations.manage">Operations</option><option value="audit.read">Audit history</option>
               </select>
