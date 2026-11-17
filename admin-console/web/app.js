@@ -65,7 +65,7 @@ function renderPending(email) {
   byId("pending-screen").classList.remove("hidden");
   byId("sign-out").classList.remove("hidden");
   byId("pending-screen").querySelector("p").textContent = email
-    ? "Signed in as " + email + ", but your account has no staff role yet. The Testagram owner must invite you or assign an approved role before you can enter the operations workspace."
+    ? "Signed in as " + email + ", but your account has no staff role yet. Native Testagram staff provisioning requires two independent approvals and MFA enrollment before you can enter the operations workspace."
     : "Your account has no staff role yet. The Testagram owner must approve your access before you can enter the operations workspace.";
 }
 function renderDashboard(user) {
@@ -343,55 +343,19 @@ async function loadStaffDirectory() {
       const card = document.createElement("article");
       card.className = "approval-item";
       const heading = document.createElement("b");
-      heading.textContent = staff.user_id + " · " + staff.role;
+      heading.textContent = (staff.email || "Staff identity") + " · " + staff.user_id;
       const detail = document.createElement("p");
-      detail.textContent = staff.revoked_at ? "Access revoked " + new Date(staff.revoked_at).toLocaleString() : "Active staff access · updated " + new Date(staff.updated_at).toLocaleString();
+      const roles = (staff.roles || "").split(",").filter(Boolean).join(", ") || "No active role";
+      const mfa = staff.mfa_enrolled_at ? "MFA enrollment recorded" : "MFA not enrolled";
+      detail.textContent = (staff.enabled ? "Enabled" : "Disabled") + " · " + mfa +
+        " · Roles: " + roles + " · Created " + new Date(staff.created_at).toLocaleString();
       card.append(heading, detail);
-      if (staff.role !== "owner" && !staff.revoked_at) {
-        const form = document.createElement("form");
-        form.className = "form compact";
-        const select = document.createElement("select");
-        for (const role of ["administrator", "engineer", "operations", "support", "moderator"]) {
-          const option = document.createElement("option");
-          option.value = role;
-          option.textContent = role;
-          option.selected = role === staff.role;
-          select.appendChild(option);
-        }
-        const save = document.createElement("button");
-        save.type = "submit";
-        save.className = "button button-secondary";
-        save.textContent = "Change role";
-        form.append(select, save);
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          save.disabled = true;
-          try {
-            await api("/api/admin/staff/" + encodeURIComponent(staff.user_id) + "/role", { role: select.value }, "PUT");
-            notice("Staff role updated.", "success");
-            await loadStaffDirectory();
-          } catch (error) { notice(error.message, "error"); save.disabled = false; }
-        });
-        const revoke = document.createElement("button");
-        revoke.type = "button";
-        revoke.className = "button button-quiet";
-        revoke.textContent = "Revoke access";
-        revoke.addEventListener("click", async () => {
-          revoke.disabled = true;
-          try {
-            await api("/api/admin/staff/" + encodeURIComponent(staff.user_id), undefined, "DELETE");
-            notice("Staff access revoked. The account can no longer enter the staff console.", "success");
-            await loadStaffDirectory();
-          } catch (error) { notice(error.message, "error"); revoke.disabled = false; }
-        });
-        card.append(form, revoke);
-      }
       list.appendChild(card);
     }
     if (!(data.items || []).length) {
       const empty = document.createElement("p");
       empty.className = "field-help";
-      empty.textContent = "No staff accounts have been invited yet.";
+      empty.textContent = "No native Testagram staff principals have been provisioned.";
       list.appendChild(empty);
     }
   } catch (error) {
