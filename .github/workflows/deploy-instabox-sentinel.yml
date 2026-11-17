@@ -40,20 +40,116 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
-          INSTABOX_WEBHOOK_SECRET: ${{ secrets.INSTABOX_WEBHOOK_SECRET }}
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::CLOUDFLARE_API_TOKEN is required"; exit 1; }
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::CLOUDFLARE_ACCOUNT_ID is required"; exit 1; }
           test -n "$INSTABOX_WATCHDOG_API_KEY" || { echo "::error::The existing INSTABOX_WATCHDOG_API_KEY secret is required"; exit 1; }
-          case "$INSTABOX_WEBHOOK_SECRET" in whsec_*) ;; *) echo "::error::INSTABOX_WEBHOOK_SECRET must be the InstaBox whsec_ signing secret"; exit 1 ;; esac
           trap 'rm -f .worker-secrets.json' EXIT
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
             const secrets = {
               INSTABOX_API_KEY: process.env.INSTABOX_WATCHDOG_API_KEY,
-              INSTABOX_WEBHOOK_SECRET: process.env.INSTABOX_WEBHOOK_SECRET,
             };
             writeFileSync(".worker-secrets.json", JSON.stringify(secrets), { mode: 0o600 });
           '
           npx --yes wrangler@4 deploy --config wrangler.toml --secrets-file .worker-secrets.json
+
+      - name: Register or rotate the Testagram InstaBox webhook and verify delivery
+        if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'ops(sentinel): register webhook')
+        working-directory: infra/instabox-sentinel
+        env:
+          INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { spawnSync } from "node:child_process";
+
+          const base = "https://api.instabox.sh";
+          const endpointUrl = "https://testagram.site/webhooks/instabox";
+          const apiKey = process.env.INSTABOX_WATCHDOG_API_KEY;
+          if (!apiKey) throw new Error("Existing InstaBox watchdog key is missing");
+
+          async function api(path, options = {}) {
+            const response = await fetch(base + path, {
+              ...options,
+              headers: {
+                accept: "application/json",
+                authorization: `Bearer ${apiKey}`,
+                ...(options.body ? { "content-type": "application/json" } : {}),
+                ...options.headers,
+              },
+            });
+            const body = response.status === 204 ? null : await response.json().catch(() => null);
+            if (!response.ok) {
+              const code = body?.error?.code || body?.code || response.status;
+              throw new Error(`InstaBox API request failed (${code})`);
+            }
+            return body;
+          }
+
+          const orgList = await api("/v1/orgs");
+          const org = orgList?.orgs?.[0];
+          if (!org?.id) throw new Error("The watchdog key did not resolve to an InstaBox workspace");
+
+          const collection = `/v1/orgs/${encodeURIComponent(org.id)}/webhooks`;
+          const listed = await api(collection);
+          const matches = (listed?.items || []).filter((item) => item.url === endpointUrl);
+          if (matches.length > 1) throw new Error("Multiple matching InstaBox webhook endpoints exist; refusing an ambiguous rotation");
+
+          let webhook;
+          if (matches.length === 1) {
+            const existing = matches[0];
+            await api(`${collection}/${encodeURIComponent(existing.id)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ enabled: true, events: ["sandbox.stopped"] }),
+            });
+            webhook = await api(`${collection}/${encodeURIComponent(existing.id)}/rotate`, { method: "POST" });
+            console.log("Rotated the existing Testagram webhook signing secret.");
+          } else {
+            webhook = await api(collection, {
+              method: "POST",
+              body: JSON.stringify({
+                url: endpointUrl,
+                events: ["sandbox.stopped"],
+                description: "Testagram VPS unexpected-stop recovery",
+                enabled: true,
+              }),
+            });
+            console.log("Created the Testagram webhook endpoint.");
+          }
+
+          if (!webhook?.id || !webhook?.secret?.startsWith("whsec_")) {
+            throw new Error("InstaBox did not return a usable webhook signing secret");
+          }
+
+          const secretSync = spawnSync("npx", [
+            "--yes", "wrangler@4", "secret", "put", "INSTABOX_WEBHOOK_SECRET",
+            "--config", "wrangler.toml",
+          ], {
+            input: webhook.secret,
+            encoding: "utf8",
+            env: process.env,
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+          if (secretSync.status !== 0) {
+            throw new Error("Cloudflare rejected the webhook secret update: " + (secretSync.stderr || secretSync.stdout || "unknown error").slice(-1200));
+          }
+          console.log("Uploaded the rotated signing secret directly to Cloudflare; the secret was not printed or committed.");
+
+          const delivery = await api(`${collection}/${encodeURIComponent(webhook.id)}/test`, { method: "POST" });
+          if (!delivery?.id) throw new Error("InstaBox did not queue a webhook test delivery");
+          let state = delivery.state;
+          for (let attempt = 0; attempt < 12 && state === "pending"; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 2500));
+            const page = await api(`${collection}/${encodeURIComponent(webhook.id)}/deliveries?limit=20`);
+            state = page.items?.find((item) => item.id === delivery.id)?.state || state;
+          }
+          if (state !== "succeeded") {
+            throw new Error(`Webhook test delivery did not succeed (state: ${state || "unknown"}); inspect InstaBox delivery history`);
+          }
+          console.log("Verified: InstaBox test delivery reached testagram.site and received a successful 2xx response.");
+          console.log(`Webhook endpoint ID: ${webhook.id}`);
+          NODE
