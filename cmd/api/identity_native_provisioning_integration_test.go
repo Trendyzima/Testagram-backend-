@@ -252,7 +252,6 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		return rec
 	}
 
-
 	results := make(chan *httptest.ResponseRecorder, 2)
 	go func() { results <- redeem() }()
 	go func() { results <- redeem() }()
