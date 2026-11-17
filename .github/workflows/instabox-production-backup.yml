@@ -212,8 +212,10 @@ jobs:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
           RUN_PRUNE: ${{ steps.config.outputs.run_prune }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
-          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
-          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
+          R2_BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+          R2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+          B2_BACKUP_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+          B2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
           BACKUP_REGION: ${{ steps.config.outputs.backup_region }}
         run: |
           set -euo pipefail
