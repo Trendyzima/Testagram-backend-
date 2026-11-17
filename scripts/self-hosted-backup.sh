@@ -10,7 +10,7 @@ usage() {
   cat <<'USAGE'
 Usage: ./scripts/self-hosted-backup.sh <backup|check|prune>
 
-  backup  Export PostgreSQL and both MinIO media buckets, then store the snapshot
+  backup  Export PostgreSQL and all four MinIO buckets, then store the snapshot
           in the encrypted restic repository.
   check   Verify repository structure and read a sample of stored data.
   prune   Apply the configured retention policy and prune unreferenced data.
@@ -51,6 +51,23 @@ export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-${HOME}/.cache/restic-testagram}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 compose_dir="$(cd -- "$script_dir/../deploy/self-hosted" && pwd)"
 cd "$compose_dir"
+
+# Do not claim a complete backup if writes have moved to an external provider.
+# This helper captures the local PostgreSQL + MinIO stack only; active B2/R2
+# buckets require their own explicit backup and restore-tested targets.
+read_env_flag() {
+  local key="$1"
+  awk -F= -v key="$key" '$1 == key {
+    value = $2
+    gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
+  } END { print tolower(value) }' .env
+}
+for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENABLED; do
+  value="$(read_env_flag "$flag")"
+  if [[ "$value" == "true" || "$value" == "1" ]]; then
+    die "$flag is enabled; extend the backup to active external object-store buckets before relying on it"
+  fi
+done
 "${DOCKER[@]}" compose config --quiet
 
 case "${1:-}" in
@@ -69,9 +86,9 @@ case "${1:-}" in
     "${DOCKER[@]}" compose exec -T postgres pg_restore --list < "$stage/postgres.dump" > "$stage/postgres.dump.list"
     chmod 600 "$stage/postgres.dump" "$stage/postgres.dump.list"
 
-    printf 'Mirroring MinIO media buckets to protected staging...\n'
-    mkdir -p "$stage/minio-private" "$stage/minio-public"
-    chmod 700 "$stage/minio-private" "$stage/minio-public"
+    printf 'Mirroring all MinIO buckets to protected staging...\n'
+    mkdir -p "$stage/minio-private" "$stage/minio-public" "$stage/minio-identity-evidence" "$stage/minio-metadata"
+    chmod 700 "$stage/minio-private" "$stage/minio-public" "$stage/minio-identity-evidence" "$stage/minio-metadata"
     # shellcheck disable=SC2016
     "${DOCKER[@]}" compose run --rm --no-deps \
       -v "$stage:/backup" \
@@ -79,6 +96,8 @@ case "${1:-}" in
         mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
         mc mirror --preserve local/"$MINIO_BUCKET" /backup/minio-private
         mc mirror --preserve local/"$PUBLIC_MEDIA_BUCKET" /backup/minio-public
+        mc mirror --preserve local/"$IDENTITY_EVIDENCE_PRIVATE_BUCKET" /backup/minio-identity-evidence
+        mc mirror --preserve local/"$MINIO_METADATA_BUCKET" /backup/minio-metadata
       '
     printf '%s\n' \
       "Testagram self-hosted backup" \
@@ -86,6 +105,8 @@ case "${1:-}" in
       "postgres_database=$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')" \
       "private_bucket=${MINIO_BUCKET:-testagram-private-media}" \
       "public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}" \
+      "identity_evidence_bucket=${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}" \
+      "metadata_bucket=${MINIO_METADATA_BUCKET:-testagram-media-metadata}" \
       "repository=${RESTIC_REPOSITORY}" > "$stage/manifest.txt"
     chmod 600 "$stage/manifest.txt"
     printf 'Writing encrypted restic snapshot...\n'
