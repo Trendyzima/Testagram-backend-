@@ -9,6 +9,7 @@ import (
 	"embed"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -103,6 +104,15 @@ func newApp() (*app, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
+	}
+	rawServiceKey := strings.TrimSpace(os.Getenv("ADMIN_SERVICE_AUTH_KEY"))
+	var serviceAuthKey []byte
+	if rawServiceKey != "" {
+		serviceAuthKey, err = hex.DecodeString(rawServiceKey)
+		if err != nil || len(serviceAuthKey) != 32 { return nil, errors.New("ADMIN_SERVICE_AUTH_KEY must be 64 hexadecimal characters (32 random bytes)") }
+	}
+	if len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))) < 32 {
+		return nil, errors.New("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters")
 	}
 	backendAPIURL := strings.TrimRight(env("BACKEND_INTERNAL_URL", "http://api:8080"), "/")
 	backendParsed, backendErr := url.Parse(backendAPIURL)
@@ -234,7 +244,7 @@ func (a *app) setSession(w http.ResponseWriter, s session) error {
 	nonce := make([]byte, a.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil { return err }
 	sealed := a.aead.Seal(nonce, nonce, raw, []byte("testagram-staff-session-v2"))
-	maxAge := 60 * 60 * 24 * 7
+	maxAge := 60 * 60 * 24 * 30
 	if s.RefreshExpiresAt > 0 {
 		remaining := int(s.RefreshExpiresAt - time.Now().Unix())
 		if remaining < maxAge { maxAge = remaining }
@@ -499,7 +509,7 @@ func (a *app) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	s:=session{AccessToken:envelope.Data.AccessToken,RefreshToken:envelope.Data.RefreshToken,
 		AccessExpiresAt:time.Now().Add(time.Duration(envelope.Data.ExpiresIn)*time.Second).Unix(),
 		RefreshExpiresAt:time.Now().Add(30*24*time.Hour).Unix()}
-	if _,_,ok:=a.currentUserFromSession(ctx,s); !ok {
+	if _,staff,sessionErr:=a.currentUserFromSession(ctx,s); sessionErr != nil || !staff {
 		_,_ = a.backendRequest(ctx,http.MethodPost,"/api/auth/logout",s.AccessToken,map[string]string{},nil)
 		writeJSON(w,http.StatusForbidden,map[string]string{"error":"This account is not an enabled Testagram staff member with enrolled MFA."}); return
 	}
