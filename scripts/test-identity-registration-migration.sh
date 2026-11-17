@@ -451,9 +451,17 @@ BEGIN
      OR NOT has_table_privilege('testagram_app','testagram_auth.security_audit','INSERT') THEN
     RAISE EXCEPTION 'Backend runtime role lacks native auth grants';
   END IF;
-  IF has_table_privilege('testagram_app','testagram_auth.staff_role_grants','SELECT')
-     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','SELECT') THEN
-    RAISE EXCEPTION 'native auth runtime role unexpectedly has staff authorization access';
+  IF NOT has_table_privilege('testagram_app','testagram_auth.staff_role_grants','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.staff_principals','SELECT') THEN
+    RAISE EXCEPTION 'Backend runtime role lacks read access to native staff authorization';
+  END IF;
+  IF has_table_privilege('testagram_app','testagram_auth.staff_role_grants','INSERT')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_role_grants','UPDATE')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_role_grants','DELETE')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','INSERT')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','UPDATE')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','DELETE') THEN
+    RAISE EXCEPTION 'Backend runtime role must not mutate native staff authorization';
   END IF;
 END;
 $native_auth_schema$;
