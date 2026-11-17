@@ -127,7 +127,7 @@ jobs:
             "$API/v1/machines/$MACHINE_ID/wake" || true)"
           code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo unknown)"
           retry="$(jq -r '.error.retryAfterSeconds // 0' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo 0)"
-          retry_header="$(awk 'BEGIN { IGNORECASE = 1 } tolower($1) == "retry-after:" { gsub("\\r", "", $2); value = $2 } END { print value }' "$RUNNER_TEMP/wake.headers" 2>/dev/null || true)"
+          retry_header="$(awk 'BEGIN { IGNORECASE = 1 } tolower($1) == "retry-after:" { gsub(/\\r/, "", $2); value = $2 } END { print value }' "$RUNNER_TEMP/wake.headers" 2>/dev/null || true)"
           if [[ "$retry_header" =~ ^[0-9]+$ && "$retry_header" -gt 0 ]]; then retry="$retry_header"; fi
           ready=false
 
