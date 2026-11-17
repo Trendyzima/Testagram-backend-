@@ -19,13 +19,10 @@ The GitHub Actions workflow `.github/workflows/deploy-instabox-sentinel.yml` dep
 
 - `CLOUDFLARE_API_TOKEN`: scoped to Workers Scripts read/edit and the required account permissions.
 - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account ID.
+- `INSTABOX_WATCHDOG_API_KEY`: the existing Testagram secret already used by the five-minute watchdog. The deploy workflow transfers its value directly into the Worker as the encrypted `INSTABOX_API_KEY` secret; it is never printed or committed.
+- `INSTABOX_WEBHOOK_SECRET`: add this after creating the InstaBox webhook. The deployment workflow will transfer it into the Worker on the next deploy. Until then, the public webhook endpoint fails closed with HTTP 503.
 
-In Cloudflare Workers & Pages, open `testagram-instabox-sentinel` → Settings → Variables and Secrets and add these as **Secret** values (not plaintext vars):
-
-- `INSTABOX_API_KEY`: the same restricted InstaBox API key already used by the Testagram watchdog, with `machines:read` and `machines:write` on the workspace containing `testagramdb`.
-- `INSTABOX_WEBHOOK_SECRET`: the signing secret beginning `whsec_` returned once when the InstaBox webhook endpoint is created.
-
-Do not paste either credential into GitHub issues, chat, source code, or repository variables. Cloudflare cannot read GitHub Actions secrets; the same API key must be entered separately as a Cloudflare Worker secret. Do not create a new broad/full-access key just for this Worker.
+The workflow uploads the existing `INSTABOX_WATCHDOG_API_KEY` as an encrypted Worker secret during deployment. Reuse that same restricted key; it must have `machines:read` and `machines:write` for the workspace containing `testagramdb`. Do not create a second provider key solely for this Worker. The webhook signing secret is separate: add the one-time `whsec_...` value as the GitHub Actions secret `INSTABOX_WEBHOOK_SECRET` after creating the endpoint, then re-run the deploy workflow so it is uploaded as an encrypted Worker secret. Never paste either value into chat, source code, issues, or repository variables.
 
 ## Register the InstaBox webhook
 
@@ -35,7 +32,7 @@ After the Worker is deployed, copy its HTTPS URL (Workers & Pages → the Worker
 instabox webhooks create https://<your-worker-host>/webhooks/instabox --event sandbox.stopped
 ```
 
-Save the displayed `whsec_...` value directly into the Cloudflare Worker secret `INSTABOX_WEBHOOK_SECRET`. InstaBox only displays the signing secret at creation; if it is lost, rotate the webhook secret and update the Cloudflare secret. The endpoint must subscribe to `sandbox.stopped`; do not subscribe to `sandbox.suspended` as a wake trigger.
+Save the displayed `whsec_...` value as the GitHub Actions secret `INSTABOX_WEBHOOK_SECRET`, then run the deploy workflow once more. InstaBox only displays the signing secret at creation; if it is lost, rotate the webhook secret and update the GitHub secret. The endpoint must subscribe to `sandbox.stopped`; do not subscribe to `sandbox.suspended` as a wake trigger.
 
 Use the dashboard/CLI delivery test and confirm a valid test delivery receives HTTP 202. Then verify the Worker logs show only safe event/action metadata. Do not stop the production VPS to test recovery; use InstaBox's webhook test or a non-production machine first.
 
