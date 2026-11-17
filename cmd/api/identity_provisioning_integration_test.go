@@ -395,7 +395,7 @@ func TestIdentityApprovalRejectsExpiredSensitiveActionRequest(t *testing.T) {
 	if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','expired-audit-ref-01'),($1::uuid,$3,'approved','Second independent evidence review','expired-audit-ref-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_appwrite_user_id,decision,reason) VALUES($1::uuid,$2,'approved','First approval before expiry')", requestID, reviewerTwoID); err != nil {
+	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason) VALUES($1::uuid,$2::uuid,'approved','First approval before expiry')", requestID, reviewerTwoID); err != nil {
 		t.Fatal(err)
 	}
 	svc := &service{db: db}
@@ -495,10 +495,8 @@ func TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair(t *testing.
 	}
 	defer db.Close()
 	reviewerID, _, reviewerToken := nativeStaffReviewerFixture(t, ctx, db)
-	var reviewerOneID, reviewerTwoID string
-	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text").Scan(&reviewerOneID, &reviewerTwoID); err != nil {
-		t.Fatal(err)
-	}
+	reviewerOneID, _, _ := nativeStaffReviewerFixture(t, ctx, db)
+	reviewerTwoID, _, _ := nativeStaffReviewerFixture(t, ctx, db)
 	const applicantEmail = "reviewer-mismatch@example.test"
 	var applicationID, requestID string
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
