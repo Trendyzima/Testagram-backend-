@@ -64,6 +64,12 @@ repositories, use the documented restic environment variables and a dedicated
 least-privilege backup identity. Do not reuse MinIO root credentials for an
 off-host backup destination.
 
+The InstaBox wrapper stages temporary plaintext under `/data/tmp` by default,
+not RAM-backed `/tmp`. An optional `BACKUP_TMP_PARENT` may select another
+directory only if it resolves inside `/data`; the wrapper rejects other paths.
+The directory is mode 0700, removed on normal exit, and stale scratch data is
+cleared before the next locked run.
+
 
 ## InstaBox free-plan production schedule
 
