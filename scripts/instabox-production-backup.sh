@@ -58,6 +58,7 @@ cd "$BACKEND"
 git fetch --depth 1 origin main
 for file in scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh scripts/instabox-production-backup.sh; do
   if git show "FETCH_HEAD:$file" | cmp -s - "$BACKEND/$file"; then
+    chmod 700 "$BACKEND/$file"
     continue
   fi
   if ! git diff --quiet -- "$file" || ! git diff --cached --quiet -- "$file"; then
