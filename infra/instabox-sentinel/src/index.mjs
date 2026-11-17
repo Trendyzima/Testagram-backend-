@@ -135,7 +135,7 @@ async function resolveMachine(env, expectedMachineId) {
   return matches[0];
 }
 
-async function reconcileStoppedEvent(env, event, deliveryId) {
+export async function reconcileStoppedEvent(env, event, deliveryId) {
   if (event.type !== "sandbox.stopped") return { action: "ignored", reason: "event is not sandbox.stopped" };
   const eventMachine = event.data.sandbox;
   const machine = await resolveMachine(env, eventMachine.id);
