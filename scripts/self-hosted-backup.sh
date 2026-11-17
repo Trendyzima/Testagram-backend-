@@ -81,6 +81,7 @@ fi
     mkdir -p "$stage_parent"
 
     printf 'Estimating PostgreSQL and all four MinIO buckets before staging...\n'
+    # shellcheck disable=SC2016
     bucket_size_report="$("${DOCKER[@]}" compose run --rm --no-deps \
       --entrypoint /bin/sh object-init -ec '
         mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
@@ -90,6 +91,7 @@ fi
         mc stat "local/$MINIO_METADATA_BUCKET" --json
       ')"
     minio_bytes="$(jq -s -er 'if length == 4 and all(.[]; (.Usage.totalSize | type) == "number") then map(.Usage.totalSize) | add else error("MinIO did not report sizes for all four buckets") end' <<< "$bucket_size_report")"
+    # shellcheck disable=SC2016
     postgres_bytes="$("${DOCKER[@]}" compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_database_size(current_database())"')"
     [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ ]] || die "could not determine database and media sizes"
     required_stage_bytes=$(( (minio_bytes + postgres_bytes) * 120 / 100 + 1073741824 ))
