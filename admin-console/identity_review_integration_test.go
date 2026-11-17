@@ -158,7 +158,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	var reviewCount, approvalCountFinal int
 	err = conn.QueryRow(ctx, `
 		SELECT a.status, sar.status,
-		       (SELECT count(*) FROM testagram_identity.native_identity_application_reviews r
+		       (SELECT count(*) FROM testagram_identity.identity_application_reviews r
 		        WHERE r.application_id=a.id AND r.decision='approved'),
 		       (SELECT count(DISTINCT approver_user_id) FROM testagram_auth.native_sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved')
