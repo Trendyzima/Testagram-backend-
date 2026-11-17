@@ -573,7 +573,7 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_appwrite_user_id,decision,reason)
+		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
 		VALUES ($1::uuid,$2,'approved',$3)
 	`, requestIDValue, reviewer.ID, input.Reason)
 	if err != nil {
@@ -583,7 +583,7 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 	var approvalCount int
 	err = tx.QueryRow(ctx, `
 		SELECT count(*) FROM testagram_auth.sensitive_action_approvals
-		WHERE request_id=$1::uuid AND decision='approved'
+		WHERE request_id=$1::uuid AND decision='approved' AND approver_user_id IS NOT NULL
 	`, requestIDValue).Scan(&approvalCount)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Approval status could not be evaluated", requestID(r)))
@@ -620,14 +620,14 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 	}
 	var firstApprover, secondApprover string
 	err = tx.QueryRow(ctx, `
-		SELECT approver_appwrite_user_id FROM testagram_auth.sensitive_action_approvals
+		SELECT approver_user_id::text FROM testagram_auth.sensitive_action_approvals
 		WHERE request_id=$1::uuid AND decision='approved'
 		ORDER BY created_at ASC LIMIT 1
 	`, requestIDValue).Scan(&firstApprover)
 	if err == nil {
 		err = tx.QueryRow(ctx, `
-			SELECT approver_appwrite_user_id FROM testagram_auth.sensitive_action_approvals
-			WHERE request_id=$1::uuid AND decision='approved' AND approver_appwrite_user_id<>$2
+			SELECT approver_user_id::text FROM testagram_auth.sensitive_action_approvals
+			WHERE request_id=$1::uuid AND decision='approved' AND approver_user_id::text<>$2
 			ORDER BY created_at ASC LIMIT 1
 		`, requestIDValue, firstApprover).Scan(&secondApprover)
 	}
@@ -641,8 +641,8 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 	if err == nil {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO testagram_identity.identity_approval_tokens
-			  (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
-			   second_approver_appwrite_user_id,expires_at)
+			  (token_sha256,jti_sha256,application_id,first_approver_user_id,
+			   second_approver_user_id,expires_at)
 			VALUES ($1,$2,$3::uuid,$4,$5,now()+interval '15 minutes')
 		`, authTokenHash(token), authTokenHash(jti), applicationID, firstApprover, secondApprover)
 	}
@@ -651,7 +651,7 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if _, err = tx.Exec(ctx, `
-		INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,request_id,metadata)
+		INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,request_id,metadata)
 		VALUES ($1,'identity.account_approval.completed',$2,$3::uuid,jsonb_build_object('approval_count',2))
 	`, reviewer.ID, applicationID, requestIDValue); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Approval audit could not be recorded", requestID(r)))
