@@ -175,7 +175,11 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.example")
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
-	type deliveredEmail struct { recipient, subject, html string }
+	type deliveredEmail struct {
+		recipient string
+		subject   string
+		html      string
+	}
 	var delivered []deliveredEmail
 	svc := &service{db: db, authEmailSender: func(_ context.Context, recipient, subject, html string) error {
 		delivered = append(delivered, deliveredEmail{recipient: recipient, subject: subject, html: html})
