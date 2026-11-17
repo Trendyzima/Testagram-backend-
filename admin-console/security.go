@@ -163,7 +163,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	err := tx.QueryRow(ctx, `
 		SELECT email, username, display_name, evidence_fingerprint_sha256,
 		       terms_version, privacy_version, status, adult_verified_at IS NOT NULL,
-		       sensitive_action_request_id::text
+		       native_sensitive_action_request_id::text
 		FROM testagram_identity.identity_applications
 		WHERE id=$1::uuid
 		FOR UPDATE
