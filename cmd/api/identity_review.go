@@ -346,7 +346,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if _,err=tx.Exec(ctx,`
-		INSERT INTO testagram_identity.verification_reviews(session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
+		INSERT INTO testagram_identity.verification_reviews(session_id,reviewer_user_id,decision,reason_code,evidence_reference)
 		VALUES ($1::uuid,$2,$3,$4,$5)
 	`,sessionID,reviewer.ID,input.Decision,input.ReasonCode,evidenceRef); err!=nil {
 		writeJSON(w,http.StatusConflict,errorBody("REVIEW_ALREADY_RECORDED","A reviewer may record only one decision per session",requestID(r)))
@@ -413,7 +413,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 	// Two matching, distinct reviewers are required before an application can
 	// enter the existing two-person sensitive-action approval ledger.
 	rows,err:=tx.Query(ctx,`
-		SELECT reviewer_appwrite_user_id,reason_code
+		SELECT reviewer_user_id,reason_code
 		FROM testagram_identity.verification_reviews
 		WHERE session_id=$1::uuid AND decision='verified'
 		ORDER BY created_at ASC LIMIT 2
@@ -454,7 +454,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 		for _,v:=range approvedReviewers {
 			_,err=tx.Exec(ctx,`
 				INSERT INTO testagram_identity.identity_application_reviews
-				  (application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference)
+				  (application_id,reviewer_user_id,decision,reason,evidence_audit_reference)
 				VALUES ($1::uuid,$2,'approved',$3,$4)
 			`,applicationID,v.id,"Independent evidence review: "+v.reason,evidenceRef)
 			if err!=nil { break }
@@ -556,7 +556,7 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 	var isReviewer bool
 	err=tx.QueryRow(ctx,`
 		SELECT EXISTS(SELECT 1 FROM testagram_identity.identity_application_reviews
-		WHERE application_id=$1::uuid AND reviewer_appwrite_user_id=$2 AND decision='approved')
+		WHERE application_id=$1::uuid AND reviewer_user_id=$2 AND decision='approved')
 	`,applicationID,reviewer.ID).Scan(&isReviewer)
 	if err!=nil || !isReviewer {
 		writeJSON(w,http.StatusForbidden,errorBody("APPROVAL_REVIEWER_MISMATCH","Only the two independent identity reviewers may approve account activation",requestID(r)))
