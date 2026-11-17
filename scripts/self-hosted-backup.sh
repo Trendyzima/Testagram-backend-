@@ -31,6 +31,7 @@ command -v docker >/dev/null || die "docker is required"
 command -v restic >/dev/null || die "restic is required"
 command -v jq >/dev/null || die "jq is required for the backup capacity preflight"
 command -v realpath >/dev/null || die "realpath is required to resolve Data Centre storage mounts"
+command -v python3 >/dev/null || die "python3 is required to validate Data Centre database routing"
 [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "RESTIC_REPOSITORY is required"
 if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then
   [[ -f "$RESTIC_PASSWORD_FILE" && -r "$RESTIC_PASSWORD_FILE" ]] || die "RESTIC_PASSWORD_FILE must point to a readable password file"
@@ -96,9 +97,34 @@ for data_centre_var in DATA_CENTRE_MEDIA_API_URL FRESH_DATA_CENTRE_INTERNAL_TOKE
 done
 
 federation_database_url="$(read_env_value FEDERATION_DATABASE_URL)"
-main_database_url="$(read_env_value DATABASE_URL)"
-if [[ -n "$federation_database_url" && "$federation_database_url" != "$main_database_url" ]]; then
-  die "a separate FEDERATION_DATABASE_URL is configured; include that database in the recovery plan before relying on this backup"
+federation_api_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=federation-api --format '{{.ID}}')"
+if [[ -n "$federation_api_ids" ]]; then
+  [[ "$(wc -l <<< "$federation_api_ids" | tr -d ' ')" == "1" ]] || die "multiple Data Centre federation-api containers found; verify their database targets"
+  federation_api_id="$(head -n 1 <<< "$federation_api_ids")"
+  federation_database_url="$("${DOCKER[@]}" inspect "$federation_api_id" | jq -er '[.[0].Config.Env[]? | select(startswith("FEDERATION_DATABASE_URL="))] | last | ltrimstr("FEDERATION_DATABASE_URL=")' 2>/dev/null || true)"
+  [[ -n "$federation_database_url" ]] || die "Data Centre federation-api has no readable FEDERATION_DATABASE_URL; refusing to omit its database"
+fi
+if [[ -n "$federation_database_url" ]]; then
+  if ! FEDERATION_DATABASE_URL_CHECK="$federation_database_url" python3 - <<'PY'
+import os
+import re
+import sys
+from urllib.parse import urlparse
+
+try:
+    parsed = urlparse(os.environ["FEDERATION_DATABASE_URL_CHECK"])
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or 5432
+except ValueError:
+    sys.exit(1)
+
+database = parsed.path.lstrip("/")
+if parsed.scheme not in {"postgres", "postgresql"} or host not in {"postgres", "federation-db"} or port != 5432 or not re.fullmatch(r"[A-Za-z0-9_]+", database):
+    sys.exit(1)
+PY
+  then
+    die "Federation database is not on the backed-up PostgreSQL service; add its own encrypted backup and restore-tested path"
+  fi
 fi
 
 data_centre_media_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=media --format '{{.ID}}')"
