@@ -106,7 +106,7 @@ func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 		var reviewCount, approvalLedgerCount, approvalTokenCount int
 		err := db.QueryRow(ctx, `
 			SELECT a.email, a.username, a.status, sar.status,
-			       (SELECT count(DISTINCT r.reviewer_appwrite_user_id) FROM testagram_identity.identity_application_reviews r
+			       (SELECT count(DISTINCT r.reviewer_user_id) FROM testagram_identity.identity_application_reviews r
 			        WHERE r.application_id=a.id AND r.decision='approved'),
 			       (SELECT count(DISTINCT sa.approver_appwrite_user_id) FROM testagram_auth.sensitive_action_approvals sa
 			        WHERE sa.request_id=sar.id AND sa.decision='approved'),
@@ -394,7 +394,7 @@ func TestIdentityApprovalRejectsExpiredSensitiveActionRequest(t *testing.T) {
 	if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_applications(id,email,username,display_name,adult_confirmed_at,adult_verified_at,adult_verification_provider,adult_verification_reference,adult_verification_checked_at,evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,terms_accepted_at,privacy_accepted_at,status,sensitive_action_request_id) VALUES($1::uuid,$2,'expired_ci','Expired Approval',now(),now(),'testagram_manual','expired-ci-adult-ref',now(),'opaque-expired-evidence-ref',decode($3,'hex'),'terms-v1','privacy-v1',now(),now(),'verified',$4::uuid)", applicationID, applicantEmail, fingerprint, requestID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','expired-audit-ref-01'),($1::uuid,$3,'approved','Second independent evidence review','expired-audit-ref-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {
+	if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','expired-audit-ref-01'),($1::uuid,$3,'approved','Second independent evidence review','expired-audit-ref-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_appwrite_user_id,decision,reason) VALUES($1::uuid,$2,'approved','First approval before expiry')", requestID, reviewerTwoID); err != nil {
@@ -517,7 +517,7 @@ func TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair(t *testing.
 	if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_applications(id,email,username,display_name,adult_confirmed_at,adult_verified_at,adult_verification_provider,adult_verification_reference,adult_verification_checked_at,evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,terms_accepted_at,privacy_accepted_at,status,sensitive_action_request_id) VALUES($1::uuid,$2,'review_mismatch','Reviewer Mismatch',now(),now(),'testagram_manual','review-mismatch-adult-ref',now(),'opaque-review-mismatch-evidence',decode($3,'hex'),'terms-v1','privacy-v1',now(),now(),'verified',$4::uuid)", applicationID, applicantEmail, fingerprint, requestID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','mismatch-audit-01'),($1::uuid,$3,'approved','Second independent evidence review','mismatch-audit-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {
+	if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','mismatch-audit-01'),($1::uuid,$3,'approved','Second independent evidence review','mismatch-audit-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {
 		t.Fatal(err)
 	}
 	svc := &service{db: db}
@@ -576,7 +576,7 @@ func TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals(t *t
 		if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_applications(id,email,username,display_name,adult_confirmed_at,adult_verified_at,adult_verification_provider,adult_verification_reference,adult_verification_checked_at,evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,terms_accepted_at,privacy_accepted_at,status,sensitive_action_request_id) VALUES($1::uuid,$2,$3,'Concurrent Review',now(),now(),'testagram_manual','concurrent-adult-ref',now(),'opaque-concurrent-evidence-ref',decode($4,'hex'),'terms-v1','privacy-v1',now(),now(),'verified',$5::uuid)", applicationID, email, username, fingerprint, requestID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','concurrent-audit-01'),($1::uuid,$3,'approved','Second independent evidence review','concurrent-audit-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {
+		if _, err := db.Exec(ctx, "INSERT INTO testagram_identity.identity_application_reviews(application_id,reviewer_user_id,decision,reason,evidence_audit_reference) VALUES($1::uuid,$2,'approved','First independent evidence review','concurrent-audit-01'),($1::uuid,$3,'approved','Second independent evidence review','concurrent-audit-02')", applicationID, reviewerOneID, reviewerTwoID); err != nil {
 			t.Fatal(err)
 		}
 		return applicationID, requestID
