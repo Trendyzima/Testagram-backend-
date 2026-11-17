@@ -397,6 +397,7 @@ func (a *app) identityProxy(w http.ResponseWriter, r *http.Request, backendPath 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Native reviewer session is unavailable"})
 		return
 	}
+	var err error
 	var body []byte
 	if r.Method == http.MethodPost {
 		body, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
