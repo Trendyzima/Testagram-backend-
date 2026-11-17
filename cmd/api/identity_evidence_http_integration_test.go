@@ -303,6 +303,44 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	if reservationCount != 1 {
 		t.Fatalf("matching concurrent retries created %d live reservations; want exactly one", reservationCount)
 	}
+
+	// After the five-minute upload capability expires, the unuploaded row is
+	// retired and a fresh reservation is issued. The old ID must not be reused.
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_identity.verification_evidence
+		SET created_at=now()-interval '6 minutes'
+		WHERE id=$1::uuid AND status='upload_pending'
+	`, reserved.EvidenceID); err != nil {
+		t.Fatal(err)
+	}
+	renewedReservation := call(http.MethodPost, sessionPath+"/evidence/upload-url", reservationBody, sessionHeaders)
+	if renewedReservation.Code != http.StatusCreated {
+		t.Fatalf("expired reservation renewal status=%d body=%s", renewedReservation.Code, renewedReservation.Body.String())
+	}
+	var renewed struct {
+		EvidenceID string `json:"evidence_id"`
+		UploadURL  string `json:"upload_url"`
+	}
+	if err := json.Unmarshal(renewedReservation.Body.Bytes(), &renewed); err != nil {
+		t.Fatal(err)
+	}
+	if renewed.EvidenceID == "" || renewed.EvidenceID == reserved.EvidenceID ||
+		!strings.HasPrefix(renewed.UploadURL, sessionPath+"/evidence/") {
+		t.Fatalf("expired reservation was not replaced safely: old=%#v renewed=%#v", reserved, renewed)
+	}
+	var retiredCount, activeCount int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE id=$2::uuid AND status='deleted'),
+		       count(*) FILTER (WHERE status='upload_pending')
+		FROM testagram_identity.verification_evidence
+		WHERE session_id=$1::uuid
+	`, created.SessionID, reserved.EvidenceID).Scan(&retiredCount, &activeCount); err != nil {
+		t.Fatal(err)
+	}
+	if retiredCount != 1 || activeCount != 1 {
+		t.Fatalf("expired reservation lifecycle retired=%d active=%d; want 1 and 1", retiredCount, activeCount)
+	}
+	reserved = renewed
 	uploaded := call(http.MethodPut, reserved.UploadURL, evidenceBytes, map[string]string{
 		"Content-Type":                 "image/jpeg",
 		"X-Verification-Session-Token": created.SessionToken,
