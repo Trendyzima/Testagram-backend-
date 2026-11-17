@@ -3,6 +3,25 @@
 -- new console writes use canonical Testagram UUID identities only.
 BEGIN;
 
+-- Native reviewer identity columns replace provider IDs for all new reviews.
+-- Keep historical provider columns nullable for audit/reconciliation only.
+ALTER TABLE testagram_identity.identity_application_reviews
+  ADD COLUMN IF NOT EXISTS reviewer_user_id UUID REFERENCES testagram_auth.staff_principals(user_id);
+ALTER TABLE testagram_identity.identity_application_reviews
+  ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS identity_application_reviews_native_reviewer_uidx
+  ON testagram_identity.identity_application_reviews(application_id,reviewer_user_id)
+  WHERE reviewer_user_id IS NOT NULL;
+
+ALTER TABLE testagram_identity.verification_reviews
+  ADD COLUMN IF NOT EXISTS reviewer_user_id UUID REFERENCES testagram_auth.staff_principals(user_id);
+ALTER TABLE testagram_identity.verification_reviews
+  ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS verification_reviews_native_reviewer_uidx
+  ON testagram_identity.verification_reviews(session_id,reviewer_user_id)
+  WHERE reviewer_user_id IS NOT NULL;
+
+
 CREATE TABLE IF NOT EXISTS testagram_auth.native_staff_permission_overrides (
   user_id UUID NOT NULL REFERENCES testagram_auth.staff_principals(user_id) ON DELETE CASCADE,
   permission_key TEXT NOT NULL REFERENCES testagram_auth.admin_permissions(permission_key) ON DELETE CASCADE,
