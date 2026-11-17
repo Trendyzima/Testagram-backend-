@@ -185,11 +185,12 @@ BEGIN
   WHERE id=app_id;
 
   INSERT INTO testagram_identity.identity_approval_tokens
-    (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
-     second_approver_appwrite_user_id,expires_at)
+    (token_sha256,jti_sha256,application_id,first_approver_user_id,
+     second_approver_user_id,expires_at)
   VALUES
     (decode(repeat('3',64),'hex'),decode(repeat('4',64),'hex'),app_id,
-     'ci-reviewer-one','ci-reviewer-two',now()+interval '10 minutes');
+     '123e4567-e89b-42d3-a456-426614174101',
+     '123e4567-e89b-42d3-a456-426614174102',now()+interval '10 minutes');
 
   INSERT INTO testagram_identity.registration_provisioning
     (application_id,idempotency_key_sha256)
