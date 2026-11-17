@@ -24,8 +24,8 @@ export TMPDIR="$BACKUP_TMP_ROOT"
 
 # Restic is not part of every InstaBox template. Install it once if needed.
 if ! command -v restic >/dev/null 2>&1; then
-  sudo apt-get update -qq
-  sudo apt-get install -y restic
+  sudo -n apt-get update -qq
+  sudo -n apt-get install -y restic
 fi
 command -v restic >/dev/null || die "restic installation did not produce a restic executable"
 
