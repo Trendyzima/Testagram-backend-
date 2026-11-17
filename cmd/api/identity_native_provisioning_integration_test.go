@@ -149,9 +149,21 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	`, requestID, reviewerOne); err != nil {
 		t.Fatal(err)
 	}
-	// The database guard must reject a completed approval request while only
-	// one account approver is recorded. Use one transaction so the failed
-	// statement can be rolled back to a savepoint without losing the fixture.
+	// The approval request can reach its decision state, but the database must
+	// refuse to mint a provisioning capability until both independent account
+	// approvals exist. The trigger protects the capability issuance boundary.
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
+		WHERE id=$1::uuid
+	`, requestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_identity.identity_applications SET status='approved'
+		WHERE id=$1::uuid
+	`, applicationID); err != nil {
+		t.Fatal(err)
+	}
 	approvalTx, err := db.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -161,11 +173,13 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := approvalTx.Exec(ctx, `
-		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
-		WHERE id=$1::uuid
-	`, requestID); err == nil {
+		INSERT INTO testagram_identity.identity_approval_tokens
+		  (token_sha256,jti_sha256,application_id,first_approver_user_id,
+		   second_approver_user_id,expires_at)
+		VALUES($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
+	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, reviewerOne, reviewerTwo); err == nil {
 		_ = approvalTx.Rollback(ctx)
-		t.Fatal("database accepted a completed identity approval with only one approver")
+		t.Fatal("database issued provisioning capability with only one account approver")
 	}
 	if _, err := approvalTx.Exec(ctx, "ROLLBACK TO SAVEPOINT single_approval_attempt"); err != nil {
 		_ = approvalTx.Rollback(ctx)
@@ -179,27 +193,15 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := approvalTx.Exec(ctx, `
-		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
-		WHERE id=$1::uuid
-	`, requestID); err != nil {
-		_ = approvalTx.Rollback(ctx)
-		t.Fatal(err)
-	}
-	if err := approvalTx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, `
-		UPDATE testagram_identity.identity_applications SET status='approved'
-		WHERE id=$1::uuid
-	`, applicationID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_approval_tokens
 		  (token_sha256,jti_sha256,application_id,first_approver_user_id,
 		   second_approver_user_id,expires_at)
 		VALUES($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
 	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, reviewerOne, reviewerTwo); err != nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := approvalTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 
