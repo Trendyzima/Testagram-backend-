@@ -3,14 +3,12 @@ API="https://api.instabox.sh"
 MACHINE_ID="${MACHINE_ID:?machine output is required}"
 AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 SMTP_PORT="${SMTP_PORT:-587}"
-if [[ "$TESTAGRAM_AUTH_PROVIDER" == "native" ]]; then
-  TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
-  [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
-  [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
-  for key in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_FROM_EMAIL; do
-    [[ -n "${!key:-}" ]] || { echo "::error::Native authentication requires $key for verification and password recovery."; exit 1; }
-  done
-fi
+TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
+[[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
+[[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
+for key in SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_FROM_EMAIL; do
+  [[ -n "${!key:-}" ]] || { echo "::error::Native authentication requires $key for verification and password recovery."; exit 1; }
+done
 case "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" in
   true|false) ;;
   *) echo "::error::TESTAGRAM_IDENTITY_REGISTRATION_ENABLED must be true or false."; exit 1 ;;
@@ -129,7 +127,6 @@ B2_S3_PUBLIC_BUCKET=
 B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=
 B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
-TESTAGRAM_AUTH_PROVIDER=$TESTAGRAM_AUTH_PROVIDER
 TESTAGRAM_AUTH_JWT_SECRET=${TESTAGRAM_AUTH_JWT_SECRET:-}
 AUTH_PUBLIC_BASE_URL=$AUTH_PUBLIC_BASE_URL
 SMTP_HOST=${SMTP_HOST:-}
@@ -681,7 +678,6 @@ fi
 
 payload="$(jq -nc \
   --arg cmd "$REMOTE_COMMAND" \
-  --arg auth_provider "$TESTAGRAM_AUTH_PROVIDER" \
   --arg auth_jwt_secret "${TESTAGRAM_AUTH_JWT_SECRET:-}" \
   --arg auth_public_base_url "$AUTH_PUBLIC_BASE_URL" \
   --arg smtp_host "${SMTP_HOST:-}" --arg smtp_port "$SMTP_PORT" \
