@@ -84,20 +84,36 @@ jobs:
           if [[ "$status" != "200" ]]; then
             code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo unknown)"
             retry="$(jq -r '.error.retryAfterSeconds // 0' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo 0)"
-            echo "::error::InstaBox wake failed (HTTP $status, code $code)."
-            if [[ "$retry" =~ ^[0-9]+$ && "$retry" -gt 0 ]]; then
-              echo "InstaBox asked us to wait $retry seconds. No forced start or cooldown bypass will be attempted."
+            if [[ "$code" == "operation_conflict" ]]; then
+              echo "Another legitimate request is already waking the machine; waiting for that same machine to become ready."
+              ready=false
+              for attempt in $(seq 1 24); do
+                machine_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
+                  -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$MACHINE_ID" || true)"
+                if [[ "$machine_status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/machine.json" >/dev/null; then
+                  ready=true
+                  break
+                fi
+                sleep 5
+              done
+              [[ "$ready" == "true" ]] || { echo "::error::The concurrent wake did not reach ready state within two minutes."; exit 1; }
+            else
+              echo "::error::InstaBox wake failed (HTTP $status, code $code)."
+              if [[ "$retry" =~ ^[0-9]+$ && "$retry" -gt 0 ]]; then
+                echo "InstaBox asked us to wait $retry seconds. No forced start or cooldown bypass will be attempted."
+              fi
+              if [[ "$code" == "machine_not_running" ]]; then
+                echo "The machine appears manually stopped or suspended. This workflow will not override an operator stop."
+              fi
+              jq -c '{error: {code: .error.code, message: .error.message, retryAfterSeconds: .error.retryAfterSeconds}}' "$RUNNER_TEMP/wake.json" 2>/dev/null || true
+              exit 1
             fi
-            if [[ "$code" == "machine_not_running" ]]; then
-              echo "The machine appears manually stopped or suspended. This workflow will not override an operator stop."
-            fi
-            jq -c '{error: {code: .error.code, message: .error.message, retryAfterSeconds: .error.retryAfterSeconds}}' "$RUNNER_TEMP/wake.json" 2>/dev/null || true
-            exit 1
+          else
+            jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/wake.json" >/dev/null || {
+              echo "::error::InstaBox accepted the wake but did not confirm a ready machine."
+              exit 1
+            }
           fi
-          jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/wake.json" >/dev/null || {
-            echo "::error::InstaBox accepted the wake but did not confirm a ready machine."
-            exit 1
-          }
           echo "InstaBox machine is ready for the scheduled backup task."
 
       - name: Run encrypted PostgreSQL and MinIO backup through InstaBox exec
