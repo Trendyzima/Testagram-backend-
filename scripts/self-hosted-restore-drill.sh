@@ -6,7 +6,7 @@ umask 077
 # This never connects to the live application database and publishes no ports.
 
 die() { printf 'restore drill error: %s\n' "$*" >&2; exit 1; }
-command -v "${DOCKER[@]}" >/dev/null || die ""${DOCKER[@]}" is required"
+command -v docker >/dev/null || die "docker is required"
 command -v restic >/dev/null || die "restic is required"
 command -v openssl >/dev/null || die "openssl is required"
 [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "RESTIC_REPOSITORY is required"
@@ -19,9 +19,9 @@ elif [[ -z "${RESTIC_PASSWORD:-}" ]]; then
 fi
 
 DOCKER=(docker)
-if ! "${DOCKER[@]}" info >/dev/null 2>&1; then
+if ! docker info >/dev/null 2>&1; then
   command -v sudo >/dev/null || die "Docker is not accessible and sudo is unavailable"
-  sudo -n "${DOCKER[@]}" info >/dev/null 2>&1 || die "Docker is not accessible to this user or passwordless sudo"
+  sudo -n docker info >/dev/null 2>&1 || die "Docker is not accessible to this user or passwordless sudo"
   DOCKER=(sudo -n docker)
 fi
 
