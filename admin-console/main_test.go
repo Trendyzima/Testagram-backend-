@@ -141,9 +141,9 @@ func staffSessionCookie(t *testing.T, a *app) *http.Cookie {
 }
 
 func TestSignOutRetainsStaffCookieWhenBackendCannotRevoke(t *testing.T) {
+	requestInfo := make(chan string, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/auth/logout" || r.Method != http.MethodPost { t.Fatalf("unexpected Backend request: %s %s", r.Method, r.URL.Path) }
-		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("a", 40) { t.Fatal("logout did not use the current native access token") }
+		requestInfo <- r.Method + " " + r.URL.Path + " " + r.Header.Get("Authorization")
 		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 	}))
 	defer backend.Close()
@@ -154,12 +154,14 @@ func TestSignOutRetainsStaffCookieWhenBackendCannotRevoke(t *testing.T) {
 	rec := httptest.NewRecorder()
 	a.handleSignOut(rec, req)
 	if rec.Code != http.StatusServiceUnavailable { t.Fatalf("sign-out status=%d body=%s; want 503", rec.Code, rec.Body.String()) }
+	if got := <-requestInfo; got != "POST /api/auth/logout Bearer "+strings.Repeat("a", 40) { t.Fatalf("unexpected Backend revocation request: %s", got) }
 	if len(rec.Result().Cookies()) != 0 { t.Fatal("staff cookie was cleared despite unconfirmed Backend revocation") }
 }
 
 func TestSignOutClearsStaffCookieAfterBackendRevocation(t *testing.T) {
+	requestInfo := make(chan string, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/auth/logout" || r.Method != http.MethodPost { t.Fatalf("unexpected Backend request: %s %s", r.Method, r.URL.Path) }
+		requestInfo <- r.Method + " " + r.URL.Path + " " + r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -172,6 +174,7 @@ func TestSignOutClearsStaffCookieAfterBackendRevocation(t *testing.T) {
 	rec := httptest.NewRecorder()
 	a.handleSignOut(rec, req)
 	if rec.Code != http.StatusOK { t.Fatalf("sign-out status=%d body=%s", rec.Code, rec.Body.String()) }
+	if got := <-requestInfo; got != "POST /api/auth/logout Bearer "+strings.Repeat("a", 40) { t.Fatalf("unexpected Backend revocation request: %s", got) }
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].MaxAge >= 0 || cookies[0].Value != "" { t.Fatalf("successful sign-out did not clear staff cookie: %#v", cookies) }
 }
