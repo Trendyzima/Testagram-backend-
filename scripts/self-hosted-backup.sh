@@ -262,6 +262,7 @@ fi
       "postgres_user=$postgres_user" \
       "postgres_primary_database=$postgres_primary_db" \
       "postgres_database_count=$(wc -l < "$stage/postgres-databases.txt" | tr -d ' ')" \
+      "postgres_source_bytes=$postgres_bytes" \
       "private_bucket=${MINIO_BUCKET:-testagram-private-media}" \
       "public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}" \
       "identity_evidence_bucket=${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}" \
