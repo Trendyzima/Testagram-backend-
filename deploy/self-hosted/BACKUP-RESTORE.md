@@ -131,10 +131,12 @@ Configure these GitHub repository secrets:
   well as GitHub Secrets. Losing it makes the encrypted repository
   unrecoverable.
 
-The workflow runs in the GitHub `production` environment so it can use the
-same environment-scoped InstaBox and object-storage settings as the production
-deployment. Keep the machine ID and credentials in that environment or in
-repository secrets; never put them in workflow YAML.
+The workflow intentionally does not target the protected GitHub
+`production` deployment environment: a required human approval there could
+block a scheduled backup indefinitely. It reads repository-level GitHub
+variables and secrets. Use a dedicated, least-privilege
+`INSTABOX_BACKUP_API_KEY` and bucket-scoped storage credentials; never put
+machine IDs, keys, or passwords directly in workflow YAML.
 
 The workflow constructs the repository as
 `s3:<endpoint>/<bucket>/testagram`. It passes credentials only to the
