@@ -107,7 +107,7 @@ jobs:
               ready=false
               for attempt in $(seq 1 24); do
                 machine_status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
-                  -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$MACHINE_ID" || true)"
+                  "$API/v1/machines/$MACHINE_ID" || true)"
                 if [[ "$machine_status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/machine.json" >/dev/null; then
                   ready=true
                   break
@@ -148,7 +148,7 @@ jobs:
           export BACKUP_EXEC_CMD="$cmd" BACKUP_RESTIC_REPOSITORY="$repository"
           status="$(
             python3 - <<'PY' | curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 660 -o "$RUNNER_TEMP/exec.json" -w '%{http_code}' \
-              -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H 'Content-Type: application/json' \
+              -X POST -H 'Content-Type: application/json' \
               --data-binary @- "$API/v1/machines/$MACHINE_ID/exec" || true
           import json, os, sys
           payload = {
