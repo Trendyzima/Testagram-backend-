@@ -47,7 +47,6 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.native_identity_application_reviews'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
