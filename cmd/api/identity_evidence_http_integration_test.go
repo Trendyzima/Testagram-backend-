@@ -247,19 +247,61 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		"Content-Type":                 "application/json",
 		"X-Verification-Session-Token": created.SessionToken,
 	}
-	reservation := call(http.MethodPost, sessionPath+"/evidence/upload-url", reservationBody, sessionHeaders)
-	if reservation.Code != http.StatusCreated {
-		t.Fatalf("evidence reservation status=%d body=%s", reservation.Code, reservation.Body.String())
+	// Concurrent identical retries must converge on one reservation and one
+	// evidence ID. The session advisory lock serializes requests across replicas.
+	type reservationResult struct {
+		response *httptest.ResponseRecorder
 	}
-	var reserved struct {
+	reservationResults := make(chan reservationResult, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			reservationResults <- reservationResult{
+				response: call(http.MethodPost, sessionPath+"/evidence/upload-url", reservationBody, sessionHeaders),
+			}
+		}()
+	}
+	firstReservation := (<-reservationResults).response
+	secondReservation := (<-reservationResults).response
+	if firstReservation.Code != http.StatusCreated || secondReservation.Code != http.StatusCreated {
+		t.Fatalf("matching evidence reservation retries returned %d and %d: %s | %s",
+			firstReservation.Code, secondReservation.Code, firstReservation.Body.String(), secondReservation.Body.String())
+	}
+	var reserved, replayed struct {
 		EvidenceID string `json:"evidence_id"`
 		UploadURL  string `json:"upload_url"`
 	}
-	if err := json.Unmarshal(reservation.Body.Bytes(), &reserved); err != nil {
+	if err := json.Unmarshal(firstReservation.Body.Bytes(), &reserved); err != nil {
 		t.Fatal(err)
 	}
-	if reserved.EvidenceID == "" || !strings.HasPrefix(reserved.UploadURL, sessionPath+"/evidence/") {
-		t.Fatalf("invalid evidence reservation: %#v", reserved)
+	if err := json.Unmarshal(secondReservation.Body.Bytes(), &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if reserved.EvidenceID == "" || reserved.EvidenceID != replayed.EvidenceID ||
+		reserved.UploadURL != replayed.UploadURL ||
+		!strings.HasPrefix(reserved.UploadURL, sessionPath+"/evidence/") {
+		t.Fatalf("matching retries did not recover the same evidence reservation: first=%#v replay=%#v", reserved, replayed)
+	}
+
+	// Reusing the session with different metadata must not silently bind the
+	// caller to the first document's reservation.
+	changedReservationBody, _ := json.Marshal(map[string]any{
+		"content_type": "image/jpeg", "size_bytes": len(evidenceBytes),
+		"sha256": strings.Repeat("0", 64),
+	})
+	conflictingReservation := call(http.MethodPost, sessionPath+"/evidence/upload-url", changedReservationBody, sessionHeaders)
+	if conflictingReservation.Code != http.StatusConflict ||
+		!strings.Contains(conflictingReservation.Body.String(), "EVIDENCE_ALREADY_RESERVED") {
+		t.Fatalf("different evidence metadata status=%d body=%s", conflictingReservation.Code, conflictingReservation.Body.String())
+	}
+	var reservationCount int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_identity.verification_evidence
+		WHERE session_id=$1::uuid AND status='upload_pending'
+	`, created.SessionID).Scan(&reservationCount); err != nil {
+		t.Fatal(err)
+	}
+	if reservationCount != 1 {
+		t.Fatalf("matching concurrent retries created %d live reservations; want exactly one", reservationCount)
 	}
 	uploaded := call(http.MethodPut, reserved.UploadURL, evidenceBytes, map[string]string{
 		"Content-Type":                 "image/jpeg",
