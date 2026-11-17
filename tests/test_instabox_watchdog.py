@@ -282,6 +282,25 @@ class WatchdogTests(unittest.TestCase):
             ):
                 watchdog.main()
 
+    def test_running_machine_health_404_is_unverified_without_restart(self):
+        api = FakeAPI()
+        state = {"consecutive_health_failures": 2}
+        with (
+            patch.object(watchdog, "probe", side_effect=watchdog.ProbeConfigurationError(
+                "Health probe /healthz returned HTTP 404; refusing automatic lifecycle action until the probe contract is corrected"
+            )) as probe,
+            patch.object(watchdog, "save_state") as save_state,
+            patch.object(watchdog, "lifecycle") as lifecycle,
+        ):
+            result = watchdog.check_running_service(api, state)
+        self.assertIn("application liveness unverified", result)
+        self.assertIn("HTTP 404", result)
+        probe.assert_called_once()
+        save_state.assert_not_called()
+        lifecycle.assert_not_called()
+        self.assertEqual(state["consecutive_health_failures"], 2)
+        self.assertFalse(any(call[0] == "POST" for call in api.calls))
+
     def test_running_machine_gets_public_liveness_probe_without_lifecycle_action(self):
         api = FakeAPI()
         with (
