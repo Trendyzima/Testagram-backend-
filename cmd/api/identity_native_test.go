@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestIdentityApplicationConflictOnlyMasksDuplicateEmailOrUsername(t *testing.T) {
@@ -41,10 +41,10 @@ func TestIdentityApplicationConflictOnlyMasksDuplicateEmailOrUsername(t *testing
 
 func TestIdentityApplicationRecoveryDoesNotReopenVerifiedOrProvisionedSessions(t *testing.T) {
 	cases := []struct {
-		name              string
-		status            string
+		name               string
+		status             string
 		provisioningExists bool
-		wantRenew         bool
+		wantRenew          bool
 	}{
 		{name: "new pending application", status: "pending", wantRenew: true},
 		{name: "initial verification pending", status: "verification_pending", wantRenew: true},
@@ -143,8 +143,8 @@ func TestIdentityDerivedCapabilityTokensAreStableAndSeparated(t *testing.T) {
 func TestIdentityEvidenceExtensionAllowlist(t *testing.T) {
 	cases := []struct {
 		contentType string
-		want string
-		ok bool
+		want        string
+		ok          bool
 	}{
 		{"image/jpeg", ".jpg", true},
 		{"image/png", ".png", true},
@@ -179,10 +179,10 @@ func TestIdentityRequestTokenShapes(t *testing.T) {
 
 func TestIdentityEvidenceContentTypeSniffing(t *testing.T) {
 	cases := []struct {
-		name string
+		name        string
 		contentType string
-		payload []byte
-		want bool
+		payload     []byte
+		want        bool
 	}{
 		{"jpeg", "image/jpeg", []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00"), true},
 		{"png", "image/png", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), true},
@@ -275,5 +275,32 @@ func TestNativeIdentityApplicationStatusUsesVerificationSessions(t *testing.T) {
 	}
 	if body["adult_verification_threshold"] != float64(18) {
 		t.Fatalf("adult_verification_threshold=%v, want 18", body["adult_verification_threshold"])
+	}
+}
+
+func TestIdentityApplicationCreateFailsClosedWhenRegistrationIsDisabled(t *testing.T) {
+	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "false")
+
+	// The disabled gate must run before CORS, database, storage, policy or
+	// evidence dependencies are consulted. This protects a paused rollout even
+	// when the public endpoint is reachable.
+	body := strings.NewReader(`{"email":"applicant@example.test","username":"applicant_01","display_name":"Test Applicant","adult_confirmed":true,"terms_accepted":true,"privacy_accepted":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/identity/applications", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")
+	rec := httptest.NewRecorder()
+
+	(&service{}).identityApplicationCreate(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled registration status=%d body=%s; want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("disabled registration returned invalid JSON: %v", err)
+	}
+	errorBody, ok := response["error"].(map[string]any)
+	if !ok || errorBody["code"] != "REGISTRATION_DISABLED" {
+		t.Fatalf("disabled registration error=%v; want REGISTRATION_DISABLED", response["error"])
 	}
 }
