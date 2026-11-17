@@ -654,7 +654,9 @@ jobs:
           assert "RestorePrimary" in replica and "ReplicaDownloadURLs" in replica and "fetchIdentityEvidenceBytes" in reviewer_evidence, "reviewer evidence must fail over only to checksum-verified replicas and restore the VPS primary"
           assert "TestFetchIdentityEvidenceBytesRejectsChecksumMismatch" in reviewer_tests and "TestFetchIdentityEvidenceBytesDoesNotFollowRedirects" in reviewer_tests, "reviewer evidence proxy must reject corrupt and redirected object responses"
           admin = Path("admin-console/main.go").read_text()
-          assert 'BACKEND_INTERNAL_URL: http://api:8080' in compose and '"/account/jwts"' in admin and 'handleIdentityReviewQueue' in admin, "staff console must mint reviewer JWTs server-side and proxy through the private Backend network"
+          admin_security = Path("admin-console/security.go").read_text()
+          assert 'BACKEND_INTERNAL_URL: http://api:8080' in compose and 'staffSession.AccessToken' in admin and 'verifyNativeSession' in admin and 'testagram_auth.staff_principals' in admin_security, "staff console must verify native Testagram sessions and proxy native bearer tokens through the private Backend network"
+          assert "APPWRITE" not in admin.upper() and "APPWRITE" not in admin_security.upper(), "staff console runtime must not contain legacy identity-provider integration"
           assert 'loadIdentityReviewQueue' in Path("admin-console/web/app.js").read_text() and 'identity-review-panel' in Path("admin-console/web/index.html").read_text(), "staff console must expose the identity reviewer workflow"
           for check in (
               "DATA_CENTRE_MEDIA_ENABLED",
@@ -1132,6 +1134,10 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_identity_registration_pipeline.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261113_identity_registration_hardening.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261117_native_staff_reviewer_grants.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261118_native_admin_console.sql
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.11"
@@ -1144,10 +1150,18 @@ jobs:
         run: |
           set -euo pipefail
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
-          INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role) VALUES
-            ('ci-master-user','owner'),
-            ('ci-identity-admin','administrator'),
-            ('ci-engineer-user','engineer');
+          INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at) VALUES
+            ('123e4567-e89b-42d3-a456-426614174001','ci-master@example.test','ci_master','test-only-invalid-password-hash',now()),
+            ('123e4567-e89b-42d3-a456-426614174002','ci-admin@example.test','ci_admin','test-only-invalid-password-hash',now()),
+            ('123e4567-e89b-42d3-a456-426614174003','ci-engineer@example.test','ci_engineer','test-only-invalid-password-hash',now());
+          INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by) VALUES
+            ('123e4567-e89b-42d3-a456-426614174001',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
+            ('123e4567-e89b-42d3-a456-426614174002',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
+            ('123e4567-e89b-42d3-a456-426614174003',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001');
+          INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES
+            ('123e4567-e89b-42d3-a456-426614174001','owner','123e4567-e89b-42d3-a456-426614174001'),
+            ('123e4567-e89b-42d3-a456-426614174002','administrator','123e4567-e89b-42d3-a456-426614174001'),
+            ('123e4567-e89b-42d3-a456-426614174003','engineer','123e4567-e89b-42d3-a456-426614174001');
           DO $permissions$
           BEGIN
             IF NOT EXISTS (
@@ -1163,46 +1177,36 @@ jobs:
               WHERE role='engineer' AND permission_key='deployment.approve'
             ) THEN RAISE EXCEPTION 'engineers must not receive production approval by default'; END IF;
           END $permissions$;
-          INSERT INTO testagram_auth.staff_permission_overrides
-            (appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id)
-          VALUES ('ci-engineer-user','deployment.approve',TRUE,'Temporary controlled CI approval grant','ci-master-user');
-          INSERT INTO testagram_auth.sensitive_action_requests
-            (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256)
+          INSERT INTO testagram_auth.native_staff_permission_overrides
+            (user_id,permission_key,granted,reason,changed_by_user_id)
+          VALUES ('123e4567-e89b-42d3-a456-426614174003','deployment.approve',TRUE,'Temporary controlled CI approval grant','123e4567-e89b-42d3-a456-426614174001');
+          INSERT INTO testagram_auth.native_sensitive_action_requests
+            (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256)
           VALUES
-            ('deployment.production','ci-master-user','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
-          INSERT INTO testagram_auth.sensitive_action_approvals
-            (request_id,approver_appwrite_user_id,decision,reason)
-          SELECT id,'ci-identity-admin','approved','Independent reviewer approves CI request'
-          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
-          INSERT INTO testagram_auth.sensitive_action_approvals
-            (request_id,approver_appwrite_user_id,decision,reason)
-          SELECT id,'ci-engineer-user','approved','Second distinct reviewer approves CI request'
-          FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001';
+            ('deployment.production','123e4567-e89b-42d3-a456-426614174001','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          INSERT INTO testagram_auth.native_sensitive_action_approvals
+            (request_id,approver_user_id,decision,reason)
+          SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Independent reviewer approves CI request'
+          FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001';
+          INSERT INTO testagram_auth.native_sensitive_action_approvals
+            (request_id,approver_user_id,decision,reason)
+          SELECT id,'123e4567-e89b-42d3-a456-426614174003','approved','Second distinct reviewer approves CI request'
+          FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001';
           DO $approval$
           BEGIN
-            IF (SELECT count(*) FROM testagram_auth.sensitive_action_approvals
-                WHERE request_id=(SELECT id FROM testagram_auth.sensitive_action_requests WHERE target_reference='ci-release-001')) <> 2 THEN
+            IF (SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals
+                WHERE request_id=(SELECT id FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001')) <> 2 THEN
               RAISE EXCEPTION 'two distinct approval records were not persisted';
             END IF;
-            IF NOT EXISTS (
-              SELECT 1 FROM testagram_auth.admin_security_audit
-              WHERE action='sensitive_action.requested'
-            ) AND EXISTS (
-              SELECT 1 FROM testagram_auth.sensitive_action_requests
-            ) THEN
-              -- Audit insertion is performed atomically by the application handler;
-              -- the schema integration intentionally inserts the ledger directly.
-              NULL;
-            END IF;
           END $approval$;
-          UPDATE testagram_auth.staff_roles SET access_revoked_at=now()
-          WHERE appwrite_user_id='ci-engineer-user';
+          UPDATE testagram_auth.staff_principals SET enabled=FALSE
+          WHERE user_id='123e4567-e89b-42d3-a456-426614174003';
           DO $revocation$
           BEGIN
-            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id='ci-engineer-user' AND access_revoked_at IS NOT NULL) THEN
-              RAISE EXCEPTION 'staff revocation timestamp was not persisted';
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_principals WHERE user_id='123e4567-e89b-42d3-a456-426614174003' AND enabled=FALSE) THEN
+              RAISE EXCEPTION 'native staff revocation state was not persisted';
             END IF;
-            IF NOT EXISTS (SELECT 1 FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id='ci-engineer-user' AND permission_key='deployment.approve') THEN
+            IF NOT EXISTS (SELECT 1 FROM testagram_auth.native_staff_permission_overrides WHERE user_id='123e4567-e89b-42d3-a456-426614174003' AND permission_key='deployment.approve') THEN
               RAISE EXCEPTION 'revocation must preserve permission audit history';
             END IF;
           END $revocation$;
