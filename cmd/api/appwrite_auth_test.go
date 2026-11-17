@@ -16,9 +16,7 @@ import (
 )
 
 func TestFetchAppwriteAccountSendsProjectAndSessionJWT(t *testing.T) {
-	legacyEndpointCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		legacyEndpointCalled = true
 		if r.URL.Path != "/v1/account" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
@@ -219,7 +217,9 @@ func TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent(t *testing.T) {
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM testagram_identity.appwrite_registration_consents WHERE appwrite_user_id=$1`, appwriteID)
 	}()
 
+	legacyEndpointCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		legacyEndpointCalled = true
 		if r.URL.Path != "/v1/account" {
 			t.Errorf("Appwrite path = %q", r.URL.Path)
 		}
