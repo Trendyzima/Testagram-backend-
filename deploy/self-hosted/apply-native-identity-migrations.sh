@@ -41,6 +41,13 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.legacy_account_reconciliation'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.staff_principals'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.staff_role_grants'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_staff_permission_overrides'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.native_identity_application_reviews'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
@@ -150,7 +157,9 @@ for file in \
   047_appwrite_registration_consent.sql \
   049_native_auth_cutover_foundation.sql \
   050_native_approved_identity_provisioning.sql \
-  051_native_auth_runtime_grants.sql; do
+  051_native_auth_runtime_grants.sql \
+  053_native_staff_reviewer_grants.sql \
+  054_native_admin_console.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -173,11 +182,13 @@ apply_migration 047_appwrite_registration_consent.sql
 apply_migration 049_native_auth_cutover_foundation.sql
 apply_migration 050_native_approved_identity_provisioning.sql
 apply_migration 051_native_auth_runtime_grants.sql
+apply_migration 053_native_staff_reviewer_grants.sql
+apply_migration 054_native_admin_console.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, native staff reviewer grants, native admin-console ledgers, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
