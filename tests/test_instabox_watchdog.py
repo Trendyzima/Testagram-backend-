@@ -335,24 +335,27 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("state changed", result)
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
 
-    def test_idle_suspended_machine_is_not_force_resumed_or_pinged(self):
+    def test_suspended_machine_is_force_resumed_even_when_desired_state_is_suspended(self):
         api = FakeAPI({
             "id": "machine-123", "name": "testagramdb", "state": "suspended",
-            "desiredState": "running", "operationId": None
+            "desiredState": "suspended", "operationId": None
         })
         with (
             patch.object(watchdog, "API", return_value=api),
             patch.object(watchdog, "load_state", return_value={}),
             patch.object(watchdog, "save_state"),
-            patch.object(watchdog, "probe") as probe,
+            patch.object(watchdog, "wait_for_service"),
+            patch.object(watchdog, "notify") as notify,
             patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
+            patch.object(watchdog, "DRY_RUN", False),
             patch.object(watchdog, "MACHINE_ID", "machine-123"),
             patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
         ):
             self.assertEqual(watchdog.main(), 0)
-        self.assertEqual(len(api.calls), 1)
-        self.assertFalse(any(call[0] == "POST" for call in api.calls))
-        probe.assert_not_called()
+        actions = [call[1].rsplit("/", 1)[-1] for call in api.calls if call[0] == "POST"]
+        self.assertEqual(actions, ["resume"])
+        notify.assert_called_once()
 
     def test_existing_watchdog_secret_uses_authorization_for_provider_requests(self):
         class Response:
