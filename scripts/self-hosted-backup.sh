@@ -63,6 +63,7 @@ case "${1:-}" in
     trap cleanup EXIT INT TERM
 
     printf 'Exporting PostgreSQL...\n'
+    # shellcheck disable=SC2016
     "${DOCKER[@]}" compose exec -T postgres sh -ec 'pg_dump -Fc --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$stage/postgres.dump"
     [[ -s "$stage/postgres.dump" ]] || die "PostgreSQL dump is empty"
     "${DOCKER[@]}" compose exec -T postgres pg_restore --list < "$stage/postgres.dump" > "$stage/postgres.dump.list"
@@ -71,6 +72,7 @@ case "${1:-}" in
     printf 'Mirroring MinIO media buckets to protected staging...\n'
     mkdir -p "$stage/minio-private" "$stage/minio-public"
     chmod 700 "$stage/minio-private" "$stage/minio-public"
+    # shellcheck disable=SC2016
     "${DOCKER[@]}" compose run --rm --no-deps \
       -v "$stage:/backup" \
       --entrypoint /bin/sh object-init -ec '
