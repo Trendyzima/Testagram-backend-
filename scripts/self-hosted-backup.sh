@@ -10,8 +10,8 @@ usage() {
   cat <<'USAGE'
 Usage: ./scripts/self-hosted-backup.sh <backup|check|prune>
 
-  backup  Export PostgreSQL and all four MinIO buckets, then store the snapshot
-          in the encrypted restic repository.
+  backup  Export PostgreSQL, all four MinIO buckets, and detected local Data
+          Centre video/node storage into the encrypted restic repository.
   check   Verify repository structure and read a sample of stored data.
   prune   Apply the configured retention policy and prune unreferenced data.
 
@@ -57,8 +57,8 @@ cd "$compose_dir"
 case "${1:-}" in
   backup)
 # Do not claim a complete backup if writes have moved to an external provider.
-# This helper captures the local PostgreSQL + MinIO stack only; active B2/R2
-# buckets require their own explicit backup and restore-tested targets.
+# This helper captures local PostgreSQL + MinIO and detected Data Centre video
+# and node files; active B2/R2 media stores need separate restore-tested backups.
 read_env_flag() {
   local key="$1"
   # shellcheck disable=SC2016
