@@ -20,10 +20,8 @@ MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagram")
 HEALTH_URL = os.getenv("TESTAGRAM_HEALTH_URL", "")
 STATE_FILE = os.getenv("WATCHDOG_STATE_FILE", ".watchdog-state.json")
 WEBHOOK_URL = os.getenv("WATCHDOG_ALERT_WEBHOOK", "")
-FAILURES_REQUIRED = int(os.getenv("WATCHDOG_FAILURES_REQUIRED", "3"))
 PROBE_INTERVAL = int(os.getenv("WATCHDOG_PROBE_INTERVAL_SECONDS", "15"))
 PROBE_TIMEOUT = int(os.getenv("WATCHDOG_PROBE_TIMEOUT_SECONDS", "10"))
-RESTART_COOLDOWN = int(os.getenv("WATCHDOG_RESTART_COOLDOWN_SECONDS", "1800"))
 OPERATION_TIMEOUT = int(os.getenv("WATCHDOG_OPERATION_TIMEOUT_SECONDS", "300"))
 RECOVERY_HEALTH_TIMEOUT = int(os.getenv("WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS", "300"))
 DRY_RUN = os.getenv("WATCHDOG_DRY_RUN", "false").lower() == "true"
@@ -286,7 +284,7 @@ def main() -> int:
         raise WatchdogError("Health URL must use HTTPS")
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
-    if (FAILURES_REQUIRED < 2 or PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
+    if (PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
             or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1):
         raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, positive timeouts/intervals and >=300s restart cooldown")
     if not API_KEY:
