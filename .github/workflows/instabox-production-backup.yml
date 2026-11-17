@@ -58,7 +58,7 @@ jobs:
           import ipaddress, re, sys
           from urllib.parse import urlparse
           machine, endpoint, bucket, region = sys.argv[1:]
-          if not re.fullmatch(r"m_[a-z2-7]{26}", machine):
+          if machine and not re.fullmatch(r"m_[a-z2-7]{26}", machine):
               raise SystemExit("INSTABOX_MACHINE_ID is not a valid InstaBox machine ID")
           parsed = urlparse(endpoint)
           if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.port:
@@ -89,10 +89,31 @@ jobs:
           echo "run_prune=$run_prune" >> "$GITHUB_OUTPUT"
           printf 'header = "X-API-Key: %s"\n' "$INSTABOX_API_KEY" > "$RUNNER_TEMP/instabox-curl.conf"
           chmod 600 "$RUNNER_TEMP/instabox-curl.conf"
-          echo "Backup destination and machine identity passed validation."
+          echo "Backup destination and credentials passed validation."
+
+      - name: Resolve production machine ID
+        id: machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${MACHINE_ID:-}" ]]; then
+            printf 'machine_id=%s\\n' "$MACHINE_ID" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          machines="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 5 --max-time 60 \\
+            "$API/v1/machines?limit=100")"
+          machine_id="$(jq -r '([.machines[] | select(.name == "testagramdb")][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' <<<"$machines")"
+          if [[ -z "$machine_id" ]]; then
+            echo "::error::Could not safely identify the production machine. Name it testagramdb or set INSTABOX_MACHINE_ID as a repository variable/secret."
+            exit 1
+          fi
+          printf 'machine_id=%s\\n' "$machine_id" >> "$GITHUB_OUTPUT"
 
       - name: Wake only the idle-suspended production machine
         shell: bash
+        env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
         run: |
           set -euo pipefail
           status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 60 -o "$RUNNER_TEMP/wake.json" -w '%{http_code}' \
@@ -138,6 +159,7 @@ jobs:
       - name: Run encrypted PostgreSQL, MinIO and local Data Centre backups through InstaBox exec
         shell: bash
         env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
           RUN_PRUNE: ${{ steps.config.outputs.run_prune }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
           BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
