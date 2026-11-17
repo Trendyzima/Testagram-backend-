@@ -1,6 +1,7 @@
 # Testagram self-hosted backup and restore
 
-This runbook backs up PostgreSQL metadata and all four MinIO buckets (private media, public media, identity evidence, and metadata) into an
+This runbook backs up PostgreSQL metadata and all four MinIO buckets
+(private media, public media, identity evidence, and metadata) into an
 encrypted [restic](https://restic.net/) repository. Valkey is intentionally not
 backed up: its cache and queue data are operational state and must be rebuilt or
 replayed according to each consumer's recovery policy. Do not treat this as a
@@ -19,7 +20,7 @@ have both been verified.
   a separate secure password manager; losing it makes the repository
   unrecoverable.
 - Ensure the machine has enough temporary disk space for a PostgreSQL dump and
-  a full working copy of both media buckets. The script uses a mode-0700
+  a full working copy of all four MinIO buckets. The script uses a mode-0700
   temporary directory and deletes it on exit, but the staged files are plaintext
   while the backup runs. Use an encrypted host disk and a protected temporary
   filesystem.
@@ -104,8 +105,10 @@ Configure these GitHub repository variables:
   `testagram-backups`.
 - `TESTAGRAM_BACKUP_S3_REGION`: optional; defaults to the existing B2/R2
   region, then `auto` for R2. B2 uses its bucket region (e.g. `us-west-004`).
-- `INSTABOX_MACHINE_ID`: optional; defaults to the verified current machine
-  ID. Set it if the machine is ever replaced.
+- `INSTABOX_MACHINE_ID`: the existing production machine-ID secret used by
+  the deployment workflow. The backup job accepts an environment variable
+  override named `INSTABOX_MACHINE_ID`, but has no hard-coded machine-ID
+  fallback; it fails closed if this value is missing or malformed.
 - `TESTAGRAM_PRODUCTION_BACKUP_ENABLED`: set to `true` only after the first
   manual backup and restore drill succeed.
 - `TESTAGRAM_BACKUP_PRUNE_ENABLED`: leave unset/false until restore has been
@@ -114,9 +117,10 @@ Configure these GitHub repository variables:
 Configure these GitHub repository secrets:
 
 - `INSTABOX_BACKUP_API_KEY`: recommended dedicated InstaBox API key with
-  `machines:write` (or legacy `machines:exec`) for this machine. If omitted,
+  permission to wake this machine and execute a command on it. If omitted,
   the workflow falls back to the existing `TESTAGRAM_DB_API` deployment
-  secret. Do not paste either key into chat or commit it.
+  secret, which is already used by the production deployment workflow. Do not
+  paste either key into chat or commit it.
 - `TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID` and
   `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`: recommended dedicated credentials
   scoped to the backup bucket. If omitted, the workflow can fall back to the
@@ -126,6 +130,11 @@ Configure these GitHub repository secrets:
   it locally with `openssl rand -hex 32` and store it in a password manager as
   well as GitHub Secrets. Losing it makes the encrypted repository
   unrecoverable.
+
+The workflow runs in the GitHub `production` environment so it can use the
+same environment-scoped InstaBox and object-storage settings as the production
+deployment. Keep the machine ID and credentials in that environment or in
+repository secrets; never put them in workflow YAML.
 
 The workflow constructs the repository as
 `s3:<endpoint>/<bucket>/testagram`. It passes credentials only to the
@@ -149,7 +158,7 @@ run migrations, or restart application containers.
    `TESTAGRAM_BACKUP_PRUNE_ENABLED=true`. Sunday runs then retain 7 daily, 5
    weekly, and 12 monthly points. Manual dispatch can also request a prune.
 5. Check the workflow result and the provider's bucket usage. The first backup
-   copies the current PostgreSQL database and both MinIO media buckets; later
+   copies the current PostgreSQL database and all four MinIO buckets; later
    Restic runs upload only changed data. A failed or timed-out exec is not
    blindly retried because InstaBox exec is not idempotent; inspect machine
    history before retrying.
