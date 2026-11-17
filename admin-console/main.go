@@ -7,7 +7,8 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"embed"
-	"encoding/base64"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,10 +31,7 @@ import (
 var webFiles embed.FS
 
 type app struct {
-	appwriteEndpoint string
-	appwriteProject  string
 	backendAPIURL    string
-	appwriteAPIKey   string
 	serviceAuthKey   []byte
 	database         *pgxpool.Pool
 	publicURL        string
@@ -47,31 +45,39 @@ type app struct {
 }
 
 type session struct {
-	Secret      string `json:"secret"`
-	ExpiresAt   int64  `json:"expires_at"`
-	StepUpUntil int64  `json:"step_up_until,omitempty"`
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	AccessExpiresAt  int64  `json:"access_expires_at"`
+	RefreshExpiresAt int64  `json:"refresh_expires_at"`
+	StepUpUntil      int64  `json:"step_up_until,omitempty"`
 }
 
 type authUser struct {
-	ID        string `json:"$id"`
+	ID        string `json:"id"`
 	Email     string `json:"email"`
 	Name      string `json:"name"`
-	Status    bool   `json:"status"`
 	StaffRole string `json:"staff_role,omitempty"`
 }
 
-type appwriteSession struct {
-	ID     string `json:"$id"`
-	UserID string `json:"userId"`
-	Secret string `json:"secret"`
-	Expire string `json:"expire"`
+type nativeAuthEnvelope struct {
+	OK   bool `json:"ok"`
+	Data struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		User         struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+		} `json:"user"`
+	} `json:"data"`
+	Error any `json:"error"`
 }
 
 type authInput struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	UserID   string `json:"user_id"`
-	Secret   string `json:"secret"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type inviteInput struct {
@@ -97,25 +103,6 @@ func newApp() (*app, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
-	}
-	endpoint := strings.TrimRight(strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT")), "/")
-	project := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
-	rawServiceKey:=strings.TrimSpace(os.Getenv("ADMIN_SERVICE_AUTH_KEY"))
-	var serviceAuthKey []byte
-	if rawServiceKey!="" {
-		serviceAuthKey,err=hex.DecodeString(rawServiceKey)
-		if err!=nil || len(serviceAuthKey)!=32 { return nil,errors.New("ADMIN_SERVICE_AUTH_KEY must be 64 hexadecimal characters (32 random bytes)") }
-	}
-	parsedEndpoint, err := url.Parse(endpoint)
-	if err != nil || parsedEndpoint.Host == "" || parsedEndpoint.User != nil ||
-		(parsedEndpoint.Scheme != "https" && !(parsedEndpoint.Scheme == "http" && (parsedEndpoint.Hostname() == "localhost" || parsedEndpoint.Hostname() == "127.0.0.1"))) {
-		return nil, errors.New("APPWRITE_ENDPOINT must be HTTPS (HTTP is allowed only for localhost)")
-	}
-	if !strings.HasSuffix(parsedEndpoint.Path, "/v1") {
-		parsedEndpoint.Path = strings.TrimRight(parsedEndpoint.Path, "/") + "/v1"
-	}
-	if project == "" {
-		return nil, errors.New("APPWRITE_PROJECT_ID is required")
 	}
 	backendAPIURL := strings.TrimRight(env("BACKEND_INTERNAL_URL", "http://api:8080"), "/")
 	backendParsed, backendErr := url.Parse(backendAPIURL)
@@ -149,10 +136,7 @@ func newApp() (*app, error) {
 		return nil, errors.New("ADMIN_COOKIE_SECURE cannot be false when ADMIN_PUBLIC_URL uses HTTPS")
 	}
 	return &app{
-		appwriteEndpoint: strings.TrimRight(parsedEndpoint.String(), "/"),
-		appwriteProject: project,
 		backendAPIURL: backendAPIURL,
-		appwriteAPIKey: strings.TrimSpace(os.Getenv("APPWRITE_API_KEY")),
 		serviceAuthKey: serviceAuthKey,
 		database: db,
 		publicURL: publicURL,
@@ -244,61 +228,6 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-func (a *app) appwriteRequest(ctx context.Context, method, path, sessionSecret string, body any, dst any) (int, error) {
-	var reader io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil { return 0, err }
-		reader = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, a.appwriteEndpoint+path, reader)
-	if err != nil { return 0, err }
-	req.Header.Set("X-Appwrite-Project", a.appwriteProject)
-	req.Header.Set("Accept", "application/json")
-	if sessionSecret != "" { req.Header.Set("X-Appwrite-Session", sessionSecret) }
-	if body != nil { req.Header.Set("Content-Type", "application/json") }
-	resp, err := a.client.Do(req)
-	if err != nil { return 0, err }
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil { return resp.StatusCode, err }
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, errors.New("Appwrite rejected the request")
-	}
-	if dst != nil {
-		if err := json.Unmarshal(raw, dst); err != nil { return resp.StatusCode, err }
-	}
-	return resp.StatusCode, nil
-}
-
-func (a *app) appwriteAdminRequest(ctx context.Context, method, path string, body any, dst any) (int, error) {
-	if a.appwriteAPIKey == "" { return 0, errors.New("APPWRITE_API_KEY is not configured") }
-	var reader io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil { return 0, err }
-		reader = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, a.appwriteEndpoint+path, reader)
-	if err != nil { return 0, err }
-	req.Header.Set("X-Appwrite-Project", a.appwriteProject)
-	req.Header.Set("X-Appwrite-Key", a.appwriteAPIKey)
-	req.Header.Set("Accept", "application/json")
-	if body != nil { req.Header.Set("Content-Type", "application/json") }
-	resp, err := a.client.Do(req)
-	if err != nil { return 0, err }
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil { return resp.StatusCode, err }
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, errors.New("Appwrite admin operation failed")
-	}
-	if dst != nil {
-		if err := json.Unmarshal(raw, dst); err != nil { return resp.StatusCode, err }
-	}
-	return resp.StatusCode, nil
-}
-
 func (a *app) setSession(w http.ResponseWriter, s session) error {
 	raw, err := json.Marshal(s)
 	if err != nil { return err }
@@ -306,11 +235,11 @@ func (a *app) setSession(w http.ResponseWriter, s session) error {
 	if _, err := rand.Read(nonce); err != nil { return err }
 	sealed := a.aead.Seal(nonce, nonce, raw, []byte("testagram-staff-session-v2"))
 	maxAge := 60 * 60 * 24 * 7
-	if s.ExpiresAt > 0 {
-		remaining := int(s.ExpiresAt - time.Now().Unix())
+	if s.RefreshExpiresAt > 0 {
+		remaining := int(s.RefreshExpiresAt - time.Now().Unix())
 		if remaining < maxAge { maxAge = remaining }
 	}
-	if maxAge < 1 { return errors.New("Appwrite session is expired") }
+	if maxAge < 1 { return errors.New("native staff session is expired") }
 	http.SetCookie(w, &http.Cookie{Name:"testagram-staff", Value:hex.EncodeToString(sealed), Path:"/", HttpOnly:true, Secure:a.cookieSecure, SameSite:http.SameSiteStrictMode, MaxAge:maxAge})
 	return nil
 }
@@ -329,31 +258,105 @@ func (a *app) readSession(r *http.Request) (session, error) {
 	plain, err := a.aead.Open(nil, sealed[:n], sealed[n:], []byte("testagram-staff-session-v2"))
 	if err != nil { return session{}, err }
 	var s session
-	if err := json.Unmarshal(plain, &s); err != nil || s.Secret == "" || s.ExpiresAt <= time.Now().Unix() {
+	if err := json.Unmarshal(plain, &s); err != nil || s.AccessToken == "" || s.RefreshToken == "" || s.RefreshExpiresAt <= time.Now().Unix() {
 		return session{}, errors.New("invalid session")
 	}
 	return s, nil
 }
 
+type nativeJWTClaims struct {
+	Subject string `json:"sub"`
+	Email string `json:"email"`
+	Role string `json:"role"`
+	Issuer string `json:"iss"`
+	Audience string `json:"aud"`
+	IssuedAt int64 `json:"iat"`
+	ExpiresAt int64 `json:"exp"`
+	TokenVersion int64 `json:"ver"`
+	SessionID string `json:"sid"`
+}
+
+func (a *app) backendRequest(ctx context.Context, method, path string, bearer string, body any, dst any) (int, error) {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body); if err != nil { return 0, err }; reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, a.backendAPIURL+path, reader)
+	if err != nil { return 0, err }
+	req.Header.Set("Accept", "application/json")
+	if bearer != "" { req.Header.Set("Authorization", "Bearer "+bearer) }
+	if body != nil { req.Header.Set("Content-Type", "application/json") }
+	resp, err := a.client.Do(req); if err != nil { return 0, err }; defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)); if err != nil { return resp.StatusCode, err }
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return resp.StatusCode, fmt.Errorf("Testagram authentication returned HTTP %d", resp.StatusCode) }
+	if dst != nil { if err := json.Unmarshal(raw, dst); err != nil { return resp.StatusCode, err } }
+	return resp.StatusCode, nil
+}
+
+func (a *app) refreshSession(ctx context.Context, s *session) error {
+	if s.RefreshToken == "" || s.RefreshExpiresAt <= time.Now().Unix() { return errors.New("native refresh session expired") }
+	var envelope nativeAuthEnvelope
+	_, err := a.backendRequest(ctx, http.MethodPost, "/api/auth/refresh", "", map[string]string{"refresh_token":s.RefreshToken}, &envelope)
+	if err != nil || !envelope.OK || envelope.Data.AccessToken == "" || envelope.Data.RefreshToken == "" {
+		return errors.New("native session refresh failed")
+	}
+	s.AccessToken = envelope.Data.AccessToken
+	s.RefreshToken = envelope.Data.RefreshToken
+	s.AccessExpiresAt = time.Now().Add(time.Duration(envelope.Data.ExpiresIn)*time.Second).Unix()
+	// Refresh-token rotation renews the 30-day session window.
+	s.RefreshExpiresAt = time.Now().Add(30*24*time.Hour).Unix()
+	return nil
+}
+
 func (a *app) currentUser(w http.ResponseWriter, r *http.Request) (session, authUser, bool) {
 	s, err := a.readSession(r)
 	if err != nil { a.clearSession(w); return session{}, authUser{}, false }
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
-	defer cancel()
-	var user authUser
-	_, err = a.appwriteRequest(ctx, http.MethodGet, "/account", s.Secret, nil, &user)
-	if err != nil || user.ID == "" || !user.Status {
-		a.clearSession(w)
-		return session{}, authUser{}, false
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second); defer cancel()
+	if s.AccessExpiresAt <= time.Now().Add(30*time.Second).Unix() {
+		if err := a.refreshSession(ctx, &s); err != nil { a.clearSession(w); return session{}, authUser{}, false }
+		if err := a.setSession(w, s); err != nil { a.clearSession(w); return session{}, authUser{}, false }
 	}
+	claims, err := a.verifyNativeSession(ctx, s.AccessToken)
+	if err != nil { a.clearSession(w); return session{}, authUser{}, false }
+	user := authUser{ID:claims.Subject, Email:claims.Email}
 	if a.database == nil { return session{}, authUser{}, false }
-	err = a.database.QueryRow(ctx, `SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL`, user.ID).Scan(&user.StaffRole)
-	if errors.Is(err, pgx.ErrNoRows) {
-		user.StaffRole = ""
-	} else if err != nil {
-		return session{}, authUser{}, false
-	}
+	err = a.database.QueryRow(ctx, `
+		SELECT rg.role
+		FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		  AND rg.role IN ('owner','administrator','engineer','operations','support','moderator')
+		ORDER BY CASE rg.role WHEN 'owner' THEN 0 WHEN 'administrator' THEN 1 ELSE 2 END
+		LIMIT 1
+	`, user.ID).Scan(&user.StaffRole)
+	if errors.Is(err, pgx.ErrNoRows) { user.StaffRole = "" } else if err != nil { return session{}, authUser{}, false }
 	return s, user, true
+}
+
+func (a *app) verifyNativeSession(ctx context.Context, token string) (nativeJWTClaims, error) {
+	var claims nativeJWTClaims
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 { return claims, errors.New("invalid native access token") }
+	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
+	if len(secret) < 32 { return claims, errors.New("native authentication is not configured") }
+	unsigned := parts[0]+"."+parts[1]
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2]); if err != nil { return claims, errors.New("invalid native token signature") }
+	mac := hmac.New(sha256.New, []byte(secret)); _, _ = mac.Write([]byte(unsigned))
+	if !hmac.Equal(signature, mac.Sum(nil)) { return claims, errors.New("invalid native token signature") }
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1]); if err != nil || json.Unmarshal(payload,&claims)!=nil { return claims, errors.New("invalid native token claims") }
+	now := time.Now().UTC().Unix()
+	if claims.Issuer!="testagram-auth" || claims.Audience!="testagram-api" || claims.Role!="authenticated" || claims.Subject=="" || claims.SessionID=="" || claims.TokenVersion<1 || claims.ExpiresAt<=now || claims.ExpiresAt<=claims.IssuedAt || claims.ExpiresAt-claims.IssuedAt>16*60 { return claims, errors.New("expired or invalid native token claims") }
+	var active bool
+	err = a.database.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM testagram_auth.sessions s
+		JOIN testagram_auth.identities i ON i.user_id=s.user_id
+		WHERE s.session_id=$1::uuid AND s.user_id=$2::uuid AND s.token_version=$3
+		 AND s.revoked_at IS NULL AND s.expires_at>now()
+		 AND i.token_version=$3 AND i.disabled_at IS NULL
+		 AND i.email_verified_at IS NOT NULL AND NOT i.password_reset_required
+	)`, claims.SessionID, claims.Subject, claims.TokenVersion).Scan(&active)
+	if err != nil || !active { return claims, errors.New("native session is revoked or unavailable") }
+	return claims, nil
 }
 
 func staffRole(user authUser) string {
@@ -372,22 +375,6 @@ func (a *app) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"authenticated":true,"staff":role!="","email":user.Email,"role":role,"user_id":user.ID})
 }
 
-func (a *app) identityJWT(ctx context.Context, sessionSecret string) (string, error) {
-	var result struct {
-		JWT string `json:"jwt"`
-	}
-	if _, err := a.appwriteRequest(ctx, http.MethodPost, "/account/jwts", sessionSecret, nil, &result); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(result.JWT) == "" {
-		return "", errors.New("Appwrite did not issue a reviewer JWT")
-	}
-	return result.JWT, nil
-}
-
-// identityProxy authenticates the staff cookie locally, obtains a short-lived
-// Appwrite JWT server-side, then lets Backend independently enforce identity.review.
-// The JWT and private evidence bytes never enter browser JavaScript storage.
 func (a *app) identityProxy(w http.ResponseWriter, r *http.Request, backendPath string, evidenceStream bool) {
 	staffSession, _, ok := a.requireStaff(w, r)
 	if !ok {
@@ -395,9 +382,9 @@ func (a *app) identityProxy(w http.ResponseWriter, r *http.Request, backendPath 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	jwt, err := a.identityJWT(ctx, staffSession.Secret)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Reviewer authentication could not be established"})
+	jwt := staffSession.AccessToken
+	if jwt == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Native reviewer session is unavailable"})
 		return
 	}
 	var body []byte
@@ -500,21 +487,23 @@ func (a *app) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	var input authInput
 	if !decodeBody(w,r,&input) { return }
 	input.Email = strings.TrimSpace(input.Email)
-	if input.Email == "" || len(input.Email)>320 || len(input.Password)<1 || len(input.Password)>1024 {
+	if input.Email == "" || len(input.Email)>254 || len(input.Password)<1 || len(input.Password)>128 {
 		writeJSON(w,400,map[string]string{"error":"Enter a valid email and password"}); return
 	}
-	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second)
-	defer cancel()
-	var created appwriteSession
-	_,err:=a.appwriteRequest(ctx,http.MethodPost,"/account/sessions/email","",map[string]string{"email":input.Email,"password":input.Password},&created)
-	if err!=nil || created.Secret=="" {
-		writeJSON(w,401,map[string]string{"error":"Sign-in failed. Check your credentials or email confirmation."}); return
+	ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second); defer cancel()
+	var envelope nativeAuthEnvelope
+	_,err:=a.backendRequest(ctx,http.MethodPost,"/api/auth/login","",map[string]string{"email":input.Email,"password":input.Password},&envelope)
+	if err!=nil || !envelope.OK || envelope.Data.AccessToken=="" || envelope.Data.RefreshToken=="" || envelope.Data.User.ID=="" {
+		writeJSON(w,401,map[string]string{"error":"Sign-in failed. Check your credentials, email verification and account approval."}); return
 	}
-	expiresAt := time.Now().Add(24*time.Hour).Unix()
-	if parsed, parseErr := time.Parse(time.RFC3339, created.Expire); parseErr == nil { expiresAt = parsed.Unix() }
-	if err:=a.setSession(w,session{Secret:created.Secret,ExpiresAt:expiresAt});err!=nil {
-		writeJSON(w,500,map[string]string{"error":"Unable to create secure session"});return
+	s:=session{AccessToken:envelope.Data.AccessToken,RefreshToken:envelope.Data.RefreshToken,
+		AccessExpiresAt:time.Now().Add(time.Duration(envelope.Data.ExpiresIn)*time.Second).Unix(),
+		RefreshExpiresAt:time.Now().Add(30*24*time.Hour).Unix()}
+	if _,_,ok:=a.currentUserFromSession(ctx,s); !ok {
+		_,_ = a.backendRequest(ctx,http.MethodPost,"/api/auth/logout",s.AccessToken,map[string]string{},nil)
+		writeJSON(w,http.StatusForbidden,map[string]string{"error":"This account is not an enabled Testagram staff member with enrolled MFA."}); return
 	}
+	if err:=a.setSession(w,s);err!=nil { writeJSON(w,500,map[string]string{"error":"Unable to create secure staff session"}); return }
 	writeJSON(w,200,map[string]any{"ok":true})
 }
 
@@ -526,108 +515,60 @@ func (a *app) handleRecover(w http.ResponseWriter, r *http.Request) {
 	var input authInput
 	if !decodeBody(w,r,&input) { return }
 	input.Email=strings.TrimSpace(input.Email)
-	if input.Email==""||len(input.Email)>320 { writeJSON(w,400,map[string]string{"error":"Enter a valid email address"});return }
-	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second)
-	defer cancel()
-	redirect:=a.publicURL+"/reset-password"
-	_,_ = a.appwriteRequest(ctx,http.MethodPost,"/account/recovery","",map[string]string{"email":input.Email,"url":redirect},nil)
-	writeJSON(w,200,map[string]string{"message":"If the account exists, a password-reset email will be sent."})
+	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second); defer cancel()
+	_,_ = a.backendRequest(ctx,http.MethodPost,"/api/auth/forgot-password","",map[string]string{"email":input.Email},nil)
+	writeJSON(w,http.StatusAccepted,map[string]string{"message":"If the staff account exists, Testagram will send password recovery instructions."})
 }
 
 func (a *app) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 	var input authInput
 	if !decodeBody(w,r,&input) { return }
-	if input.UserID=="" || input.Secret=="" || len(input.Password)<12 || len(input.Password)>1024 {
-		writeJSON(w,400,map[string]string{"error":"A valid recovery link and a password of at least 12 characters are required"});return
+	if len(input.Token)<32 || len(input.Token)>128 || len(input.Password)<12 || len(input.Password)>128 {
+		writeJSON(w,400,map[string]string{"error":"A valid recovery link and a password of 12–128 bytes are required"}); return
 	}
-	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second)
-	defer cancel()
-	body:=map[string]string{"userId":input.UserID,"secret":input.Secret,"password":input.Password,"passwordAgain":input.Password}
-	_,err:=a.appwriteRequest(ctx,http.MethodPut,"/account/recovery","",body,nil)
-	if err!=nil { writeJSON(w,400,map[string]string{"error":"Password could not be updated. The recovery link may have expired."});return }
+	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second); defer cancel()
+	_,err:=a.backendRequest(ctx,http.MethodPost,"/api/auth/reset-password","",map[string]string{"token":input.Token,"password":input.Password},nil)
+	if err!=nil { writeJSON(w,400,map[string]string{"error":"Password could not be updated. The recovery link may have expired."}); return }
+	a.clearSession(w)
 	writeJSON(w,200,map[string]string{"message":"Password updated. You can now sign in."})
 }
 
 func (a *app) handleSignOut(w http.ResponseWriter, r *http.Request) {
 	s,err:=a.readSession(r)
 	if err==nil {
-		ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second)
-		_,_ = a.appwriteRequest(ctx,http.MethodDelete,"/account/sessions/current",s.Secret,nil,nil)
+		ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second)
+		_,_ = a.backendRequest(ctx,http.MethodPost,"/api/auth/logout",s.AccessToken,map[string]any{},nil)
 		cancel()
 	}
 	a.clearSession(w)
 	writeJSON(w,200,map[string]bool{"ok":true})
 }
 
+func (a *app) currentUserFromSession(ctx context.Context, s session) (authUser, bool, error) {
+	claims,err:=a.verifyNativeSession(ctx,s.AccessToken)
+	if err!=nil{return authUser{},false,err}
+	user:=authUser{ID:claims.Subject,Email:claims.Email}
+	err=a.database.QueryRow(ctx,`SELECT rg.role FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		ORDER BY CASE rg.role WHEN 'owner' THEN 0 WHEN 'administrator' THEN 1 ELSE 2 END LIMIT 1`,user.ID).Scan(&user.StaffRole)
+	if errors.Is(err,pgx.ErrNoRows){return user,false,nil}
+	if err!=nil{return authUser{},false,err}
+	return user,staffRole(user)!="",nil
+}
+
 func (a *app) requireStaff(w http.ResponseWriter,r *http.Request,roles ...string) (session,authUser,bool) {
 	s,user,ok:=a.currentUser(w,r)
-	if !ok { writeJSON(w,401,map[string]string{"error":"Sign in required"});return session{},authUser{},false }
+	if !ok { writeJSON(w,401,map[string]string{"error":"An active Testagram staff session is required"});return session{},authUser{},false }
 	role:=staffRole(user)
-	if role=="" { writeJSON(w,403,map[string]string{"error":"Your account is waiting for owner approval"});return session{},authUser{},false }
-	if len(roles)>0 {
-		allowed:=false
-		for _,candidate:=range roles { if role==candidate { allowed=true;break } }
-		if !allowed { writeJSON(w,403,map[string]string{"error":"This action requires owner privileges"});return session{},authUser{},false }
-	}
+	if role=="" { writeJSON(w,403,map[string]string{"error":"Your Testagram staff access is not enabled or MFA is not enrolled"});return session{},authUser{},false }
+	if len(roles)>0 { allowed:=false;for _,candidate:=range roles{if role==candidate{allowed=true;break}};if !allowed{writeJSON(w,403,map[string]string{"error":"This action requires owner privileges"});return session{},authUser{},false} }
 	return s,user,true
 }
 
-func randomAppwriteUserID() (string,error) {
-	raw:=make([]byte,16)
-	if _,err:=rand.Read(raw);err!=nil{return "",err}
-	encoded:=hex.EncodeToString(raw)
-	return encoded[:8]+"-"+encoded[8:12]+"-"+encoded[12:16]+"-"+encoded[16:20]+"-"+encoded[20:],nil
-}
-
 func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
-	s,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
-	if !a.requireRecentStepUp(w,s){return}
-	var input inviteInput
-	if !decodeBody(w,r,&input){return}
-	input.Email=strings.TrimSpace(input.Email)
-	switch input.Role {case "administrator","engineer","operations","support","moderator":default:writeJSON(w,400,map[string]string{"error":"Unsupported staff role"});return}
-	if input.Email==""||len(input.Email)>320||!strings.Contains(input.Email,"@"){writeJSON(w,400,map[string]string{"error":"Enter a valid email address"});return}
-	userID,err:=randomAppwriteUserID()
-	if err!=nil { writeJSON(w,500,map[string]string{"error":"Could not create invitation"});return }
-	randomPassword:=make([]byte,32)
-	if _,err:=rand.Read(randomPassword);err!=nil { writeJSON(w,500,map[string]string{"error":"Could not create invitation"});return }
-	ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second)
-	defer cancel()
-	var invited authUser
-	_,err=a.appwriteAdminRequest(ctx,http.MethodPost,"/users",map[string]any{
-		"userId":userID,"email":input.Email,"password":base64.RawURLEncoding.EncodeToString(randomPassword),"name":input.Email,
-	},&invited)
-	if err!=nil||invited.ID=="" { writeJSON(w,400,map[string]string{"error":"Invitation failed. Verify Appwrite user-management permissions and whether this email already has an account."});return }
-	tx,err:=a.database.Begin(ctx)
-	if err!=nil {
-		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
-		writeJSON(w,503,map[string]string{"error":"Staff role database is unavailable"});return
-	}
-	defer func(){_ = tx.Rollback(context.Background())}()
-	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,created_by_appwrite_user_id)
-		VALUES($1,$2,$3) ON CONFLICT(appwrite_user_id) DO UPDATE
-		SET role=EXCLUDED.role,created_by_appwrite_user_id=EXCLUDED.created_by_appwrite_user_id,updated_at=now(),access_revoked_at=NULL`,
-		invited.ID,input.Role,actor.ID);err!=nil {
-		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
-		writeJSON(w,503,map[string]string{"error":"Could not assign the staff role"});return
-	}
-	if _,err=tx.Exec(ctx,`INSERT INTO testagram_auth.staff_role_audit(actor_appwrite_user_id,target_appwrite_user_id,action,role)
-		VALUES($1,$2,'invited',$3)`,actor.ID,invited.ID,input.Role);err!=nil {
-		_,_ = a.appwriteAdminRequest(ctx,http.MethodDelete,"/users/"+url.PathEscape(invited.ID),nil,nil)
-		writeJSON(w,503,map[string]string{"error":"Could not audit the staff invitation"});return
-	}
-	if err=tx.Commit(ctx);err!=nil {
-		log.Printf("staff invitation commit outcome requires reconciliation actor=%s target_user=%s",actor.ID,invited.ID)
-		writeJSON(w,503,map[string]string{"error":"Could not confirm the staff invitation commit. Check the staff directory before retrying."});return
-	}
-	_,recoveryErr:=a.appwriteRequest(ctx,http.MethodPost,"/account/recovery","",map[string]string{"email":input.Email,"url":a.publicURL+"/reset-password"},nil)
-	if recoveryErr!=nil {
-		log.Printf("staff invitation recovery email failed actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
-		writeJSON(w,201,map[string]any{"ok":true,"user_id":invited.ID,"role":input.Role,"message":"Staff account and role were created. The recipient can use password recovery to set their password."})
-		return
-	}
-	log.Printf("staff invite created actor=%s target_user=%s role=%s",actor.ID,invited.ID,input.Role)
-	writeJSON(w,201,map[string]any{"ok":true,"user_id":invited.ID,"role":input.Role,"message":"Invitation sent. The recipient must set a password before accessing the operations workspace."})
+	if _,_,ok:=a.requireStaff(w,r,"owner");!ok{return}
+	writeJSON(w,http.StatusNotImplemented,map[string]string{"error":"Native staff invitation provisioning is not yet available. Staff access remains closed until the two-person Testagram provisioning workflow is completed."})
 }
 
 type promResponse struct {
