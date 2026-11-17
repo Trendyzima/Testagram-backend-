@@ -1,5 +1,6 @@
 const API_BASE = "https://api.instabox.sh";
 const EVENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_EVENT_ATTEMPTS = 8;
 const MAX_CLOCK_SKEW_SECONDS = 300;
 
 function json(data, status = 200) {
@@ -186,9 +187,11 @@ export class EventLedger {
     const result = await this.state.blockConcurrencyWhile(async () => {
       const key = `event:${event.deliveryId}`;
       const record = await this.state.storage.get(key);
-      if (record?.status === "complete") return { duplicate: true, result: record.result };
+      if (record?.status === "complete" || record?.status === "failed") {
+        return { duplicate: true, status: record.status, result: record.result };
+      }
 
-      const pending = { status: "pending", deliveryId: event.deliveryId, event: event.event, updatedAt: Date.now() };
+      const pending = { status: "pending", deliveryId: event.deliveryId, event: event.event, attempts: record?.attempts || 0, updatedAt: Date.now() };
       await this.state.storage.put(key, pending);
       // Arm the retry before the external request so an isolate crash cannot strand a pending event.
       await this.state.storage.setAlarm(Date.now() + 30_000);
@@ -200,9 +203,18 @@ export class EventLedger {
         });
         return { duplicate: false, result: outcome };
       } catch (error) {
-        await this.state.storage.put(key, { ...pending, lastError: error instanceof Error ? error.message : "unknown error" });
-        await this.state.storage.setAlarm(Date.now() + 30_000);
-        return { duplicate: false, retryScheduled: true };
+        const attempts = pending.attempts + 1;
+        const exhausted = attempts >= MAX_EVENT_ATTEMPTS;
+        const message = error instanceof Error ? error.message : "unknown error";
+        await this.state.storage.put(key, { ...pending, attempts, status: exhausted ? "failed" : "pending", lastError: message });
+        if (exhausted) {
+          console.error("Testagram Sentinel stopped retrying an event after the retry limit", { eventId: event.deliveryId, attempts, error: message });
+        } else {
+          const delay = Math.min(30 * 60_000, 30_000 * (2 ** (attempts - 1)));
+          await this.state.storage.setAlarm(Date.now() + delay);
+          console.warn("Testagram Sentinel scheduled a provider retry", { eventId: event.deliveryId, attempts, error: message });
+        }
+        return { duplicate: false, retryScheduled: !exhausted, failed: exhausted };
       }
     });
     return json(result, 202);
@@ -224,11 +236,19 @@ export class EventLedger {
             updatedAt: Date.now(), expiresAt: Date.now() + EVENT_TTL_MS,
           });
         } catch (error) {
-          retryPending = true;
+          const attempts = (record.attempts || 0) + 1;
+          const exhausted = attempts >= MAX_EVENT_ATTEMPTS;
+          const message = error instanceof Error ? error.message : "unknown error";
           await this.state.storage.put(key, {
-            ...record, lastError: error instanceof Error ? error.message : "unknown error",
+            ...record, status: exhausted ? "failed" : "pending", attempts, lastError: message,
             updatedAt: Date.now(),
           });
+          if (exhausted) {
+            console.error("Testagram Sentinel stopped retrying an event after the retry limit", { eventId: record.deliveryId, attempts, error: message });
+          } else {
+            retryPending = true;
+            console.warn("Testagram Sentinel provider retry failed", { eventId: record.deliveryId, attempts, error: message });
+          }
         }
       }
       if (retryPending) await this.state.storage.setAlarm(Date.now() + 60_000);
