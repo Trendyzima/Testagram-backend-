@@ -299,15 +299,6 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		))
 		return true
 	}
-	if (action == "login" || action == "forgot-password" || action == "reset-password" ||
-		action == "refresh" || action == "logout" || action == "logout-all") && !nativeAuthEnabled() {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody(
-			"NATIVE_AUTH_NOT_ENABLED",
-			"Native Testagram authentication is not enabled on this deployment.",
-			requestID(r),
-		))
-		return true
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 	var in authInput
