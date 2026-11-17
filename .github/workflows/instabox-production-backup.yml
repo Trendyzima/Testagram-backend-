@@ -125,23 +125,28 @@ jobs:
             -H "Idempotency-Key: testagram-backup-wake-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             -H 'Content-Type: application/json' -d '{}' \
             "$API/v1/machines/$MACHINE_ID/wake" || true)"
-          if [[ "$status" != "200" ]]; then
-            code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo unknown)"
-            retry="$(jq -r '.error.retryAfterSeconds // 0' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo 0)"
-            if [[ "$code" == "operation_conflict" ]]; then
-              echo "Another legitimate request is already waking the machine; waiting for that same machine to become ready."
-              ready=false
-              for attempt in $(seq 1 24); do
-                machine_status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
-                  "$API/v1/machines/$MACHINE_ID" || true)"
-                if [[ "$machine_status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/machine.json" >/dev/null; then
-                  ready=true
-                  break
+          code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo unknown)"
+          retry="$(jq -r '.error.retryAfterSeconds // 0' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo 0)"
+          ready=false
+
+          case "$status" in
+            200|202|204)
+              if [[ "$status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/wake.json" >/dev/null 2>&1; then
+                ready=true
+              fi
+              ;;
+            409)
+              if [[ "$code" != "operation_conflict" ]]; then
+                echo "::error::InstaBox refused the wake (code $code)."
+                if [[ "$retry" =~ ^[0-9]+$ && "$retry" -gt 0 ]]; then
+                  echo "InstaBox asked us to wait $retry seconds. No forced start or cooldown bypass will be attempted."
                 fi
-                sleep 5
-              done
-              [[ "$ready" == "true" ]] || { echo "::error::The concurrent wake did not reach ready state within two minutes."; exit 1; }
-            else
+                jq -c '{error: {code: .error.code, message: .error.message, retryAfterSeconds: .error.retryAfterSeconds}}' "$RUNNER_TEMP/wake.json" 2>/dev/null || true
+                exit 1
+              fi
+              echo "Another legitimate request is already waking the machine; waiting for that same machine to become ready."
+              ;;
+            *)
               echo "::error::InstaBox wake failed (HTTP $status, code $code)."
               if [[ "$retry" =~ ^[0-9]+$ && "$retry" -gt 0 ]]; then
                 echo "InstaBox asked us to wait $retry seconds. No forced start or cooldown bypass will be attempted."
@@ -151,13 +156,22 @@ jobs:
               fi
               jq -c '{error: {code: .error.code, message: .error.message, retryAfterSeconds: .error.retryAfterSeconds}}' "$RUNNER_TEMP/wake.json" 2>/dev/null || true
               exit 1
-            fi
-          else
-            jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/wake.json" >/dev/null || {
-              echo "::error::InstaBox accepted the wake but did not confirm a ready machine."
-              exit 1
-            }
+              ;;
+          esac
+
+          if [[ "$ready" != "true" ]]; then
+            echo "Wake was accepted; polling the machine until its guest runtime is ready."
+            for attempt in $(seq 1 24); do
+              machine_status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
+                "$API/v1/machines/$MACHINE_ID" || true)"
+              if [[ "$machine_status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/machine.json" >/dev/null 2>&1; then
+                ready=true
+                break
+              fi
+              sleep 5
+            done
           fi
+          [[ "$ready" == "true" ]] || { echo "::error::The machine did not reach runtime-ready state within two minutes."; exit 1; }
           echo "InstaBox machine is ready for the scheduled backup task."
 
       - name: Run encrypted PostgreSQL, MinIO and local Data Centre backups through InstaBox exec
