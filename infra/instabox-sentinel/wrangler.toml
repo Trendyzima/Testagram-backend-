@@ -1,0 +1,15 @@
+name = "testagram-instabox-sentinel"
+main = "src/index.mjs"
+compatibility_date = "2026-11-17"
+workers_dev = true
+
+[vars]
+INSTABOX_MACHINE_NAME = "testagramdb"
+
+[[durable_objects.bindings]]
+name = "EVENT_LEDGER"
+class_name = "EventLedger"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EventLedger"]
