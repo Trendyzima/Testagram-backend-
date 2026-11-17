@@ -38,11 +38,6 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 			VALUES($1::uuid,$2,$3,'test-only-invalid-password-hash',now())`,id,email,username);err!=nil{
 			t.Fatalf("insert native staff identity: %v",err)
 		}
-		if _,err:=conn.Exec(ctx,`INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by)
-			VALUES($1::uuid,TRUE,now(),now(),$2::uuid)`,id,requester);err!=nil && i>0{
-			// Requester identity is inserted last in this loop; defer principal setup below.
-			_ = err
-		}
 	}
 	// All three principals exist now; enable and grant them native roles.
 	for _,item:=range []struct{id,role string}{{reviewerOne,"administrator"},{reviewerTwo,"administrator"},{requester,"operations"}} {
@@ -168,7 +163,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		       (SELECT count(DISTINCT approver_user_id) FROM testagram_auth.native_sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved')
 		FROM testagram_identity.identity_applications a
-		JOIN testagram_auth.sensitive_action_requests sar ON sar.id=a.sensitive_action_request_id
+		JOIN testagram_auth.native_sensitive_action_requests sar ON sar.id=a.sensitive_action_request_id
 		WHERE a.id=$1::uuid
 	`, applicationID).Scan(&finalStatus, &requestStatus, &reviewCount, &approvalCountFinal)
 	if err != nil {
