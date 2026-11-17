@@ -52,7 +52,12 @@ export async function validateWebhookRequest(request, secret, nowSeconds = Math.
     return { ok: false, status: 503, error: "webhook signing secret is malformed" };
   }
 
+  const declaredLength = Number(request.headers.get("content-length") || 0);
+  if (declaredLength > 65_536) return { ok: false, status: 413, error: "webhook body exceeds the size limit" };
   const rawBody = await request.text();
+  if (new TextEncoder().encode(rawBody).byteLength > 65_536) {
+    return { ok: false, status: 413, error: "webhook body exceeds the size limit" };
+  }
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const signed = await crypto.subtle.sign("HMAC", key, encoder.encode(`${deliveryId}.${timestampText}.${rawBody}`));
@@ -185,6 +190,8 @@ export class EventLedger {
 
       const pending = { status: "pending", deliveryId: event.deliveryId, event: event.event, updatedAt: Date.now() };
       await this.state.storage.put(key, pending);
+      // Arm the retry before the external request so an isolate crash cannot strand a pending event.
+      await this.state.storage.setAlarm(Date.now() + 30_000);
       try {
         const outcome = await reconcileStoppedEvent(this.env, event.event, event.deliveryId);
         await this.state.storage.put(key, {
