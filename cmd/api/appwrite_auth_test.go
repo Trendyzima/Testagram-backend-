@@ -101,7 +101,6 @@ func TestAppwriteAuthenticationFailsClosedWhenNotConfigured(t *testing.T) {
 	}
 }
 
-
 func TestExternalProviderSessionCannotBypassNativeIdentityStore(t *testing.T) {
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("n", 64))
 	legacyEndpointCalled := false
@@ -145,7 +144,6 @@ func TestAppwriteDefaultUsernameHandlesInvalidLocalPart(t *testing.T) {
 	}
 }
 
-
 func TestFetchAppwriteAccountAllowsUnverifiedSessionForConsentOnlyFlow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -182,7 +180,6 @@ func TestAppwriteRegistrationConsentRejectsUnacceptedPolicyBeforeDatabase(t *tes
 		t.Fatalf("status=%d body=%s; expected explicit consent rejection", response.Code, response.Body.String())
 	}
 }
-
 
 // TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent proves
 // that Appwrite verification and accepted consent cannot bypass the native
@@ -278,7 +275,6 @@ func TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent(t *tes
 		t.Fatalf("consent-only login created account state: mappings=%d canonical_accounts=%d", mappings, canonicalAccounts)
 	}
 }
-
 
 func TestWriteAppwriteAuthFailureReturnsStableAuthorizationCodes(t *testing.T) {
 	tests := []struct {
