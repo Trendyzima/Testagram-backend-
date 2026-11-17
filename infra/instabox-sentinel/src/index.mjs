@@ -54,14 +54,25 @@ export async function validateWebhookRequest(request, secret, nowSeconds = Math.
   }
 
   const declaredLength = Number(request.headers.get("content-length") || 0);
-  if (declaredLength > 65_536) return { ok: false, status: 413, error: "webhook body exceeds the size limit" };
-  const rawBody = await request.text();
-  if (new TextEncoder().encode(rawBody).byteLength > 65_536) {
+  if (Number.isFinite(declaredLength) && declaredLength > 65_536) {
     return { ok: false, status: 413, error: "webhook body exceeds the size limit" };
   }
-  const encoder = new TextEncoder();
+  const rawBytes = new Uint8Array(await request.arrayBuffer());
+  if (rawBytes.byteLength > 65_536) {
+    return { ok: false, status: 413, error: "webhook body exceeds the size limit" };
+  }
+  let rawBody;
+  try {
+    rawBody = new TextDecoder("utf-8", { fatal: true }).decode(rawBytes);
+  } catch {
+    return { ok: false, status: 400, error: "webhook body is not valid UTF-8" };
+  }
+  const prefix = new TextEncoder().encode(`${deliveryId}.${timestampText}.`);
+  const signedBytes = new Uint8Array(prefix.byteLength + rawBytes.byteLength);
+  signedBytes.set(prefix);
+  signedBytes.set(rawBytes, prefix.byteLength);
   const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signed = await crypto.subtle.sign("HMAC", key, encoder.encode(`${deliveryId}.${timestampText}.${rawBody}`));
+  const signed = await crypto.subtle.sign("HMAC", key, signedBytes);
   const expected = new Uint8Array(signed);
   const signatures = signatureHeader.split(/\s+/).map((item) => item.split(",", 2))
     .filter(([version, value]) => version === "v1" && value)
@@ -77,8 +88,11 @@ export async function validateWebhookRequest(request, secret, nowSeconds = Math.
   } catch {
     return { ok: false, status: 400, error: "webhook body is not valid JSON" };
   }
-  if (!event || typeof event !== "object" || typeof event.type !== "string" || !event.data?.sandbox?.id) {
+  if (!event || typeof event !== "object" || Array.isArray(event) || typeof event.type !== "string") {
     return { ok: false, status: 400, error: "webhook event has an invalid shape" };
+  }
+  if (event.type === "sandbox.stopped" && !event.data?.sandbox?.id) {
+    return { ok: false, status: 400, error: "stopped event is missing its sandbox identity" };
   }
   if (event.id && event.id !== deliveryId) {
     return { ok: false, status: 400, error: "webhook event ID does not match delivery header" };
