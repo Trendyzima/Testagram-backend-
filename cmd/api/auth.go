@@ -204,6 +204,9 @@ func authClientIP(r *http.Request) string {
 }
 
 func (s *service) authSendEmail(ctx context.Context, recipient, subject, html string) error {
+	if s.authEmailSender != nil {
+		return s.authEmailSender(ctx, recipient, subject, html)
+	}
 	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
 	port := strings.TrimSpace(env("SMTP_PORT", "587"))
 	username := strings.TrimSpace(os.Getenv("SMTP_USERNAME"))
