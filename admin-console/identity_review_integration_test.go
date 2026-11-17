@@ -91,7 +91,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		  (id, email, username, display_name, adult_confirmed_at, adult_verified_at,
 		   adult_verification_provider, adult_verification_reference, adult_verification_checked_at,
 		   evidence_reference, evidence_fingerprint_sha256, terms_version, privacy_version,
-		   terms_accepted_at, privacy_accepted_at, sensitive_action_request_id)
+		   terms_accepted_at, privacy_accepted_at, native_sensitive_action_request_id)
 		VALUES ($1::uuid, $2, $3, $4, now(), now(), 'testagram_manual', 'testagram_manual-verification-' || $3, now(),
 		        'opaque-evidence-reference-ci', $5, $6, $7, now(), now(), $8::uuid)
 	`, applicationID, payload.Email, payload.Username, payload.DisplayName,
