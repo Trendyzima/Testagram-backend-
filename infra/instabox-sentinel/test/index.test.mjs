@@ -79,3 +79,54 @@ test("accepts one matching signature among rotated signatures", async () => {
   const result = await validateWebhookRequest(rotated, secret, now);
   assert.equal(result.ok, true);
 });
+
+import { reconcileStoppedEvent } from "../src/index.mjs";
+
+async function withMockInstaBox(machine, callback) {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    calls.push({ method: init.method || "GET", path: url.pathname, headers: new Headers(init.headers) });
+    if (url.pathname === "/v1/machines") return Response.json({ machines: [{ id: "machine-123", name: "testagramdb" }], nextCursor: null });
+    if (url.pathname === "/v1/machines/machine-123" && (init.method || "GET") === "GET") return Response.json({ machine });
+    if (url.pathname === "/v1/machines/machine-123/start" && init.method === "POST") return Response.json({ operation: { id: "op-123", state: "queued" } }, { status: 202 });
+    throw new Error("Unexpected mocked InstaBox request: " + (init.method || "GET") + " " + url.pathname);
+  };
+  try { await callback(calls); } finally { globalThis.fetch = originalFetch; }
+}
+
+const stoppedEvent = { type: "sandbox.stopped", data: { sandbox: { id: "machine-123", name: "testagramdb" }, state: "stopped" } };
+
+test("starts only the exact VPS when stopped and desiredState remains running", async () => {
+  await withMockInstaBox({ id: "machine-123", name: "testagramdb", state: "stopped", desiredState: "running", operationId: null }, async (calls) => {
+    const result = await reconcileStoppedEvent({ INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" }, stoppedEvent, "evt_start_123");
+    assert.equal(result.action, "start_requested");
+    const start = calls.find((call) => call.path.endsWith("/start"));
+    assert.ok(start);
+    assert.equal(start.headers.get("Idempotency-Key"), "testagram-sentinel-evt_start_123");
+    assert.equal(start.headers.get("Authorization"), "Bearer unit-test-only");
+  });
+});
+
+test("never wakes an intentionally stopped machine", async () => {
+  await withMockInstaBox({ id: "machine-123", name: "testagramdb", state: "stopped", desiredState: "stopped", operationId: null }, async (calls) => {
+    const result = await reconcileStoppedEvent({ INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" }, stoppedEvent, "evt_operator_stop");
+    assert.equal(result.action, "ignored");
+    assert.match(result.reason, /desiredState is not running/);
+    assert.equal(calls.some((call) => call.path.endsWith("/start")), false);
+  });
+});
+
+test("never starts a running machine or one with an active operation", async () => {
+  for (const machine of [
+    { id: "machine-123", name: "testagramdb", state: "running", desiredState: "running", operationId: null },
+    { id: "machine-123", name: "testagramdb", state: "stopped", desiredState: "running", operationId: "op-active" },
+  ]) {
+    await withMockInstaBox(machine, async (calls) => {
+      const result = await reconcileStoppedEvent({ INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" }, stoppedEvent, "evt_noop_123");
+      assert.equal(result.action, "ignored");
+      assert.equal(calls.some((call) => call.path.endsWith("/start")), false);
+    });
+  }
+});
