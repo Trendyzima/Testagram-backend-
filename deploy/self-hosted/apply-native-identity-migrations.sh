@@ -98,6 +98,12 @@ schema_ready() {
         )
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_applications'\''
+            AND column_name='\''native_sensitive_action_request_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_auth'\''
             AND table_name='\''identities'\''
             AND column_name='\''password_reset_required'\''
