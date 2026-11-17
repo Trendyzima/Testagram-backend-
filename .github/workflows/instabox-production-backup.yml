@@ -135,7 +135,7 @@ jobs:
           fi
           echo "InstaBox machine is ready for the scheduled backup task."
 
-      - name: Run encrypted PostgreSQL and all MinIO bucket backups through InstaBox exec
+      - name: Run encrypted PostgreSQL, MinIO and local Data Centre backups through InstaBox exec
         shell: bash
         env:
           RUN_PRUNE: ${{ steps.config.outputs.run_prune }}
