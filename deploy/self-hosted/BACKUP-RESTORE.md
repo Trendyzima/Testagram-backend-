@@ -1,8 +1,8 @@
 # Testagram self-hosted backup and restore
 
-This runbook backs up PostgreSQL metadata and all four MinIO buckets
-(private media, public media, identity evidence, and metadata) into an
-encrypted [restic](https://restic.net/) repository. Valkey is intentionally not
+This runbook backs up PostgreSQL metadata, all four MinIO buckets
+(private media, public media, identity evidence, and metadata), plus detected
+Data Centre video and node-storage directories, into an encrypted [restic](https://restic.net/) repository. Valkey is intentionally not
 backed up: its cache and queue data are operational state and must be rebuilt or
 replayed according to each consumer's recovery policy. Do not treat this as a
 complete disaster-recovery plan until an off-host repository and a restore drill
@@ -171,15 +171,16 @@ after it completes.
 The current helper deliberately fails closed if `DATA_CENTRE_MEDIA_ENABLED`,
 `MEDIA_REPLICATION_ENABLED`, or `FRESH_MEDIA_ENABLED` is enabled; if
 `MEDIA_S3_ENDPOINT`, legacy `R2_S3_ENDPOINT`, or `MINIO_PUBLIC_ENDPOINT`
-overrides the bundled MinIO origin; or if the separate Data Centre client is
-configured through `DATA_CENTRE_MEDIA_API_URL` or
-`FRESH_DATA_CENTRE_INTERNAL_TOKEN`. In those configurations, canonical or
-previously uploaded media may live outside the four local MinIO buckets. Do
-not disable those guards or declare backups complete until every active
-external media store has its own encrypted backup and restore-tested path.
-With the supported local-MinIO configuration, the backup includes private
-media, public media, identity-evidence objects, and the metadata sidecar
-bucket. The free plan has a fixed 20 GiB machine disk and includes
+overrides the bundled MinIO origin; if `DATA_CENTRE_MEDIA_API_URL`,
+`FRESH_DATA_CENTRE_INTERNAL_TOKEN`, or `MEDIA_DATABASE_URL` configures the
+separate B2/R2 media service; or if a separate `FEDERATION_DATABASE_URL` or
+`federation-db` container is detected. Those systems need their own encrypted
+backup and restore-tested path. When the standard Data Centre Compose project
+is present, the helper discovers the `video`/`video-worker` `/media` bind mount
+and includes that directory, plus sibling `nodes` storage when present. Do not
+disable the guards or declare recovery complete until every active external
+media store and separate database is covered. The supported local-MinIO path
+includes all four buckets and any detected local Data Centre storage. The free plan has a fixed 20 GiB machine disk and includes
 100 GiB of egress per month; monitor the first backup and storage-provider
 usage, especially if media grows. InstaBox's free plan also has a 200 GiB
 stored-data cap and five snapshots. This workflow does not create machine
@@ -197,9 +198,9 @@ From the repository root, the automated database restore check is:
 It restores the latest `testagram` snapshot to a private temporary directory,
 starts a disposable PostgreSQL container with `--network none` and no published
 ports, restores the dump into that database, and checks that application tables
-exist. It confirms that all four bucket trees were restored, reports the recovered
-object-file counts for private/public media, identity evidence and metadata,
-and securely removes its temporary directory, container, and volume on exit. The
+exist. It confirms that all four bucket trees and any Data Centre storage directories
+recorded in the backup manifest were restored, reports their file counts, and
+securely removes its temporary directory, container, and volume on exit. The
 operator must have enough free disk space for a full temporary snapshot restore
 and Docker volume for the restored database.
 
