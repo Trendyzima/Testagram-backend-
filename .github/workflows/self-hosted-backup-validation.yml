@@ -67,6 +67,25 @@ jobs:
                   raise SystemExit("external or invalid Federation database target was accepted")
           print("Federation database routing guard passed.")
           PY
+      - name: Assert explicit Restic initialization and deployed checkout path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          wrapper = Path("scripts/instabox-production-backup.sh").read_text()
+          workflow = Path(".github/workflows/instabox-production-backup.yml").read_text()
+          if 'if [[ "${INITIALIZE_RESTIC_REPOSITORY:-false}" == "true" ]]; then' not in wrapper:
+              raise SystemExit("Restic initialization must require an explicit operator input")
+          if "restic cat config >/dev/null || die" not in wrapper:
+              raise SystemExit("backup must verify the existing Restic repository before writing")
+          if "if ! restic snapshots" in wrapper:
+              raise SystemExit("a failed Restic read must never trigger implicit initialization")
+          if 'cwd: "/data/home/testagram/repos/backend"' not in workflow:
+              raise SystemExit("InstaBox exec checkout path does not match the deployment script")
+          if 'BACKEND="$REPOS/backend"' not in Path("scripts/start-instabox-deployment.sh").read_text():
+              raise SystemExit("deployment checkout path changed; update backup workflow cwd")
+          print("Restic initialization and deployed checkout path guards passed.")
+          PY
       - name: Install ShellCheck
         run: |
           sudo apt-get update
