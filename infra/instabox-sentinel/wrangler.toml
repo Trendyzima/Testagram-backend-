@@ -1,6 +1,11 @@
 name = "testagram-instabox-sentinel"
 main = "src/index.mjs"
 compatibility_date = "2026-11-17"
+
+routes = [
+  { pattern = "testagram.site/webhooks/instabox", zone_name = "testagram.site" }
+]
+
 workers_dev = true
 
 [vars]
@@ -14,7 +19,3 @@ class_name = "EventLedger"
 tag = "v1"
 new_sqlite_classes = ["EventLedger"]
 
-# Route only InstaBox lifecycle webhook traffic through the Sentinel.
-routes = [
-  { pattern = "testagram.site/webhooks/instabox", zone_name = "testagram.site" }
-]
