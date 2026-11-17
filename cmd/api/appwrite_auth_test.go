@@ -184,7 +184,7 @@ func TestAppwriteRegistrationConsentRejectsUnacceptedPolicyBeforeDatabase(t *tes
 // TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent proves
 // that Appwrite verification and accepted consent cannot bypass the native
 // identity-review and two-person approval gate.
-func TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent(t *testing.T) {
+func TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is not configured")
@@ -237,8 +237,8 @@ func TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent(t *tes
 	svc := &service{db: pool, upstream: server.Client()}
 	request := httptest.NewRequest(http.MethodGet, "/api/me/profile", nil)
 	firstID, status, err := svc.authenticatedAppwriteUser(request, "integration-session-jwt")
-	if status != http.StatusForbidden || err == nil || !strings.Contains(err.Error(), "two-person account approval") {
-		t.Fatalf("unconsented account status=%d canonical=%q err=%v; expected identity approval gate", status, firstID, err)
+	if status != http.StatusUnauthorized || err == nil || firstID != "" {
+		t.Fatalf("Appwrite token status=%d canonical=%q err=%v; native-only authentication must reject provider tokens", status, firstID, err)
 	}
 
 	for _, consent := range []struct{ kind, version string }{
@@ -257,8 +257,11 @@ func TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent(t *tes
 	}
 
 	firstID, status, err = svc.authenticatedAppwriteUser(request, "integration-session-jwt")
-	if status != http.StatusForbidden || err == nil || !strings.Contains(err.Error(), "two-person account approval") {
-		t.Fatalf("consented account status=%d canonical=%q err=%v; consent must not bypass identity approval", status, firstID, err)
+	if status != http.StatusUnauthorized || err == nil || firstID != "" {
+		t.Fatalf("consented Appwrite token status=%d canonical=%q err=%v; consent must not enable provider authentication", status, firstID, err)
+	}
+	if legacyEndpointCalled {
+		t.Fatal("native-only authentication attempted an Appwrite account lookup")
 	}
 	var mappings, canonicalAccounts int
 	if err := pool.QueryRow(ctx, `
