@@ -50,6 +50,7 @@ jobs:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
           BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
           BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
+          BACKUP_REGION: ${{ steps.config.outputs.backup_region }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
         run: |
           set -euo pipefail
@@ -60,6 +61,12 @@ jobs:
           for secret in "$INSTABOX_API_KEY" "$BACKUP_ACCESS_KEY_ID" "$BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
             echo "::add-mask::$secret"
           done
+          # Cloudflare R2 requires the literal S3 region "auto"; ignore stale overrides.
+          case "$BACKUP_ENDPOINT" in
+            https://*.r2.cloudflarestorage.com|https://*.r2.cloudflarestorage.com/)
+              BACKUP_REGION=auto
+              ;;
+          esac
           python3 - "$MACHINE_ID" "$BACKUP_ENDPOINT" "$BACKUP_BUCKET" "$BACKUP_REGION" <<'PY'
           import ipaddress, re, sys
           from urllib.parse import urlparse
@@ -93,6 +100,7 @@ jobs:
             run_prune=false
           fi
           echo "run_prune=$run_prune" >> "$GITHUB_OUTPUT"
+          echo "backup_region=$BACKUP_REGION" >> "$GITHUB_OUTPUT"
           printf 'header = "X-API-Key: %s"\n' "$INSTABOX_API_KEY" > "$RUNNER_TEMP/instabox-curl.conf"
           chmod 600 "$RUNNER_TEMP/instabox-curl.conf"
           echo "Backup destination and credentials passed validation."
