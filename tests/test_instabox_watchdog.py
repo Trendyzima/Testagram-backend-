@@ -198,7 +198,7 @@ class WatchdogTests(unittest.TestCase):
             "desiredState": "running", "operationId": None
         })
         with patch.object(watchdog, "API", return_value=api), \
-             patch.object(watchdog, "load_state", return_value={"last_action_at": __import__("time").time()}), \
+             patch.object(watchdog, "load_state", return_value={}), \
              patch.object(watchdog, "save_state"), \
              patch.object(watchdog, "notify") as notify, \
              patch.object(watchdog, "wait_for_service"), \
@@ -212,6 +212,32 @@ class WatchdogTests(unittest.TestCase):
         self.assertTrue(any(call[0] == "POST" and call[1].endswith("/start") for call in api.calls))
         notify.assert_called_once()
 
+
+
+    def test_recent_recovery_attempt_obeys_local_cooldown(self):
+        api = FakeAPI({
+            "id": "machine-123", "name": "testagramdb", "state": "stopped",
+            "desiredState": "running", "operationId": None
+        })
+        with (
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
+            patch.object(watchdog, "DRY_RUN", False),
+            patch.object(watchdog, "RESTART_COOLDOWN", 900),
+            patch.object(watchdog.time, "time", return_value=10_000),
+            patch.object(watchdog, "save_state"),
+        ):
+            result = watchdog.recover_stopped(api, {"last_action_at": 9_500})
+        self.assertIn("local recovery cooldown active", result)
+        self.assertFalse(any(call[0] == "POST" for call in api.calls))
+
+    def test_invalid_future_state_timestamp_fails_closed(self):
+        with (
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
+            patch.object(watchdog, "DRY_RUN", False),
+            patch.object(watchdog.time, "time", return_value=10_000),
+        ):
+            with self.assertRaisesRegex(watchdog.WatchdogError, "timestamp is in the future"):
+                watchdog.recover_stopped(FakeAPI(), {"last_action_at": 20_000})
 
     def test_stopped_machine_stays_read_only_without_explicit_recovery_approval(self):
         api = FakeAPI({
