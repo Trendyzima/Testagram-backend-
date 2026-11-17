@@ -197,9 +197,6 @@ for key in TESTAGRAM_AUTH_JWT_SECRET SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
-  value="${!key:-}"
-  if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
-done
 write_env_value VIRTUAL_STORAGE_ENABLED true
 write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-private
 write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
