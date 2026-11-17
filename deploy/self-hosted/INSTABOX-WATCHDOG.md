@@ -25,16 +25,16 @@ Optional secret:
 
 ## Recovery policy
 
-1. Resolve the exact machine name to one immutable ID through Instabox's read-only machine list, then read that machine. A missing/duplicate name, mismatched ID or malformed response fails closed.
-2. If stopped, request `POST /v1/machines/{id}/start`.
-3. If suspended, request `POST /v1/machines/{id}/resume`.
-4. If running, probe both `/healthz` and `/readyz` three times, 15 seconds apart. If all probes fail, re-read the machine and confirm it is still running, has no active lifecycle operation, and still has `desiredState=running`. Only then perform a controlled stop followed by start.
-5. Poll each accepted operation until success/failure, with a five-minute bound, and verify the provider reports the expected final machine state.
-6. After start/resume/restart, wait up to five minutes for both public API health and readiness to return successfully before reporting recovery.
-6. Persist a 30-minute cooldown specifically for disruptive stop/start restarts. Unexpected stopped machines are started again on the next scheduled check if a previous start attempt fails; suspended machines are similarly resumed again. Serialize runs to prevent concurrent restarts.
-8. Never delete, recreate, restore, resize, or alter machine disks. A provider `error` state, deleted machine, active cooldown, API authorization failure, billing restriction, or provider cooldown is surfaced for operator action rather than bypassed.
+1. Resolve the exact machine name to one immutable ID through InstaBox's machine list, then read that machine. A missing/duplicate name, mismatched ID or malformed response fails closed.
+2. If the machine is stopped while desiredState=running, start it and verify the provider operation and public API liveness.
+3. If the machine is suspended, treat it as an intentional idle pause. Do not send scheduled wake requests or force-resume it: preserve InstaBox's real-request/SSH auto-wake behavior.
+4. If the machine is running, probe the public API /healthz three times, 15 seconds apart. A single successful probe clears the failure streak. Three consecutive failures trigger a fresh provider-state read. Only if the same machine is still running, has no active lifecycle operation, and still has desiredState=running may the watchdog perform a controlled stop followed by start.
+5. Poll every accepted lifecycle operation to completion (five-minute bound), verify the expected provider state, then wait up to five minutes for public API liveness to return.
+6. Persist the last recovery action and health-failure evidence between scheduled runs. Enforce a 15-minute recovery cooldown. Serialize workflow runs to prevent concurrent lifecycle actions.
+7. Never delete, recreate, restore, resize, or alter machine disks or database volumes. A provider error state, deleted machine, active operation/cooldown, API authorization failure, billing restriction, or provider cooldown is surfaced for operator action rather than bypassed.
+8. Do not run database migrations, docker compose down, volume deletion, image pruning, or data restoration as part of watchdog recovery.
 
-The watchdog does not automatically override an intentional provider state where `desiredState` is not `running`. To keep a production workload continuously available, configure the Instabox machine's idle auto-suspend and maximum-run policy appropriately in the provider dashboard; the watchdog does not silently change billing or lifecycle policy.
+The watchdog deliberately does not override an intentional provider state where desiredState is not running. Suspended idle machines are allowed to wake on real requests. The controlled stop/start path is reserved for a machine that the provider still reports as running but whose public API liveness has failed three times.
 
 ## Validation and activation
 
