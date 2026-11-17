@@ -186,7 +186,7 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(len(api.calls), 1)
         notify.assert_not_called()
 
-    def test_intentional_stop_is_never_overridden(self):
+    def test_stopped_machine_is_restarted_even_when_desired_state_is_stopped(self):
         api = FakeAPI({
             "id": "machine-123", "name": "testagramdb", "state": "stopped",
             "desiredState": "stopped", "operationId": None
@@ -194,14 +194,19 @@ class WatchdogTests(unittest.TestCase):
         with (
             patch.object(watchdog, "API", return_value=api),
             patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "save_state"),
+            patch.object(watchdog, "wait_for_service"),
             patch.object(watchdog, "notify") as notify,
             patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
+            patch.object(watchdog, "DRY_RUN", False),
             patch.object(watchdog, "MACHINE_ID", "machine-123"),
             patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
         ):
             self.assertEqual(watchdog.main(), 0)
-        self.assertEqual(len(api.calls), 1)
-        notify.assert_not_called()
+        actions = [call[1].rsplit("/", 1)[-1] for call in api.calls if call[0] == "POST"]
+        self.assertEqual(actions, ["start"])
+        notify.assert_called_once()
 
     def test_unexpected_stop_is_started_when_desired_state_is_running(self):
         api = FakeAPI({
