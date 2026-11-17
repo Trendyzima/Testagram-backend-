@@ -30,24 +30,25 @@ jobs:
           node-version: "22"
       - name: Verify Sentinel signature and recovery safety tests
         run: node --test infra/instabox-sentinel/test/index.test.mjs
-      - name: Deploy Worker and transfer existing InstaBox key as an encrypted secret
+      - name: Deploy Worker using existing Testagram credentials
         if: github.event_name != "pull_request"
         working-directory: infra/instabox-sentinel
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
           INSTABOX_WEBHOOK_SECRET: ${{ secrets.INSTABOX_WEBHOOK_SECRET }}
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::CLOUDFLARE_API_TOKEN is required"; exit 1; }
-          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::CLOUDFLARE_ACCOUNT_ID is required"; exit 1; }
-          test -n "$INSTABOX_WATCHDOG_API_KEY" || { echo "::error::The existing INSTABOX_WATCHDOG_API_KEY secret is required"; exit 1; }
+          test -n "$INSTABOX_API_KEY" || { echo "::error::The existing INSTABOX_API_KEY secret is required"; exit 1; }
+          test -n "$INSTABOX_WEBHOOK_SECRET" || { echo "::error::Create the InstaBox webhook and add its signing secret as INSTABOX_WEBHOOK_SECRET"; exit 1; }
           trap 'rm -f .worker-secrets.json' EXIT
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
-            const secrets = { INSTABOX_API_KEY: process.env.INSTABOX_WATCHDOG_API_KEY };
-            if (process.env.INSTABOX_WEBHOOK_SECRET) secrets.INSTABOX_WEBHOOK_SECRET = process.env.INSTABOX_WEBHOOK_SECRET;
+            const secrets = {
+              INSTABOX_API_KEY: process.env.INSTABOX_API_KEY,
+              INSTABOX_WEBHOOK_SECRET: process.env.INSTABOX_WEBHOOK_SECRET
+            };
             writeFileSync(".worker-secrets.json", JSON.stringify(secrets), { mode: 0o600 });
           '
           npx --yes wrangler@4 deploy --config wrangler.toml --secrets-file .worker-secrets.json
