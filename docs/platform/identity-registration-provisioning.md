@@ -1,62 +1,43 @@
-# Identity registration and provisioning contract
+# Native identity registration and provisioning
 
-## Status
+## Canonical owner
 
-The database migration `20261111_identity_registration_pipeline.sql` adds durable state for the registration workflow. It is **not** a public-signup activation and does not by itself implement application handlers, token issuance, Appwrite provisioning, email delivery, or canonical account linking.
+The Testagram Backend owns the application, verification session, private evidence metadata, reviewer decisions, two-person approval ledger, canonical account and native provisioning state. No Flutter client, Data Centre service, CDN, Federation service or Algorithm service can create a canonical user.
 
-Keep public registration disabled until every gate below is implemented and verified.
+## Application journey
 
-## Ownership
+1. Flutter submits an idempotent application request with accepted age, Terms and Privacy declarations.
+2. Backend creates an applicant-scoped verification session and returns only scoped capabilities.
+3. Applicant reserves evidence uploads. Reservation retries with matching metadata converge on one evidence ID; conflicting metadata is rejected. Expired unuploaded reservations are retired before a new reservation is issued.
+4. Backend verifies content type, file signature, byte count and SHA-256, stores evidence privately, confirms required replication and audits reviewer access.
+5. Two distinct reviewers record matching identity decisions. Two distinct authorized approvers then approve account provisioning.
+6. Backend consumes a one-time application authorization and creates the canonical identity/profile transactionally.
+7. Backend sends a single-use verification email. The account remains unable to sign in until the verification token is accepted and the provisioning state becomes active.
 
-- Appwrite Auth owns credentials, sessions, password recovery and email verification.
-- Backend owns application review, canonical Testagram identity, registration orchestration and consent evidence.
-- PostgreSQL `testagram_local.accounts` owns the canonical account UUID and product profile.
-- PostgreSQL `testagram_identity.appwrite_accounts` maps the Appwrite user ID to that canonical UUID.
-- Data Centre and other services resolve the Appwrite session with Appwrite and require the canonical mapping. They must never create mappings during authentication.
-- Flutter collects application data and consent, but is not an authority for identity approval or permissions.
+## Native credential lifecycle
 
-## Required state machine
+- Native password writes use Argon2id. Legacy PBKDF2 hashes are accepted only for controlled reconciliation and upgraded on successful login.
+- A 15-minute access JWT and opaque 30-day refresh token are issued only to verified, active, non-disabled identities that do not require password reset.
+- Refresh tokens are hashed in PostgreSQL and rotated atomically. Reuse revokes the token family.
+- Logout revokes the current session; logout-all increments token version and revokes all active sessions.
+- Password reset consumes a one-time hashed recovery token, changes the password, clears reset-required state and revokes all prior sessions.
 
-`pending → under_review → approved → provisioning → provisioned → verification_pending → verified`
+## Fail-closed conditions
 
-Rejected, expired, cancelled and compensation-required states must be terminal or explicitly recoverable. No client request may set an application to approved, provisioned or verified.
+- Missing or unavailable PostgreSQL, policy versions, rate-limit storage, email transport, private evidence storage, replication or approval records.
+- A single reviewer or approver attempting to satisfy both independent approvals.
+- Evidence integrity mismatch, missing replica, expired applicant capability or duplicate/conflicting reservation.
+- Unverified email, disabled identity, pending provisioning or mandatory password reset.
+- Staff reviewer lacking an enabled principal, explicit role grant or recorded MFA-enrollment marker.
 
-## Application submission
+## Legacy Appwrite records
 
-The API must validate and normalize email, username and display name; enforce 18+ policy; require explicit Terms and Privacy acceptance; record distinct policy versions and server receipt timestamps; and rate-limit by IP and normalized email. A self-attested age checkbox is not identity verification. Do not persist identity-document images or raw identity numbers in this database. Store only an opaque evidence reference and a non-reversible fingerprint digest under a documented retention policy.
+`scripts/migrate-appwrite-identities.sql` is a controlled reconciliation tool only. It uses explicit Appwrite-ID-to-canonical-UUID mappings, detects ambiguous collisions and does not import Appwrite password hashes. Reconciled users receive a reset-required credential state and must complete native password reset. It does not disable Appwrite or authorize Appwrite bearer tokens on native API routes.
 
-## Review and approval
+## Staff controls
 
-Review actions require the existing `identity.review` permission, recent step-up authentication and the two-person sensitive-action policy. The requester cannot approve their own request. Both reviewer IDs, decisions, reasons, evidence audit references and timestamps must be retained. Rejection must not mint a token.
+The Admin Console uses native Backend login and an encrypted `testagram-staff` cookie. It currently checks a recorded MFA-enrollment marker and password step-up but does not verify a TOTP/passkey challenge. Staff invitations and role-grant activation remain paused until dual-control onboarding and actual second-factor verification are implemented.
 
-## Approval token
+## Release status
 
-The issuer must run only after the approval transaction has two distinct authorized approvals. The signed token must include a cryptographically random JTI, application ID, subject, policy versions, approver references, issue time and expiry no longer than 15 minutes. Store SHA-256 hashes of the token and JTI, never the bearer token. Redemption must atomically mark the token consumed and bind it to one provisioning attempt. Replays must fail. A retry after an uncertain external Appwrite result must reconcile by the idempotency key, not mint a second account.
-
-## Provisioning saga
-
-1. Claim the application and approval token in a PostgreSQL transaction.
-2. Create the Appwrite Auth user with email verification disabled.
-3. Create `testagram_local.accounts` and `testagram_identity.appwrite_accounts` with one stable canonical UUID in a database transaction.
-4. Record the Appwrite ID, canonical ID and provisioning state.
-5. Dispatch an Appwrite verification email using the approved callback origin.
-6. Mark verification pending; do not grant product access until Appwrite confirms verified email and all canonical mapping checks pass.
-
-Appwrite and PostgreSQL do not share a distributed transaction. Use an explicit saga with idempotent steps, bounded retries, reconciliation and compensation. Never report success before the durable mapping and verification dispatch state are recorded. If account deletion compensation fails, quarantine the application and alert operations; do not silently retry account creation.
-
-## Consent evidence
-
-Persist Terms and Privacy separately, including exact published policy version, accepted timestamp and request ID. Record age confirmation separately from independently verified adult status. Policy version changes must not silently overwrite historical acceptance. The policy text and operator disclosures must be legally reviewed before public launch.
-
-## Activation gates
-
-- Reviewer queue and decision API are implemented and permission-tested.
-- Token issuer and one-time redemption have concurrency/replay tests.
-- Appwrite creation and canonical PostgreSQL mapping have failure-injection and reconciliation tests.
-- Verification email delivery and callback origin allow-list are verified in production.
-- Data Centre rejects unlinked and unverified identities.
-- Terms/Privacy version and timestamp evidence is queryable by authorized auditors.
-- Rate limits, abuse controls, monitoring, retention and deletion procedures are active.
-- Web and Android registration journeys pass end-to-end tests.
-
-Until all gates pass, the registration endpoint must remain unavailable to public clients.
+The source implementation is present in mainline. Registration remains disabled until all staging gates pass. A merged PR, passing unit test or visible Create your account entry does not enable production registration, provision a real account or prove live email delivery.
