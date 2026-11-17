@@ -387,7 +387,9 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 	if input.Decision == "failed" {
 		_, err = tx.Exec(ctx, `
 			UPDATE testagram_identity.verification_sessions
-			SET status='failed',verified_age_over_threshold=FALSE,assurance_level='none',
+			SET status='failed',
+			    verified_age_over_threshold=CASE WHEN purpose='age_assurance' THEN FALSE ELSE NULL END,
+			    assurance_level='none',
 			    decided_at=now(),decided_by_user_id=$2::uuid,decided_by_appwrite_user_id=NULL,
 			    decision_reason_code=$3,updated_at=now()
 			WHERE id=$1::uuid
@@ -483,7 +485,9 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 	if err == nil {
 		_, err = tx.Exec(ctx, `
 			UPDATE testagram_identity.verification_sessions
-			SET status='verified',verified_age_over_threshold=TRUE,assurance_level='reviewed',
+			SET status='verified',
+			    verified_age_over_threshold=CASE WHEN purpose='age_assurance' THEN TRUE ELSE NULL END,
+			    assurance_level='reviewed',
 			    decided_at=now(),decided_by_user_id=$2::uuid,decided_by_appwrite_user_id=NULL,
 			    decision_reason_code=$3,updated_at=now()
 			WHERE id=$1::uuid
