@@ -53,6 +53,7 @@ type upstreamMetric struct {
 
 type service struct {
 	db                        *pgxpool.Pool
+	authEmailSender           func(context.Context, string, string, string) error
 	moderation                freshapi.ContentModeration
 	metricsMu                 sync.Mutex
 	routeMetrics              map[string]*requestMetric
