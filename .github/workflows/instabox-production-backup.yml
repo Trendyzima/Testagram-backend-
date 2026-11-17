@@ -101,7 +101,7 @@ jobs:
             exit 0
           fi
 
-          machines="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 5 --max-time 60 \\
+          machines="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -fsS --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 5 --max-time 60 \\
             "$API/v1/machines?limit=100")"
           machine_id="$(jq -r '([.machines[] | select(.name == "testagramdb")][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' <<<"$machines")"
           if [[ -z "$machine_id" ]]; then
