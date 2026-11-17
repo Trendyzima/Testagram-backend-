@@ -164,6 +164,20 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	`, applicationID); err != nil {
 		t.Fatal(err)
 	}
+
+	// Exercise the real provisioning-token HTTP endpoint with only one
+	// account approver. It must not mint or return a capability.
+	singleApprovalRouter := (&service{db: db}).routes()
+	singleApprovalReq := httptest.NewRequest(http.MethodPost,
+		"/api/identity/applications/"+applicationID+"/provisioning-token", nil)
+	singleApprovalReq.Header.Set("X-Application-Token", applicationToken)
+	singleApprovalResp := httptest.NewRecorder()
+	singleApprovalRouter.ServeHTTP(singleApprovalResp, singleApprovalReq)
+	if singleApprovalResp.Code != http.StatusConflict ||
+		strings.Contains(singleApprovalResp.Body.String(), "approval_token") {
+		t.Fatalf("provisioning token issued before second independent approval: status=%d body=%s",
+			singleApprovalResp.Code, singleApprovalResp.Body.String())
+	}
 	approvalTx, err := db.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
