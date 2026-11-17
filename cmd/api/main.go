@@ -79,6 +79,7 @@ type service struct {
 	freshMediaInternalToken   string
 	virtualStorage            *virtualstorage.Manager
 	mediaReplicator           *virtualstorage.Replicator
+	authEmailSender           func(context.Context, string, string, string) error
 	algorithm                 *algorithmclient.Client
 	replicationReceiver       http.Handler
 }
