@@ -510,65 +510,120 @@ func (a *app) handleIdentityApplicationApprove(w http.ResponseWriter, r *http.Re
 
 func (a *app) handleSignIn(w http.ResponseWriter, r *http.Request) {
 	var input authInput
-	if !decodeBody(w,r,&input) { return }
+	if !decodeBody(w, r, &input) {
+		return
+	}
 	input.Email = strings.TrimSpace(input.Email)
-	if input.Email == "" || len(input.Email)>254 || len(input.Password)<1 || len(input.Password)>128 {
-		writeJSON(w,400,map[string]string{"error":"Enter a valid email and password"}); return
+	if input.Email == "" || len(input.Email) > 254 || len(input.Password) < 1 || len(input.Password) > 128 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Enter a valid email and password"})
+		return
 	}
-	ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	var envelope nativeAuthEnvelope
-	_,err:=a.backendRequest(ctx,http.MethodPost,"/api/auth/login","",map[string]string{"email":input.Email,"password":input.Password},&envelope)
-	if err!=nil || !envelope.OK || envelope.Data.AccessToken=="" || envelope.Data.RefreshToken=="" || envelope.Data.User.ID=="" {
-		writeJSON(w,401,map[string]string{"error":"Sign-in failed. Check your credentials, email verification and account approval."}); return
+	status, err := a.backendRequest(ctx, http.MethodPost, "/api/auth/login", "", map[string]string{"email": input.Email, "password": input.Password}, &envelope)
+	if err != nil || !envelope.OK || envelope.Data.AccessToken == "" || envelope.Data.RefreshToken == "" || envelope.Data.User.ID == "" {
+		if status == http.StatusTooManyRequests {
+			writeJSON(w, status, map[string]string{"error": "Too many sign-in attempts. Try again later."})
+			return
+		}
+		if status == 0 || status >= http.StatusInternalServerError {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Testagram authentication is temporarily unavailable. Try again shortly."})
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Sign-in failed. Check your credentials, email verification and account approval."})
+		return
 	}
-	s:=session{AccessToken:envelope.Data.AccessToken,RefreshToken:envelope.Data.RefreshToken,
-		AccessExpiresAt:time.Now().Add(time.Duration(envelope.Data.ExpiresIn)*time.Second).Unix(),
-		RefreshExpiresAt:time.Now().Add(30*24*time.Hour).Unix()}
-	if _,staff,sessionErr:=a.currentUserFromSession(ctx,s); sessionErr != nil || !staff {
-		_,_ = a.backendRequest(ctx,http.MethodPost,"/api/auth/logout",s.AccessToken,map[string]string{},nil)
-		writeJSON(w,http.StatusForbidden,map[string]string{"error":"This account is not an enabled Testagram staff member with enrolled MFA."}); return
+	s := session{
+		AccessToken: envelope.Data.AccessToken, RefreshToken: envelope.Data.RefreshToken,
+		AccessExpiresAt: time.Now().Add(time.Duration(envelope.Data.ExpiresIn) * time.Second).Unix(),
+		RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour).Unix(),
 	}
-	if err:=a.setSession(w,s);err!=nil { writeJSON(w,500,map[string]string{"error":"Unable to create secure staff session"}); return }
-	writeJSON(w,200,map[string]any{"ok":true})
+	if _, staff, sessionErr := a.currentUserFromSession(ctx, s); sessionErr != nil || !staff {
+		_, revokeErr := a.backendRequest(ctx, http.MethodPost, "/api/auth/logout", s.AccessToken, map[string]string{}, nil)
+		if revokeErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "This account is not enabled for staff access, and its temporary sign-in session could not be revoked. Contact an administrator."})
+			return
+		}
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "This account is not an enabled Testagram staff member with enrolled MFA."})
+		return
+	}
+	if err := a.setSession(w, s); err != nil {
+		_, _ = a.backendRequest(ctx, http.MethodPost, "/api/auth/logout", s.AccessToken, map[string]string{}, nil)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Unable to create secure staff session"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
-
 func (a *app) handleSignUp(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w,http.StatusForbidden,map[string]string{"error":"Staff accounts are provisioned through the controlled two-person Testagram staff workflow."})
 }
 
 func (a *app) handleRecover(w http.ResponseWriter, r *http.Request) {
 	var input authInput
-	if !decodeBody(w,r,&input) { return }
-	input.Email=strings.TrimSpace(input.Email)
-	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second); defer cancel()
-	_,_ = a.backendRequest(ctx,http.MethodPost,"/api/auth/forgot-password","",map[string]string{"email":input.Email},nil)
-	writeJSON(w,http.StatusAccepted,map[string]string{"message":"If the staff account exists, Testagram will send password recovery instructions."})
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	input.Email = strings.TrimSpace(input.Email)
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	status, err := a.backendRequest(ctx, http.MethodPost, "/api/auth/forgot-password", "", map[string]string{"email": input.Email}, nil)
+	if err != nil {
+		if status == http.StatusTooManyRequests {
+			writeJSON(w, status, map[string]string{"error": "Too many recovery requests. Try again later."})
+			return
+		}
+		if status == 0 || status >= http.StatusInternalServerError {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Testagram recovery is temporarily unavailable. Try again shortly."})
+			return
+		}
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"message": "If the staff account exists, Testagram will send password recovery instructions."})
 }
-
 func (a *app) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 	var input authInput
-	if !decodeBody(w,r,&input) { return }
-	if len(input.Token)<32 || len(input.Token)>128 || len(input.Password)<12 || len(input.Password)>128 {
-		writeJSON(w,400,map[string]string{"error":"A valid recovery link and a password of 12–128 bytes are required"}); return
+	if !decodeBody(w, r, &input) {
+		return
 	}
-	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second); defer cancel()
-	_,err:=a.backendRequest(ctx,http.MethodPost,"/api/auth/reset-password","",map[string]string{"token":input.Token,"password":input.Password},nil)
-	if err!=nil { writeJSON(w,400,map[string]string{"error":"Password could not be updated. The recovery link may have expired."}); return }
+	if len(input.Token) < 32 || len(input.Token) > 128 || len(input.Password) < 12 || len(input.Password) > 128 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A valid recovery link and a password of 12–128 bytes are required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	status, err := a.backendRequest(ctx, http.MethodPost, "/api/auth/reset-password", "", map[string]string{"token": input.Token, "password": input.Password}, nil)
+	if err != nil {
+		if status == 0 || status >= http.StatusInternalServerError {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Testagram could not update the password right now. Try again shortly."})
+			return
+		}
+		if status == http.StatusTooManyRequests {
+			writeJSON(w, status, map[string]string{"error": "Too many password reset attempts. Request a new link later."})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Password could not be updated. The recovery link may have expired."})
+		return
+	}
 	a.clearSession(w)
-	writeJSON(w,200,map[string]string{"message":"Password updated. You can now sign in."})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "Password updated. You can now sign in."})
 }
-
 func (a *app) handleSignOut(w http.ResponseWriter, r *http.Request) {
-	s,err:=a.readSession(r)
-	if err==nil {
-		ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second)
-		_,_ = a.backendRequest(ctx,http.MethodPost,"/api/auth/logout",s.AccessToken,map[string]any{},nil)
+	s, err := a.readSession(r)
+	if err == nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		status, revokeErr := a.backendRequest(ctx, http.MethodPost, "/api/auth/logout", s.AccessToken, map[string]any{}, nil)
 		cancel()
+		// Keep the encrypted staff cookie when the Backend is unavailable so
+		// the user can retry. A 401/403 means the server no longer recognizes
+		// this session, so clearing the local cookie is safe.
+		if revokeErr != nil && status != http.StatusUnauthorized && status != http.StatusForbidden {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Testagram could not confirm server-side sign-out. Your staff session is retained so you can safely retry."})
+			return
+		}
 	}
 	a.clearSession(w)
-	writeJSON(w,200,map[string]bool{"ok":true})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
-
 func (a *app) currentUserFromSession(ctx context.Context, s session) (authUser, bool, error) {
 	claims,err:=a.verifyNativeSession(ctx,s.AccessToken)
 	if err!=nil{return authUser{},false,err}
