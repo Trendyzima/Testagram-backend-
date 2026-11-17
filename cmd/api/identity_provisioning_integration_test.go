@@ -277,7 +277,6 @@ func canonicalUserIDFromResult(t *testing.T, result map[string]any) string {
 	return value
 }
 
-
 func TestExternalIdentityTokenCannotCreateOrAuthorizeTestagramAccount(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
@@ -321,7 +320,6 @@ func TestExternalIdentityTokenCannotCreateOrAuthorizeTestagramAccount(t *testing
 	}
 }
 
-
 // TestIdentityApprovalRejectsExpiredSensitiveActionRequest proves that the
 // identity-specific approval handler cannot bypass the expiry enforced by the
 // general sensitive-action approval path.
@@ -352,13 +350,13 @@ func TestIdentityApprovalRejectsExpiredSensitiveActionRequest(t *testing.T) {
 	// Use a fingerprint distinct from the shared migration harness fixtures.
 	fingerprint := strings.Repeat("f", 64)
 	payload := map[string]any{
-		"application_id": applicationID,
-		"email": applicantEmail,
-		"username": "expired_ci",
-		"display_name": "Expired Approval",
+		"application_id":              applicationID,
+		"email":                       applicantEmail,
+		"username":                    "expired_ci",
+		"display_name":                "Expired Approval",
 		"evidence_fingerprint_sha256": fingerprint,
-		"terms_version": "terms-v1",
-		"privacy_version": "privacy-v1",
+		"terms_version":               "terms-v1",
+		"privacy_version":              "privacy-v1",
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
