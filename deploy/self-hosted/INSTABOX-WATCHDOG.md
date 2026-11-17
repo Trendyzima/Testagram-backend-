@@ -1,6 +1,6 @@
 # Instabox VPS watchdog
 
-The watchdog runs from GitHub Actions, outside the Testagram VPS, every five minutes. It uses the official Instabox API and checks both Testagram liveness and readiness before taking recovery action.
+The watchdog runs from GitHub Actions, outside the Testagram VPS, every five minutes. It checks InstaBox machine state first, then public Testagram API liveness whenever the provider reports the machine running.
 
 ## Required GitHub configuration
 
