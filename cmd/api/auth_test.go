@@ -226,7 +226,7 @@ func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 	}
 }
 
-func TestNativePasswordEndpointsRemainDisabledOutsideNativeMode(t *testing.T) {
+func TestNativePasswordEndpointsFailClosedWhenDatabaseIsUnavailable(t *testing.T) {
 	handler := (&service{}).routes()
 	for _, path := range []string{
 		"/api/auth/login",
@@ -236,8 +236,8 @@ func TestNativePasswordEndpointsRemainDisabledOutsideNativeMode(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"user@example.com","password":"example-password","token":"example-token"}`))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "NATIVE_AUTH_NOT_ENABLED") {
-			t.Fatalf("POST %s status=%d body=%s; expected explicit native-provider deployment gate", path, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "AUTH_STORE_UNAVAILABLE") {
+			t.Fatalf("POST %s status=%d body=%s; expected fail-closed native auth database error", path, rec.Code, rec.Body.String())
 		}
 	}
 }

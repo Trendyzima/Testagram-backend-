@@ -41,7 +41,16 @@ for migration in \
   migrations/20261114_native_identity_integrity.sql \
   migrations/20261115_identity_evidence_access_audit.sql \
   migrations/20261115_native_identity_status_access.sql \
-  migrations/20261114_appwrite_registration_consent.sql; do
+  migrations/20261114_appwrite_registration_consent.sql \
+  migrations/20261019_dual_backend_replication.sql \
+  migrations/20261019_testagram_local_accounts_posts.sql \
+  migrations/20261115_testagram_native_auth_cutover_foundation.sql \
+  migrations/20261116_native_approved_identity_provisioning.sql \
+  migrations/20261116_native_auth_runtime_grants.sql \
+  migrations/20261117_native_staff_reviewer_grants.sql \
+  migrations/20261118_native_admin_console.sql \
+  migrations/20261119_native_identity_approval_ledger.sql \
+  migrations/20261120_native_verification_decider.sql; do
   psql_ci < "$migration"
 done
 
@@ -59,6 +68,20 @@ psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
+psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
+psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+psql_ci < migrations/20261117_native_staff_reviewer_grants.sql
+psql_ci < migrations/20261117_native_staff_reviewer_grants.sql
+psql_ci < migrations/20261118_native_admin_console.sql
+psql_ci < migrations/20261118_native_admin_console.sql
+psql_ci < migrations/20261119_native_identity_approval_ledger.sql
+psql_ci < migrations/20261119_native_identity_approval_ledger.sql
+psql_ci < migrations/20261120_native_verification_decider.sql
+psql_ci < migrations/20261120_native_verification_decider.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_identity.appwrite_registration_consents
@@ -83,8 +106,23 @@ $consent$;
 SQL
 
 psql_ci <<'SQL'
-INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role)
-VALUES ('ci-reviewer-one','administrator'),('ci-reviewer-two','administrator'),('ci-intake-service','operations');
+INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at) VALUES
+  ('123e4567-e89b-42d3-a456-426614174101','native-reviewer-one@example.test','native_reviewer_one','test-only-invalid-password-hash',now()),
+  ('123e4567-e89b-42d3-a456-426614174102','native-reviewer-two@example.test','native_reviewer_two','test-only-invalid-password-hash',now()),
+  ('123e4567-e89b-42d3-a456-426614174103','native-reviewer-requester@example.test','native_reviewer_requester','test-only-invalid-password-hash',now());
+INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by) VALUES
+  ('123e4567-e89b-42d3-a456-426614174101',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174103'),
+  ('123e4567-e89b-42d3-a456-426614174102',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174103'),
+  ('123e4567-e89b-42d3-a456-426614174103',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174103');
+-- The legacy request ledger still references the requester through staff_roles.
+-- Keep this distinct intake principal separate from both native approvers.
+INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,created_by_appwrite_user_id)
+VALUES ('ci-intake-service','operations','ci-fixture');
+
+INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES
+  ('123e4567-e89b-42d3-a456-426614174101','administrator','123e4567-e89b-42d3-a456-426614174103'),
+  ('123e4567-e89b-42d3-a456-426614174102','administrator','123e4567-e89b-42d3-a456-426614174103'),
+  ('123e4567-e89b-42d3-a456-426614174103','operations','123e4567-e89b-42d3-a456-426614174103');
 
 DO $registration$
 DECLARE
@@ -117,11 +155,11 @@ BEGIN
   BEGIN
     BEGIN
       INSERT INTO testagram_identity.identity_approval_tokens
-        (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
-         second_approver_appwrite_user_id,expires_at)
+        (token_sha256,jti_sha256,application_id,first_approver_user_id,
+         second_approver_user_id,expires_at)
       VALUES
         (decode(repeat('a',64),'hex'),decode(repeat('b',64),'hex'),app_id,
-         'ci-reviewer-one','ci-reviewer-two',now()+interval '10 minutes');
+         '123e4567-e89b-42d3-a456-426614174101','123e4567-e89b-42d3-a456-426614174102',now()+interval '10 minutes');
     EXCEPTION WHEN raise_exception THEN
       premature_token_rejected := TRUE;
     END;
@@ -131,16 +169,16 @@ BEGIN
   END;
 
   INSERT INTO testagram_identity.identity_application_reviews
-    (application_id,reviewer_appwrite_user_id,decision,reason,evidence_audit_reference)
+    (application_id,reviewer_user_id,decision,reason,evidence_audit_reference)
   VALUES
-    (app_id,'ci-reviewer-one','approved','First independent approval','audit-reference-0001'),
-    (app_id,'ci-reviewer-two','approved','Second independent approval','audit-reference-0002');
+    (app_id,'123e4567-e89b-42d3-a456-426614174101','approved','First independent approval','audit-reference-0001'),
+    (app_id,'123e4567-e89b-42d3-a456-426614174102','approved','Second independent approval','audit-reference-0002');
 
   INSERT INTO testagram_auth.sensitive_action_approvals
-    (request_id,approver_appwrite_user_id,decision,reason)
+    (request_id,approver_user_id,decision,reason)
   VALUES
-    (action_id,'ci-reviewer-one','approved','First independent approval'),
-    (action_id,'ci-reviewer-two','approved','Second independent approval');
+    (action_id,'123e4567-e89b-42d3-a456-426614174101','approved','First independent approval'),
+    (action_id,'123e4567-e89b-42d3-a456-426614174102','approved','Second independent approval');
 
   UPDATE testagram_auth.sensitive_action_requests
   SET status='approved',decided_at=now()
@@ -150,11 +188,12 @@ BEGIN
   WHERE id=app_id;
 
   INSERT INTO testagram_identity.identity_approval_tokens
-    (token_sha256,jti_sha256,application_id,first_approver_appwrite_user_id,
-     second_approver_appwrite_user_id,expires_at)
+    (token_sha256,jti_sha256,application_id,first_approver_user_id,
+     second_approver_user_id,expires_at)
   VALUES
     (decode(repeat('3',64),'hex'),decode(repeat('4',64),'hex'),app_id,
-     'ci-reviewer-one','ci-reviewer-two',now()+interval '10 minutes');
+     '123e4567-e89b-42d3-a456-426614174101',
+     '123e4567-e89b-42d3-a456-426614174102',now()+interval '10 minutes');
 
   INSERT INTO testagram_identity.registration_provisioning
     (application_id,idempotency_key_sha256)
@@ -294,11 +333,11 @@ BEGIN
   INSERT INTO testagram_identity.verification_sessions
     (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
      evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
-     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_appwrite_user_id)
+     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_user_id)
   VALUES
     (gen_random_uuid(),app_id,decode(repeat('b',64),'hex'),'identity_assurance',NULL,'verified',
      'opaque-identity-evidence',decode(repeat('c',64),'hex'),'document_review','reviewed',
-     NULL,now()+interval '1 day',now(),now(),'ci-reviewer-two');
+     NULL,now()+interval '1 day',now(),now(),'123e4567-e89b-42d3-a456-426614174102');
 
   INSERT INTO testagram_identity.verification_events
     (session_id,event_type,actor_type,actor_reference,request_id)
@@ -315,9 +354,9 @@ BEGIN
   END IF;
 
   INSERT INTO testagram_identity.verification_reviews
-    (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
+    (session_id,reviewer_user_id,decision,reason_code,evidence_reference)
   VALUES
-    (v_session_id,'ci-reviewer-one','escalate','needs_second_review','opaque-native-evidence-ref');
+    (v_session_id,'123e4567-e89b-42d3-a456-426614174101','escalate','needs_second_review','opaque-native-evidence-ref');
 
   BEGIN
     UPDATE testagram_identity.verification_events
@@ -434,9 +473,17 @@ BEGIN
      OR NOT has_table_privilege('testagram_app','testagram_auth.security_audit','INSERT') THEN
     RAISE EXCEPTION 'Backend runtime role lacks native auth grants';
   END IF;
-  IF has_table_privilege('testagram_app','testagram_auth.staff_role_grants','SELECT')
-     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','SELECT') THEN
-    RAISE EXCEPTION 'native auth runtime role unexpectedly has staff authorization access';
+  IF NOT has_table_privilege('testagram_app','testagram_auth.staff_role_grants','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.staff_principals','SELECT') THEN
+    RAISE EXCEPTION 'Backend runtime role lacks read access to native staff authorization';
+  END IF;
+  IF has_table_privilege('testagram_app','testagram_auth.staff_role_grants','INSERT')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_role_grants','UPDATE')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_role_grants','DELETE')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','INSERT')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','UPDATE')
+     OR has_table_privilege('testagram_app','testagram_auth.staff_principals','DELETE') THEN
+    RAISE EXCEPTION 'Backend runtime role must not mutate native staff authorization';
   END IF;
 END;
 $native_auth_schema$;
@@ -446,7 +493,7 @@ SQL
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
 
 # Exercise the actual Appwrite session -> current-consent -> canonical account path.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent$' -count=1
 
 # Exercise the Admin Console review handler against this same isolated database.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1

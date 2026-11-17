@@ -45,20 +45,6 @@ func TestIdentityProvisioningTokenFailsClosedWithoutApplicantCredential(t *testi
 	}
 }
 
-func TestIdentityProvisioningRedeemFailsClosedWithoutCredentials(t *testing.T) {
-	s := &service{}
-	r := httptest.NewRequest(http.MethodPost, "/api/identity/applications/11111111-1111-4111-8111-111111111111/redeem", nil)
-	r.SetPathValue("application_id", "11111111-1111-4111-8111-111111111111")
-	w := httptest.NewRecorder()
-	s.identityProvisioningRedeem(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "PROVISIONING_AUTHORIZATION_INVALID") {
-		t.Fatalf("unexpected response: %s", w.Body.String())
-	}
-}
-
 func subtleTokenCompare(left, right []byte) int {
 	if len(left) == 0 || len(right) == 0 {
 		return 0

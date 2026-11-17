@@ -24,10 +24,7 @@ type nativeSessionTokens struct {
 	User         map[string]any `json:"user"`
 }
 
-func nativeAuthEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "appwrite")), "native")
-}
-
+// Authentication is Testagram-owned and PostgreSQL-backed.
 func authFingerprint(value string) []byte {
 	sum := sha256.Sum256([]byte(value))
 	return sum[:]

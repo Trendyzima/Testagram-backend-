@@ -104,8 +104,8 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	var consumedAt *time.Time
 	var consumedByNativeUserID string
 	err = tx.QueryRow(ctx, `
-		SELECT token_sha256,jti_sha256,first_approver_appwrite_user_id,
-		       second_approver_appwrite_user_id,expires_at,consumed_at,
+		SELECT token_sha256,jti_sha256,first_approver_user_id::text,
+		       second_approver_user_id::text,expires_at,consumed_at,
 		       COALESCE(consumed_by_native_user_id::text,'')
 		FROM testagram_identity.identity_approval_tokens
 		WHERE application_id=$1::uuid
@@ -155,14 +155,14 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		SELECT sar.action_type,sar.status,sar.target_reference,sar.required_approvals,sar.expires_at,
 		       (SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved'),
-		       (SELECT count(DISTINCT sa.approver_appwrite_user_id) FROM testagram_auth.sensitive_action_approvals sa
-		        WHERE sa.request_id=sar.id AND sa.decision='approved'),
+		       (SELECT count(DISTINCT sa.approver_user_id) FROM testagram_auth.sensitive_action_approvals sa
+		        WHERE sa.request_id=sar.id AND sa.decision='approved' AND sa.approver_user_id IS NOT NULL),
 		       (SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved'
-		          AND sa.approver_appwrite_user_id IN ($2::text,$3::text)),
-		       (SELECT count(DISTINCT ar.reviewer_appwrite_user_id) FROM testagram_identity.identity_application_reviews ar
+		          AND sa.approver_user_id IN ($2::uuid,$3::uuid)),
+		       (SELECT count(DISTINCT ar.reviewer_user_id) FROM testagram_identity.identity_application_reviews ar
 		        WHERE ar.application_id=$4::uuid AND ar.decision='approved'
-		          AND ar.reviewer_appwrite_user_id IN ($2::text,$3::text))
+		          AND ar.reviewer_user_id IN ($2::uuid,$3::uuid))
 		FROM testagram_auth.sensitive_action_requests sar
 		WHERE sar.id=$1::uuid
 		FOR UPDATE

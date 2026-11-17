@@ -80,7 +80,7 @@ func (s *service) socialAuth(w http.ResponseWriter, r *http.Request) (string, st
 	}
 	userID, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
-		writeAppwriteAuthFailure(w, status, err, requestID)
+		writeNativeAuthFailure(w, status, err, requestID)
 		return "", requestID, false
 	}
 	if !socialUUIDPattern.MatchString(userID) {
@@ -1001,7 +1001,9 @@ func (s *service) socialRejectFollowRequest(w http.ResponseWriter, r *http.Reque
 
 func (s *service) socialPostRead(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialAuth(w, r)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	postID := strings.ToLower(r.PathValue("post_id"))
 	if !socialUUIDPattern.MatchString(postID) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_POST_ID", "A valid post ID is required", requestID))
@@ -1032,9 +1034,9 @@ func (s *service) socialPostRead(w http.ResponseWriter, r *http.Request) {
 		FROM testagram_local.posts p
 		JOIN testagram_local.accounts a ON a.user_id=p.author_id
 		WHERE p.id=$1 AND p.deleted_at IS NULL`, postID).Scan(
-		&post.ID,&post.Content,&post.UserID,&post.Visibility,&mediaIDs,
-		&post.Language,&post.CreatedAt,&post.LikesCount,&post.RepliesCount,&post.RepostsCount,
-		&username,&displayName,&avatarKey,&protected)
+		&post.ID, &post.Content, &post.UserID, &post.Visibility, &mediaIDs,
+		&post.Language, &post.CreatedAt, &post.LikesCount, &post.RepliesCount, &post.RepostsCount,
+		&username, &displayName, &avatarKey, &protected)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusNotFound, errorBody("POST_NOT_FOUND", "The post is unavailable", requestID))
 		return
@@ -1044,27 +1046,31 @@ func (s *service) socialPostRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.Unmarshal(mediaIDs, &post.MediaIDs)
-	post.Author = map[string]any{"id":post.UserID,"username":username,"display_name":displayName,"avatar_key":avatarKey,"protected_account":protected}
+	post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName, "avatar_key": avatarKey, "protected_account": protected}
 	post.Origin = "local"
 	if err := tx.Commit(ctx); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_LOOKUP_FAILED", "The post could not be confirmed", requestID))
 		return
 	}
-	if err := s.attachHomeFeedMediaURLs(ctx,userID,[]homeFeedPost{post}); err != nil {
+	if err := s.attachHomeFeedMediaURLs(ctx, userID, []homeFeedPost{post}); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_MEDIA_FAILED", "Post media could not be authorized", requestID))
 		return
 	}
 	videoURL, imageURL := "", ""
 	if len(post.MediaURLs) > 0 {
-		if post.IsVideo { videoURL = post.MediaURLs[0] } else { imageURL = post.MediaURLs[0] }
+		if post.IsVideo {
+			videoURL = post.MediaURLs[0]
+		} else {
+			imageURL = post.MediaURLs[0]
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok":true,"data":map[string]any{
-		"id":post.ID,"content":post.Content,"created_at":post.CreatedAt,"author_id":post.UserID,"user_id":post.UserID,
-		"visibility":post.Visibility,"language":post.Language,"media_ids":post.MediaIDs,"media_urls":post.MediaURLs,"media_content_types":post.MediaContentTypes,"media_auth_headers":post.MediaAuthHeaders,"is_video":post.IsVideo,
-		"video_url":videoURL,"image_url":imageURL,
-		"likes_count":post.LikesCount,"replies_count":post.RepliesCount,"reposts_count":post.RepostsCount,
-		"profiles":post.Author,"user_profiles":post.Author,
-	},"error":nil,"request_id":requestID})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{
+		"id": post.ID, "content": post.Content, "created_at": post.CreatedAt, "author_id": post.UserID, "user_id": post.UserID,
+		"visibility": post.Visibility, "language": post.Language, "media_ids": post.MediaIDs, "media_urls": post.MediaURLs, "media_content_types": post.MediaContentTypes, "media_auth_headers": post.MediaAuthHeaders, "is_video": post.IsVideo,
+		"video_url": videoURL, "image_url": imageURL,
+		"likes_count": post.LikesCount, "replies_count": post.RepliesCount, "reposts_count": post.RepostsCount,
+		"profiles": post.Author, "user_profiles": post.Author,
+	}, "error": nil, "request_id": requestID})
 }
 
 func (s *service) socialInteractionSummary(w http.ResponseWriter, r *http.Request) {

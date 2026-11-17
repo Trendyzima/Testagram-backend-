@@ -28,6 +28,18 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.admin_security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.identity_applications'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.identity_application_reviews'\'') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_application_reviews'\''
+            AND column_name='\''reviewer_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''verification_reviews'\''
+            AND column_name='\''reviewer_user_id'\''
+        )
         AND to_regclass('\''testagram_identity.identity_approval_tokens'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
@@ -41,6 +53,12 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.legacy_account_reconciliation'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.staff_principals'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.staff_role_grants'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_staff_permission_overrides'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
@@ -53,6 +71,42 @@ schema_ready() {
           WHERE table_schema='\''testagram_identity'\''
             AND table_name='\''identity_approval_tokens'\''
             AND column_name='\''consumed_by_native_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_auth'\''
+            AND table_name='\''sensitive_action_approvals'\''
+            AND column_name='\''approver_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_auth'\''
+            AND table_name='\''admin_security_audit'\''
+            AND column_name='\''actor_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_approval_tokens'\''
+            AND column_name='\''first_approver_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_approval_tokens'\''
+            AND column_name='\''second_approver_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''verification_sessions'\''
+            AND column_name='\''decided_by_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_applications'\''
+            AND column_name='\''native_sensitive_action_request_id'\''
         )
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
@@ -150,7 +204,11 @@ for file in \
   047_appwrite_registration_consent.sql \
   049_native_auth_cutover_foundation.sql \
   050_native_approved_identity_provisioning.sql \
-  051_native_auth_runtime_grants.sql; do
+  051_native_auth_runtime_grants.sql \
+  053_native_staff_reviewer_grants.sql \
+  054_native_admin_console.sql \
+  055_native_identity_approval_ledger.sql \
+  056_native_verification_decider.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -173,11 +231,15 @@ apply_migration 047_appwrite_registration_consent.sql
 apply_migration 049_native_auth_cutover_foundation.sql
 apply_migration 050_native_approved_identity_provisioning.sql
 apply_migration 051_native_auth_runtime_grants.sql
+apply_migration 053_native_staff_reviewer_grants.sql
+apply_migration 054_native_admin_console.sql
+apply_migration 055_native_identity_approval_ledger.sql
+apply_migration 056_native_verification_decider.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."

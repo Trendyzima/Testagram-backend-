@@ -31,9 +31,6 @@ jobs:
     env:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
-      APPWRITE_ENDPOINT: ${{ vars.APPWRITE_ENDPOINT || 'https://fra.cloud.appwrite.io/v1' }}
-      APPWRITE_PROJECT_ID: ${{ vars.APPWRITE_PROJECT_ID || secrets.APPWRITE_PROJECT_ID || '6af01d97002875d6d7bd' }}
-      TESTAGRAM_AUTH_PROVIDER: ${{ vars.TESTAGRAM_AUTH_PROVIDER || 'appwrite' }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
@@ -143,8 +140,6 @@ jobs:
           CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ inputs.confirm_native_identity_migrations == true && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
-          APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
-          TESTAGRAM_AUTH_PROVIDER: ${{ vars.TESTAGRAM_AUTH_PROVIDER || 'appwrite' }}
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
@@ -421,5 +416,4 @@ jobs:
           echo "- Apex federation edge URL: ${{ steps.publish_apex.outputs.apex_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Apex edge: port 8443; ActivityPub/WebFinger proxy and canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend and Go CDN: public /healthz; private /readyz and /metrics on Docker-only port 8082" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Appwrite project ID: ${{ secrets.APPWRITE_PROJECT_ID != '' && 'configured' || 'not configured; login-dependent services are skipped' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
