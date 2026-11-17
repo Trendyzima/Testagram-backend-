@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -173,7 +174,19 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.example")
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
-	svc := &service{db: db}
+	type deliveredEmail struct {
+		recipient string
+		subject   string
+		html      string
+	}
+	mailDeliveries := make(chan deliveredEmail, 4)
+	svc := &service{
+		db: db,
+		authEmailSender: func(_ context.Context, recipient, subject, html string) error {
+			mailDeliveries <- deliveredEmail{recipient: recipient, subject: subject, html: html}
+			return nil
+		},
+	}
 
 	tokenReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/provisioning-token", nil)
 	tokenReq.SetPathValue("application_id", applicationID)
@@ -227,6 +240,17 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		}
 		userID = got
 	}
+
+	initialEmail := <-mailDeliveries
+	if initialEmail.recipient != applicantEmail || initialEmail.subject != "Verify your Testagram account" {
+		t.Fatalf("initial verification email recipient/subject mismatch: %#v", initialEmail)
+	}
+	tokenPattern := regexp.MustCompile(`[?&]token=([A-Za-z0-9_-]{32,128})`)
+	initialTokenMatch := tokenPattern.FindStringSubmatch(initialEmail.html)
+	if len(initialTokenMatch) != 2 || len(mailDeliveries) != 0 {
+		t.Fatalf("expected exactly one initial verification email with a token, html=%q pending=%d", initialEmail.html, len(mailDeliveries))
+	}
+	initialVerificationToken := initialTokenMatch[1]
 
 	var identityCount, profileCount, pendingCount, consumedCount int
 	var passwordHash string
@@ -306,16 +330,23 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal("application-scoped resend did not rotate the stored email-verification capability")
 	}
 
-	verifyToken, err := authRandomToken()
-	if err != nil {
-		t.Fatal(err)
+	resentEmail := <-mailDeliveries
+	if resentEmail.recipient != applicantEmail || resentEmail.subject != "Verify your Testagram account" {
+		t.Fatalf("resend verification email recipient/subject mismatch: %#v", resentEmail)
 	}
-	if _, err := db.Exec(ctx, `
-		UPDATE testagram_auth.identities
-		SET verification_token_hash=$2,verification_expires_at=now()+interval '1 hour'
-		WHERE user_id=$1::uuid
-	`, userID, authTokenHash(verifyToken)); err != nil {
-		t.Fatal(err)
+	resentTokenMatch := tokenPattern.FindStringSubmatch(resentEmail.html)
+	if len(resentTokenMatch) != 2 {
+		t.Fatalf("resend email did not contain a verification capability: %q", resentEmail.html)
+	}
+	verifyToken := resentTokenMatch[1]
+	if len(previousVerificationHash) != 32 || len(rotatedVerificationHash) != 32 ||
+		bytes.Equal(previousVerificationHash, rotatedVerificationHash) ||
+		!bytes.Equal(previousVerificationHash, authTokenHash(initialVerificationToken)) ||
+		!bytes.Equal(rotatedVerificationHash, authTokenHash(verifyToken)) {
+		t.Fatal("initial delivery/resend did not persist and rotate the exact emailed verification capabilities")
+	}
+	if len(mailDeliveries) != 0 {
+		t.Fatalf("unexpected duplicate verification email deliveries: %d", len(mailDeliveries))
 	}
 	verifyReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/verify-email",
 		strings.NewReader(fmt.Sprintf("{\"token\":%q}", verifyToken)))
