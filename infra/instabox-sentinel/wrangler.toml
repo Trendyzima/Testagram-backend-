@@ -1,5 +1,6 @@
 name = "testagram-instabox-sentinel"
 main = "src/index.mjs"
+account_id = "77dbe7a859196105dc84fbb6b7094019"
 compatibility_date = "2026-11-17"
 workers_dev = true
 
