@@ -86,6 +86,9 @@ The GitHub Actions workflow
 `.github/workflows/instabox-production-backup.yml` is **disabled on schedule
 until** the repository variable `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` is set
 to `true`. Manual dispatch is available after its credentials are configured.
+The workflow uses `INSTABOX_MACHINE_ID` when supplied; otherwise it resolves
+the machine named `testagramdb`, falling back to the sole account machine only
+when exactly one exists. It does not guess or hard-code a machine ID.
 It calls InstaBox's `POST /v1/machines/{id}/wake` and then `POST
 /v1/machines/{id}/exec`; it never calls `start`, `resume`, `stop`, or
 `resize`, and it does not bypass a max-run cooldown or a manual operator stop.
