@@ -176,7 +176,9 @@ overrides the bundled MinIO origin; if `DATA_CENTRE_MEDIA_API_URL`,
 separate B2/R2 media service; or if the Federation API points to an external PostgreSQL host or a separate
 `federation-db` container is detected. A Federation database on the existing
 `postgres`/`federation-db` network alias is included because every connectable
-non-template database in that PostgreSQL cluster is dumped. When the standard
+non-template database in that PostgreSQL cluster is dumped. The helper also
+fails closed if it finds non-system PostgreSQL roles beyond `postgres` and the
+configured `POSTGRES_USER`; those roles need a globals backup/restore path. When the standard
 Data Centre Compose project is present, the helper discovers the
 `video`/`video-worker` `/media` bind mount and includes that directory, plus
 sibling `nodes` storage when present. Do not disable the guards or declare
