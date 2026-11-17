@@ -76,11 +76,11 @@ for file in scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh s
   mv "$tmp_file" "$BACKEND/$file"
 done
 
-# Initialize only an empty/uninitialized repository. Existing repositories are
-# never reinitialized or overwritten; bad credentials still fail closed.
-if ! restic snapshots --host testagram-self-hosted --tag testagram >/dev/null 2>&1; then
-  restic init
-fi
+# Never infer that a failed repository read means the repository is new.
+# A transient network/authentication error must not trigger initialization.
+# Initialize the repository explicitly once, using the same endpoint and
+# credentials, then require its config to be readable before any backup.
+restic cat config >/dev/null || die "Restic repository is not initialized or cannot be read; verify credentials/network, and initialize it explicitly only if this bucket prefix is genuinely empty"
 
 ./scripts/self-hosted-backup.sh backup
 
