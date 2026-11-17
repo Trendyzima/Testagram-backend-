@@ -50,7 +50,6 @@ jobs:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
           BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
           BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
-          BACKUP_REGION: ${{ steps.config.outputs.backup_region }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
         run: |
           set -euo pipefail
@@ -198,10 +197,40 @@ jobs:
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
           BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
           BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
+          BACKUP_REGION: ${{ steps.config.outputs.backup_region }}
         run: |
           set -euo pipefail
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
-          cmd='bash scripts/instabox-production-backup.sh'
+          cmd='set -Eeuo pipefail
+          mapfile -t env_files < <(find /data/home -type f -path "*/deploy/self-hosted/.env" -print 2>/dev/null)
+          backend_roots=()
+          for env_file in "${env_files[@]}"; do
+            root="${env_file%/deploy/self-hosted/.env}"
+            if [[ -d "$root/.git" ]] && [[ "$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" == "$root" ]]; then
+              backend_roots+=("$root")
+            fi
+          done
+          if [[ "${#backend_roots[@]}" -ne 1 ]]; then
+            echo "Expected exactly one Git backend checkout containing deploy/self-hosted/.env; found ${#backend_roots[@]}." >&2
+            printf "Candidate environment files: %s\\n" "${env_files[@]:-none}" >&2
+            exit 72
+          fi
+          backend="${backend_roots[0]}"
+          helper="$backend/scripts/instabox-production-backup.sh"
+          git -C "$backend" fetch --depth 1 origin main
+          git -C "$backend" cat-file -e FETCH_HEAD:scripts/instabox-production-backup.sh
+          if [[ -e "$helper" ]]; then
+            if ! git -C "$backend" show FETCH_HEAD:scripts/instabox-production-backup.sh | cmp -s - "$helper"; then
+              echo "Existing InstaBox backup helper differs from approved main; refusing to overwrite it." >&2
+              exit 73
+            fi
+          else
+            install -d "$backend/scripts"
+            git -C "$backend" show FETCH_HEAD:scripts/instabox-production-backup.sh > "$helper"
+          fi
+          chmod 700 "$helper"
+          cd "$backend"
+          exec bash "$helper"'
           export BACKUP_EXEC_CMD="$cmd" BACKUP_RESTIC_REPOSITORY="$repository"
           status="$(
             python3 - <<'PY' | curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 660 -o "$RUNNER_TEMP/exec.json" -w '%{http_code}' \
