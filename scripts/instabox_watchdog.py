@@ -317,6 +317,93 @@ def check_running_service(api: API, state: dict[str, Any]) -> str:
 
 
 
+def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
+    """Safely power-cycle a still-desired-running machine after repeated liveness failure."""
+    now = int(time.time())
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: public liveness failed repeatedly; would perform controlled stop/start"
+    last_action_at = state.get("last_action_at", 0)
+    try:
+        last_action_at = int(last_action_at)
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not restarting machine"
+
+    # Re-read immediately before the disruptive action. Never override an
+    # operator stop, an in-flight provider operation, or a changed machine.
+    latest = machine_snapshot(api)
+    if latest["state"] != "running" or latest["desiredState"] != "running":
+        return ("machine state changed during health investigation "
+                f"(state={latest['state']}, desiredState={latest['desiredState']}); no action")
+    if latest.get("operationId"):
+        return f"machine has active operation {latest['operationId']}; no restart"
+
+    state.update(last_action_at=now, last_action="stop-start")
+    save_state(state)
+    lifecycle(api, "stop")
+    lifecycle(api, "start")
+    wait_for_service()
+    return "controlled stop/start completed; public API liveness verified"
+
+
+def recover_suspended(api: API, state: dict[str, Any]) -> str:
+    """Force-resume a paused InstaBox machine after explicit operator authorization."""
+    now = int(time.time())
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: suspended machine detected; would force provider resume"
+    last_action_at = state.get("last_action_at", 0)
+    try:
+        last_action_at = int(last_action_at)
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not resuming machine"
+
+    latest = machine_snapshot(api)
+    if latest["state"] != "suspended":
+        return (f"machine state changed during wake request "
+                f"(state={latest['state']}, desiredState={latest['desiredState']}); no action")
+    if latest.get("operationId"):
+        return f"machine has active operation {latest['operationId']}; no resume"
+
+    state.update(last_action_at=now, last_action="resume")
+    save_state(state)
+    lifecycle(api, "resume")
+    application_status = wait_for_service()
+    return f"resumed suspended machine; {application_status}"
+
+
+def recover_stopped(api: API, state: dict[str, Any]) -> str:
+    now = int(time.time())
+    # Enforce the recovery approval boundary in the program itself, not only
+    # in GitHub Actions. Direct/manual invocations remain read-only by default.
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: recovery is not explicitly enabled; would start stopped machine"
+    last_action_at = state.get("last_action_at", 0)
+    try:
+        last_action_at = int(last_action_at)
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not starting machine"
+    state.update(last_action_at=now, last_action="start")
+    save_state(state)
+    lifecycle(api, "start")
+    application_status = wait_for_service()
+    return f"started stopped machine; {application_status}"
+
+
+
 def main() -> int:
     global MACHINE_ID
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
