@@ -195,8 +195,9 @@ From the repository root, the automated database restore check is:
 It restores the latest `testagram` snapshot to a private temporary directory,
 starts a disposable PostgreSQL container with `--network none` and no published
 ports, restores the dump into that database, and checks that application tables
-exist. It reports the number of recovered private/public media files and
-securely removes its temporary directory, container, and volume on exit. The
+exist. It confirms that all four bucket trees were restored, reports the recovered
+object-file counts for private/public media, identity evidence and metadata,
+and securely removes its temporary directory, container, and volume on exit. The
 operator must have enough free disk space for a full temporary snapshot restore
 and Docker volume for the restored database.
 
@@ -220,9 +221,10 @@ the full manual drill below before cutover and periodically thereafter.
    --no-acl --dbname="$RECOVERY_DATABASE_URL" /path/to/postgres.dump`. Review
    the target and permissions before executing; never point this command at the
    live production database during a drill.
-6. Restore private/public bucket contents into empty test buckets using
-   `mc mirror` from the recovered directories. Verify object counts and sample
-   hashes against the source where feasible.
+6. Restore all four bucket contents (private media, public media, identity
+   evidence, and metadata) into empty test buckets using `mc mirror` from the
+   recovered directories. Verify object counts and sample hashes against the
+   source where feasible.
 7. Run application health checks and media-read checks against the isolated
    recovery stack. Record duration, missing data, recovery point (RPO), recovery
    time (RTO), and corrective actions in the operations log.
