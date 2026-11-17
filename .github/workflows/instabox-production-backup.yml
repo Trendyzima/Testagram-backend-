@@ -28,10 +28,11 @@ jobs:
     name: Wake for a real backup, then allow idle pause
     if: github.event_name == 'workflow_dispatch' || vars.TESTAGRAM_PRODUCTION_BACKUP_ENABLED == 'true'
     runs-on: ubuntu-24.04
+    environment: production
     timeout-minutes: 25
     env:
       API: https://api.instabox.sh
-      MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID || secrets.INSTABOX_MACHINE_ID || 'm_agq4me2xgrgx5ge52ts437tqea' }}
+      MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID || secrets.INSTABOX_MACHINE_ID }}
       INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
       BACKUP_ENDPOINT: ${{ vars.TESTAGRAM_BACKUP_S3_ENDPOINT || vars.B2_S3_ENDPOINT || vars.CLOUDFLARE_R2_ENDPOINT }}
       BACKUP_BUCKET: ${{ vars.TESTAGRAM_BACKUP_S3_BUCKET }}
@@ -79,8 +80,10 @@ jobs:
         run: |
           set -euo pipefail
           status="$(curl -sS --connect-timeout 5 --max-time 60 -o "$RUNNER_TEMP/wake.json" -w '%{http_code}' \
-            -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H 'Content-Type: application/json' \
-            -d '{}' "$API/v1/machines/$MACHINE_ID/wake" || true)"
+            -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
+            -H "Idempotency-Key: testagram-backup-wake-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            -H 'Content-Type: application/json' -d '{}' \
+            "$API/v1/machines/$MACHINE_ID/wake" || true)"
           if [[ "$status" != "200" ]]; then
             code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo unknown)"
             retry="$(jq -r '.error.retryAfterSeconds // 0' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo 0)"
@@ -124,19 +127,31 @@ jobs:
           set -euo pipefail
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
           cmd='bash scripts/instabox-production-backup.sh'
-          payload="$(jq -nc \
-            --arg cmd "$cmd" \
-            --arg repo "$repository" \
-            --arg password "$RESTIC_PASSWORD" \
-            --arg access "$BACKUP_ACCESS_KEY_ID" \
-            --arg secret "$BACKUP_SECRET_ACCESS_KEY" \
-            --arg region "$BACKUP_REGION" \
-            --arg prune "$RUN_PRUNE" \
-            --arg drill "$RUN_RESTORE_DRILL" \
-            '{cmd:$cmd,cwd:"/data/home/testagram/repos/backend",historyCommand:"testagram encrypted production backup",timeoutSeconds:600,envs:{RESTIC_REPOSITORY:$repo,RESTIC_PASSWORD:$password,AWS_ACCESS_KEY_ID:$access,AWS_SECRET_ACCESS_KEY:$secret,AWS_DEFAULT_REGION:$region,AWS_REGION:$region,RUN_PRUNE:$prune,RUN_RESTORE_DRILL:$drill}}')"
-          status="$(curl -sS --connect-timeout 5 --max-time 660 -o "$RUNNER_TEMP/exec.json" -w '%{http_code}' \
-            -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H 'Content-Type: application/json' \
-            --data-binary "$payload" "$API/v1/machines/$MACHINE_ID/exec" || true)"
+          export BACKUP_EXEC_CMD="$cmd" BACKUP_RESTIC_REPOSITORY="$repository"
+          status="$(
+            python3 - <<'PY' | curl -sS --connect-timeout 5 --max-time 660 -o "$RUNNER_TEMP/exec.json" -w '%{http_code}' \
+              -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H 'Content-Type: application/json' \
+              --data-binary @- "$API/v1/machines/$MACHINE_ID/exec" || true
+          import json, os, sys
+          payload = {
+              "cmd": os.environ["BACKUP_EXEC_CMD"],
+              "cwd": "/data/home/testagram/repos/backend",
+              "historyCommand": "testagram encrypted production backup",
+              "timeoutSeconds": 600,
+              "envs": {
+                  "RESTIC_REPOSITORY": os.environ["BACKUP_RESTIC_REPOSITORY"],
+                  "RESTIC_PASSWORD": os.environ["RESTIC_PASSWORD"],
+                  "AWS_ACCESS_KEY_ID": os.environ["BACKUP_ACCESS_KEY_ID"],
+                  "AWS_SECRET_ACCESS_KEY": os.environ["BACKUP_SECRET_ACCESS_KEY"],
+                  "AWS_DEFAULT_REGION": os.environ["BACKUP_REGION"],
+                  "AWS_REGION": os.environ["BACKUP_REGION"],
+                  "RUN_PRUNE": os.environ["RUN_PRUNE"],
+                  "RUN_RESTORE_DRILL": os.environ["RUN_RESTORE_DRILL"],
+              },
+          }
+          json.dump(payload, sys.stdout)
+          PY
+          )"
           if [[ "$status" != "200" ]]; then
             code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/exec.json" 2>/dev/null || echo unknown)"
             echo "::error::InstaBox backup command could not be completed (HTTP $status, code $code). Do not blindly repeat an exec whose outcome is unknown; inspect machine history first."
