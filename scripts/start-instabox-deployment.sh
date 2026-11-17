@@ -282,6 +282,9 @@ FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
 write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-cdn@sha256:39fe7cf0a27bbf9d09a0f0a311202030359d6e95ca414269af712f7281c8ae41"
 write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
+if [[ -z "$(read_env_value TESTAGRAM_WEB_IMAGE)" ]]; then
+  write_env_value TESTAGRAM_WEB_IMAGE "ghcr.io/trendyzima/testagram-web:main"
+fi
 if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
 CDN_MEDIA_BASE_URL="$(read_env_value CDN_MEDIA_BASE_URL)"
 if [[ "$CDN_MEDIA_BASE_URL" != https://* ]]; then
@@ -310,7 +313,24 @@ fi
 # retains its own fail-closed publishing behavior when moderation is unavailable.
 echo "No external AI moderation provider is configured; protected publishing remains fail-closed."
 
-echo "Starting PostgreSQL, MinIO and the native Go API..."
+# Pull the Flutter web release and immediately pin its resolved registry digest.
+# The GHCR package must be public or the host must have a read-only registry login.
+web_image_ref="$(read_env_value TESTAGRAM_WEB_IMAGE)"
+if [[ -z "$web_image_ref" ]]; then
+  echo "::error::TESTAGRAM_WEB_IMAGE is missing from the protected deployment environment."
+  exit 1
+fi
+sudo docker pull --platform linux/amd64 "$web_image_ref"
+web_image_digest="$(sudo docker image inspect --format='{{index .RepoDigests 0}}' "$web_image_ref")"
+if [[ ! "$web_image_digest" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
+  echo "::error::Flutter web image did not resolve to the expected immutable GHCR digest."
+  exit 1
+fi
+write_env_value TESTAGRAM_WEB_IMAGE "$web_image_digest"
+TESTAGRAM_WEB_IMAGE="$web_image_digest"
+export TESTAGRAM_WEB_IMAGE
+
+echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
@@ -322,7 +342,22 @@ sudo env \
   CONFIRM_NATIVE_IDENTITY_MIGRATIONS="${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
   COMPOSE_FILE="$BASE_COMPOSE" ENV_FILE="$BASE_ENV" BACKUP_DIR="$ROOT/backups" \
   bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api caddy
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api flutter-web caddy
+
+echo "Verifying the self-hosted Flutter web origin..."
+web_ready=false
+for attempt in $(seq 1 24); do
+  if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T flutter-web wget -q -O - http://127.0.0.1:8080/healthz | grep -Fq '"service":"testagram-web"'; then
+    web_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$web_ready" != "true" ]]; then
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=100 flutter-web caddy
+  exit 1
+fi
 
 echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" pull media-cache
