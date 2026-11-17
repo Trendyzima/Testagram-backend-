@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { validateWebhookRequest } from "./index.mjs";
+import { validateWebhookRequest, reconcileStoppedEvent } from "../src/index.mjs";
 
 const secretBytes = Buffer.from("test-only-webhook-signing-key");
 const secret = `whsec_${secretBytes.toString("base64")}`;
@@ -80,7 +80,6 @@ test("accepts one matching signature among rotated signatures", async () => {
   assert.equal(result.ok, true);
 });
 
-import { reconcileStoppedEvent } from "../src/index.mjs";
 
 async function withMockInstaBox(machine, callback) {
   const originalFetch = globalThis.fetch;
