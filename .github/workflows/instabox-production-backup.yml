@@ -61,7 +61,7 @@ jobs:
           parsed = urlparse(endpoint)
           if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.port:
               raise SystemExit("TESTAGRAM_BACKUP_S3_ENDPOINT must be a plain HTTPS origin")
-          if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])?", bucket) or ".." in bucket or ".-" in bucket or "-." in bucket:
+          if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) or ".." in bucket or ".-" in bucket or "-." in bucket:
               raise SystemExit("TESTAGRAM_BACKUP_S3_BUCKET must be a valid S3 bucket name")
           try:
               ipaddress.ip_address(bucket)
