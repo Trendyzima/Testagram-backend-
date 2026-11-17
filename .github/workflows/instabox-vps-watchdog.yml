@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - name: Restore incident cooldown state
+      - name: Restore watchdog incident state
         uses: actions/cache/restore@v6
         with:
           path: .watchdog-state.json
@@ -84,7 +84,7 @@ jobs:
       - name: Ensure cooldown state file exists
         if: always()
         run: test -f .watchdog-state.json || printf '{}' > .watchdog-state.json
-      - name: Persist cooldown state for the next scheduled run
+      - name: Persist watchdog incident state for the next scheduled run
         if: always()
         uses: actions/cache/save@v6
         with:
@@ -103,5 +103,5 @@ jobs:
             echo "- Idle suspend: left to InstaBox wake-on-real-request and Paradev SSH"
             echo "- Routine monitoring: provider API only; no scheduled HTTP keepalive probes"
             echo
-            echo "See the run log for probe results and lifecycle operation IDs."
+            echo "See the run log for provider state and any recovery verification details."
           } >> "$GITHUB_STEP_SUMMARY"
