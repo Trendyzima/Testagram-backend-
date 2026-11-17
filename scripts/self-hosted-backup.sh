@@ -140,8 +140,18 @@ fi
 "${DOCKER[@]}" compose config --quiet
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
+    stage_parent_real="$(realpath "$stage_parent")"
+    for source_path in "$video_media_source" "$node_storage_source"; do
+      [[ -n "$source_path" ]] || continue
+      case "$stage_parent_real/" in
+        "$source_path/"*) die "backup staging directory is inside a Data Centre source directory" ;;
+      esac
+      case "$source_path/" in
+        "$stage_parent_real/"*) die "Data Centre source directory is inside the backup staging directory" ;;
+      esac
+    done
 
-    printf 'Estimating PostgreSQL and all four MinIO buckets before staging...\n'
+    printf 'Estimating PostgreSQL, MinIO and detected Data Centre files before staging...\n'
     # shellcheck disable=SC2016
     bucket_size_report="$("${DOCKER[@]}" compose run --rm --no-deps \
       --entrypoint /bin/sh object-init -ec '
