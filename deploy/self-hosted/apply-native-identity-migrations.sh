@@ -99,6 +99,12 @@ schema_ready() {
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''verification_sessions'\''
+            AND column_name='\''decided_by_user_id'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
             AND table_name='\''identity_applications'\''
             AND column_name='\''native_sensitive_action_request_id'\''
         )
@@ -200,8 +206,8 @@ for file in \
   050_native_approved_identity_provisioning.sql \
   051_native_auth_runtime_grants.sql \
   053_native_staff_reviewer_grants.sql \
-  054_native_admin_console.sql \\
-  055_native_identity_approval_ledger.sql \\
+  054_native_admin_console.sql \
+  055_native_identity_approval_ledger.sql \
   056_native_verification_decider.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
