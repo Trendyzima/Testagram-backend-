@@ -163,7 +163,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		       (SELECT count(DISTINCT approver_user_id) FROM testagram_auth.native_sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved')
 		FROM testagram_identity.identity_applications a
-		JOIN testagram_auth.native_sensitive_action_requests sar ON sar.id=a.sensitive_action_request_id
+		JOIN testagram_auth.native_sensitive_action_requests sar ON sar.id=a.native_sensitive_action_request_id
 		WHERE a.id=$1::uuid
 	`, applicationID).Scan(&finalStatus, &requestStatus, &reviewCount, &approvalCountFinal)
 	if err != nil {
