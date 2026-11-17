@@ -24,6 +24,7 @@ PROBE_INTERVAL = int(os.getenv("WATCHDOG_PROBE_INTERVAL_SECONDS", "15"))
 PROBE_TIMEOUT = int(os.getenv("WATCHDOG_PROBE_TIMEOUT_SECONDS", "10"))
 OPERATION_TIMEOUT = int(os.getenv("WATCHDOG_OPERATION_TIMEOUT_SECONDS", "300"))
 RECOVERY_HEALTH_TIMEOUT = int(os.getenv("WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS", "300"))
+AUTO_RECOVERY_RAW = os.getenv("WATCHDOG_AUTO_RECOVERY_ENABLED", "false").lower()
 DRY_RUN = os.getenv("WATCHDOG_DRY_RUN", "false").lower() == "true"
 
 
@@ -267,8 +268,10 @@ def lifecycle(api: API, action: str) -> None:
 
 def recover_stopped(api: API, state: dict[str, Any]) -> str:
     now = int(time.time())
-    if DRY_RUN:
-        return "DRY RUN: would start stopped machine"
+    # Enforce the recovery approval boundary in the program itself, not only
+    # in GitHub Actions. Direct/manual invocations remain read-only by default.
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: recovery is not explicitly enabled; would start stopped machine"
     state.update(last_action_at=now, last_action="start")
     save_state(state)
     lifecycle(api, "start")
@@ -287,12 +290,10 @@ def main() -> int:
     if (PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
             or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1):
         raise WatchdogError("Unsafe watchdog thresholds: require positive probe intervals and operation/recovery timeouts")
+    if AUTO_RECOVERY_RAW not in ("true", "false"):
+        raise WatchdogError("WATCHDOG_AUTO_RECOVERY_ENABLED must be exactly true or false")
     if not API_KEY:
-        raise WatchdogError(
-            "An InstaBox API key is required for provider-state monitoring. "
-            "Configure INSTABOX_READONLY_API_KEY for read-only mode or "
-            "INSTABOX_WATCHDOG_API_KEY for explicitly enabled recovery."
-        )
+        raise WatchdogError("INSTABOX_WATCHDOG_API_KEY is required for provider-state monitoring")
     if not MACHINE_ID and not MACHINE_NAME:
         raise WatchdogError("Configure INSTABOX_MACHINE_NAME or INSTABOX_MACHINE_ID")
     if urlparse(API_BASE).scheme != "https":
