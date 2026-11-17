@@ -145,15 +145,8 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
-		VALUES($1::uuid,$2::uuid,'approved','First independent account approval'),
-		      ($1::uuid,$3::uuid,'approved','Second independent account approval')
-	`, requestID, reviewerOne, reviewerTwo); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, `
-		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
-		WHERE id=$1::uuid
-	`, requestID); err != nil {
+		VALUES($1::uuid,$2::uuid,'approved','First independent account approval')
+	`, requestID, reviewerOne); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
@@ -216,6 +209,33 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		rec := httptest.NewRecorder()
 		svc.identityProvisioningRedeemNative(rec, req)
 		return rec
+	}
+
+	// A single approval is insufficient: provisioning must fail closed
+	// without consuming the approval capability or creating a native identity.
+	singleApproval := redeem()
+	if singleApproval.Code != http.StatusConflict ||
+		!strings.Contains(singleApproval.Body.String(), "APPROVAL_LEDGER_INVALID") {
+		t.Fatalf("one-person approval unexpectedly provisioned an account: status=%d body=%s", singleApproval.Code, singleApproval.Body.String())
+	}
+	var preApprovalIdentityCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email=$1", applicantEmail).Scan(&preApprovalIdentityCount); err != nil {
+		t.Fatal(err)
+	}
+	if preApprovalIdentityCount != 0 {
+		t.Fatalf("one approval created %d native identities", preApprovalIdentityCount)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
+		VALUES($1::uuid,$2::uuid,'approved','Second independent account approval')
+	`, requestID, reviewerTwo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
+		WHERE id=$1::uuid
+	`, requestID); err != nil {
+		t.Fatal(err)
 	}
 
 	results := make(chan *httptest.ResponseRecorder, 2)
