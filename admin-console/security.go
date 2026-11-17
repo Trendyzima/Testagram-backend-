@@ -71,10 +71,10 @@ func (a *app) hasPermission(user authUser, permission string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var granted bool
-	err := a.database.QueryRow(ctx, "SELECT granted FROM testagram_auth.staff_permission_overrides WHERE appwrite_user_id=$1 AND permission_key=$2", user.ID, permission).Scan(&granted)
+	err := a.database.QueryRow(ctx, "SELECT granted FROM testagram_auth.staff_permission_overrides WHERE user_id=$1::uuid AND permission_key=$2", user.ID, permission).Scan(&granted)
 	if err == nil { return granted, nil }
 	if !errors.Is(err, pgx.ErrNoRows) { return false, err }
-	err = a.database.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM testagram_auth.staff_roles sr JOIN testagram_auth.staff_role_permissions rp ON rp.role=sr.role WHERE sr.appwrite_user_id=$1 AND rp.permission_key=$2)", user.ID, permission).Scan(&granted)
+	err = a.database.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM testagram_auth.staff_role_grants rg JOIN testagram_auth.staff_role_permissions rp ON rp.role=rg.role WHERE rg.user_id=$1::uuid AND rg.revoked_at IS NULL AND rp.permission_key=$2)", user.ID, permission).Scan(&granted)
 	return granted, err
 }
 func (a *app) requirePermission(w http.ResponseWriter, r *http.Request, permission string) (session, authUser, bool) {
@@ -95,20 +95,25 @@ func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
 func (a *app) handleStepUp(w http.ResponseWriter, r *http.Request) {
 	s, user, ok := a.requireStaff(w, r); if !ok { return }
 	var input stepUpInput; if !decodeBody(w,r,&input) { return }
-	if len(input.Password)<1 || len(input.Password)>1024 { writeJSON(w,400,map[string]string{"error":"Password is required"}); return }
-	ctx,cancel:=context.WithTimeout(r.Context(),8*time.Second); defer cancel()
+	if len(input.Password)<12 || len(input.Password)>128 { writeJSON(w,400,map[string]string{"error":"Enter your current password"}); return }
+	ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second); defer cancel()
 	allowed,rateErr:=a.consumeAdminRateLimit(ctx,user.ID,"step-up",5,15*time.Minute)
 	if rateErr!=nil { writeJSON(w,503,map[string]string{"error":"Security rate-limit service is unavailable"}); return }
 	if !allowed { writeJSON(w,429,map[string]string{"error":"Too many re-authentication attempts. Try again later."}); return }
-	var temporary appwriteSession
-	_,err:=a.appwriteRequest(ctx,http.MethodPost,"/account/sessions/email","",map[string]string{"email":user.Email,"password":input.Password},&temporary)
-	if err!=nil || temporary.Secret=="" || temporary.ID=="" { writeJSON(w,401,map[string]string{"error":"Re-authentication failed"}); return }
-	_,err=a.appwriteRequest(ctx,http.MethodDelete,"/account/sessions/"+url.PathEscape(temporary.ID),temporary.Secret,nil,nil)
-	if err!=nil { log.Printf("staff step-up temporary session revoke failed user=%s",user.ID); writeJSON(w,503,map[string]string{"error":"Could not safely complete re-authentication"}); return }
+	var envelope nativeAuthEnvelope
+	_,err:=a.backendRequest(ctx,http.MethodPost,"/api/auth/login","",map[string]string{"email":user.Email,"password":input.Password},&envelope)
+	if err!=nil || !envelope.OK || envelope.Data.User.ID!=user.ID || envelope.Data.AccessToken=="" {
+		writeJSON(w,401,map[string]string{"error":"Re-authentication failed"}); return
+	}
+	// Revoke the short-lived verification session immediately; only the existing
+	// encrypted staff cookie receives the five-minute step-up marker.
+	_,revokeErr:=a.backendRequest(ctx,http.MethodPost,"/api/auth/logout",envelope.Data.AccessToken,map[string]any{},nil)
+	if revokeErr!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely complete re-authentication"}); return }
 	s.StepUpUntil=time.Now().Add(5*time.Minute).Unix()
 	if err:=a.setSession(w,s); err!=nil { writeJSON(w,500,map[string]string{"error":"Could not refresh secure session"}); return }
 	writeJSON(w,200,map[string]any{"ok":true,"step_up_expires_at":s.StepUpUntil})
 }
+
 func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request) {
 	var input sensitiveActionInput; if !decodeBody(w,r,&input) { return }
 	permission,err:=permissionForAction(input.ActionType); if err!=nil { writeJSON(w,400,map[string]string{"error":"Unsupported sensitive action type"}); return }
@@ -127,8 +132,8 @@ func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request
 	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Approval service is unavailable"}); return }
 	defer func(){_ = tx.Rollback(context.Background())}()
 	var id string
-	err=tx.QueryRow(ctx,"INSERT INTO testagram_auth.sensitive_action_requests (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256,required_approvals) VALUES($1,$2,$3,$4,$5::jsonb,$6,2) RETURNING id::text",input.ActionType,actor.ID,input.TargetReference,input.Reason,string(canonical),hex.EncodeToString(digest[:])).Scan(&id)
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,request_id,metadata) VALUES($1,'sensitive_action.requested',$2,$3,jsonb_build_object('action_type',$4))",actor.ID,input.TargetReference,id,input.ActionType) }
+	err=tx.QueryRow(ctx,"INSERT INTO testagram_auth.sensitive_action_requests (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256,required_approvals) VALUES($1,$2,$3,$4,$5::jsonb,$6,2) RETURNING id::text",input.ActionType,actor.ID,input.TargetReference,input.Reason,string(canonical),hex.EncodeToString(digest[:])).Scan(&id)
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,request_id,metadata) VALUES($1,'sensitive_action.requested',$2,$3,jsonb_build_object('action_type',$4))",actor.ID,input.TargetReference,id,input.ActionType) }
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely record the approval request"}); return }
 	writeJSON(w,201,map[string]any{"id":id,"status":"pending","required_approvals":2,"message":"Request recorded. Two different authorised staff members must approve it. The action has not been executed."})
@@ -187,7 +192,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 		return "", errors.New("linked approval request does not match the identity application")
 	}
 	err = tx.QueryRow(ctx, `
-		SELECT count(DISTINCT approver_appwrite_user_id)
+		SELECT count(DISTINCT approver_user_id)
 		FROM testagram_auth.sensitive_action_approvals
 		WHERE request_id=$1::uuid AND decision='approved'
 	`, requestID).Scan(&recordedApprovals)
@@ -215,7 +220,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_application_reviews
-		  (application_id, reviewer_appwrite_user_id, decision, reason, evidence_audit_reference)
+		  (application_id, reviewer_user_id, decision, reason, evidence_audit_reference)
 		VALUES ($1::uuid, $2, $3, $4, $5)
 	`, applicationID, reviewerID, decision, reason, snapshot.EvidenceAuditReference)
 	if err != nil {
@@ -243,7 +248,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 	var actionType, requesterID, requestStatus, targetReference string
 	var payload []byte
 	err := tx.QueryRow(ctx, `
-		SELECT action_type, requested_by_appwrite_user_id, status, target_reference, payload
+		SELECT action_type, requested_by_user_id, status, target_reference, payload
 		FROM testagram_auth.sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 		FOR UPDATE
@@ -263,7 +268,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_auth.sensitive_action_approvals
-		  (request_id, approver_appwrite_user_id, decision, reason)
+		  (request_id, approver_user_id, decision, reason)
 		VALUES ($1::uuid, $2, $3, $4)
 	`, requestID, approverID, decision, reason); err != nil {
 		return "", "", 0, errors.New("approver has already decided this request or the decision could not be recorded")
@@ -271,7 +276,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 
 	var approvalCount int
 	if err := tx.QueryRow(ctx, `
-		SELECT count(DISTINCT approver_appwrite_user_id)
+		SELECT count(DISTINCT approver_user_id)
 		FROM testagram_auth.sensitive_action_approvals
 		WHERE request_id=$1::uuid AND decision='approved'
 	`, requestID).Scan(&approvalCount); err != nil {
@@ -310,7 +315,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO testagram_auth.admin_security_audit
-		  (actor_appwrite_user_id, action, target_reference, request_id, metadata)
+		  (actor_user_id, action, target_reference, request_id, metadata)
 		VALUES ($1, $2, $3, $4::uuid,
 		        jsonb_build_object('action_type', $5::text, 'decision', $6::text, 'approval_count', $7::integer))
 	`, approverID, "sensitive_action."+decision, targetReference, requestID, actionType, decision, approvalCount)
@@ -346,7 +351,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 	var action, requester, status string
 	err := a.database.QueryRow(ctx, `
-		SELECT action_type, requested_by_appwrite_user_id, status
+		SELECT action_type, requested_by_user_id, status
 		FROM testagram_auth.sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 	`, id).Scan(&action, &requester, &status)
@@ -423,7 +428,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	}
 	if !canReview { writeJSON(w,403,map[string]string{"error":"You do not have permission to review sensitive actions"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_appwrite_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
+	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the approval queue"}); return }
 	defer rows.Close()
 	type item struct {
@@ -492,13 +497,13 @@ func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
 	defer func(){_ = tx.Rollback(context.Background())}()
 	var exists bool
-	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1)",target).Scan(&exists)
+	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_roles WHERE user_id=$1)",target).Scan(&exists)
 	if err!=nil || !exists { writeJSON(w,404,map[string]string{"error":"Staff account not found"}); return }
 	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.admin_permissions WHERE permission_key=$1)",input.Permission).Scan(&exists)
 	if err!=nil || !exists { writeJSON(w,400,map[string]string{"error":"Unknown permission"}); return }
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_permission_overrides(appwrite_user_id,permission_key,granted,reason,changed_by_appwrite_user_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(appwrite_user_id,permission_key) DO UPDATE SET granted=EXCLUDED.granted,reason=EXCLUDED.reason,changed_by_appwrite_user_id=EXCLUDED.changed_by_appwrite_user_id,created_at=now()",target,input.Permission,input.Granted,input.Reason,actor.ID)
+	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_permission_overrides(user_id,permission_key,granted,reason,changed_by_user_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,permission_key) DO UPDATE SET granted=EXCLUDED.granted,reason=EXCLUDED.reason,changed_by_user_id=EXCLUDED.changed_by_user_id,created_at=now()",target,input.Permission,input.Granted,input.Reason,actor.ID)
 	if err==nil {
-		_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,metadata) VALUES($1,'staff.permission_changed',$2,jsonb_build_object('permission',$3,'granted',$4,'reason',$5))",actor.ID,target,input.Permission,input.Granted,input.Reason)
+		_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.permission_changed',$2,jsonb_build_object('permission',$3,'granted',$4,'reason',$5))",actor.ID,target,input.Permission,input.Granted,input.Reason)
 	}
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely update staff permissions"}); return }
@@ -512,7 +517,7 @@ func (a *app) handleStaffList(w http.ResponseWriter,r *http.Request) {
 	s,_,ok:=a.requireStaff(w,r,"owner"); if !ok { return }
 	if !a.requireRecentStepUp(w,s) { return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,"SELECT appwrite_user_id,role,created_at,updated_at,access_revoked_at FROM testagram_auth.staff_roles ORDER BY created_at DESC LIMIT 500")
+	rows,err:=a.database.Query(ctx,"SELECT user_id,role,created_at,updated_at,access_revoked_at FROM testagram_auth.staff_roles ORDER BY created_at DESC LIMIT 500")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load staff directory"}); return }
 	defer rows.Close()
 	type staffItem struct {
@@ -540,12 +545,12 @@ func (a *app) handleStaffRoleChange(w http.ResponseWriter,r *http.Request) {
 	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Staff access service is unavailable"}); return }
 	defer func(){_ = tx.Rollback(context.Background())}()
 	var currentRole string
-	err=tx.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL FOR UPDATE",target).Scan(&currentRole)
+	err=tx.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE user_id=$1 AND access_revoked_at IS NULL FOR UPDATE",target).Scan(&currentRole)
 	if err!=nil { writeJSON(w,404,map[string]string{"error":"Active staff account not found"}); return }
 	if currentRole=="owner" { writeJSON(w,403,map[string]string{"error":"The Master owner account cannot be changed through staff management"}); return }
-	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET role=$2,updated_at=now() WHERE appwrite_user_id=$1",target,input.Role)
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_appwrite_user_id,target_appwrite_user_id,action,role) VALUES($1,$2,'role_changed',$3)",actor.ID,target,input.Role) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,metadata) VALUES($1,'staff.role_changed',$2,jsonb_build_object('old_role',$3,'new_role',$4))",actor.ID,target,currentRole,input.Role) }
+	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET role=$2,updated_at=now() WHERE user_id=$1",target,input.Role)
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_user_id,target_user_id,action,role) VALUES($1,$2,'role_changed',$3)",actor.ID,target,input.Role) }
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.role_changed',$2,jsonb_build_object('old_role',$3,'new_role',$4))",actor.ID,target,currentRole,input.Role) }
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely change staff role"}); return }
 	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"role":input.Role})
@@ -560,12 +565,12 @@ func (a *app) handleStaffRevoke(w http.ResponseWriter,r *http.Request) {
 	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Staff access service is unavailable"}); return }
 	defer func(){_ = tx.Rollback(context.Background())}()
 	var role string
-	err=tx.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL FOR UPDATE",target).Scan(&role)
+	err=tx.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE user_id=$1 AND access_revoked_at IS NULL FOR UPDATE",target).Scan(&role)
 	if err!=nil { writeJSON(w,404,map[string]string{"error":"Active staff account not found"}); return }
 	if role=="owner" { writeJSON(w,403,map[string]string{"error":"The Master owner account cannot be revoked through staff management"}); return }
-	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET access_revoked_at=now(),updated_at=now() WHERE appwrite_user_id=$1",target)
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_appwrite_user_id,target_appwrite_user_id,action,role) VALUES($1,$2,'revoked',$3)",actor.ID,target,role) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_appwrite_user_id,action,target_reference,metadata) VALUES($1,'staff.access_revoked',$2,jsonb_build_object('former_role',$3))",actor.ID,target,role) }
+	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET access_revoked_at=now(),updated_at=now() WHERE user_id=$1",target)
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_user_id,target_user_id,action,role) VALUES($1,$2,'revoked',$3)",actor.ID,target,role) }
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.access_revoked',$2,jsonb_build_object('former_role',$3))",actor.ID,target,role) }
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely revoke staff access"}); return }
 	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"access_revoked":true})
@@ -575,7 +580,7 @@ func (a *app) handleStaffRevoke(w http.ResponseWriter,r *http.Request) {
 func (a *app) handleAdminAudit(w http.ResponseWriter,r *http.Request) {
 	if _,_,ok:=a.requirePermission(w,r,"audit.read"); !ok { return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,`SELECT id,actor_appwrite_user_id,action,target_reference,request_id::text,metadata,created_at
+	rows,err:=a.database.Query(ctx,`SELECT id,actor_user_id,action,target_reference,request_id::text,metadata,created_at
 		FROM testagram_auth.admin_security_audit ORDER BY created_at DESC LIMIT 200`)
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the security audit ledger"}); return }
 	defer rows.Close()
@@ -602,7 +607,7 @@ func (a *app) handleAdminAudit(w http.ResponseWriter,r *http.Request) {
 
 
 type internalAuthorizationInput struct {
-	AppwriteUserID string `json:"appwrite_user_id"`
+	AppwriteUserID string `json:"user_id"`
 	Permission string `json:"permission"`
 }
 
@@ -628,7 +633,7 @@ func (a *app) handleInternalAuthorize(w http.ResponseWriter,r *http.Request) {
 	}
 	ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second); defer cancel()
 	var role string
-	err:=a.database.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE appwrite_user_id=$1 AND access_revoked_at IS NULL",input.AppwriteUserID).Scan(&role)
+	err:=a.database.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE user_id=$1 AND access_revoked_at IS NULL",input.AppwriteUserID).Scan(&role)
 	if err!=nil {
 		if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusForbidden,map[string]any{"authorized":false,"reason":"not_active_staff"}); return }
 		writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Staff authorization database is unavailable"}); return
