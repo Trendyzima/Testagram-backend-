@@ -36,6 +36,7 @@ for migration in \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
   migrations/20261113_identity_registration_hardening.sql \
+  migrations/20261113_identity_idswyft_intake.sql \
   migrations/20261113_native_identity_verification.sql \
   migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
@@ -56,6 +57,7 @@ done
 
 # Re-apply the new migration to prove idempotent DDL behavior.
 psql_ci < migrations/20261113_identity_registration_hardening.sql
+psql_ci < migrations/20261113_identity_idswyft_intake.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261113_native_identity_verification.sql
 psql_ci < migrations/20261114_native_identity_evidence.sql
