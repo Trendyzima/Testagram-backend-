@@ -49,7 +49,8 @@ for migration in \
   migrations/20261116_native_auth_runtime_grants.sql \
   migrations/20261117_native_staff_reviewer_grants.sql \
   migrations/20261118_native_admin_console.sql \
-  migrations/20261119_native_identity_approval_ledger.sql; do
+  migrations/20261119_native_identity_approval_ledger.sql \
+  migrations/20261120_native_verification_decider.sql; do
   psql_ci < "$migration"
 done
 
@@ -79,6 +80,8 @@ psql_ci < migrations/20261118_native_admin_console.sql
 psql_ci < migrations/20261118_native_admin_console.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
+psql_ci < migrations/20261120_native_verification_decider.sql
+psql_ci < migrations/20261120_native_verification_decider.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_identity.appwrite_registration_consents
@@ -330,11 +333,11 @@ BEGIN
   INSERT INTO testagram_identity.verification_sessions
     (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
      evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
-     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_appwrite_user_id)
+     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_user_id)
   VALUES
     (gen_random_uuid(),app_id,decode(repeat('b',64),'hex'),'identity_assurance',NULL,'verified',
      'opaque-identity-evidence',decode(repeat('c',64),'hex'),'document_review','reviewed',
-     NULL,now()+interval '1 day',now(),now(),'ci-reviewer-two');
+     NULL,now()+interval '1 day',now(),now(),'123e4567-e89b-42d3-a456-426614174102');
 
   INSERT INTO testagram_identity.verification_events
     (session_id,event_type,actor_type,actor_reference,request_id)
@@ -351,9 +354,9 @@ BEGIN
   END IF;
 
   INSERT INTO testagram_identity.verification_reviews
-    (session_id,reviewer_appwrite_user_id,decision,reason_code,evidence_reference)
+    (session_id,reviewer_user_id,decision,reason_code,evidence_reference)
   VALUES
-    (v_session_id,'ci-reviewer-one','escalate','needs_second_review','opaque-native-evidence-ref');
+    (v_session_id,'123e4567-e89b-42d3-a456-426614174101','escalate','needs_second_review','opaque-native-evidence-ref');
 
   BEGIN
     UPDATE testagram_identity.verification_events
