@@ -201,7 +201,8 @@ for file in \
   051_native_auth_runtime_grants.sql \
   053_native_staff_reviewer_grants.sql \
   054_native_admin_console.sql \\
-  055_native_identity_approval_ledger.sql; do
+  055_native_identity_approval_ledger.sql \\
+  056_native_verification_decider.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -227,11 +228,12 @@ apply_migration 051_native_auth_runtime_grants.sql
 apply_migration 053_native_staff_reviewer_grants.sql
 apply_migration 054_native_admin_console.sql
 apply_migration 055_native_identity_approval_ledger.sql
+apply_migration 056_native_verification_decider.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
