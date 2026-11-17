@@ -30,15 +30,15 @@ schema_ready() {
         AND to_regclass('\''testagram_identity.identity_application_reviews'\'') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\\''testagram_identity'\\''
-            AND table_name='\\''identity_application_reviews'\\''
-            AND column_name='\\''reviewer_user_id'\\''
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_application_reviews'\''
+            AND column_name='\''reviewer_user_id'\''
         )
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\\''testagram_identity'\\''
-            AND table_name='\\''verification_reviews'\\''
-            AND column_name='\\''reviewer_user_id'\\''
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''verification_reviews'\''
+            AND column_name='\''reviewer_user_id'\''
         )
         AND to_regclass('\''testagram_identity.identity_approval_tokens'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.registration_provisioning'\'') IS NOT NULL
