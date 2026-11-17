@@ -130,6 +130,7 @@ DO $registration$
 DECLARE
   app_id uuid := gen_random_uuid();
   action_id uuid := gen_random_uuid();
+  session_id uuid := gen_random_uuid();
   provisioning_id uuid;
   premature_token_rejected boolean := FALSE;
 BEGIN
@@ -152,6 +153,18 @@ BEGIN
      'testagram_manual','ci-adult-evidence-ref',now(),
      'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'terms-v1','privacy-v1',now(),now(),
      decode(repeat('2',64),'hex'),action_id);
+
+  -- Approval token guards require evidence to be linked to a verified
+  -- age-assurance session, even in this pending-approval fixture.
+  INSERT INTO testagram_identity.verification_sessions
+    (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
+     evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
+     verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_user_id)
+  VALUES
+    (session_id,app_id,decode(repeat('5',64),'hex'),'age_assurance',18,'verified',
+     'opaque-ci-evidence-ref',decode(repeat('1',64),'hex'),'document_review','reviewed',
+     TRUE,now()+interval '1 day',now(),now(),
+     '123e4567-e89b-42d3-a456-426614174101');
 
   -- A token cannot be issued while the ledger is still pending.
   BEGIN
