@@ -441,10 +441,11 @@ def main() -> int:
         emit(f"machine has active operation {machine['operationId']}; leaving it undisturbed")
         return 0
 
-    # A suspended InstaBox machine is the provider's paused/stopped state for
-    # this deployment. Operator authorization requires waking it even when
-    # desiredState still reports "suspended".
-    if desired != "running" and machine_state != "suspended":
+    # Operator-approved recovery policy: a stopped or suspended VPS must
+    # be brought back even when desiredState still says stopped/suspended.
+    # Keep the desired-state guard for other states so an operator-requested
+    # non-running state is not mistaken for a recoverable outage.
+    if desired != "running" and machine_state not in ("stopped", "suspended"):
         emit(f"desiredState={desired}; respecting provider/operator intent")
         return 0
 
