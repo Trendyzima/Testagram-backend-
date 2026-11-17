@@ -21,6 +21,7 @@ BEGIN
       AND contype='c'
       AND pg_get_constraintdef(oid) LIKE '%decided_by_appwrite_user_id%'
       AND pg_get_constraintdef(oid) LIKE '%decided_at%'
+      AND conname <> 'verification_sessions_decision_attribution_check'
   LOOP
     EXECUTE format(
       'ALTER TABLE testagram_identity.verification_sessions DROP CONSTRAINT %I',
