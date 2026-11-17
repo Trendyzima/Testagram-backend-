@@ -14,6 +14,7 @@ import (
 )
 
 func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
+	t.Skip("legacy external-identity provisioning integration is superseded by the Testagram-native provisioning integration")
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is required for PostgreSQL identity provisioning integration")
