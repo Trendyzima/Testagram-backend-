@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -373,15 +373,21 @@ func (s *service) mediaUploadGateway(w http.ResponseWriter, r *http.Request) {
 const maxCDNOriginObjectBytes int64 = 1 << 30
 
 func cdnOriginObjectSize(resp *http.Response) (int64, error) {
- if value:=strings.TrimSpace(resp.Header.Get("Content-Range"));value!="" {
-  slash:=strings.LastIndex(value,"/")
-  if slash<0 { return -1,errors.New("malformed origin Content-Range") }
-  size,err:=strconv.ParseInt(value[slash+1:],10,64)
-  if err!=nil||size<0 { return -1,errors.New("malformed origin Content-Range size") }
-  return size,nil
- }
- if resp.ContentLength>=0 { return resp.ContentLength,nil }
- return -1,errors.New("origin omitted a trustworthy media object size")
+	if value := strings.TrimSpace(resp.Header.Get("Content-Range")); value != "" {
+		slash := strings.LastIndex(value, "/")
+		if slash < 0 {
+			return -1, errors.New("malformed origin Content-Range")
+		}
+		size, err := strconv.ParseInt(value[slash+1:], 10, 64)
+		if err != nil || size < 0 {
+			return -1, errors.New("malformed origin Content-Range size")
+		}
+		return size, nil
+	}
+	if resp.ContentLength >= 0 {
+		return resp.ContentLength, nil
+	}
+	return -1, errors.New("origin omitted a trustworthy media object size")
 }
 
 func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
@@ -426,7 +432,9 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		claimOwner := claims.Owner
-		if claimOwner == "" { claimOwner = claims.Subject }
+		if claimOwner == "" {
+			claimOwner = claims.Subject
+		}
 		if visibility != "private" || claimOwner != ownerID {
 			http.Error(w, "media authorization denied", http.StatusNotFound)
 			return
@@ -438,7 +446,10 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
-		if s.dataCentreMedia == nil { http.Error(w, "Data Centre media service unavailable", http.StatusServiceUnavailable); return }
+		if s.dataCentreMedia == nil {
+			http.Error(w, "Data Centre media service unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		var grant datacentreclient.DownloadGrant
 		if r.Method == http.MethodHead {
 			grant, err = s.dataCentreMedia.HeadURL(r.Context(), requesterID, ownerID, storageNamespace, key)
@@ -489,8 +500,14 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 	}
 	if resp.StatusCode != http.StatusNotModified {
 		size, sizeErr := cdnOriginObjectSize(resp)
-		if sizeErr != nil { http.Error(w, "media origin returned incomplete size metadata", http.StatusBadGateway); return }
-		if size > maxCDNOriginObjectBytes { http.Error(w, "media object exceeds the CDN delivery limit", http.StatusRequestEntityTooLarge); return }
+		if sizeErr != nil {
+			http.Error(w, "media origin returned incomplete size metadata", http.StatusBadGateway)
+			return
+		}
+		if size > maxCDNOriginObjectBytes {
+			http.Error(w, "media object exceeds the CDN delivery limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 		if (resp.StatusCode == http.StatusPartialContent || resp.StatusCode == http.StatusRequestedRangeNotSatisfiable) && strings.TrimSpace(resp.Header.Get("Content-Range")) == "" {
 			http.Error(w, "media origin omitted range metadata", http.StatusBadGateway)
 			return
@@ -498,15 +515,19 @@ func (s *service) mediaCDNOrigin(w http.ResponseWriter, r *http.Request) {
 	}
 	writeCDNOriginResponse(w, r, resp, key, visibility)
 }
-func copyCDNOriginRequestHeaders(source,destination *http.Request) {
- for _,name:=range []string{"Range","If-Range","If-None-Match","If-Modified-Since"} {
-  if value:=strings.TrimSpace(source.Header.Get(name));value!="" { destination.Header.Set(name,value) }
- }
+func copyCDNOriginRequestHeaders(source, destination *http.Request) {
+	for _, name := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"} {
+		if value := strings.TrimSpace(source.Header.Get(name)); value != "" {
+			destination.Header.Set(name, value)
+		}
+	}
 }
 
 func writeCDNOriginResponse(w http.ResponseWriter, r *http.Request, resp *http.Response, objectKey, visibility string) {
 	for _, name := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
-		if value := resp.Header.Get(name); value != "" { w.Header().Set(name, value) }
+		if value := resp.Header.Get(name); value != "" {
+			w.Header().Set(name, value)
+		}
 	}
 	if visibility == "public" {
 		w.Header().Set("Cache-Control", "public, max-age=0, s-maxage=300")
@@ -516,26 +537,55 @@ func writeCDNOriginResponse(w http.ResponseWriter, r *http.Request, resp *http.R
 		w.Header().Set("X-Testagram-Visibility", "private")
 	}
 	w.WriteHeader(resp.StatusCode)
-	if r.Method == http.MethodHead || resp.StatusCode == http.StatusNotModified { return }
-	if n, copyErr := io.Copy(w, resp.Body); copyErr != nil { log.Printf("CDN media stream interrupted after %d bytes for %s: %v", n, objectKey, copyErr) }
+	if r.Method == http.MethodHead || resp.StatusCode == http.StatusNotModified {
+		return
+	}
+	if n, copyErr := io.Copy(w, resp.Body); copyErr != nil {
+		log.Printf("CDN media stream interrupted after %d bytes for %s: %v", n, objectKey, copyErr)
+	}
 }
 
 func (s *service) mediaCDNDownloadURL(w http.ResponseWriter, r *http.Request) {
 	id := requestID(r)
 	w.Header().Set("Cache-Control", "no-store")
-	if !s.cors(w, r) { writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id)); return }
-	if s.cdnMediaAssertions == nil || s.cdnMediaBaseURL == "" { writeJSON(w, http.StatusServiceUnavailable, errorBody("CDN_MEDIA_NOT_CONFIGURED", "CDN media delivery is not configured", id)); return }
-	if s.db == nil { writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id)); return }
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", id))
+		return
+	}
+	if s.cdnMediaAssertions == nil || s.cdnMediaBaseURL == "" {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("CDN_MEDIA_NOT_CONFIGURED", "CDN media delivery is not configured", id))
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_METADATA_UNAVAILABLE", "Media metadata database is unavailable", id))
+		return
+	}
 	userID, status, err := s.authenticatedMediaUser(r)
-	if err != nil { code,message:="AUTH_REQUIRED","A valid authenticated session is required";if status>=500{code,message="AUTH_BACKEND_UNAVAILABLE","Authentication service is temporarily unavailable"};writeJSON(w,status,errorBody(code,message,id));return }
+	if err != nil {
+		code, message := "AUTH_REQUIRED", "A valid authenticated session is required"
+		if status >= 500 {
+			code, message = "AUTH_BACKEND_UNAVAILABLE", "Authentication service is temporarily unavailable"
+		}
+		writeJSON(w, status, errorBody(code, message, id))
+		return
+	}
 	var body cdnMediaDownloadRequest
-	if err:=decodeMediaJSON(w,r,&body);err!=nil||strings.TrimSpace(body.Key)==""{writeJSON(w,http.StatusBadRequest,errorBody("INVALID_MEDIA_REQUEST","A valid media key is required",id));return}
-	var visibility,assetStatus,storageProvider string
-	err=s.db.QueryRow(r.Context(),"select visibility, status, storage_provider from testagram_media.assets where object_key=$1 and owner_id=$2",body.Key,userID).Scan(&visibility,&assetStatus,&storageProvider)
-	if err!=nil||visibility!="private"||assetStatus!="ready"||storageProvider=="fresh-b2-r2"{writeJSON(w,http.StatusNotFound,errorBody("MEDIA_NOT_FOUND","Private media was not found for this account",id));return}
-	assertion,expiresAt,err:=s.cdnMediaAssertions.Issue(body.Key,userID,time.Now())
-	if err!=nil{writeJSON(w,http.StatusForbidden,errorBody("MEDIA_ACCESS_DENIED","This private media object cannot be authorized",id));return}
-	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"url":s.cdnMediaBaseURL+"/v1/"+body.Key,"authorization":"Bearer "+assertion,"expires_at":expiresAt,"expires_in_seconds":int64(time.Until(expiresAt).Seconds()),"visibility":"private"},"error":nil,"request_id":id})
+	if err := decodeMediaJSON(w, r, &body); err != nil || strings.TrimSpace(body.Key) == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "A valid media key is required", id))
+		return
+	}
+	var visibility, assetStatus, storageProvider string
+	err = s.db.QueryRow(r.Context(), "select visibility, status, storage_provider from testagram_media.assets where object_key=$1 and owner_id=$2", body.Key, userID).Scan(&visibility, &assetStatus, &storageProvider)
+	if err != nil || visibility != "private" || assetStatus != "ready" || storageProvider == "fresh-b2-r2" {
+		writeJSON(w, http.StatusNotFound, errorBody("MEDIA_NOT_FOUND", "Private media was not found for this account", id))
+		return
+	}
+	assertion, expiresAt, err := s.cdnMediaAssertions.Issue(body.Key, userID, time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_ACCESS_DENIED", "This private media object cannot be authorized", id))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"url": s.cdnMediaBaseURL + "/v1/" + body.Key, "authorization": "Bearer " + assertion, "expires_at": expiresAt, "expires_in_seconds": int64(time.Until(expiresAt).Seconds()), "visibility": "private"}, "error": nil, "request_id": id})
 }
 
 func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request) {
@@ -573,7 +623,10 @@ func (s *service) mediaPrivateDownloadURL(w http.ResponseWriter, r *http.Request
 	}
 	var signedURL string
 	if storageProvider == "data-centre" {
-		if s.dataCentreMedia == nil { writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Data Centre media service is unavailable", id)); return }
+		if s.dataCentreMedia == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("MEDIA_STORAGE_NOT_CONFIGURED", "Data Centre media service is unavailable", id))
+			return
+		}
 		var grant datacentreclient.DownloadGrant
 		grant, err = s.dataCentreMedia.DownloadURL(r.Context(), userID, userID, storageNamespace, body.Key)
 		signedURL = grant.URL
@@ -717,19 +770,29 @@ func (s *service) mediaComplete(w http.ResponseWriter, r *http.Request) {
 		body.ContentType = intentType
 	}
 	body.ContentType = strings.ToLower(strings.TrimSpace(body.ContentType))
-body.ChecksumSHA256 = strings.ToLower(strings.TrimSpace(body.ChecksumSHA256))
-intentChecksum = strings.ToLower(strings.TrimSpace(intentChecksum))
-if body.ChecksumSHA256 == "" { body.ChecksumSHA256 = intentChecksum } else if intentChecksum != "" && body.ChecksumSHA256 != intentChecksum {
-		writeJSON(w, http.StatusConflict, errorBody("MEDIA_CHECKSUM_MISMATCH", "Client checksum does not match the server-computed upload checksum", id)); return
+	body.ChecksumSHA256 = strings.ToLower(strings.TrimSpace(body.ChecksumSHA256))
+	intentChecksum = strings.ToLower(strings.TrimSpace(intentChecksum))
+	if body.ChecksumSHA256 == "" {
+		body.ChecksumSHA256 = intentChecksum
+	} else if intentChecksum != "" && body.ChecksumSHA256 != intentChecksum {
+		writeJSON(w, http.StatusConflict, errorBody("MEDIA_CHECKSUM_MISMATCH", "Client checksum does not match the server-computed upload checksum", id))
+		return
 	}
-if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISSING", "The upload gateway has not recorded a server-computed checksum", id)); return }
+	if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" {
+		writeJSON(w, http.StatusUnprocessableEntity, errorBody("MEDIA_CHECKSUM_MISSING", "The upload gateway has not recorded a server-computed checksum", id))
+		return
+	}
 	if intentVisibility != body.Visibility || intentType != body.ContentType {
 		writeJSON(w, http.StatusForbidden, errorBody("MEDIA_INTENT_INVALID", "Completion metadata does not match the stored upload intent", id))
 		return
 	}
 	var maxBytes int64
 	var ok bool
-	if storageProvider == "data-centre" { maxBytes, ok = s.mediaIntentFactory.MaxBytesForContentType(body.ContentType) } else { maxBytes, ok = s.media.MaxBytesForContentType(body.ContentType) }
+	if storageProvider == "data-centre" {
+		maxBytes, ok = s.mediaIntentFactory.MaxBytesForContentType(body.ContentType)
+	} else {
+		maxBytes, ok = s.media.MaxBytesForContentType(body.ContentType)
+	}
 	if !ok || (body.Visibility != "public" && body.Visibility != "private") {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_REQUEST", "Unsupported media type or visibility", id))
 		return
@@ -739,7 +802,9 @@ if body.ChecksumSHA256 == "" && storageNamespace != "legacy-media" { writeJSON(w
 		return
 	}
 	verifyTimeout := 8 * time.Second
-	if storageProvider == "data-centre" { verifyTimeout = 25 * time.Second }
+	if storageProvider == "data-centre" {
+		verifyTimeout = 25 * time.Second
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), verifyTimeout)
 	defer cancel()
 	var actualType, etag string
@@ -1319,7 +1384,6 @@ func (s *service) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"key": body.Key, "status": "deleted"}, "error": nil, "request_id": id})
 }
 
-
 func (s *service) deleteMediaObject(ctx context.Context, userID, key, visibility string) error {
 	return s.deleteMediaObjectWithNamespace(ctx, userID, key, visibility, "legacy-media", "default")
 }
@@ -1335,10 +1399,16 @@ func (s *service) deleteMediaObjectWithNamespace(ctx context.Context, userID, ke
 		}
 	}
 	if storageProvider == "data-centre" {
-		if s.dataCentreMedia == nil { return errors.New("Data Centre media service is unavailable") }
+		if s.dataCentreMedia == nil {
+			return errors.New("Data Centre media service is unavailable")
+		}
 		status, err := s.dataCentreMedia.Delete(ctx, userID, userID, storageNamespace, key)
-		if err != nil { return err }
-		if status != "deleted" { return errors.New("Data Centre media deletion remains pending") }
+		if err != nil {
+			return err
+		}
+		if status != "deleted" {
+			return errors.New("Data Centre media deletion remains pending")
+		}
 		return nil
 	}
 	if storageNamespace != "" && storageNamespace != "legacy-media" {
