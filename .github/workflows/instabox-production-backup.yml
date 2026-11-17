@@ -37,9 +37,9 @@ jobs:
     env:
       API: https://api.instabox.sh
       MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID || secrets.INSTABOX_MACHINE_ID }}
-      BACKUP_ENDPOINT: ${{ secrets.TESTAGRAM_BACKUP_S3_ENDPOINT || vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
-      BACKUP_BUCKET: ${{ vars.TESTAGRAM_BACKUP_S3_BUCKET }}
-      BACKUP_REGION: ${{ vars.TESTAGRAM_BACKUP_S3_REGION || 'auto' }}
+      BACKUP_ENDPOINT: ${{ secrets.TESTAGRAM_BACKUP_S3_ENDPOINT || vars.TESTAGRAM_BACKUP_S3_ENDPOINT || secrets.B2_S3_ENDPOINT || vars.B2_S3_ENDPOINT }}
+      BACKUP_BUCKET: ${{ secrets.TESTAGRAM_BACKUP_S3_BUCKET || vars.TESTAGRAM_BACKUP_S3_BUCKET || secrets.B2_S3_BUCKET || vars.B2_S3_BUCKET }}
+      BACKUP_REGION: ${{ secrets.TESTAGRAM_BACKUP_S3_REGION || vars.TESTAGRAM_BACKUP_S3_REGION || secrets.B2_S3_REGION || vars.B2_S3_REGION || 'auto' }}
       RUN_RESTORE_DRILL: ${{ inputs.run_restore_drill == true && 'true' || 'false' }}
       INITIALIZE_RESTIC_REPOSITORY: ${{ inputs.initialize_restic_repository == true && 'true' || 'false' }}
     steps:
@@ -48,8 +48,8 @@ jobs:
         shell: bash
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
-          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
-          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
+          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
         run: |
           set -euo pipefail
@@ -188,8 +188,8 @@ jobs:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
           RUN_PRUNE: ${{ steps.config.outputs.run_prune }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
-          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
-          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
+          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
