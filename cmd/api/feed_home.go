@@ -265,7 +265,7 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	userID, status, authErr := s.authenticatedMediaUser(r)
 	if authErr != nil {
-		writeAppwriteAuthFailure(w, status, authErr, requestID)
+		writeNativeAuthFailure(w, status, authErr, requestID)
 		return
 	}
 	if s.db == nil {
