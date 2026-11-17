@@ -244,13 +244,12 @@ class WatchdogTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
         probe.assert_not_called()
 
-    def test_workflow_uses_separate_write_key_and_canonical_backend_health_urls(self):
+    def test_workflow_reuses_existing_secret_and_preserves_pr_validation(self):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
         self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
-        self.assertIn("secrets.INSTABOX_READONLY_API_KEY", workflow)
         self.assertIn("WATCHDOG_AUTO_RECOVERY_ENABLED", workflow)
-        self.assertIn("INSTABOX_WATCHDOG_API_KEY_HEADER=X-API-Key", workflow)
-        self.assertIn("dedicated INSTABOX_WATCHDOG_API_KEY", workflow)
+        self.assertIn("export INSTABOX_WATCHDOG_API_KEY_HEADER=Authorization", workflow)
+        self.assertNotIn("INSTABOX_READONLY_API_KEY", workflow)
         self.assertIn("secrets.INSTABOX_MACHINE_ID", workflow)
         self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagramdb'", workflow)
         self.assertIn("https://api.testagram.site/healthz", workflow)
@@ -262,6 +261,7 @@ class WatchdogTests(unittest.TestCase):
         self.assertNotIn("/readyz", workflow)
         self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
         self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true'", workflow)
+        self.assertIn("pull_request:", workflow)
 
 
 if __name__ == "__main__":
