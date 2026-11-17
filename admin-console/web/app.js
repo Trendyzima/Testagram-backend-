@@ -1,8 +1,7 @@
 const byId = (id) => document.getElementById(id);
 const views = ["login", "recover", "update-password"];
 let currentUser = null;
-let resetUserID = "";
-let resetSecret = "";
+let resetToken = "";
 let overviewRefreshing = false;
 
 function notice(message, kind = "info") {
@@ -179,10 +178,9 @@ byId("update-password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget; busy(form, true);
   try {
-    const result = await api("/api/auth/update-password", { user_id: resetUserID, secret: resetSecret, password: byId("new-password").value });
+    const result = await api("/api/auth/update-password", { token: resetToken, password: byId("new-password").value });
     history.replaceState(null, "", "/");
-    resetUserID = "";
-    resetSecret = "";
+    resetToken = "";
     showView("login"); notice(result.message || "Password updated. You can now sign in.", "success");
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
@@ -217,11 +215,9 @@ byId("invite-form").addEventListener("submit", async (event) => {
 });
 
 const recoveryParams = new URLSearchParams(location.search);
-const resetUser = recoveryParams.get("userId") || "";
-const resetToken = recoveryParams.get("secret") || "";
-if (resetUser && resetToken) {
-  resetUserID = resetUser;
-  resetSecret = resetToken;
+const recoveryToken = recoveryParams.get("token") || "";
+if (recoveryToken) {
+  resetToken = recoveryToken;
   showView("update-password");
   history.replaceState(null, "", "/reset-password");
 }
