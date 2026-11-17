@@ -35,9 +35,6 @@ jobs:
       BACKUP_ENDPOINT: ${{ vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
       BACKUP_BUCKET: ${{ vars.TESTAGRAM_BACKUP_S3_BUCKET }}
       BACKUP_REGION: ${{ vars.TESTAGRAM_BACKUP_S3_REGION || 'auto' }}
-      BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
-      BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
-      RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
       RUN_RESTORE_DRILL: ${{ inputs.run_restore_drill == true && 'true' || 'false' }}
     steps:
       - name: Validate configuration without printing credentials
@@ -45,6 +42,9 @@ jobs:
         shell: bash
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
+          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+          RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
         run: |
           set -euo pipefail
           for name in INSTABOX_API_KEY BACKUP_ENDPOINT BACKUP_BUCKET BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY RESTIC_PASSWORD; do
