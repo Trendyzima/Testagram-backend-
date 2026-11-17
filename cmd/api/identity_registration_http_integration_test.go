@@ -159,12 +159,16 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		SET status='manual_review',evidence_reference=$2,evidence_fingerprint_sha256=$3,
 		    submitted_at=now(),updated_at=now()
 		WHERE id=$1::uuid
-	`, created.SessionID, "identity-evidence:"+evidenceUUID, digest); err != nil { t.Fatal(err) }
+	`, created.SessionID, "identity-evidence:"+evidenceUUID, digest); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
 		SET status='under_review',evidence_reference=$2,evidence_fingerprint_sha256=$3,updated_at=now()
 		WHERE id=$1::uuid
-	`, created.ApplicationID, "identity-evidence:"+evidenceUUID, digest); err != nil { t.Fatal(err) }
+	`, created.ApplicationID, "identity-evidence:"+evidenceUUID, digest); err != nil {
+		t.Fatal(err)
+	}
 
 	var eventCountBefore int
 	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.verification_events WHERE session_id=$1::uuid", created.SessionID).Scan(&eventCountBefore); err != nil {
