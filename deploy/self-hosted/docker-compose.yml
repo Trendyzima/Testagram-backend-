@@ -61,6 +61,7 @@ services:
       - ../../migrations/20261116_native_approved_identity_provisioning.sql:/docker-entrypoint-initdb.d/050_native_approved_identity_provisioning.sql:ro
       - ../../migrations/20261116_native_auth_runtime_grants.sql:/docker-entrypoint-initdb.d/051_native_auth_runtime_grants.sql:ro
       - ../../migrations/20261116_remote_author_subscriptions.sql:/docker-entrypoint-initdb.d/052_remote_author_subscriptions.sql:ro
+      - ../../migrations/20261117_native_staff_reviewer_grants.sql:/docker-entrypoint-initdb.d/053_native_staff_reviewer_grants.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
