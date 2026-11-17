@@ -5,6 +5,11 @@ on:
     - cron: "17 2 * * *"
   workflow_dispatch:
     inputs:
+      initialize_restic_repository:
+        description: "Initialize a brand-new empty Restic repository (only on the first manual run)"
+        required: false
+        type: boolean
+        default: false
       run_restore_drill:
         description: "Restore the latest backup into a disposable, network-isolated PostgreSQL container"
         required: false
@@ -36,6 +41,7 @@ jobs:
       BACKUP_BUCKET: ${{ vars.TESTAGRAM_BACKUP_S3_BUCKET }}
       BACKUP_REGION: ${{ vars.TESTAGRAM_BACKUP_S3_REGION || 'auto' }}
       RUN_RESTORE_DRILL: ${{ inputs.run_restore_drill == true && 'true' || 'false' }}
+      INITIALIZE_RESTIC_REPOSITORY: ${{ inputs.initialize_restic_repository == true && 'true' || 'false' }}
     steps:
       - name: Validate configuration without printing credentials
         id: config
@@ -207,6 +213,7 @@ jobs:
                   "AWS_REGION": os.environ["BACKUP_REGION"],
                   "RUN_PRUNE": os.environ["RUN_PRUNE"],
                   "RUN_RESTORE_DRILL": os.environ["RUN_RESTORE_DRILL"],
+                  "INITIALIZE_RESTIC_REPOSITORY": os.environ["INITIALIZE_RESTIC_REPOSITORY"],
               },
           }
           json.dump(payload, sys.stdout)
