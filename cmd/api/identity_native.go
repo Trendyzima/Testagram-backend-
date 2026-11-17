@@ -583,8 +583,88 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	var evidenceID string
-	if err := s.db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceID); err != nil {
+	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
+	sessionID := r.PathValue("session_id")
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	// Serialize all reservation attempts for this session across API replicas.
+	// The partial unique index remains the final database-level invariant.
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", sessionID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
+		return
+	}
+
+	var evidenceID, existingType string
+	var existingSize int64
+	var existingDigest []byte
+	var reservationActive bool
+	var expiresInSeconds int
+	err = tx.QueryRow(ctx, `
+		SELECT id::text,content_type,size_bytes,sha256,
+		       created_at > now()-interval '5 minutes',
+		       GREATEST(1,CEIL(EXTRACT(EPOCH FROM (created_at+interval '5 minutes'-now())))::int)
+		FROM testagram_identity.verification_evidence
+		WHERE session_id=$1::uuid AND status='upload_pending'
+		FOR UPDATE
+	`, sessionID).Scan(&evidenceID, &existingType, &existingSize, &existingDigest, &reservationActive, &expiresInSeconds)
+	if err == nil && reservationActive {
+		if existingType != input.ContentType || existingSize != input.SizeBytes ||
+			len(existingDigest) != len(digest) || subtle.ConstantTimeCompare(existingDigest, digest) != 1 {
+			writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "A different evidence upload is already reserved for this session", requestID(r)))
+			return
+		}
+		if err := tx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		uploadPath := "/api/identity/sessions/" + sessionID + "/evidence/" + evidenceID + "/upload"
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"evidence_id": evidenceID, "upload_url": uploadPath,
+			"method": http.MethodPut, "content_type": input.ContentType,
+			"size_bytes": input.SizeBytes, "expires_in_seconds": expiresInSeconds,
+		})
+		return
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence reservation could not be recovered", requestID(r)))
+		return
+	}
+	if err == nil {
+		// The five-minute upload capability has expired. Retire only the
+		// unuploaded reservation so a fresh attempt can be made; submitted,
+		// verified or quarantined evidence is never replaced here.
+		if _, err := tx.Exec(ctx, `
+			UPDATE testagram_identity.verification_evidence
+			SET status='deleted',uploaded_at=now(),retention_until=now()
+			WHERE id=$1::uuid AND status='upload_pending'
+		`, evidenceID); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Expired evidence reservation could not be retired", requestID(r)))
+			return
+		}
+	} else {
+		var immutableEvidenceExists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM testagram_identity.verification_evidence
+				WHERE session_id=$1::uuid AND status IN ('verified','quarantined')
+			)
+		`, sessionID).Scan(&immutableEvidenceExists); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence reservation state is unavailable", requestID(r)))
+			return
+		}
+		if immutableEvidenceExists {
+			writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "Evidence for this session has already been submitted or quarantined", requestID(r)))
+			return
+		}
+	}
+
+	if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
 		return
 	}
@@ -593,17 +673,20 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Evidence upload could not be prepared", requestID(r)))
 		return
 	}
-	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
-	objectKey := path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
-	_, err = s.db.Exec(ctx, `
+	objectKey := path.Join("identity", sessionID, evidenceID+extension+"-"+nonce)
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_evidence
 		  (id,session_id,object_key,content_type,size_bytes,sha256)
 		VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)
-	`, evidenceID, r.PathValue("session_id"), objectKey, input.ContentType, input.SizeBytes, digest)
-	if err != nil {
+	`, evidenceID, sessionID, objectKey, input.ContentType, input.SizeBytes, digest); err != nil {
 		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "An evidence upload is already reserved for this session", requestID(r)))
 		return
 	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
+		return
+	}
+	expiresInSeconds = 300
 	w.Header().Set("Cache-Control", "no-store")
 	// Do not expose an internal MinIO hostname or a raw object-store capability
 	// to mobile clients. The client uploads to this authenticated API route;
@@ -612,7 +695,7 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"evidence_id": evidenceID, "upload_url": uploadPath,
 		"method": http.MethodPut, "content_type": input.ContentType,
-		"size_bytes": input.SizeBytes, "expires_in_seconds": 300,
+		"size_bytes": input.SizeBytes, "expires_in_seconds": expiresInSeconds,
 	})
 }
 
