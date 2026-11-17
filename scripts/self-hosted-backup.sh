@@ -130,7 +130,7 @@ if [[ -z "$video_media_source" && -d "$storage_root/media" ]]; then
 fi
 node_storage_source=""
 storage_root_for_nodes="$storage_root"
-if [[ -n "$video_media_source" ]]; then
+if [[ ! -d "$storage_root_for_nodes/nodes" && -n "$video_media_source" ]]; then
   storage_root_for_nodes="$(dirname "$video_media_source")"
 fi
 if [[ -d "$storage_root_for_nodes/nodes" ]]; then
