@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -148,6 +147,6 @@ func TestNativeSessionConcurrentRefreshReuseRevokesFamily(t *testing.T) {
 		t.Fatalf("concurrent refresh replay did not revoke the token family: status=%d err=%v", status, err)
 	}
 	if _, err := svc.rotateNativeRefresh(ctx, successful.RefreshToken, "concurrent-refresh", "192.0.2.26"); err == nil {
-		t.Fatal(fmt.Sprintf("replacement token remained usable after concurrent replay"))
+		t.Fatal("replacement token remained usable after concurrent replay")
 	}
 }
