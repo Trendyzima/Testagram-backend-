@@ -27,11 +27,7 @@ USAGE
 }
 
 die() { printf 'backup error: %s\n' "$*" >&2; exit 1; }
-command -v docker >/dev/null || die "docker is required"
 command -v restic >/dev/null || die "restic is required"
-command -v jq >/dev/null || die "jq is required for the backup capacity preflight"
-command -v realpath >/dev/null || die "realpath is required to resolve Data Centre storage mounts"
-command -v python3 >/dev/null || die "python3 is required to validate Data Centre database routing"
 [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "RESTIC_REPOSITORY is required"
 if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then
   [[ -f "$RESTIC_PASSWORD_FILE" && -r "$RESTIC_PASSWORD_FILE" ]] || die "RESTIC_PASSWORD_FILE must point to a readable password file"
@@ -39,6 +35,19 @@ if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then
 elif [[ -z "${RESTIC_PASSWORD:-}" ]]; then
   die "set RESTIC_PASSWORD_FILE or RESTIC_PASSWORD"
 fi
+
+export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-${HOME}/.cache/restic-testagram}"
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+compose_dir="$(cd -- "$script_dir/../deploy/self-hosted" && pwd)"
+cd "$compose_dir"
+
+case "${1:-}" in
+  backup)
+command -v docker >/dev/null || die "docker is required"
+command -v jq >/dev/null || die "jq is required for the backup capacity preflight"
+command -v realpath >/dev/null || die "realpath is required to resolve Data Centre storage mounts"
+command -v python3 >/dev/null || die "python3 is required to validate Data Centre database routing"
 
 # InstaBox's standard template may expose Docker through sudo rather than the
 # user's supplementary groups. Prefer unprivileged Docker, then use passwordless
@@ -49,14 +58,7 @@ if ! docker info >/dev/null 2>&1; then
   sudo -n docker info >/dev/null 2>&1 || die "Docker is not accessible to this user or passwordless sudo"
   DOCKER=(sudo -n docker)
 fi
-export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-${HOME}/.cache/restic-testagram}"
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-compose_dir="$(cd -- "$script_dir/../deploy/self-hosted" && pwd)"
-cd "$compose_dir"
-
-case "${1:-}" in
-  backup)
 # Do not claim a complete backup if writes have moved to an external provider.
 # This helper captures local PostgreSQL + MinIO and detected Data Centre video
 # and node files; active B2/R2 media stores need separate restore-tested backups.
