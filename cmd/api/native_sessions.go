@@ -25,7 +25,8 @@ type nativeSessionTokens struct {
 }
 
 func nativeAuthEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "appwrite")), "native")
+	// Testagram identity is owned by this Backend. There is no external-provider fallback.
+	return true
 }
 
 func authFingerprint(value string) []byte {
