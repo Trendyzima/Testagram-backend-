@@ -131,7 +131,7 @@ jobs:
 
           case "$status" in
             200|202|204)
-              if [[ "$status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/wake.json" >/dev/null 2>&1; then
+              if [[ "$status" == "200" ]] && jq -e '.state == "running"' "$RUNNER_TEMP/wake.json" >/dev/null 2>&1; then
                 ready=true
               fi
               ;;
@@ -160,11 +160,11 @@ jobs:
           esac
 
           if [[ "$ready" != "true" ]]; then
-            echo "Wake was accepted; polling the machine until its guest runtime is ready."
+            echo "Wake was accepted; polling the machine until its machine state is running."
             for attempt in $(seq 1 24); do
               machine_status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
                 "$API/v1/machines/$MACHINE_ID" || true)"
-              if [[ "$machine_status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/machine.json" >/dev/null 2>&1; then
+              if [[ "$machine_status" == "200" ]] && jq -e '.state == "running"' "$RUNNER_TEMP/machine.json" >/dev/null 2>&1; then
                 ready=true
                 break
               fi
