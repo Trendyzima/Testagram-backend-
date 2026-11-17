@@ -508,7 +508,34 @@ SQL
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
 
 # Exercise the actual Appwrite session -> current-consent -> canonical account path.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent
+# Exercise the Admin Console review handler against this same isolated database.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
+
+# Consent evidence must be immutable after insertion.
+if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
+  echo "legal consent audit mutation unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "Native identity migrations, evidence-access audit and registration invariants passed."
+ -count=1
+
+# Exercise native password recovery and the complete refresh/logout lifecycle against
+# the same isolated PostgreSQL schema used by the registration acceptance tests.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativePasswordRecoveryRequestIsAntiEnumeration|TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin|TestNativeSessionRefreshRotationAndReuseRevokesFamily|TestNativeSessionLogoutRevokesCurrentSession|TestNativeSessionLogoutAllRevokesEverySession|TestNativeSessionConcurrentRefreshReuseRevokesFamily)
+# Exercise the Admin Console review handler against this same isolated database.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
+
+# Consent evidence must be immutable after insertion.
+if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
+  echo "legal consent audit mutation unexpectedly succeeded" >&2
+  exit 1
+fi
+
+echo "Native identity migrations, evidence-access audit and registration invariants passed."
+ -count=1
+
 
 # Exercise the Admin Console review handler against this same isolated database.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
