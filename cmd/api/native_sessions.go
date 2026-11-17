@@ -24,7 +24,8 @@ type nativeSessionTokens struct {
 	User         map[string]any `json:"user"`
 }
 
-// Authentication is Testagram-owned and PostgreSQL-backed.\nfunc authFingerprint(value string) []byte {
+// Authentication is Testagram-owned and PostgreSQL-backed.
+func authFingerprint(value string) []byte {
 	sum := sha256.Sum256([]byte(value))
 	return sum[:]
 }
