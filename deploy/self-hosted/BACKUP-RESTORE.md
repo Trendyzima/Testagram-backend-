@@ -107,15 +107,17 @@ its back.
 
 Configure these GitHub repository variables:
 
-- `TESTAGRAM_BACKUP_S3_ENDPOINT`: required HTTPS endpoint origin for the
-  dedicated backup bucket. Set the R2 account endpoint
-  (`https://<account-id>.r2.cloudflarestorage.com`) or the exact B2 S3 endpoint
-  for the bucket's region. The workflow deliberately does not guess a provider
-  from the media-storage endpoints.
-- `TESTAGRAM_BACKUP_S3_BUCKET`: required dedicated bucket name, e.g.
+- `TESTAGRAM_BACKUP_S3_BUCKET`: required dedicated backup bucket name, e.g.
   `testagram-backups`.
 - `TESTAGRAM_BACKUP_S3_REGION`: set to `auto` for R2. For B2, set the
   exact bucket region (e.g. `us-west-004`); the workflow rejects `auto` for B2.
+
+Configure this endpoint as the repository secret
+`TESTAGRAM_BACKUP_S3_ENDPOINT` (recommended), or as a repository variable with
+the same name. The workflow accepts either, preferring the secret:
+the R2 account endpoint (`https://<account-id>.r2.cloudflarestorage.com`) or
+the exact B2 S3 endpoint for the bucket's region. It deliberately does not
+guess a provider from the media-storage endpoints.
 - `INSTABOX_MACHINE_ID`: the existing production machine-ID secret used by
   the deployment workflow. The backup job accepts an environment variable
   override named `INSTABOX_MACHINE_ID`, but has no hard-coded machine-ID
