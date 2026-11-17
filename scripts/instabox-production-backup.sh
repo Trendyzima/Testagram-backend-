@@ -25,12 +25,13 @@ export TMPDIR="$BACKUP_TMP_ROOT"
 # Restic and jq are not guaranteed on every InstaBox template. Install
 # only these small backup utilities when missing; do not upgrade the OS or
 # restart production services as part of a backup.
-if ! command -v restic >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+if ! command -v restic >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
   sudo -n apt-get update -qq
-  sudo -n apt-get install -y restic jq
+  sudo -n apt-get install -y restic jq python3
 fi
 command -v restic >/dev/null || die "restic installation did not produce a restic executable"
 command -v jq >/dev/null || die "jq installation did not produce a jq executable"
+command -v python3 >/dev/null || die "python3 is required for federation database validation"
 
 export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-$TMPDIR/testagram-restic-cache}"
 export BACKUP_STAGE_DIR="${BACKUP_STAGE_DIR:-$TMPDIR/testagram-backup-stage}"
