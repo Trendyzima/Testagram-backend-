@@ -168,6 +168,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
+		log.Printf("identity application tx begin failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
@@ -181,6 +182,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	if _, err := tx.Exec(ctx, `
 		SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))
 	`, submissionHash); err != nil {
+		log.Printf("identity application advisory lock failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
@@ -197,6 +199,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		log.Printf("identity application row lookup failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
@@ -253,6 +256,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		`, applicationID, email, username, displayName, "native-session-pending:"+applicationID,
 			termsVersion, privacyVersion, submissionHash, applicationTokenHash)
 		if err != nil {
+			log.Printf("identity application insert failed request_id=%s: %v", requestID(r), err)
 			if identityApplicationConflict(err) {
 				// Duplicate email/username constraints receive the same neutral
 				// acceptance as an ineligible application to prevent enumeration.
@@ -267,6 +271,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 				INSERT INTO testagram_identity.legal_consent_audit(application_id,consent_type,policy_version,accepted_at,request_id)
 				VALUES ($1::uuid,$2,$3,now(),$4)
 			`, applicationID, consent.kind, consent.version, requestID(r)); err != nil {
+				log.Printf("identity consent audit insert failed request_id=%s: %v", requestID(r), err)
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("CONSENT_AUDIT_FAILED", "Registration consent could not be recorded", requestID(r)))
 				return
 			}
@@ -377,6 +382,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		  (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,expires_at,assurance_method)
 		VALUES ($1::uuid,$2::uuid,$3,'age_assurance',18,'in_progress',now()+interval '24 hours','manual_review')
 	`, sessionID, applicationID, sessionTokenHash); err != nil {
+		log.Printf("identity verification session insert failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification session could not be created", requestID(r)))
 		return
 	}
@@ -394,6 +400,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		SET evidence_reference=$2,status='verification_pending',updated_at=now()
 		WHERE id=$1::uuid
 	`, applicationID, "native-session-pending:"+sessionID); err != nil {
+		log.Printf("identity application session link failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification session could not be linked", requestID(r)))
 		return
 	}
