@@ -28,7 +28,6 @@ jobs:
     name: Wake for a real backup, then allow idle pause
     if: github.event_name == 'workflow_dispatch' || vars.TESTAGRAM_PRODUCTION_BACKUP_ENABLED == 'true'
     runs-on: ubuntu-24.04
-    environment: production
     timeout-minutes: 25
     env:
       API: https://api.instabox.sh
