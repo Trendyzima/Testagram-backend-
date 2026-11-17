@@ -80,7 +80,7 @@ jobs:
               raise SystemExit("backup must verify the existing Restic repository before writing")
           if "if ! restic snapshots" in wrapper:
               raise SystemExit("a failed Restic read must never trigger implicit initialization")
-          if 'cwd: "/data/home/testagram/repos/backend"' not in workflow:
+          if '"cwd": "/data/home/testagram/repos/backend"' not in workflow:
               raise SystemExit("InstaBox exec checkout path does not match the deployment script")
           if 'BACKEND="$REPOS/backend"' not in Path("scripts/start-instabox-deployment.sh").read_text():
               raise SystemExit("deployment checkout path changed; update backup workflow cwd")
