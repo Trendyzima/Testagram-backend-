@@ -149,7 +149,10 @@ variables and secrets. Use a dedicated, least-privilege
 machine IDs, keys, or passwords directly in workflow YAML.
 
 The workflow constructs the repository as
-`s3:<endpoint>/<bucket>/testagram`. It passes credentials only to the
+`s3:<endpoint>/<bucket>/testagram`. Repository initialization is an explicit
+manual-dispatch input and is never inferred from a failed repository read;
+this prevents a transient storage/network error from triggering an attempted
+reinitialization. It passes credentials only to the
 single InstaBox exec request as temporary environment variables; it does not
 write the S3 keys or restic password into the machine's persistent `.env`.
 The remote helper refreshes only the backup scripts from GitHub main before
@@ -160,10 +163,14 @@ run migrations, or restart application containers.
 
 1. Create the private bucket and scoped S3 key, then add the variables/secrets
    above. Keep `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` unset/false for now.
-2. In Actions, run **InstaBox production backup (free-plan safe)** manually
-   with `run_restore_drill=true`. This creates the first encrypted backup and
-   restores it into a disposable PostgreSQL container with no network or
-   published ports. It never restores over production.
+2. In Actions, run **InstaBox production backup (free-plan safe)** manually.
+   On the very first run only, set `initialize_restic_repository=true` after
+   confirming the dedicated bucket/prefix is empty and reserved for this
+   Testagram repository. Also set `run_restore_drill=true`. The workflow
+   explicitly initializes Restic, creates the encrypted backup, then restores
+   it into a disposable PostgreSQL container with no network or published
+   ports. It never restores over production. Leave initialization false on
+   every later run; the workflow refuses to initialize implicitly.
 3. Confirm the run reports a successful restore drill. Only then set
    `TESTAGRAM_PRODUCTION_BACKUP_ENABLED=true` for one daily backup at 02:17 UTC.
 4. After several successful backups and a restore drill, optionally set
