@@ -255,10 +255,10 @@ fi
       -v "$stage:/backup" \
       --entrypoint /bin/sh object-init -ec '
         mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
-        mc mirror --preserve local/"$MINIO_BUCKET" /backup/minio-private
-        mc mirror --preserve local/"$PUBLIC_MEDIA_BUCKET" /backup/minio-public
-        mc mirror --preserve local/"$IDENTITY_EVIDENCE_PRIVATE_BUCKET" /backup/minio-identity-evidence
-        mc mirror --preserve local/"$MINIO_METADATA_BUCKET" /backup/minio-metadata
+        mc mirror --preserve local/"$MINIO_BUCKET" /backup/minio-private >/dev/null
+        mc mirror --preserve local/"$PUBLIC_MEDIA_BUCKET" /backup/minio-public >/dev/null
+        mc mirror --preserve local/"$IDENTITY_EVIDENCE_PRIVATE_BUCKET" /backup/minio-identity-evidence >/dev/null
+        mc mirror --preserve local/"$MINIO_METADATA_BUCKET" /backup/minio-metadata >/dev/null
       '
     printf '%s\n' \
       "Testagram self-hosted backup" \
