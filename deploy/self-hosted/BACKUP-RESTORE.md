@@ -176,12 +176,13 @@ overrides the bundled MinIO origin; if `DATA_CENTRE_MEDIA_API_URL`,
 separate B2/R2 media service; or if the Federation API points to an external PostgreSQL host or a separate
 `federation-db` container is detected. A Federation database on the existing
 `postgres`/`federation-db` network alias is included because every connectable
-non-template database in that PostgreSQL cluster is dumped. When the standard Data Centre Compose project
-is present, the helper discovers the `video`/`video-worker` `/media` bind mount
-and includes that directory, plus sibling `nodes` storage when present. Do not
-disable the guards or declare recovery complete until every active external
-media store and separate database is covered. The supported local-MinIO path
-includes all four buckets and any detected local Data Centre storage. The free plan has a fixed 20 GiB machine disk and includes
+non-template database in that PostgreSQL cluster is dumped. When the standard
+Data Centre Compose project is present, the helper discovers the
+`video`/`video-worker` `/media` bind mount and includes that directory, plus
+sibling `nodes` storage when present. Do not disable the guards or declare
+recovery complete until every active external media store and separate database
+is covered. The supported local-MinIO path includes all four buckets and any
+detected local Data Centre storage. The free plan has a fixed 20 GiB machine disk and includes
 100 GiB of egress per month; monitor the first backup and storage-provider
 usage, especially if media grows. InstaBox's free plan also has a 200 GiB
 stored-data cap and five snapshots. This workflow does not create machine
@@ -199,11 +200,12 @@ From the repository root, the automated database restore check is:
 It restores the latest `testagram` snapshot to a private temporary directory,
 starts a disposable PostgreSQL container with `--network none` and no published
 ports, restores every database listed in the manifest, and checks that the
-primary application database contains tables. It confirms that all four bucket trees and any Data Centre storage directories
+primary application database contains tables. It confirms that all four bucket
+trees and any Data Centre storage directories
 recorded in the backup manifest were restored, reports their file counts, and
 securely removes its temporary directory, container, and volume on exit. The
-operator must have enough free disk space for a full temporary snapshot restore
-and Docker volume for the restored database.
+script checks staging space before downloading and checks Docker storage against
+the recorded raw PostgreSQL size before creating the isolated database volume.
 
 This automated check does **not** restore media files into a running MinIO
 instance, test public/private URLs, or measure production traffic recovery. Use
