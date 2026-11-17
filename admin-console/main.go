@@ -243,7 +243,7 @@ func (a *app) setSession(w http.ResponseWriter, s session) error {
 	if err != nil { return err }
 	nonce := make([]byte, a.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil { return err }
-	sealed := a.aead.Seal(nonce, nonce, raw, []byte("testagram-staff-session-v2"))
+	sealed := a.aead.Seal(nonce, nonce, raw, []byte("testagram-staff-session-v3"))
 	maxAge := 60 * 60 * 24 * 30
 	if s.RefreshExpiresAt > 0 {
 		remaining := int(s.RefreshExpiresAt - time.Now().Unix())
@@ -265,7 +265,7 @@ func (a *app) readSession(r *http.Request) (session, error) {
 	if err != nil { return session{}, err }
 	n := a.aead.NonceSize()
 	if len(sealed) <= n { return session{}, errors.New("invalid session") }
-	plain, err := a.aead.Open(nil, sealed[:n], sealed[n:], []byte("testagram-staff-session-v2"))
+	plain, err := a.aead.Open(nil, sealed[:n], sealed[n:], []byte("testagram-staff-session-v3"))
 	if err != nil { return session{}, err }
 	var s session
 	if err := json.Unmarshal(plain, &s); err != nil || s.AccessToken == "" || s.RefreshToken == "" || s.RefreshExpiresAt <= time.Now().Unix() {
@@ -518,7 +518,7 @@ func (a *app) handleSignIn(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) handleSignUp(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w,http.StatusForbidden,map[string]string{"error":"Staff accounts are invitation-only. Ask a Testagram owner for an invitation."})
+	writeJSON(w,http.StatusForbidden,map[string]string{"error":"Staff accounts are provisioned through the controlled two-person Testagram staff workflow."})
 }
 
 func (a *app) handleRecover(w http.ResponseWriter, r *http.Request) {
