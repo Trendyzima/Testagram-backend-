@@ -100,10 +100,10 @@ jobs:
             echo "- Provider: Instabox"
             echo "- Machine: configured through repository variable"
             echo "- Schedule: every five minutes"
-            echo "- Recovery: force-resume suspended VPS; start stopped VPS regardless of desiredState; guarded stop/start after three failed health probes"
+            echo "- Recovery: start stopped VPS and resume suspended VPS; running VPS never receives a restart trigger"
             echo "- Suspended VPS: force-resume with existing watchdog credential, then verify public API liveness"
-            echo "- Health monitoring: provider state first; probe public /healthz only while provider reports running"
-            echo "- Stopped and suspended machines are force-recovered even when desiredState reports stopped/suspended; three failed running-machine probes trigger a guarded stop/start"
+            echo "- Decision rule: provider running = read-only/no restart; stopped or suspended = initiate recovery"
+            echo "- Only stopped/suspended provider states initiate lifecycle actions; application health failures alone never restart a running VPS"
             echo
             echo "See the run log for provider state and any recovery verification details."
           } >> "$GITHUB_STEP_SUMMARY"
