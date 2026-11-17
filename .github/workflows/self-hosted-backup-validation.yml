@@ -36,20 +36,18 @@ jobs:
         run: |
           python3 - <<'PY'
           import os
-          import re
           import subprocess
           import sys
           from pathlib import Path
 
           source = Path("scripts/self-hosted-backup.sh").read_text()
-          match = re.search(
-              r'FEDERATION_DATABASE_URL_CHECK="\\$federation_database_url" python3 - <<\'PY\'\\n(.*?)\\nPY',
-              source,
-              re.S,
-          )
-          if not match:
+          marker = "FEDERATION_DATABASE_URL_CHECK=\"$federation_database_url\" python3 - <<'PY'"
+          marker_at = source.find(marker)
+          if marker_at < 0:
               raise SystemExit("could not locate the embedded Federation database URL validator")
-          validator = match.group(1)
+          validator_start = source.index(chr(10), marker_at) + 1
+          validator_end = source.index(chr(10) + "PY", validator_start)
+          validator = source[validator_start:validator_end]
           def check(url):
               env = dict(os.environ, FEDERATION_DATABASE_URL_CHECK=url)
               return subprocess.run([sys.executable, "-c", validator], env=env, check=False).returncode
