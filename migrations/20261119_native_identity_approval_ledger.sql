@@ -2,6 +2,17 @@
 -- making every reviewer decision and approval-token signer a native Testagram UUID.
 BEGIN;
 
+-- The native admin-console approval workflow has its own UUID request ledger.
+-- Keep the historical API approval link intact; do not overload its foreign key.
+ALTER TABLE testagram_identity.identity_applications
+  ADD COLUMN IF NOT EXISTS native_sensitive_action_request_id UUID
+    REFERENCES testagram_auth.native_sensitive_action_requests(id) ON DELETE RESTRICT;
+CREATE INDEX IF NOT EXISTS identity_applications_native_sensitive_request_idx
+  ON testagram_identity.identity_applications(native_sensitive_action_request_id)
+  WHERE native_sensitive_action_request_id IS NOT NULL;
+
+
+
 ALTER TABLE testagram_auth.sensitive_action_approvals
   ADD COLUMN IF NOT EXISTS approver_user_id UUID
     REFERENCES testagram_auth.staff_principals(user_id) ON DELETE RESTRICT;
