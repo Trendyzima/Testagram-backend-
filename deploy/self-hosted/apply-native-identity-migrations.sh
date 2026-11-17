@@ -28,6 +28,18 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.admin_security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.identity_applications'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.identity_application_reviews'\'') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\\''testagram_identity'\\''
+            AND table_name='\\''identity_application_reviews'\\''
+            AND column_name='\\''reviewer_user_id'\\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\\''testagram_identity'\\''
+            AND table_name='\\''verification_reviews'\\''
+            AND column_name='\\''reviewer_user_id'\\''
+        )
         AND to_regclass('\''testagram_identity.identity_approval_tokens'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
@@ -189,5 +201,5 @@ if [[ "$(schema_ready)" != "t" ]]; then
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, native staff reviewer grants, native admin-console ledgers, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
