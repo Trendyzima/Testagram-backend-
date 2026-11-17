@@ -154,14 +154,22 @@ fi
     minio_bytes="$(jq -s -er 'if length == 4 and all(.[]; (.Usage.totalSize | type) == "number") then map(.Usage.totalSize) | add else error("MinIO did not report sizes for all four buckets") end' <<< "$bucket_size_report")"
     # shellcheck disable=SC2016
     postgres_bytes="$("${DOCKER[@]}" compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_database_size(current_database())"')"
-    [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ ]] || die "could not determine database and media sizes"
-    required_stage_bytes=$(( (minio_bytes + postgres_bytes) * 120 / 100 + 1073741824 ))
+    video_media_bytes=0
+    node_storage_bytes=0
+    if [[ -n "$video_media_source" ]]; then
+      video_media_bytes="$(du -sb "$video_media_source" | awk '{print $1}')"
+    fi
+    if [[ -n "$node_storage_source" ]]; then
+      node_storage_bytes="$(du -sb "$node_storage_source" | awk '{print $1}')"
+    fi
+    [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ && "$video_media_bytes" =~ ^[0-9]+$ && "$node_storage_bytes" =~ ^[0-9]+$ ]] || die "could not determine database, MinIO or Data Centre storage sizes"
+    required_stage_bytes=$(( (minio_bytes + postgres_bytes + video_media_bytes + node_storage_bytes) * 120 / 100 + 1073741824 ))
     available_stage_bytes="$(df -PB1 "$stage_parent" | awk 'NR == 2 { print $4 }')"
     docker_root="$("${DOCKER[@]}" info --format '{{.DockerRootDir}}')"
     available_docker_bytes="$(df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
     [[ "$available_stage_bytes" =~ ^[0-9]+$ && "$available_docker_bytes" =~ ^[0-9]+$ ]] || die "could not determine free disk space"
-    printf 'Estimated backup source: PostgreSQL=%s bytes, MinIO=%s bytes; staging free=%s bytes.\n' \
-      "$postgres_bytes" "$minio_bytes" "$available_stage_bytes"
+    printf 'Estimated backup source: PostgreSQL=%s bytes, MinIO=%s bytes, Data Centre video=%s bytes, node storage=%s bytes; staging free=%s bytes.\n' \
+      "$postgres_bytes" "$minio_bytes" "$video_media_bytes" "$node_storage_bytes" "$available_stage_bytes"
     (( available_stage_bytes >= required_stage_bytes )) || die "insufficient staging space; need at least ${required_stage_bytes} bytes free for a safe full copy"
     (( available_docker_bytes >= 1073741824 )) || die "less than 1 GiB remains in Docker storage; refusing to risk production containers"
 
@@ -176,6 +184,15 @@ fi
     [[ -s "$stage/postgres.dump" ]] || die "PostgreSQL dump is empty"
     "${DOCKER[@]}" compose exec -T postgres pg_restore --list < "$stage/postgres.dump" > "$stage/postgres.dump.list"
     chmod 600 "$stage/postgres.dump" "$stage/postgres.dump.list"
+
+    if [[ -n "$video_media_source" ]]; then
+      printf 'Copying Data Centre video media into protected staging...\n'
+      cp -a -- "$video_media_source" "$stage/data-centre-video-media"
+    fi
+    if [[ -n "$node_storage_source" ]]; then
+      printf 'Copying Data Centre node storage into protected staging...\n'
+      cp -a -- "$node_storage_source" "$stage/data-centre-node-storage"
+    fi
 
     printf 'Mirroring all MinIO buckets to protected staging...\n'
     mkdir -p "$stage/minio-private" "$stage/minio-public" "$stage/minio-identity-evidence" "$stage/minio-metadata"
@@ -198,6 +215,12 @@ fi
       "public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}" \
       "identity_evidence_bucket=${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}" \
       "metadata_bucket=${MINIO_METADATA_BUCKET:-testagram-media-metadata}" \
+      "data_centre_video_media_included=$([[ -n "$video_media_source" ]] && echo true || echo false)" \
+      "data_centre_video_media_source=$video_media_source" \
+      "data_centre_video_media_bytes=$video_media_bytes" \
+      "data_centre_node_storage_included=$([[ -n "$node_storage_source" ]] && echo true || echo false)" \
+      "data_centre_node_storage_source=$node_storage_source" \
+      "data_centre_node_storage_bytes=$node_storage_bytes" \
       "repository=${RESTIC_REPOSITORY}" > "$stage/manifest.txt"
     chmod 600 "$stage/manifest.txt"
     printf 'Writing encrypted restic snapshot...\n'
