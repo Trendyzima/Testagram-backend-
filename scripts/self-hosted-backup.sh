@@ -227,8 +227,8 @@ fi
     cleanup() { rm -rf -- "$stage"; }
     trap cleanup EXIT INT TERM
 
-    printf '%s\\n' "$postgres_database_names" > "$stage/postgres-databases.txt"
-    printf 'Exporting %s PostgreSQL databases...\\n' "$(wc -l < "$stage/postgres-databases.txt" | tr -d ' ')"
+    printf '%s\n' "$postgres_database_names" > "$stage/postgres-databases.txt"
+    printf 'Exporting %s PostgreSQL databases...\n' "$(wc -l < "$stage/postgres-databases.txt" | tr -d ' ')"
     while IFS= read -r database_name; do
       dump_path="$stage/postgres-$database_name.dump"
       "${DOCKER[@]}" compose exec -T postgres pg_dump -Fc --no-owner --no-acl -U "$postgres_user" -d "$database_name" > "$dump_path"
