@@ -34,6 +34,8 @@ jobs:
             caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           grep -Fq 'testagram.site {' deploy/self-hosted/Caddyfile
           test "$(grep -Fc '@activitypub path /.well-known/webfinger* /.well-known/nodeinfo* /nodeinfo/* /users/* /inbox /outbox /objects/*' deploy/self-hosted/Caddyfile)" -eq 2
+          # Require both the direct HTTPS apex and InstaBox :8443 matchers to cover the full protocol surface.
+          grep -Fq '/inbox /outbox /objects/*' deploy/self-hosted/Caddyfile
           grep -Fq 'reverse_proxy federation-api:8081' deploy/self-hosted/Caddyfile
           grep -Fq 'redir https://www.testagram.site{uri} 308' deploy/self-hosted/Caddyfile
           echo "Apex ActivityPub routing and www frontend preservation: PASS"
