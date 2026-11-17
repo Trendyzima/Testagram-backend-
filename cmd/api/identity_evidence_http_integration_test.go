@@ -43,7 +43,9 @@ func (p *identityHTTPFakeProvider) PresignPut(_ context.Context, bucket, key, co
 		return "", errors.New("fake upload endpoint is not configured")
 	}
 	u, err := url.Parse(p.uploadBase)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	q := u.Query()
 	q.Set("bucket", bucket)
 	q.Set("key", key)
@@ -57,7 +59,9 @@ func (p *identityHTTPFakeProvider) Head(_ context.Context, bucket, key string) (
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	object, ok := p.objects[identityHTTPObjectKey(bucket, key)]
-	if !ok { return virtualstorage.ObjectInfo{}, virtualstorage.ErrNotFound }
+	if !ok {
+		return virtualstorage.ObjectInfo{}, virtualstorage.ErrNotFound
+	}
 	return object.info, nil
 }
 func (p *identityHTTPFakeProvider) Delete(_ context.Context, bucket, key string) error {
@@ -73,23 +77,33 @@ func (p *identityHTTPFakeProvider) SHA256(_ context.Context, bucket, key string,
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	object, ok := p.objects[identityHTTPObjectKey(bucket, key)]
-	if !ok { return "", virtualstorage.ErrNotFound }
-	if int64(len(object.body)) > maxBytes { return "", virtualstorage.ErrTooLarge }
+	if !ok {
+		return "", virtualstorage.ErrNotFound
+	}
+	if int64(len(object.body)) > maxBytes {
+		return "", virtualstorage.ErrTooLarge
+	}
 	digest := sha256.Sum256(object.body)
 	return hex.EncodeToString(digest[:]), nil
 }
 func (p *identityHTTPFakeProvider) CopyFromProvider(_ context.Context, source virtualstorage.Provider, sourceBucket, sourceKey, destinationBucket, destinationKey string, expectedBytes int64, contentType, expectedSHA256 string) error {
 	from, ok := source.(*identityHTTPFakeProvider)
-	if !ok { return errors.New("unsupported fake replica source") }
+	if !ok {
+		return errors.New("unsupported fake replica source")
+	}
 	from.mu.Lock()
 	object, exists := from.objects[identityHTTPObjectKey(sourceBucket, sourceKey)]
 	from.mu.Unlock()
-	if !exists { return virtualstorage.ErrNotFound }
+	if !exists {
+		return virtualstorage.ErrNotFound
+	}
 	if int64(len(object.body)) != expectedBytes || object.info.ContentType != contentType {
 		return virtualstorage.ErrObjectMismatch
 	}
 	digest := sha256.Sum256(object.body)
-	if hex.EncodeToString(digest[:]) != expectedSHA256 { return virtualstorage.ErrChecksumMismatch }
+	if hex.EncodeToString(digest[:]) != expectedSHA256 {
+		return virtualstorage.ErrChecksumMismatch
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	copied := append([]byte(nil), object.body...)
@@ -108,16 +122,27 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	db, err := pgxpool.New(ctx, dsn)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 
 	primary := newIdentityHTTPFakeProvider()
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut { http.Error(w, "PUT required", http.StatusMethodNotAllowed); return }
+		if r.Method != http.MethodPut {
+			http.Error(w, "PUT required", http.StatusMethodNotAllowed)
+			return
+		}
 		bucket, key := r.URL.Query().Get("bucket"), r.URL.Query().Get("key")
-		if bucket == "" || key == "" { http.Error(w, "missing object identity", http.StatusBadRequest); return }
+		if bucket == "" || key == "" {
+			http.Error(w, "missing object identity", http.StatusBadRequest)
+			return
+		}
 		body, readErr := io.ReadAll(r.Body)
-		if readErr != nil { http.Error(w, "read failed", http.StatusBadRequest); return }
+		if readErr != nil {
+			http.Error(w, "read failed", http.StatusBadRequest)
+			return
+		}
 		primary.mu.Lock()
 		primary.objects[identityHTTPObjectKey(bucket, key)] = identityHTTPStoredObject{
 			body: append([]byte(nil), body...),
@@ -147,7 +172,9 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		{Name: "r2", Provider: replicaR2, Buckets: replicaBuckets("r2")},
 		{Name: "b2", Provider: replicaB2, Buckets: replicaBuckets("b2")},
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager, err := virtualstorage.New(primary, []virtualstorage.Namespace{{
 		Name: identityEvidenceNamespace,
 		PhysicalBucket: buckets[identityEvidenceNamespace],
@@ -157,7 +184,9 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		UploadTTL: 5*time.Minute,
 		DownloadTTL: 5*time.Minute,
 	}})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "true")
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "terms-http-v1")
@@ -166,7 +195,9 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	router := svc.routes()
 
 	idempotencyKey, err := authRandomToken()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	username := "e" + suffix[len(suffix)-12:]
 	email := "evidence-http-" + suffix + "@example.test"
@@ -174,7 +205,9 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		"email": email, "username": username, "display_name": "Evidence HTTP Applicant",
 		"adult_confirmed": true, "terms_accepted": true, "privacy_accepted": true,
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	call := func(method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(string(body)))
 		req.RemoteAddr = "192.0.2.73:4567"
@@ -194,7 +227,9 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		SessionID string `json:"verification_session_id"`
 		SessionToken string `json:"verification_session_token"`
 	}
-	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
 	if created.ApplicationID == "" || created.SessionID == "" || len(created.SessionToken) < 32 {
 		t.Fatalf("incomplete application/session capabilities: %#v", created)
 	}
@@ -218,7 +253,9 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		EvidenceID string `json:"evidence_id"`
 		UploadURL string `json:"upload_url"`
 	}
-	if err := json.Unmarshal(reservation.Body.Bytes(), &reserved); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(reservation.Body.Bytes(), &reserved); err != nil {
+		t.Fatal(err)
+	}
 	if reserved.EvidenceID == "" || !strings.HasPrefix(reserved.UploadURL, sessionPath+"/evidence/") {
 		t.Fatalf("invalid evidence reservation: %#v", reserved)
 	}
