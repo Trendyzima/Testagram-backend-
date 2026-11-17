@@ -47,6 +47,7 @@ jobs:
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
         run: |
           set -euo pipefail
+          umask 077
           for name in INSTABOX_API_KEY BACKUP_ENDPOINT BACKUP_BUCKET BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY RESTIC_PASSWORD; do
             [[ -n "${!name:-}" ]] || { echo "::error::Missing required InstaBox backup setting: $name"; exit 1; }
           done
