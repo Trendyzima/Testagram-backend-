@@ -193,21 +193,28 @@ def resolve_machine_id(api: API) -> str:
     return str(matches[0]["id"])
 
 
-def wait_for_service() -> None:
-    # Only public liveness is used to decide whether a machine lifecycle
-    # action succeeded. Dependency readiness is intentionally private and is
-    # enforced by Docker healthchecks inspected by the read-only health audit.
+def wait_for_service() -> str:
+    # Provider lifecycle completion is authoritative for the VPS wake itself.
+    # Public HTTP liveness is a separate application/routing check. A 404 is
+    # a probe-contract/routing defect, not evidence that resume failed; never
+    # undo or misreport a successful provider resume because of that defect.
     deadline = time.monotonic() + RECOVERY_HEALTH_TIMEOUT
     while True:
-        health_ok, health_detail = probe(HEALTH_URL)
+        try:
+            health_ok, health_detail = probe(HEALTH_URL)
+        except ProbeConfigurationError as exc:
+            detail = str(exc)
+            emit(f"provider lifecycle verified; application liveness UNVERIFIED: {detail}")
+            return f"provider running; application liveness unverified ({detail})"
         if health_ok:
             emit(f"recovery verified: public liveness={health_detail}")
-            return
+            return f"public API liveness verified ({health_detail})"
         if time.monotonic() >= deadline:
             raise WatchdogError(
-                f"Machine lifecycle completed but Testagram liveness did not recover "
+                f"Provider reports machine running, but Testagram liveness did not recover "
                 f"within {RECOVERY_HEALTH_TIMEOUT}s (health={health_detail})"
             )
+        emit(f"provider running; waiting for public API liveness: {health_detail}")
         time.sleep(PROBE_INTERVAL)
 
 
@@ -261,10 +268,13 @@ def lifecycle(api: API, action: str) -> None:
     # Each logical operation gets a unique idempotency key. It is never reused
     # for a different action or a later incident.
     key = f"testagram-watchdog-{MACHINE_ID}-{action}-{int(time.time())}"
+    emit(f"requesting provider lifecycle action={action} machine={MACHINE_ID}")
     result = api.request("POST", f"/v1/machines/{quote(MACHINE_ID, safe='')}/{action}", {},
                          idempotency_key=key)
     expected = "running" if action in ("start", "resume") else "stopped"
     wait_operation(api, result, expected)
+    final = machine_snapshot(api)
+    emit(f"provider lifecycle verified: action={action} state={final['state']} desiredState={final['desiredState']}")
 
 
 def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
@@ -352,8 +362,8 @@ def recover_suspended(api: API, state: dict[str, Any]) -> str:
     state.update(last_action_at=now, last_action="resume")
     save_state(state)
     lifecycle(api, "resume")
-    wait_for_service()
-    return "resumed suspended machine; public API liveness verified"
+    application_status = wait_for_service()
+    return f"resumed suspended machine; {application_status}"
 
 
 def recover_stopped(api: API, state: dict[str, Any]) -> str:
@@ -375,8 +385,8 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
     state.update(last_action_at=now, last_action="start")
     save_state(state)
     lifecycle(api, "start")
-    wait_for_service()
-    return "started stopped machine; public API liveness verified"
+    application_status = wait_for_service()
+    return f"started stopped machine; {application_status}"
 
 
 def main() -> int:
