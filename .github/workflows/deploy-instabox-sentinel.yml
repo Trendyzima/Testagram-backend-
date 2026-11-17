@@ -34,7 +34,7 @@ jobs:
         working-directory: infra/instabox-sentinel
         run: npx --yes wrangler@4 deploy --dry-run --config wrangler.toml
       - name: Deploy Worker and transfer existing InstaBox key as an encrypted secret
-        if: github.event_name != "pull_request"
+        if: github.event_name != 'pull_request'
         working-directory: infra/instabox-sentinel
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
