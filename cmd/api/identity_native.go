@@ -572,25 +572,62 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	var evidenceID string
-	if err := s.db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceID); err != nil {
+	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
+	sessionID := r.PathValue("session_id")
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
 		return
 	}
-	nonce, err := authRandomToken()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Evidence upload could not be prepared", requestID(r)))
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	// Serialize reservation retries per session so parallel retries with the
+	// same metadata converge on one opaque evidence ID instead of colliding
+	// with the one-live-evidence-per-session constraint.
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", sessionID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
 		return
 	}
-	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
-	objectKey := path.Join("identity", r.PathValue("session_id"), evidenceID+extension+"-"+nonce)
-	_, err = s.db.Exec(ctx, `
-		INSERT INTO testagram_identity.verification_evidence
-		  (id,session_id,object_key,content_type,size_bytes,sha256)
-		VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)
-	`, evidenceID, r.PathValue("session_id"), objectKey, input.ContentType, input.SizeBytes, digest)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "An evidence upload is already reserved for this session", requestID(r)))
+	var evidenceID, existingType string
+	var existingSize int64
+	var existingDigest []byte
+	err = tx.QueryRow(ctx, `
+		SELECT id::text,content_type,size_bytes,sha256
+		FROM testagram_identity.verification_evidence
+		WHERE session_id=$1::uuid AND status='upload_pending'
+		  AND created_at > now()-interval '5 minutes'
+		FOR UPDATE
+	`, sessionID).Scan(&evidenceID, &existingType, &existingSize, &existingDigest)
+	if err == nil {
+		if existingType != input.ContentType || existingSize != input.SizeBytes ||
+			len(existingDigest) != len(digest) || subtle.ConstantTimeCompare(existingDigest, digest) != 1 {
+			writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "A different evidence upload is already reserved for this session", requestID(r)))
+			return
+		}
+	} else if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&evidenceID); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
+			return
+		}
+		nonce, nonceErr := authRandomToken()
+		if nonceErr != nil {
+			writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Evidence upload could not be prepared", requestID(r)))
+			return
+		}
+		objectKey := path.Join("identity", sessionID, evidenceID+extension+"-"+nonce)
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO testagram_identity.verification_evidence
+			  (id,session_id,object_key,content_type,size_bytes,sha256)
+			VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6)
+		`, evidenceID, sessionID, objectKey, input.ContentType, input.SizeBytes, digest); err != nil {
+			writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_RESERVED", "An evidence upload is already reserved for this session", requestID(r)))
+			return
+		}
+	} else {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Evidence upload could not be prepared", requestID(r)))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
