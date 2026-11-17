@@ -97,11 +97,11 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "${MACHINE_ID:-}" ]]; then
-            printf 'machine_id=%s\\n' "$MACHINE_ID" >> "$GITHUB_OUTPUT"
+            printf 'machine_id=%s\n' "$MACHINE_ID" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          machines="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -fsS --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 5 --max-time 60 \\
+          machines="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -fsS --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 5 --max-time 60 \
             "$API/v1/machines?limit=100")"
           machine_id="$(jq -r '([.machines[] | select(.name == "testagramdb")][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' <<<"$machines")"
           if [[ -z "$machine_id" ]]; then
@@ -112,7 +112,7 @@ jobs:
             echo "::error::InstaBox returned an invalid machine identifier."
             exit 1
           fi
-          printf 'machine_id=%s\\n' "$machine_id" >> "$GITHUB_OUTPUT"
+          printf 'machine_id=%s\n' "$machine_id" >> "$GITHUB_OUTPUT"
 
       - name: Wake only the idle-suspended production machine
         shell: bash
