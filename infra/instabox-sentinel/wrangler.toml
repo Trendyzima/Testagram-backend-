@@ -13,3 +13,8 @@ class_name = "EventLedger"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["EventLedger"]
+
+# Route only InstaBox lifecycle webhook traffic through the Sentinel.
+routes = [
+  { pattern = "testagram.site/webhooks/instabox", zone_name = "testagram.site" }
+]
