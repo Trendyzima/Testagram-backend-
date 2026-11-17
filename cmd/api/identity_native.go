@@ -827,7 +827,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_events(session_id,event_type,actor_type,actor_reference,request_id,metadata)
-		VALUES ($1::uuid,'evidence_submitted','applicant',$2,$3,jsonb_build_object('evidence_id',$4))
+		VALUES ($1::uuid,'evidence_submitted','applicant',$2,$3,jsonb_build_object('evidence_id',$4::text))
 	`, r.PathValue("session_id"), access.ApplicationID, requestID(r), input.EvidenceID); err != nil {
 		log.Printf("identity evidence audit insert failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Evidence submission audit could not be recorded", requestID(r)))
