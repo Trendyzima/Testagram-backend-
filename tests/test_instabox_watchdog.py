@@ -203,12 +203,46 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "notify") as notify, \
              patch.object(watchdog, "wait_for_service"), \
              patch.object(watchdog, "API_KEY", "test-key"), \
+             patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"), \
              patch.object(watchdog, "MACHINE_ID", "machine-123"), \
              patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"):
 
             self.assertEqual(watchdog.main(), 0)
         self.assertTrue(any(call[0] == "POST" and call[1].endswith("/start") for call in api.calls))
         notify.assert_called_once()
+
+
+    def test_stopped_machine_stays_read_only_without_explicit_recovery_approval(self):
+        api = FakeAPI({
+            "id": "machine-123", "name": "testagramdb", "state": "stopped",
+            "desiredState": "running", "operationId": None
+        })
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "save_state"),
+            patch.object(watchdog, "notify") as notify,
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "false"),
+            patch.object(watchdog, "DRY_RUN", False),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
+        ):
+            self.assertEqual(watchdog.main(), 0)
+        self.assertEqual([call[0] for call in api.calls], ["GET"])
+        notify.assert_not_called()
+
+    def test_invalid_recovery_switch_fails_closed(self):
+        with (
+            patch.object(watchdog, "AUTO_RECOVERY_RAW", "yes"),
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
+        ):
+            with self.assertRaisesRegex(
+                watchdog.WatchdogError,
+                "must be exactly true or false",
+            ):
+                watchdog.main()
 
     def test_running_machine_is_monitored_without_synthetic_http_probes(self):
         api = FakeAPI()
