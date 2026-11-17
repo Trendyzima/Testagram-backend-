@@ -286,7 +286,7 @@ def main() -> int:
         raise WatchdogError("Alert webhook URL must use HTTPS")
     if (PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
             or OPERATION_TIMEOUT < 1 or RECOVERY_HEALTH_TIMEOUT < 1):
-        raise WatchdogError("Unsafe watchdog thresholds: require >=2 failures, positive timeouts/intervals and >=300s restart cooldown")
+        raise WatchdogError("Unsafe watchdog thresholds: require positive probe intervals and operation/recovery timeouts")
     if not API_KEY:
         raise WatchdogError(
             "An InstaBox API key is required for provider-state monitoring. "
