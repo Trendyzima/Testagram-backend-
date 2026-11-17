@@ -1,0 +1,38 @@
+name: Deploy Testagram InstaBox Sentinel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/instabox-sentinel/**"
+      - ".github/workflows/deploy-instabox-sentinel.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-testagram-instabox-sentinel
+  cancel-in-progress: false
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Verify Sentinel signature tests
+        run: node --test infra/instabox-sentinel/test/index.test.mjs
+      - name: Deploy Worker
+        working-directory: infra/instabox-sentinel
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::CLOUDFLARE_API_TOKEN is required"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "::error::CLOUDFLARE_ACCOUNT_ID is required"; exit 1; }
+          npx --yes wrangler@4 deploy --config wrangler.toml
