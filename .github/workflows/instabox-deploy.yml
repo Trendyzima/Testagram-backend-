@@ -141,7 +141,7 @@ jobs:
           CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ inputs.confirm_native_identity_migrations == true && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
-              TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
+          TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           TESTAGRAM_AUTH_PROVIDER: native
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
