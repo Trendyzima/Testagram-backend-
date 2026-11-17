@@ -32,7 +32,6 @@ jobs:
     env:
       API: https://api.instabox.sh
       MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID || secrets.INSTABOX_MACHINE_ID }}
-      INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
       BACKUP_ENDPOINT: ${{ vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
       BACKUP_BUCKET: ${{ vars.TESTAGRAM_BACKUP_S3_BUCKET }}
       BACKUP_REGION: ${{ vars.TESTAGRAM_BACKUP_S3_REGION || 'auto' }}
@@ -44,6 +43,8 @@ jobs:
       - name: Validate configuration without printing credentials
         id: config
         shell: bash
+        env:
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
         run: |
           set -euo pipefail
           for name in INSTABOX_API_KEY BACKUP_ENDPOINT BACKUP_BUCKET BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY RESTIC_PASSWORD; do
@@ -85,14 +86,16 @@ jobs:
             run_prune=false
           fi
           echo "run_prune=$run_prune" >> "$GITHUB_OUTPUT"
+          printf 'header = "X-API-Key: %s"\n' "$INSTABOX_API_KEY" > "$RUNNER_TEMP/instabox-curl.conf"
+          chmod 600 "$RUNNER_TEMP/instabox-curl.conf"
           echo "Backup destination and machine identity passed validation."
 
       - name: Wake only the idle-suspended production machine
         shell: bash
         run: |
           set -euo pipefail
-          status="$(curl -sS --connect-timeout 5 --max-time 60 -o "$RUNNER_TEMP/wake.json" -w '%{http_code}' \
-            -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
+          status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 60 -o "$RUNNER_TEMP/wake.json" -w '%{http_code}' \
+            -X POST \
             -H "Idempotency-Key: testagram-backup-wake-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             -H 'Content-Type: application/json' -d '{}' \
             "$API/v1/machines/$MACHINE_ID/wake" || true)"
@@ -103,7 +106,7 @@ jobs:
               echo "Another legitimate request is already waking the machine; waiting for that same machine to become ready."
               ready=false
               for attempt in $(seq 1 24); do
-                machine_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
+                machine_status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
                   -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$MACHINE_ID" || true)"
                 if [[ "$machine_status" == "200" ]] && jq -e '.state == "running" and .runtime.ready == true' "$RUNNER_TEMP/machine.json" >/dev/null; then
                   ready=true
@@ -135,13 +138,16 @@ jobs:
         shell: bash
         env:
           RUN_PRUNE: ${{ steps.config.outputs.run_prune }}
+          RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
+          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
           cmd='bash scripts/instabox-production-backup.sh'
           export BACKUP_EXEC_CMD="$cmd" BACKUP_RESTIC_REPOSITORY="$repository"
           status="$(
-            python3 - <<'PY' | curl -sS --connect-timeout 5 --max-time 660 -o "$RUNNER_TEMP/exec.json" -w '%{http_code}' \
+            python3 - <<'PY' | curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 660 -o "$RUNNER_TEMP/exec.json" -w '%{http_code}' \
               -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H 'Content-Type: application/json' \
               --data-binary @- "$API/v1/machines/$MACHINE_ID/exec" || true
           import json, os, sys
@@ -179,3 +185,8 @@ jobs:
             exit 1
           fi
           echo "Encrypted backup task completed. The machine is free to auto-pause after genuine activity ends."
+
+      - name: Remove temporary InstaBox API authentication
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/instabox-curl.conf"
