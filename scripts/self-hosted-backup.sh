@@ -73,9 +73,17 @@ for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENAB
   fi
 done
 
-if [[ -n "$(read_env_flag MEDIA_S3_ENDPOINT)" ]]; then
-  die "MEDIA_S3_ENDPOINT is configured; extend the backup to that external primary bucket before relying on it"
-fi
+for endpoint_var in MEDIA_S3_ENDPOINT R2_S3_ENDPOINT MINIO_PUBLIC_ENDPOINT; do
+  if [[ -n "$(read_env_flag "$endpoint_var")" ]]; then
+    die "$endpoint_var is configured; verify and back up that effective S3 origin before relying on this local-MinIO backup"
+  fi
+done
+
+for data_centre_var in DATA_CENTRE_MEDIA_API_URL FRESH_DATA_CENTRE_INTERNAL_TOKEN; do
+  if [[ -n "$(read_env_flag "$data_centre_var")" ]]; then
+    die "$data_centre_var is configured; back up and restore-test the separate Data Centre media store before relying on this backup"
+  fi
+done
 "${DOCKER[@]}" compose config --quiet
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
