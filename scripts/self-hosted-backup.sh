@@ -106,12 +106,13 @@ if [[ -n "$federation_api_ids" ]]; then
   federation_database_url="$("${DOCKER[@]}" inspect "$federation_api_id" | jq -er '[.[0].Config.Env[]? | select(startswith("FEDERATION_DATABASE_URL="))] | last | ltrimstr("FEDERATION_DATABASE_URL=")' 2>/dev/null || true)"
   [[ -n "$federation_database_url" ]] || die "Data Centre federation-api has no readable FEDERATION_DATABASE_URL; refusing to omit its database"
 fi
+federation_database_name=""
 if [[ -n "$federation_database_url" ]]; then
-  if ! FEDERATION_DATABASE_URL_CHECK="$federation_database_url" python3 - <<'PY'
+  federation_database_name="$(FEDERATION_DATABASE_URL_CHECK="$federation_database_url" python3 - <<'PY'
 import os
 import re
 import sys
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 try:
     parsed = urlparse(os.environ["FEDERATION_DATABASE_URL_CHECK"])
@@ -120,13 +121,12 @@ try:
 except ValueError:
     sys.exit(1)
 
-database = parsed.path.lstrip("/")
+database = unquote(parsed.path.lstrip("/"))
 if parsed.scheme not in {"postgres", "postgresql"} or host not in {"postgres", "federation-db"} or port != 5432 or not re.fullmatch(r"[A-Za-z0-9_]+", database):
     sys.exit(1)
+print(database)
 PY
-  then
-    die "Federation database is not on the backed-up PostgreSQL service; add its own encrypted backup and restore-tested path"
-  fi
+  )" || die "Federation database is not on the backed-up PostgreSQL service; add its own encrypted backup and restore-tested path"
 fi
 
 data_centre_media_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=media --format '{{.ID}}')"
@@ -178,6 +178,9 @@ fi
     postgres_database_names="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")"
     [[ -n "$postgres_database_names" ]] || die "PostgreSQL returned no connectable databases"
     grep -Fxq "$postgres_primary_db" <<< "$postgres_database_names" || die "primary PostgreSQL database is absent from the database inventory"
+    if [[ -n "$federation_database_name" ]]; then
+      grep -Fxq "$federation_database_name" <<< "$postgres_database_names" || die "Federation API points to a database that is not present in the backed-up PostgreSQL cluster"
+    fi
     while IFS= read -r database_name; do
       [[ "$database_name" =~ ^[A-Za-z0-9_]+$ ]] || die "unsupported PostgreSQL database name discovered; refusing unsafe dump path"
     done <<< "$postgres_database_names"
