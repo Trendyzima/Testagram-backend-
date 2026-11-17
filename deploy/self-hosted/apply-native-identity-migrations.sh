@@ -170,7 +170,8 @@ for file in \
   050_native_approved_identity_provisioning.sql \
   051_native_auth_runtime_grants.sql \
   053_native_staff_reviewer_grants.sql \
-  054_native_admin_console.sql; do
+  054_native_admin_console.sql \\
+  055_native_identity_approval_ledger.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -195,6 +196,7 @@ apply_migration 050_native_approved_identity_provisioning.sql
 apply_migration 051_native_auth_runtime_grants.sql
 apply_migration 053_native_staff_reviewer_grants.sql
 apply_migration 054_native_admin_console.sql
+apply_migration 055_native_identity_approval_ledger.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
