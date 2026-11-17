@@ -9,6 +9,7 @@ die() { printf 'restore drill error: %s\n' "$*" >&2; exit 1; }
 command -v docker >/dev/null || die "docker is required"
 command -v restic >/dev/null || die "restic is required"
 command -v openssl >/dev/null || die "openssl is required"
+command -v jq >/dev/null || die "jq is required for restore capacity checks"
 [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "RESTIC_REPOSITORY is required"
 if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then
   [[ -f "$RESTIC_PASSWORD_FILE" && -r "$RESTIC_PASSWORD_FILE" ]] || die "RESTIC_PASSWORD_FILE must point to a readable password file"
@@ -29,9 +30,17 @@ export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-${HOME}/.cache/restic-testagram}"
 restore_parent="${RESTORE_STAGE_DIR:-${TMPDIR:-/tmp}}"
 mkdir -p "$restore_parent"
 [[ -d "$restore_parent" && -w "$restore_parent" ]] || die "RESTORE_STAGE_DIR must be a writable directory"
+restore_size_json="$(restic stats latest --tag testagram --json)"
+restore_bytes="$(jq -er '.total_size | select(type == "number" and . >= 0)' <<< "$restore_size_json")"
+available_restore_bytes="$(df -PB1 "$restore_parent" | awk 'NR == 2 { print $4 }')"
+[[ "$available_restore_bytes" =~ ^[0-9]+$ ]] || die "could not determine free restore staging space"
+required_restore_bytes=$(( restore_bytes * 120 / 100 + 1073741824 ))
+printf 'Restore estimate: %s bytes; staging free: %s bytes.\n' "$restore_bytes" "$available_restore_bytes"
+(( available_restore_bytes >= required_restore_bytes )) || die "insufficient free staging space for a full isolated restore"
+
 restore_dir="$(mktemp -d "${restore_parent%/}/testagram-restore-drill.XXXXXXXX")"
 chmod 700 "$restore_dir"
-suffix="$$"
+suffix="$"
 container_name="testagram-restore-drill-$suffix"
 volume_name="testagram-restore-drill-$suffix"
 cleanup() {
@@ -45,6 +54,12 @@ printf 'Restoring the latest tagged backup to private temporary storage...\n'
 restic restore latest --tag testagram --target "$restore_dir"
 dump_path="$(find "$restore_dir" -type f -name postgres.dump -print -quit)"
 [[ -n "$dump_path" && -s "$dump_path" ]] || die "snapshot does not contain a non-empty PostgreSQL dump"
+dump_bytes="$(stat -c '%s' "$dump_path")"
+docker_root="$("${DOCKER[@]}" info --format '{{.DockerRootDir}}')"
+available_docker_bytes="$(df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
+required_docker_bytes=$(( dump_bytes * 120 / 100 + 1073741824 ))
+[[ "$available_docker_bytes" =~ ^[0-9]+$ ]] || die "could not determine free Docker storage"
+(( available_docker_bytes >= required_docker_bytes )) || die "insufficient Docker storage for an isolated PostgreSQL restore; refusing to create the container"
 
 db_password="$(openssl rand -hex 24)"
 "${DOCKER[@]}" volume create "$volume_name" >/dev/null
