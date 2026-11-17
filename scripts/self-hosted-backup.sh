@@ -52,6 +52,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 compose_dir="$(cd -- "$script_dir/../deploy/self-hosted" && pwd)"
 cd "$compose_dir"
 
+case "${1:-}" in
+  backup)
 # Do not claim a complete backup if writes have moved to an external provider.
 # This helper captures the local PostgreSQL + MinIO stack only; active B2/R2
 # buckets require their own explicit backup and restore-tested targets.
@@ -74,9 +76,6 @@ if [[ -n "$(read_env_flag MEDIA_S3_ENDPOINT)" ]]; then
   die "MEDIA_S3_ENDPOINT is configured; extend the backup to that external primary bucket before relying on it"
 fi
 "${DOCKER[@]}" compose config --quiet
-
-case "${1:-}" in
-  backup)
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
     stage=$(mktemp -d "${stage_parent%/}/testagram-backup.XXXXXXXX")
