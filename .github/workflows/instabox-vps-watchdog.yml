@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Check provider and endpoints without issuing lifecycle actions"
+        description: "Inspect provider state without issuing lifecycle actions"
         required: false
         type: boolean
         default: true
@@ -56,9 +56,7 @@ jobs:
           WATCHDOG_STATE_FILE: .watchdog-state.json
           # Scheduled recovery stays disabled until a restricted key is installed and explicitly enabled.
           WATCHDOG_DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || vars.WATCHDOG_AUTO_RECOVERY_ENABLED != 'true' }}
-          WATCHDOG_FAILURES_REQUIRED: "3"
           WATCHDOG_PROBE_INTERVAL_SECONDS: "15"
-          WATCHDOG_RESTART_COOLDOWN_SECONDS: "1800"
           WATCHDOG_OPERATION_TIMEOUT_SECONDS: "300"
           WATCHDOG_RECOVERY_HEALTH_TIMEOUT_SECONDS: "300"
         shell: bash
@@ -101,8 +99,9 @@ jobs:
             echo "- Provider: Instabox"
             echo "- Machine: configured through repository variable"
             echo "- Schedule: every five minutes"
-            echo "- Recovery: bounded start/resume or stop/start"
-            echo "- Cooldown: 30 minutes"
+            echo "- Recovery: start only when provider state is stopped but desiredState remains running"
+            echo "- Idle suspend: left to InstaBox wake-on-real-request and Paradev SSH"
+            echo "- Routine monitoring: provider API only; no scheduled HTTP keepalive probes"
             echo
             echo "See the run log for probe results and lifecycle operation IDs."
           } >> "$GITHUB_STEP_SUMMARY"
