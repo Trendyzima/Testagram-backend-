@@ -37,7 +37,7 @@ jobs:
     env:
       API: https://api.instabox.sh
       MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID || secrets.INSTABOX_MACHINE_ID }}
-      BACKUP_ENDPOINT: ${{ vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
+      BACKUP_ENDPOINT: ${{ secrets.TESTAGRAM_BACKUP_S3_ENDPOINT || vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
       BACKUP_BUCKET: ${{ vars.TESTAGRAM_BACKUP_S3_BUCKET }}
       BACKUP_REGION: ${{ vars.TESTAGRAM_BACKUP_S3_REGION || 'auto' }}
       RUN_RESTORE_DRILL: ${{ inputs.run_restore_drill == true && 'true' || 'false' }}
