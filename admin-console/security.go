@@ -217,7 +217,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO testagram_identity.native_identity_application_reviews
+		INSERT INTO testagram_identity.identity_application_reviews
 		  (application_id, reviewer_user_id, decision, reason, evidence_audit_reference)
 		VALUES ($1::uuid, $2, $3, $4, $5)
 	`, applicationID, reviewerID, decision, reason, snapshot.EvidenceAuditReference)
