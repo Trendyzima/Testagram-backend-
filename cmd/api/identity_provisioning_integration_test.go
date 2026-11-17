@@ -53,7 +53,6 @@ func nativeStaffReviewerFixture(t *testing.T, ctx context.Context, db *pgxpool.P
 	return reviewerID, reviewerEmail, session.AccessToken
 }
 
-
 func TestNativeIdentityProvisioningTokenAndRedeemIntegration(t *testing.T) {
 	t.Skip("Legacy Appwrite provisioning is superseded by the Testagram-native approved identity, email verification and session integration.")
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
@@ -317,7 +316,6 @@ func canonicalUserIDFromResult(t *testing.T, result map[string]any) string {
 	value, _ := result["canonical_user_id"].(string)
 	return value
 }
-
 
 func TestExternalProviderTokenCannotCreateOrAuthorizeTestagramAccount(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
