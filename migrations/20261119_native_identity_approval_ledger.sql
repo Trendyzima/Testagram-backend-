@@ -126,6 +126,10 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
     GRANT SELECT,INSERT ON testagram_auth.sensitive_action_approvals,
       testagram_auth.admin_security_audit TO testagram_app;
+    GRANT USAGE,SELECT ON SEQUENCE
+      testagram_auth.sensitive_action_approvals_id_seq,
+      testagram_auth.admin_security_audit_id_seq
+      TO testagram_app;
     GRANT SELECT,INSERT,UPDATE ON testagram_identity.identity_approval_tokens TO testagram_app;
   END IF;
 END;
