@@ -164,6 +164,15 @@ if [[ -d "$storage_root_for_nodes/nodes" ]]; then
 fi
 
 "${DOCKER[@]}" compose config --quiet
+    postgres_user="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_USER | tr -d '\r')"
+    postgres_primary_db="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')"
+    [[ "$postgres_user" =~ ^[A-Za-z0-9_]+$ && "$postgres_primary_db" =~ ^[A-Za-z0-9_]+$ ]] || die "PostgreSQL user/database names are missing or unsupported"
+    postgres_database_names="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")"
+    [[ -n "$postgres_database_names" ]] || die "PostgreSQL returned no connectable databases"
+    grep -Fxq "$postgres_primary_db" <<< "$postgres_database_names" || die "primary PostgreSQL database is absent from the database inventory"
+    while IFS= read -r database_name; do
+      [[ "$database_name" =~ ^[A-Za-z0-9_]+$ ]] || die "unsupported PostgreSQL database name discovered; refusing unsafe dump path"
+    done <<< "$postgres_database_names"
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
     stage_parent_real="$(realpath "$stage_parent")"
@@ -189,8 +198,7 @@ fi
         mc stat "local/$MINIO_METADATA_BUCKET" --json
       ')"
     minio_bytes="$(jq -s -er 'if length == 4 and all(.[]; (.Usage.totalSize | type) == "number") then map(.Usage.totalSize) | add else error("MinIO did not report sizes for all four buckets") end' <<< "$bucket_size_report")"
-    # shellcheck disable=SC2016
-    postgres_bytes="$("${DOCKER[@]}" compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_database_size(current_database())"')"
+    postgres_bytes="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT COALESCE(SUM(pg_database_size(datname)),0) FROM pg_database WHERE datallowconn AND NOT datistemplate")"
     video_media_bytes=0
     node_storage_bytes=0
     if [[ -n "$video_media_source" ]]; then
@@ -215,12 +223,16 @@ fi
     cleanup() { rm -rf -- "$stage"; }
     trap cleanup EXIT INT TERM
 
-    printf 'Exporting PostgreSQL...\n'
-    # shellcheck disable=SC2016
-    "${DOCKER[@]}" compose exec -T postgres sh -ec 'pg_dump -Fc --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > "$stage/postgres.dump"
-    [[ -s "$stage/postgres.dump" ]] || die "PostgreSQL dump is empty"
-    "${DOCKER[@]}" compose exec -T postgres pg_restore --list < "$stage/postgres.dump" > "$stage/postgres.dump.list"
-    chmod 600 "$stage/postgres.dump" "$stage/postgres.dump.list"
+    printf '%s\\n' "$postgres_database_names" > "$stage/postgres-databases.txt"
+    printf 'Exporting %s PostgreSQL databases...\\n' "$(wc -l < "$stage/postgres-databases.txt" | tr -d ' ')"
+    while IFS= read -r database_name; do
+      dump_path="$stage/postgres-$database_name.dump"
+      "${DOCKER[@]}" compose exec -T postgres pg_dump -Fc --no-owner --no-acl -U "$postgres_user" -d "$database_name" > "$dump_path"
+      [[ -s "$dump_path" ]] || die "PostgreSQL dump for $database_name is empty"
+      "${DOCKER[@]}" compose exec -T postgres pg_restore --list < "$dump_path" > "$dump_path.list"
+      [[ -s "$dump_path.list" ]] || die "PostgreSQL dump for $database_name failed archive-list validation"
+      chmod 600 "$dump_path" "$dump_path.list"
+    done < "$stage/postgres-databases.txt"
 
     if [[ -n "$video_media_source" ]]; then
       printf 'Copying Data Centre video media into protected staging...\n'
@@ -247,7 +259,9 @@ fi
     printf '%s\n' \
       "Testagram self-hosted backup" \
       "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      "postgres_database=$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')" \
+      "postgres_user=$postgres_user" \
+      "postgres_primary_database=$postgres_primary_db" \
+      "postgres_database_count=$(wc -l < "$stage/postgres-databases.txt" | tr -d ' ')" \
       "private_bucket=${MINIO_BUCKET:-testagram-private-media}" \
       "public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}" \
       "identity_evidence_bucket=${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}" \
