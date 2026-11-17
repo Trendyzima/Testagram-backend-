@@ -8,7 +8,7 @@ An external Cloudflare Worker that receives signed InstaBox lifecycle webhooks a
 - The Worker verifies the raw request body with InstaBox's HMAC-SHA256 signature, rejects timestamps outside five minutes, and checks delivery/event IDs.
 - The event machine ID must match the unique InstaBox machine named `testagramdb`.
 - Before starting, it fetches the current machine snapshot and requires `state=stopped`, `desiredState=running`, and no active `operationId`.
-- Every start uses a deterministic `Idempotency-Key` based on the webhook delivery ID. A Durable Object serializes deliveries and stores event outcomes; failed provider calls are retried with an alarm.
+- Every start uses a deterministic `Idempotency-Key` based on the webhook delivery ID. A Durable Object serializes deliveries and stores event outcomes; failed provider calls are retried with exponential backoff for up to eight attempts, then marked failed and logged without exposing credentials.
 - It never stops a machine, resumes an idle-suspended machine, changes storage, runs migrations, or touches database volumes.
 - The public webhook responds quickly with HTTP 202; recovery runs asynchronously.
 - No credential values are written to source, repository variables, logs, or test fixtures.
