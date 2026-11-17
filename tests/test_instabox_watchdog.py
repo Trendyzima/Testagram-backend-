@@ -42,7 +42,7 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "probe") as probe,
             patch.object(watchdog, "API") as api_factory,
         ):
-            with self.assertRaisesRegex(watchdog.WatchdogError, "An InstaBox API key is required"):
+            with self.assertRaisesRegex(watchdog.WatchdogError, "INSTABOX_WATCHDOG_API_KEY is required"):
                 watchdog.main()
         probe.assert_not_called()
         api_factory.assert_not_called()
@@ -56,7 +56,7 @@ class WatchdogTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 watchdog.WatchdogError,
-                "An InstaBox API key is required",
+                "INSTABOX_WATCHDOG_API_KEY is required",
             ):
                 watchdog.main()
 
