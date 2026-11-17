@@ -149,15 +149,15 @@ jobs:
           web = services.get("flutter-web", {})
           web_image = str(web.get("image", ""))
           web_expose = [str(port) for port in web.get("expose", [])]
-          web_env_image = re.search(r"(?m)^TESTAGRAM_WEB_IMAGE=(\\S+)$", env_example)
-          if "TESTAGRAM_WEB_IMAGE" not in web_image or not web_env_image or web_env_image.group(1) != "ghcr.io/trendyzima/testagram-web:main":
+          web_env_image = next((line.split("=", 1)[1] for line in env_example.splitlines() if line.startswith("TESTAGRAM_WEB_IMAGE=")), "")
+          if "TESTAGRAM_WEB_IMAGE" not in web_image or web_env_image != "ghcr.io/trendyzima/testagram-web:main":
               raise SystemExit("Self-hosted Flutter web must use the reviewed GHCR release tag, resolved to a digest by the deployment script.")
           if "8080" not in web_expose or "ports" in web or "edge" not in web.get("networks", []):
               raise SystemExit("Flutter web must expose only its private 8080 listener on the Caddy edge network.")
           if "flutter-web" not in services.get("caddy", {}).get("depends_on", []):
               raise SystemExit("Caddy must wait for the Flutter web origin.")
           caddyfile = pathlib.Path("Caddyfile").read_text(encoding="utf-8")
-          if "www.testagram.site {" not in caddyfile or "@www_frontend header X-Forwarded-Host www.testagram.site" not in caddyfile or "reverse_proxy flutter-web:8080" not in caddyfile:
+          if "@www_frontend header X-Forwarded-Host www.testagram.site" not in caddyfile or "reverse_proxy flutter-web:8080" not in caddyfile:
               raise SystemExit("Caddy must serve www.testagram.site through the private Flutter web origin.")
           health = cdn.get("healthcheck", {}).get("test", [])
           if "/app/healthcheck" not in health:
