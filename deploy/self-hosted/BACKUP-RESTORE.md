@@ -59,6 +59,101 @@ more permissive. For S3-compatible restic repositories, use the documented
 restic environment variables and a dedicated least-privilege backup identity.
 Do not reuse MinIO root credentials for an off-host backup destination.
 
+
+## InstaBox free-plan production schedule
+
+Testagram's current small-scale production machine is `testagramdb`. The free
+plan intentionally pauses it after 30 minutes without activity; a run starts at
+120 minutes and can extend through genuine use up to 480 minutes. Do not add
+heartbeat pings, busy loops, or recurring activity leases to keep it awake.
+Incoming requests should wake an idle-suspended machine through the Cloudflare
+gateway. A real backup is legitimate work, so the scheduled backup below wakes
+the machine only while it is exporting and verifying data, then leaves it free
+to pause again.
+
+The GitHub Actions workflow
+`.github/workflows/instabox-production-backup.yml` is **disabled on schedule
+until** the repository variable `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` is set
+to `true`. Manual dispatch is available after its credentials are configured.
+It calls InstaBox's `POST /v1/machines/{id}/wake` and then `POST
+/v1/machines/{id}/exec`; it never calls `start`, `resume`, `stop`, or
+`resize`, and it does not bypass a max-run cooldown or a manual operator stop.
+
+### Off-host destination and credentials
+
+Create a **dedicated private S3-compatible bucket** for backups, separate from
+the live media, identity-evidence, and metadata buckets. Cloudflare R2 or
+Backblaze B2 can be used. Create a dedicated access key restricted to that
+bucket; do not reuse the MinIO root key or the application's media key. Restic
+encrypts the repository before uploading it. Keep the bucket private and do not
+apply an object-expiration rule that can delete restic pack/index files behind
+its back.
+
+Configure these GitHub repository variables:
+
+- `TESTAGRAM_BACKUP_S3_ENDPOINT`: HTTPS endpoint origin only. For R2 this is
+  `https://<account-id>.r2.cloudflarestorage.com`; for B2 use the S3 endpoint
+  for the bucket's region.
+- `TESTAGRAM_BACKUP_S3_BUCKET`: the dedicated bucket name, e.g.
+  `testagram-backups`.
+- `TESTAGRAM_BACKUP_S3_REGION`: `auto` for R2, or the B2 region (e.g.
+  `us-west-004`).
+- `INSTABOX_MACHINE_ID`: optional; defaults to the verified current machine
+  ID. Set it if the machine is ever replaced.
+- `TESTAGRAM_PRODUCTION_BACKUP_ENABLED`: set to `true` only after the first
+  manual backup and restore drill succeed.
+- `TESTAGRAM_BACKUP_PRUNE_ENABLED`: leave unset/false until restore has been
+  proven; set to `true` to apply the weekly retention policy.
+
+Configure these GitHub repository secrets:
+
+- `INSTABOX_BACKUP_API_KEY`: an InstaBox API key with `machines:write` (or
+  legacy `machines:exec`) for the production machine. Do not paste it into
+  chat or commit it.
+- `TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID` and
+  `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`: the dedicated bucket-scoped S3
+  credentials.
+- `TESTAGRAM_BACKUP_RESTIC_PASSWORD`: a strong independent password; generate
+  it locally with `openssl rand -hex 32` and store it in a password manager as
+  well as GitHub Secrets. Losing it makes the encrypted repository
+  unrecoverable.
+
+The workflow constructs the repository as
+`s3:<endpoint>/<bucket>/testagram`. It passes credentials only to the
+single InstaBox exec request as temporary environment variables; it does not
+write the S3 keys or restic password into the machine's persistent `.env`.
+The remote helper refreshes only the backup scripts from GitHub main before
+running them. It does not reset the production checkout, change Compose files,
+run migrations, or restart application containers.
+
+### First run and ongoing operation
+
+1. Create the private bucket and scoped S3 key, then add the variables/secrets
+   above. Keep `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` unset/false for now.
+2. In Actions, run **InstaBox production backup (free-plan safe)** manually
+   with `run_restore_drill=true`. This creates the first encrypted backup and
+   restores it into a disposable PostgreSQL container with no network or
+   published ports. It never restores over production.
+3. Confirm the run reports a successful restore drill. Only then set
+   `TESTAGRAM_PRODUCTION_BACKUP_ENABLED=true` for one daily backup at 02:17 UTC.
+4. After several successful backups and a restore drill, optionally set
+   `TESTAGRAM_BACKUP_PRUNE_ENABLED=true`. Sunday runs then retain 7 daily, 5
+   weekly, and 12 monthly points. Manual dispatch can also request a prune.
+5. Check the workflow result and the provider's bucket usage. The first backup
+   copies the current PostgreSQL database and both MinIO media buckets; later
+   Restic runs upload only changed data. A failed or timed-out exec is not
+   blindly retried because InstaBox exec is not idempotent; inspect machine
+   history before retrying.
+
+This workflow does not keep the machine awake. It is a genuine, bounded backup
+task, and the machine can return to its normal 30-minute idle-pause behavior
+after it completes. The free plan has a fixed 20 GiB machine disk and includes
+100 GiB of egress per month; monitor the first backup and storage-provider
+usage, especially if media grows. InstaBox's free plan also has a 200 GiB
+stored-data cap and five snapshots. This workflow does not create machine
+snapshots or consume those five snapshot slots.
+
+
 ## Restore drill (never experiment on production)
 
 From the repository root, the automated database restore check is:
