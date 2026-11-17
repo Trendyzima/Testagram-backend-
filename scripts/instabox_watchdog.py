@@ -267,6 +267,65 @@ def lifecycle(api: API, action: str) -> None:
     wait_operation(api, result, expected)
 
 
+def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
+    """Safely power-cycle a still-desired-running machine after repeated liveness failure."""
+    now = int(time.time())
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: public liveness failed repeatedly; would perform controlled stop/start"
+    last_action_at = state.get("last_action_at", 0)
+    try:
+        last_action_at = int(last_action_at)
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not restarting machine"
+
+    # Re-read immediately before the disruptive action. Never override an
+    # operator stop, an in-flight provider operation, or a changed machine.
+    latest = machine_snapshot(api)
+    if latest["state"] != "running" or latest["desiredState"] != "running":
+        return ("machine state changed during health investigation "
+                f"(state={latest['state']}, desiredState={latest['desiredState']}); no action")
+    if latest.get("operationId"):
+        return f"machine has active operation {latest['operationId']}; no restart"
+
+    state.update(last_action_at=now, last_action="stop-start")
+    save_state(state)
+    lifecycle(api, "stop")
+    lifecycle(api, "start")
+    wait_for_service()
+    return "controlled stop/start completed; public API liveness verified"
+
+
+def check_running_service(api: API, state: dict[str, Any]) -> str:
+    """Probe only a provider-running machine; require three failures before restart."""
+    for attempt in range(3):
+        healthy, detail = probe(HEALTH_URL)
+        if healthy:
+            state["last_successful_health_at"] = int(time.time())
+            state["consecutive_health_failures"] = 0
+            save_state(state)
+            emit(f"running machine public liveness healthy: {detail}")
+            return "healthy"
+        emit(f"public liveness failure {attempt + 1}/3: {detail}")
+        if attempt < 2:
+            time.sleep(PROBE_INTERVAL)
+    try:
+        previous_failures = int(state.get("consecutive_health_failures", 0))
+    except (TypeError, ValueError):
+        raise WatchdogError("Watchdog state has an invalid consecutive_health_failures value")
+    if previous_failures < 0:
+        raise WatchdogError("Watchdog state has a negative consecutive_health_failures value")
+    state["consecutive_health_failures"] = previous_failures + 3
+    state["last_health_failure_at"] = int(time.time())
+    save_state(state)
+    result = recover_unhealthy_running(api, state)
+    return result
+
+
 def recover_stopped(api: API, state: dict[str, Any]) -> str:
     now = int(time.time())
     # Enforce the recovery approval boundary in the program itself, not only
@@ -361,13 +420,15 @@ def main() -> int:
         raise WatchdogError("Machine is in provider error state; refusing automatic stop/start")
     if machine_state != "running":
         raise WatchdogError(f"Unrecognized machine state {machine_state!r}; refusing action")
-    # A scheduled HTTP probe would wake an idle-suspended Free-plan box and
-    # can defeat InstaBox's idle policy. Keep routine monitoring provider-side:
-    # GET machine state is non-waking. App liveness is checked only after an
-    # explicit recovery start, never as a periodic keepalive.
+    # Only probe after provider confirms the machine is running. Suspended
+    # idle machines returned above without an HTTP request, preserving the
+    # Free-plan real-request auto-wake behavior.
     state["last_provider_running_at"] = int(time.time())
-    save_state(state)
-    emit("provider reports machine running; no synthetic liveness request or lifecycle action issued")
+    result = check_running_service(api, state)
+    if result.startswith("controlled"):
+        notify(result, "recovery")
+    else:
+        emit(result)
     return 0
 
 
