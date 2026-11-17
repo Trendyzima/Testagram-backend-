@@ -102,30 +102,27 @@ func TestAppwriteAuthenticationFailsClosedWhenNotConfigured(t *testing.T) {
 }
 
 
-func TestAuthenticatedAppwriteUserRejectsUnverifiedEmailBeforeIdentityLookup(t *testing.T) {
+func TestExternalProviderSessionCannotBypassNativeIdentityStore(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("n", 64))
+	legacyEndpointCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"$id":"user_123","email":"person@example.test","emailVerification":false,"status":true}`))
+		legacyEndpointCalled = true
+		http.Error(w, "legacy provider must not be called", http.StatusUnauthorized)
 	}))
 	defer server.Close()
+	t.Setenv("APPWRITE_ENDPOINT", server.URL+"/v1")
+	t.Setenv("APPWRITE_PROJECT_ID", "ci-only-project")
 
-	t.Setenv("APPWRITE_ENDPOINT", server.URL)
-	t.Setenv("APPWRITE_PROJECT_ID", "test-project")
-	service := &service{upstream: server.Client()}
+	svc := &service{upstream: server.Client()}
 	request := httptest.NewRequest(http.MethodPost, "/api/social/posts", nil)
-	_, status, err := service.authenticatedAppwriteUser(request, "valid-but-unverified-session")
-	if err == nil || status != http.StatusForbidden {
-		t.Fatalf("status=%d err=%v; expected verified-email authorization failure", status, err)
+	_, status, err := svc.authenticatedAppwriteUser(request, "external-provider-session-token")
+	if err == nil || status != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d err=%v; expected native identity-store failure without PostgreSQL", status, err)
 	}
-	if !strings.Contains(err.Error(), "email verification is required") {
-		t.Fatalf("unexpected error: %v", err)
+	if legacyEndpointCalled {
+		t.Fatal("native authentication attempted an Appwrite account lookup")
 	}
 }
-
-
 func TestAppwriteDefaultUsernameIsStableAndValid(t *testing.T) {
 	first := appwriteDefaultUsername("Trendy.User+test@example.test", "appwrite-user-123")
 	second := appwriteDefaultUsername("Trendy.User+test@example.test", "appwrite-user-123")
