@@ -203,17 +203,6 @@ window.setInterval(() => {
     refreshOverview();
   }
 }, 30000);
-byId("invite-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget; busy(form, true);
-  try {
-    const result = await api("/api/staff/invite", { email: byId("invite-email").value, role: byId("invite-role").value });
-    notice((result.message || "Invitation sent.") + (result.user_id ? " Staff ID: " + result.user_id : ""), "success");
-    byId("invite-email").value = "";
-  } catch (error) { notice(error.message, "error"); }
-  finally { busy(form, false); }
-});
-
 const recoveryParams = new URLSearchParams(location.search);
 const recoveryToken = recoveryParams.get("token") || "";
 if (recoveryToken) {
