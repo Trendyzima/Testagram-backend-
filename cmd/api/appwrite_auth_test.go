@@ -101,7 +101,6 @@ func TestAppwriteAuthenticationFailsClosedWhenNotConfigured(t *testing.T) {
 	}
 }
 
-
 func TestAuthenticatedUserRejectsExternalSessionWithoutNativeIdentityStore(t *testing.T) {
 	service := &service{}
 	request := httptest.NewRequest(http.MethodPost, "/api/social/posts", nil)
