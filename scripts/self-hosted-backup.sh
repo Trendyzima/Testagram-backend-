@@ -29,6 +29,7 @@ USAGE
 die() { printf 'backup error: %s\n' "$*" >&2; exit 1; }
 command -v docker >/dev/null || die "docker is required"
 command -v restic >/dev/null || die "restic is required"
+command -v jq >/dev/null || die "jq is required for the MinIO capacity preflight"
 [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "RESTIC_REPOSITORY is required"
 if [[ -n "${RESTIC_PASSWORD_FILE:-}" ]]; then
   [[ -f "$RESTIC_PASSWORD_FILE" && -r "$RESTIC_PASSWORD_FILE" ]] || die "RESTIC_PASSWORD_FILE must point to a readable password file"
@@ -78,6 +79,29 @@ fi
 "${DOCKER[@]}" compose config --quiet
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
+
+    printf 'Estimating PostgreSQL and all four MinIO buckets before staging...\n'
+    bucket_size_report="$("${DOCKER[@]}" compose run --rm --no-deps \
+      --entrypoint /bin/sh object-init -ec '
+        mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+        mc stat "local/$MINIO_BUCKET" --json
+        mc stat "local/$PUBLIC_MEDIA_BUCKET" --json
+        mc stat "local/$IDENTITY_EVIDENCE_PRIVATE_BUCKET" --json
+        mc stat "local/$MINIO_METADATA_BUCKET" --json
+      ')"
+    minio_bytes="$(jq -s -er 'if length == 4 and all(.[]; (.Usage.totalSize | type) == "number") then map(.Usage.totalSize) | add else error("MinIO did not report sizes for all four buckets") end' <<< "$bucket_size_report")"
+    postgres_bytes="$("${DOCKER[@]}" compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_database_size(current_database())"')"
+    [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ ]] || die "could not determine database and media sizes"
+    required_stage_bytes=$(( (minio_bytes + postgres_bytes) * 120 / 100 + 1073741824 ))
+    available_stage_bytes="$(df -PB1 "$stage_parent" | awk 'NR == 2 { print $4 }')"
+    docker_root="$("${DOCKER[@]}" info --format '{{.DockerRootDir}}')"
+    available_docker_bytes="$(df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
+    [[ "$available_stage_bytes" =~ ^[0-9]+$ && "$available_docker_bytes" =~ ^[0-9]+$ ]] || die "could not determine free disk space"
+    printf 'Estimated backup source: PostgreSQL=%s bytes, MinIO=%s bytes; staging free=%s bytes.\n' \
+      "$postgres_bytes" "$minio_bytes" "$available_stage_bytes"
+    (( available_stage_bytes >= required_stage_bytes )) || die "insufficient staging space; need at least ${required_stage_bytes} bytes free for a safe full copy"
+    (( available_docker_bytes >= 1073741824 )) || die "less than 1 GiB remains in Docker storage; refusing to risk production containers"
+
     stage=$(mktemp -d "${stage_parent%/}/testagram-backup.XXXXXXXX")
     chmod 700 "$stage"
     cleanup() { rm -rf -- "$stage"; }
