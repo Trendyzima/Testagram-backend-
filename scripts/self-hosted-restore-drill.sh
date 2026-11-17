@@ -57,9 +57,15 @@ manifest_path="$(find "$restore_dir" -type f -name manifest.txt -print -quit)"
 backup_root="$(dirname "$manifest_path")"
 database_names_path="$backup_root/postgres-databases.txt"
 [[ -s "$database_names_path" ]] || die "snapshot is missing its PostgreSQL database inventory"
-restore_db_user="$(awk -F= '$1 == "postgres_user" { sub(/^[^=]*=/, ""); print; exit }' "$manifest_path")"
-restore_primary_db="$(awk -F= '$1 == "postgres_primary_database" { sub(/^[^=]*=/, ""); print; exit }' "$manifest_path")"
-postgres_source_bytes="$(awk -F= '$1 == "postgres_source_bytes" { sub(/^[^=]*=/, ""); print; exit }' "$manifest_path")"
+manifest_value() {
+  local key="$1"
+  # shellcheck disable=SC2016
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$manifest_path"
+}
+restore_db_user="$(manifest_value postgres_user)"
+restore_primary_db="$(manifest_value postgres_primary_database)"
+postgres_source_bytes="$(manifest_value postgres_source_bytes)"
+manifest_database_count="$(manifest_value postgres_database_count)"
 [[ "$restore_db_user" =~ ^[A-Za-z0-9_]+$ && "$restore_primary_db" =~ ^[A-Za-z0-9_]+$ ]] || die "backup manifest has invalid PostgreSQL user/database names"
 [[ "$postgres_source_bytes" =~ ^[0-9]+$ ]] || die "backup manifest has no valid PostgreSQL source size"
 grep -Fxq "$restore_primary_db" "$database_names_path" || die "primary PostgreSQL database is absent from the backup inventory"
@@ -74,6 +80,7 @@ while IFS= read -r database_name; do
   database_count=$(( database_count + 1 ))
 done < "$database_names_path"
 (( database_count > 0 )) || die "snapshot contains no PostgreSQL databases"
+[[ "$manifest_database_count" == "$database_count" ]] || die "backup manifest database count does not match the restored inventory"
 
 docker_root="$("${DOCKER[@]}" info --format '{{.DockerRootDir}}')"
 available_docker_bytes="$(df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
