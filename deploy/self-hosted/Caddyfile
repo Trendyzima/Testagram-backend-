@@ -59,19 +59,6 @@ testagram.site {
   }
 }
 
-# Canonical web frontend. Cloudflare can proxy www through the dedicated
-# :8443 edge listener; direct origin fallback is also served on HTTPS :443.
-www.testagram.site {
-  encode zstd gzip
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains"
-    X-Content-Type-Options nosniff
-    Referrer-Policy strict-origin-when-cross-origin
-    -Server
-  }
-  reverse_proxy flutter-web:8080
-}
-
 {$MEDIA_DOMAIN} {
   @internal_observability path /readyz /metrics
   respond @internal_observability 404
