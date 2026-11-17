@@ -174,7 +174,7 @@ func TestAppwriteRegistrationConsentRejectsUnacceptedPolicyBeforeDatabase(t *tes
 // TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent proves
 // that Appwrite verification and accepted consent cannot bypass the native
 // identity-review and two-person approval gate.
-func TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent(t *testing.T) {
+func TestExternalProviderSessionCannotBypassNativeIdentityApproval(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is not configured")
@@ -190,83 +190,41 @@ func TestAuthenticatedAppwriteUserRequiresIdentityApprovalEvenWithConsent(t *tes
 		t.Fatalf("ping PostgreSQL: %v", err)
 	}
 
-	appwriteID := "ci-appwrite-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	email := appwriteID + "@example.test"
-	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cleanupCancel()
-		var canonical string
-		_ = pool.QueryRow(cleanupCtx, `
-			SELECT canonical_user_id::text FROM testagram_identity.appwrite_accounts
-			WHERE appwrite_user_id=$1
-		`, appwriteID).Scan(&canonical)
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1`, appwriteID)
-		if canonical != "" {
-			_, _ = pool.Exec(cleanupCtx, `DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid`, canonical)
-		}
-		_, _ = pool.Exec(cleanupCtx, `DELETE FROM testagram_identity.appwrite_registration_consents WHERE appwrite_user_id=$1`, appwriteID)
-	}()
-
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("n", 64))
+	legacyID := "ci-appwrite-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	email := legacyID + "@example.test"
+	legacyEndpointCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account" {
-			t.Errorf("Appwrite path = %q", r.URL.Path)
-		}
-		if r.Header.Get("X-Appwrite-Project") != "integration-project" ||
-			r.Header.Get("X-Appwrite-JWT") != "integration-session-jwt" {
-			t.Errorf("Appwrite project/session headers were not forwarded")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"$id":"` + appwriteID + `","email":"` + email + `","name":"CI Appwrite User","emailVerification":true,"status":true}`))
+		legacyEndpointCalled = true
+		http.Error(w, "legacy provider must not be called", http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	t.Setenv("APPWRITE_ENDPOINT", server.URL)
-	t.Setenv("APPWRITE_PROJECT_ID", "integration-project")
-	t.Setenv("TESTAGRAM_TERMS_VERSION", "2026-11-11")
-	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "2026-11-11")
+	t.Setenv("APPWRITE_ENDPOINT", server.URL+"/v1")
+	t.Setenv("APPWRITE_PROJECT_ID", "ci-only-project")
 
 	svc := &service{db: pool, upstream: server.Client()}
-	request := httptest.NewRequest(http.MethodGet, "/api/me/profile", nil)
-	firstID, status, err := svc.authenticatedAppwriteUser(request, "integration-session-jwt")
-	if status != http.StatusForbidden || err == nil || !strings.Contains(err.Error(), "two-person account approval") {
-		t.Fatalf("unconsented account status=%d canonical=%q err=%v; expected identity approval gate", status, firstID, err)
+	canonicalID, status, err := svc.authenticatedAppwriteUser(
+		httptest.NewRequest(http.MethodGet, "/api/me/profile", nil),
+		"external-provider-session-token",
+	)
+	if status != http.StatusUnauthorized || err == nil || canonicalID != "" {
+		t.Fatalf("external provider session canonical=%q status=%d err=%v; want native-token rejection", canonicalID, status, err)
+	}
+	if legacyEndpointCalled {
+		t.Fatal("native authentication attempted an Appwrite account lookup")
 	}
 
-	for _, consent := range []struct{ kind, version string }{
-		{"age_confirmation", "age-v1"},
-		{"terms", "2026-11-11"},
-		{"privacy", "2026-11-11"},
-	} {
-		_, err := pool.Exec(ctx, `
-			INSERT INTO testagram_identity.appwrite_registration_consents
-			  (appwrite_user_id,email,consent_type,policy_version,accepted_at,request_id)
-			VALUES($1,$2,$3,$4,now(),'ci-appwrite-flow')
-		`, appwriteID, email, consent.kind, consent.version)
-		if err != nil {
-			t.Fatalf("insert %s consent: %v", consent.kind, err)
-		}
-	}
-
-	firstID, status, err = svc.authenticatedAppwriteUser(request, "integration-session-jwt")
-	if status != http.StatusForbidden || err == nil || !strings.Contains(err.Error(), "two-person account approval") {
-		t.Fatalf("consented account status=%d canonical=%q err=%v; consent must not bypass identity approval", status, firstID, err)
-	}
 	var mappings, canonicalAccounts int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1
-	`, appwriteID).Scan(&mappings); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.appwrite_accounts WHERE appwrite_user_id=$1", legacyID).Scan(&mappings); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM testagram_local.accounts WHERE username LIKE $1
-	`, appwriteDefaultUsername(email, appwriteID)).Scan(&canonicalAccounts); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE username=$1", appwriteDefaultUsername(email, legacyID)).Scan(&canonicalAccounts); err != nil {
 		t.Fatal(err)
 	}
 	if mappings != 0 || canonicalAccounts != 0 {
-		t.Fatalf("consent-only login created account state: mappings=%d canonical_accounts=%d", mappings, canonicalAccounts)
+		t.Fatalf("external provider session created Testagram state: mappings=%d canonical_accounts=%d", mappings, canonicalAccounts)
 	}
 }
-
-
 func TestWriteAppwriteAuthFailureReturnsStableAuthorizationCodes(t *testing.T) {
 	tests := []struct {
 		name       string
