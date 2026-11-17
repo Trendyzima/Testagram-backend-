@@ -227,3 +227,43 @@ func TestReadyChecksAlgorithmServiceHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+
+func TestRankAcceptsEveryPublishedFeedMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/feed/rank" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("s", 32) {
+			t.Fatal("missing service authorization")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := []string{"for_you", "following", "latest", "media", "discover", "federated"}
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
+			_, err := client.Rank(context.Background(), Request{
+				FeedMode: mode,
+				Limit: 1,
+				Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Source: "native", Visible: true, CreatedAt: time.Now().UTC()}},
+			})
+			if err != nil {
+				t.Fatalf("published feed mode %q was rejected: %v", mode, err)
+			}
+		})
+	}
+	if _, err := client.Rank(context.Background(), Request{
+		FeedMode: "unknown",
+		Limit: 1,
+		Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Source: "native", Visible: true, CreatedAt: time.Now().UTC()}},
+	}); err == nil {
+		t.Fatal("unknown feed mode must be rejected")
+	}
+}
