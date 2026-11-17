@@ -32,6 +32,9 @@ jobs:
           bash -n scripts/self-hosted-backup.sh
           bash -n scripts/self-hosted-restore-drill.sh
           bash -n scripts/instabox-production-backup.sh
+      - name: Validate InstaBox backup workflow YAML
+        run: |
+          ruby -e 'require "yaml"; YAML.load_file(".github/workflows/instabox-production-backup.yml"); puts "InstaBox backup workflow YAML is valid."'
       - name: Test embedded Federation database safety guard
         run: |
           python3 - <<'PY'
