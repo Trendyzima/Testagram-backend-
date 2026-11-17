@@ -5,12 +5,17 @@ on:
     paths:
       - "scripts/self-hosted-backup.sh"
       - "scripts/self-hosted-restore-drill.sh"
+      - "scripts/instabox-production-backup.sh"
+      - ".github/workflows/instabox-production-backup.yml"
       - "deploy/self-hosted/BACKUP-RESTORE.md"
       - ".github/workflows/self-hosted-backup-validation.yml"
   push:
     branches: [main]
     paths:
       - "scripts/self-hosted-backup.sh"
+      - "scripts/self-hosted-restore-drill.sh"
+      - "scripts/instabox-production-backup.sh"
+      - ".github/workflows/instabox-production-backup.yml"
       - "deploy/self-hosted/BACKUP-RESTORE.md"
       - ".github/workflows/self-hosted-backup-validation.yml"
 
@@ -26,9 +31,64 @@ jobs:
         run: |
           bash -n scripts/self-hosted-backup.sh
           bash -n scripts/self-hosted-restore-drill.sh
+          bash -n scripts/instabox-production-backup.sh
+      - name: Validate InstaBox backup workflow YAML
+        run: |
+          ruby -e 'require "yaml"; YAML.load_file(".github/workflows/instabox-production-backup.yml"); puts "InstaBox backup workflow YAML is valid."'
+      - name: Test embedded Federation database safety guard
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          source = Path("scripts/self-hosted-backup.sh").read_text()
+          marker = "FEDERATION_DATABASE_URL_CHECK=\"$federation_database_url\" python3 - <<'PY'"
+          marker_at = source.find(marker)
+          if marker_at < 0:
+              raise SystemExit("could not locate the embedded Federation database URL validator")
+          validator_start = source.index(chr(10), marker_at) + 1
+          validator_end = source.index(chr(10) + "PY", validator_start)
+          validator = source[validator_start:validator_end]
+          def check(url):
+              env = dict(os.environ, FEDERATION_DATABASE_URL_CHECK=url)
+              return subprocess.run([sys.executable, "-c", validator], env=env, check=False).returncode
+
+          valid = "postgresql://testagram:masked@federation-db:5432/testagram_federation?sslmode=disable"
+          if check(valid) != 0:
+              raise SystemExit("same-cluster federation-db alias should be accepted")
+          for invalid in (
+              "postgresql://testagram:masked@external-db.example:5432/testagram_federation",
+              "postgresql://testagram:masked@postgres:5433/testagram_federation",
+              "https://testagram:masked@postgres:5432/testagram_federation",
+          ):
+              if check(invalid) == 0:
+                  raise SystemExit("external or invalid Federation database target was accepted")
+          print("Federation database routing guard passed.")
+          PY
+      - name: Assert explicit Restic initialization and deployed checkout path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          wrapper = Path("scripts/instabox-production-backup.sh").read_text()
+          workflow = Path(".github/workflows/instabox-production-backup.yml").read_text()
+          if 'if [[ "${INITIALIZE_RESTIC_REPOSITORY:-false}" == "true" ]]; then' not in wrapper:
+              raise SystemExit("Restic initialization must require an explicit operator input")
+          if "restic cat config >/dev/null || die" not in wrapper:
+              raise SystemExit("backup must verify the existing Restic repository before writing")
+          if "if ! restic snapshots" in wrapper:
+              raise SystemExit("a failed Restic read must never trigger implicit initialization")
+          if '"cwd": "/data/home/testagram/repos/backend"' not in workflow:
+              raise SystemExit("InstaBox exec checkout path does not match the deployment script")
+          if 'BACKEND="$REPOS/backend"' not in Path("scripts/start-instabox-deployment.sh").read_text():
+              raise SystemExit("deployment checkout path changed; update backup workflow cwd")
+          print("Restic initialization and deployed checkout path guards passed.")
+          PY
       - name: Install ShellCheck
         run: |
           sudo apt-get update
           sudo apt-get install --yes shellcheck
       - name: Lint backup and restore scripts
-        run: shellcheck --severity=style scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh
+        run: shellcheck --severity=style scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh scripts/instabox-production-backup.sh

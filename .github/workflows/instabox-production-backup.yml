@@ -1,0 +1,242 @@
+name: InstaBox production backup (free-plan safe)
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      initialize_restic_repository:
+        description: "Initialize a brand-new empty Restic repository (only on the first manual run)"
+        required: false
+        type: boolean
+        default: false
+      run_restore_drill:
+        description: "Restore the latest backup into a disposable, network-isolated PostgreSQL container"
+        required: false
+        type: boolean
+        default: false
+      run_prune:
+        description: "Apply 7 daily / 5 weekly / 12 monthly retention and prune old backup data"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-instabox-deploy-repair-5
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Wake for a real backup, then allow idle pause
+    if: github.event_name == 'workflow_dispatch' || vars.TESTAGRAM_PRODUCTION_BACKUP_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      API: https://api.instabox.sh
+      MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID || secrets.INSTABOX_MACHINE_ID }}
+      BACKUP_ENDPOINT: ${{ vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
+      BACKUP_BUCKET: ${{ vars.TESTAGRAM_BACKUP_S3_BUCKET }}
+      BACKUP_REGION: ${{ vars.TESTAGRAM_BACKUP_S3_REGION || 'auto' }}
+      RUN_RESTORE_DRILL: ${{ inputs.run_restore_drill == true && 'true' || 'false' }}
+      INITIALIZE_RESTIC_REPOSITORY: ${{ inputs.initialize_restic_repository == true && 'true' || 'false' }}
+    steps:
+      - name: Validate configuration without printing credentials
+        id: config
+        shell: bash
+        env:
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
+          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+          RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for name in INSTABOX_API_KEY BACKUP_ENDPOINT BACKUP_BUCKET BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY RESTIC_PASSWORD; do
+            [[ -n "${!name:-}" ]] || { echo "::error::Missing required InstaBox backup setting: $name"; exit 1; }
+          done
+          for secret in "$INSTABOX_API_KEY" "$BACKUP_ACCESS_KEY_ID" "$BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
+            echo "::add-mask::$secret"
+          done
+          python3 - "$MACHINE_ID" "$BACKUP_ENDPOINT" "$BACKUP_BUCKET" "$BACKUP_REGION" <<'PY'
+          import ipaddress, re, sys
+          from urllib.parse import urlparse
+          machine, endpoint, bucket, region = sys.argv[1:]
+          if machine and not re.fullmatch(r"m_[a-z2-7]{26}", machine):
+              raise SystemExit("INSTABOX_MACHINE_ID is not a valid InstaBox machine ID")
+          parsed = urlparse(endpoint)
+          if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.port:
+              raise SystemExit("TESTAGRAM_BACKUP_S3_ENDPOINT must be a plain HTTPS origin")
+          if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) or ".." in bucket or ".-" in bucket or "-." in bucket:
+              raise SystemExit("TESTAGRAM_BACKUP_S3_BUCKET must be a valid S3 bucket name")
+          try:
+              ipaddress.ip_address(bucket)
+          except ValueError:
+              pass
+          else:
+              raise SystemExit("TESTAGRAM_BACKUP_S3_BUCKET cannot be formatted as an IP address")
+          if not re.fullmatch(r"[a-z0-9-]{2,32}", region):
+              raise SystemExit("TESTAGRAM_BACKUP_S3_REGION must be a valid region label")
+          host = parsed.hostname.lower()
+          if "r2.cloudflarestorage.com" in host and region != "auto":
+              raise SystemExit("Cloudflare R2 backup region must be 'auto'")
+          if "backblazeb2.com" in host and region == "auto":
+              raise SystemExit("Backblaze B2 requires its bucket's actual region, not 'auto'")
+          PY
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            run_prune="${{ inputs.run_prune }}"
+          elif [[ "${{ vars.TESTAGRAM_BACKUP_PRUNE_ENABLED }}" == "true" && "$(date -u +%u)" == "7" ]]; then
+            run_prune=true
+          else
+            run_prune=false
+          fi
+          echo "run_prune=$run_prune" >> "$GITHUB_OUTPUT"
+          printf 'header = "X-API-Key: %s"\n' "$INSTABOX_API_KEY" > "$RUNNER_TEMP/instabox-curl.conf"
+          chmod 600 "$RUNNER_TEMP/instabox-curl.conf"
+          echo "Backup destination and credentials passed validation."
+
+      - name: Resolve production machine ID
+        id: machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${MACHINE_ID:-}" ]]; then
+            printf 'machine_id=%s\n' "$MACHINE_ID" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          machines="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -fsS --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 5 --max-time 60 \
+            "$API/v1/machines?limit=100")"
+          machine_id="$(jq -r '([.machines[] | select(.name == "testagramdb")][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' <<<"$machines")"
+          if [[ -z "$machine_id" ]]; then
+            echo "::error::Could not safely identify the production machine. Name it testagramdb or set INSTABOX_MACHINE_ID as a repository variable/secret."
+            exit 1
+          fi
+          if [[ ! "$machine_id" =~ ^m_[a-z2-7]{26}$ ]]; then
+            echo "::error::InstaBox returned an invalid machine identifier."
+            exit 1
+          fi
+          printf 'machine_id=%s\n' "$machine_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wake only the idle-suspended production machine
+        shell: bash
+        env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
+        run: |
+          set -euo pipefail
+          status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 60 -D "$RUNNER_TEMP/wake.headers" -o "$RUNNER_TEMP/wake.json" -w '%{http_code}' \
+            -X POST \
+            -H "Idempotency-Key: testagram-backup-wake-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            -H 'Content-Type: application/json' -d '{}' \
+            "$API/v1/machines/$MACHINE_ID/wake" || true)"
+          code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo unknown)"
+          retry="$(jq -r '.error.retryAfterSeconds // 0' "$RUNNER_TEMP/wake.json" 2>/dev/null || echo 0)"
+          retry_header="$(sed -n 's/^[Rr]etry-[Aa]fter:[[:space:]]*//p' "$RUNNER_TEMP/wake.headers" | tr -d '\015' | tail -n 1)"
+          if [[ "$retry_header" =~ ^[0-9]+$ && "$retry_header" -gt 0 ]]; then retry="$retry_header"; fi
+          ready=false
+
+          case "$status" in
+            200|202|204)
+              if [[ "$status" == "200" ]] && jq -e '(.state // .machine.state) == "running" and (.runtime.ready // .machine.runtime.ready) == true' "$RUNNER_TEMP/wake.json" >/dev/null 2>&1; then
+                ready=true
+              fi
+              ;;
+            409)
+              if [[ "$code" != "operation_conflict" ]]; then
+                echo "::error::InstaBox refused the wake (code $code)."
+                if [[ "$retry" =~ ^[0-9]+$ && "$retry" -gt 0 ]]; then
+                  echo "InstaBox asked us to wait $retry seconds. No forced start or cooldown bypass will be attempted."
+                fi
+                jq -c '{error: {code: .error.code, message: .error.message, retryAfterSeconds: .error.retryAfterSeconds}}' "$RUNNER_TEMP/wake.json" 2>/dev/null || true
+                exit 1
+              fi
+              echo "Another legitimate request is already waking the machine; waiting for that same machine to become ready."
+              ;;
+            *)
+              echo "::error::InstaBox wake failed (HTTP $status, code $code)."
+              if [[ "$retry" =~ ^[0-9]+$ && "$retry" -gt 0 ]]; then
+                echo "InstaBox asked us to wait $retry seconds. No forced start or cooldown bypass will be attempted."
+              fi
+              if [[ "$code" == "machine_not_running" ]]; then
+                echo "The machine appears manually stopped or suspended. This workflow will not override an operator stop."
+              fi
+              jq -c '{error: {code: .error.code, message: .error.message, retryAfterSeconds: .error.retryAfterSeconds}}' "$RUNNER_TEMP/wake.json" 2>/dev/null || true
+              exit 1
+              ;;
+          esac
+
+          if [[ "$ready" != "true" ]]; then
+            echo "Wake was accepted; polling the machine until its machine state is running."
+            for attempt in $(seq 1 24); do
+              machine_status="$(curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 15 -o "$RUNNER_TEMP/machine.json" -w '%{http_code}' \
+                "$API/v1/machines/$MACHINE_ID" || true)"
+              if [[ "$machine_status" == "200" ]] && jq -e '(.state // .machine.state) == "running" and (.runtime.ready // .machine.runtime.ready) == true' "$RUNNER_TEMP/machine.json" >/dev/null 2>&1; then
+                ready=true
+                break
+              fi
+              sleep 5
+            done
+          fi
+          [[ "$ready" == "true" ]] || { echo "::error::The machine did not reach runtime-ready state within two minutes."; exit 1; }
+          echo "InstaBox machine is ready for the scheduled backup task."
+
+      - name: Run encrypted PostgreSQL, MinIO and local Data Centre backups through InstaBox exec
+        shell: bash
+        env:
+          MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
+          RUN_PRUNE: ${{ steps.config.outputs.run_prune }}
+          RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
+          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
+          cmd='bash scripts/instabox-production-backup.sh'
+          export BACKUP_EXEC_CMD="$cmd" BACKUP_RESTIC_REPOSITORY="$repository"
+          status="$(
+            python3 - <<'PY' | curl --config "$RUNNER_TEMP/instabox-curl.conf" -sS --connect-timeout 5 --max-time 660 -o "$RUNNER_TEMP/exec.json" -w '%{http_code}' \
+              -X POST -H 'Content-Type: application/json' \
+              --data-binary @- "$API/v1/machines/$MACHINE_ID/exec" || true
+          import json, os, sys
+          payload = {
+              "cmd": os.environ["BACKUP_EXEC_CMD"],
+              "cwd": "/data/home/testagram/repos/backend",
+              "timeoutSeconds": 600,
+              "envs": {
+                  "RESTIC_REPOSITORY": os.environ["BACKUP_RESTIC_REPOSITORY"],
+                  "RESTIC_PASSWORD": os.environ["RESTIC_PASSWORD"],
+                  "AWS_ACCESS_KEY_ID": os.environ["BACKUP_ACCESS_KEY_ID"],
+                  "AWS_SECRET_ACCESS_KEY": os.environ["BACKUP_SECRET_ACCESS_KEY"],
+                  "AWS_DEFAULT_REGION": os.environ["BACKUP_REGION"],
+                  "AWS_REGION": os.environ["BACKUP_REGION"],
+                  "RUN_PRUNE": os.environ["RUN_PRUNE"],
+                  "RUN_RESTORE_DRILL": os.environ["RUN_RESTORE_DRILL"],
+                  "INITIALIZE_RESTIC_REPOSITORY": os.environ["INITIALIZE_RESTIC_REPOSITORY"],
+              },
+          }
+          json.dump(payload, sys.stdout)
+          PY
+          )"
+          if [[ "$status" != "200" ]]; then
+            code="$(jq -r '.error.code // "unknown"' "$RUNNER_TEMP/exec.json" 2>/dev/null || echo unknown)"
+            echo "::error::InstaBox backup command could not be completed (HTTP $status, code $code). Do not blindly repeat an exec whose outcome is unknown; inspect machine history first."
+            jq -c '{error: {code: .error.code, message: .error.message, retryAfterSeconds: .error.retryAfterSeconds}}' "$RUNNER_TEMP/exec.json" 2>/dev/null || true
+            exit 1
+          fi
+          exit_code="$(jq -r '.exitCode // 1' "$RUNNER_TEMP/exec.json")"
+          stdout="$(jq -r '.stdout // empty' "$RUNNER_TEMP/exec.json")"
+          stderr="$(jq -r '.stderr // empty' "$RUNNER_TEMP/exec.json")"
+          [[ -z "$stdout" ]] || printf '%s\n' "$stdout"
+          if [[ "$exit_code" != "0" || "$(jq -r '.timedOut // false' "$RUNNER_TEMP/exec.json")" == "true" ]]; then
+            echo "::error::The production backup command failed (exit=$exit_code)."
+            [[ -z "$stderr" ]] || printf '%s\n' "$stderr"
+            exit 1
+          fi
+          echo "Encrypted backup task completed. The machine is free to auto-pause after genuine activity ends."
+
+      - name: Remove temporary InstaBox API authentication
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/instabox-curl.conf"
