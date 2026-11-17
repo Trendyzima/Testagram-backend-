@@ -390,13 +390,14 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE testagram_identity.identity_applications
-		SET evidence_reference=$3,status='verification_pending',updated_at=now()
+		SET evidence_reference=$2,status='verification_pending',updated_at=now()
 		WHERE id=$1::uuid
-	`, applicationID, sessionID, "native-session-pending:"+sessionID); err != nil {
+	`, applicationID, "native-session-pending:"+sessionID); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Verification session could not be linked", requestID(r)))
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
+		log.Printf("identity application create commit failed request_id=%s: %v", requestID(r), err)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 		return
 	}
