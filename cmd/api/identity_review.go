@@ -626,7 +626,7 @@ func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Requ
 	`, requestIDValue).Scan(&firstApprover)
 	if err == nil {
 		err = tx.QueryRow(ctx, `
-			SELECT approver_appwrite_user_id FROM testagram_auth.sensitive_action_approvals
+			SELECT approver_user_id::text FROM testagram_auth.sensitive_action_approvals
 			WHERE request_id=$1::uuid AND decision='approved' AND approver_user_id::text<>$2
 			ORDER BY created_at ASC LIMIT 1
 		`, requestIDValue, firstApprover).Scan(&secondApprover)
