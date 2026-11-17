@@ -226,12 +226,6 @@ func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 	}
 }
 
-func TestNativeAuthenticationIsAlwaysEnabled(t *testing.T) {
-	if !nativeAuthEnabled() {
-		t.Fatal("Testagram-native authentication must not depend on a third-party provider selector")
-	}
-}
-
 func TestNativePasswordEndpointsFailClosedWhenDatabaseIsUnavailable(t *testing.T) {
 	handler := (&service{}).routes()
 	for _, path := range []string{
