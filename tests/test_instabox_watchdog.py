@@ -244,6 +244,27 @@ class WatchdogTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
         probe.assert_not_called()
 
+    def test_existing_watchdog_secret_uses_authorization_for_provider_requests(self):
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self):
+                return b'{}'
+
+        with patch.object(watchdog.urllib.request, "urlopen", return_value=Response()) as urlopen:
+            watchdog.API(base="https://api.instabox.sh", key="existing-secret").request(
+                "GET", "/v1/machines"
+            )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Bearer existing-secret")
+        self.assertIsNone(request.get_header("X-api-key"))
+
+    def test_default_machine_name_is_testagramdb(self):
+        source = Path("scripts/instabox_watchdog.py").read_text()
+        self.assertIn('MACHINE_NAME = os.getenv("INSTABOX_MACHINE_NAME", "testagramdb")', source)
+
     def test_workflow_reuses_existing_secret_and_preserves_pr_validation(self):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
         self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
