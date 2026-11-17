@@ -21,8 +21,7 @@ func testApp(t *testing.T) *app {
 	aead, err := cipher.NewGCM(block)
 	if err != nil { t.Fatal(err) }
 	return &app{
-		appwriteEndpoint: "https://appwrite.example.test/v1",
-		appwriteProject: "test-project",
+		backendAPIURL: "http://api:8080",
 		publicURL: "https://ops.example.test",
 		publicOrigin: "https://ops.example.test",
 		cookieSecure: true,
@@ -40,7 +39,7 @@ func TestNewAppRejectsInvalidSessionKey(t *testing.T) {
 func TestSessionCookieIsEncryptedAndRoundTrips(t *testing.T) {
 	a := testApp(t)
 	w := httptest.NewRecorder()
-	want := session{Secret:"appwrite-session-secret", ExpiresAt:time.Now().Add(time.Hour).Unix()}
+	want := session{AccessToken:"native-access-token",RefreshToken:"native-refresh-token",AccessExpiresAt:time.Now().Add(15*time.Minute).Unix(),RefreshExpiresAt:time.Now().Add(30*24*time.Hour).Unix()}
 	if err := a.setSession(w,want); err != nil { t.Fatal(err) }
 	cookies := w.Result().Cookies()
 	if len(cookies)!=1 { t.Fatalf("got %d cookies",len(cookies)) }
@@ -51,13 +50,13 @@ func TestSessionCookieIsEncryptedAndRoundTrips(t *testing.T) {
 	req.AddCookie(cookie)
 	got,err:=a.readSession(req)
 	if err!=nil { t.Fatal(err) }
-	if got.Secret!=want.Secret { t.Fatalf("session mismatch: %#v",got) }
+	if got.AccessToken!=want.AccessToken || got.RefreshToken!=want.RefreshToken { t.Fatalf("session mismatch: %#v",got) }
 }
 
 func TestSessionCookieRejectsTampering(t *testing.T) {
 	a:=testApp(t)
 	w:=httptest.NewRecorder()
-	if err:=a.setSession(w,session{Secret:"session",ExpiresAt:time.Now().Add(time.Hour).Unix()});err!=nil{t.Fatal(err)}
+	if err:=a.setSession(w,session{AccessToken:"native-access-token",RefreshToken:"native-refresh-token",AccessExpiresAt:time.Now().Add(15*time.Minute).Unix(),RefreshExpiresAt:time.Now().Add(30*24*time.Hour).Unix()});err!=nil{t.Fatal(err)}
 	cookie:=w.Result().Cookies()[0]
 	raw,err:=hex.DecodeString(cookie.Value);if err!=nil{t.Fatal(err)}
 	raw[len(raw)-1]^=0x01
