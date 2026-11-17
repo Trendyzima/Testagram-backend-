@@ -16,7 +16,9 @@ import (
 )
 
 func TestFetchAppwriteAccountSendsProjectAndSessionJWT(t *testing.T) {
+	legacyEndpointCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		legacyEndpointCalled = true
 		if r.URL.Path != "/v1/account" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
