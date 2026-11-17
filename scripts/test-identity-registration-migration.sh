@@ -41,7 +41,14 @@ for migration in \
   migrations/20261114_native_identity_integrity.sql \
   migrations/20261115_identity_evidence_access_audit.sql \
   migrations/20261115_native_identity_status_access.sql \
-  migrations/20261114_appwrite_registration_consent.sql; do
+  migrations/20261114_appwrite_registration_consent.sql \
+  migrations/20261019_dual_backend_replication.sql \
+  migrations/20261019_testagram_local_accounts_posts.sql \
+  migrations/20261115_testagram_native_auth_cutover_foundation.sql \
+  migrations/20261116_native_approved_identity_provisioning.sql \
+  migrations/20261116_native_auth_runtime_grants.sql \
+  migrations/20261117_native_staff_reviewer_grants.sql \
+  migrations/20261118_native_admin_console.sql; do
   psql_ci < "$migration"
 done
 
@@ -59,6 +66,16 @@ psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
 psql_ci < migrations/20261114_appwrite_registration_consent.sql
+psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
+psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
+psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+psql_ci < migrations/20261117_native_staff_reviewer_grants.sql
+psql_ci < migrations/20261117_native_staff_reviewer_grants.sql
+psql_ci < migrations/20261118_native_admin_console.sql
+psql_ci < migrations/20261118_native_admin_console.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_identity.appwrite_registration_consents
