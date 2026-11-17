@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -43,18 +44,21 @@ func (s *service) identityReviewer(r *http.Request) (appwriteAccount, int, error
 	if len(header) < 8 || !strings.EqualFold(header[:7], "Bearer ") {
 		return appwriteAccount{}, http.StatusUnauthorized, errors.New("staff authentication required")
 	}
+	jwt := strings.TrimSpace(header[7:])
+	endpoint := strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT"))
+	projectID := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
+	if endpoint == "" || projectID == "" {
+		return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("Appwrite authentication is not configured")
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	claims, status, err := verifyNativeAccessToken(ctx, s.db, strings.TrimSpace(header[7:]))
+	account, status, err := fetchAppwriteAccount(ctx, s.upstream, endpoint, projectID, jwt)
 	if err != nil {
-		return appwriteAccount{}, status, errors.New("valid Testagram staff session required")
+		return appwriteAccount{}, status, err
 	}
-	if !localUUIDPattern.MatchString(claims.Subject) || strings.TrimSpace(claims.Email) == "" {
-		return appwriteAccount{}, http.StatusUnauthorized, errors.New("native staff identity is invalid")
+	if !account.EmailVerification {
+		return appwriteAccount{}, http.StatusForbidden, errors.New("verified Appwrite email is required")
 	}
-	// The legacy text column is retained for an additive migration window, but
-	// its value is now the canonical Testagram UUID. No Appwrite account lookup
-	// or external identity mapping participates in staff authorization.
 	var allowed bool
 	err = s.db.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -67,14 +71,14 @@ func (s *service) identityReviewer(r *http.Request) (appwriteAccount, int, error
 		  WHERE sr.appwrite_user_id=$1 AND sr.access_revoked_at IS NULL
 		    AND (po.granted IS TRUE OR (po.granted IS NULL AND rp.permission_key IS NOT NULL))
 		)
-	`, claims.Subject).Scan(&allowed)
+	`, account.ID).Scan(&allowed)
 	if err != nil {
 		return appwriteAccount{}, http.StatusServiceUnavailable, errors.New("staff authorization is unavailable")
 	}
 	if !allowed {
 		return appwriteAccount{}, http.StatusForbidden, errors.New("identity review permission is required")
 	}
-	return appwriteAccount{ID: claims.Subject, Email: claims.Email, EmailVerification: true, Status: true}, http.StatusOK, nil
+	return account, http.StatusOK, nil
 }
 
 func (s *service) identityReviewQueue(w http.ResponseWriter, r *http.Request) {
