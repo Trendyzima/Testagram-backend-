@@ -32,7 +32,6 @@ jobs:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
-      TESTAGRAM_AUTH_PROVIDER: native
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
       SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
@@ -142,8 +141,7 @@ jobs:
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
-          TESTAGRAM_AUTH_PROVIDER: native
-          AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
+              AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
           SMTP_HOST: ${{ vars.SMTP_HOST }}
           SMTP_PORT: ${{ vars.SMTP_PORT || '587' }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
