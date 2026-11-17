@@ -287,61 +287,46 @@ class WatchdogTests(unittest.TestCase):
             ):
                 watchdog.main()
 
-    def test_running_machine_health_404_is_unverified_without_restart(self):
+    def test_running_machine_never_triggers_restart_even_after_prior_health_failures(self):
         api = FakeAPI()
-        state = {"consecutive_health_failures": 2}
-        with (
-            patch.object(watchdog, "probe", side_effect=watchdog.ProbeConfigurationError(
-                "Health probe /healthz returned HTTP 404; refusing automatic lifecycle action until the probe contract is corrected"
-            )) as probe,
-            patch.object(watchdog, "save_state") as save_state,
-            patch.object(watchdog, "lifecycle") as lifecycle,
-        ):
+        state = {"consecutive_health_failures": 99}
+        with patch.object(watchdog, "probe") as probe, patch.object(watchdog, "lifecycle") as lifecycle:
             result = watchdog.check_running_service(api, state)
-        self.assertIn("application liveness unverified", result)
-        self.assertIn("HTTP 404", result)
-        probe.assert_called_once()
-        save_state.assert_not_called()
+        self.assertIn("no restart triggered", result)
+        probe.assert_not_called()
         lifecycle.assert_not_called()
-        self.assertEqual(state["consecutive_health_failures"], 2)
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
+        self.assertEqual(state["consecutive_health_failures"], 99)
 
-    def test_running_machine_gets_public_liveness_probe_without_lifecycle_action(self):
+    def test_running_machine_is_read_only_and_does_not_probe_or_restart(self):
         api = FakeAPI()
         with (
             patch.object(watchdog, "API", return_value=api),
             patch.object(watchdog, "load_state", return_value={}),
             patch.object(watchdog, "save_state"),
-            patch.object(watchdog, "probe", return_value=(True, "HTTP 200")) as probe,
+            patch.object(watchdog, "probe") as probe,
             patch.object(watchdog, "API_KEY", "test-key"),
             patch.object(watchdog, "MACHINE_ID", "machine-123"),
-            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
         ):
             self.assertEqual(watchdog.main(), 0)
         self.assertEqual([call[0] for call in api.calls], ["GET"])
-        probe.assert_called_once()
+        probe.assert_not_called()
 
-    def test_three_failed_liveness_probes_trigger_controlled_stop_start(self):
+    def test_running_machine_with_failing_health_probe_still_never_restarts(self):
         api = FakeAPI()
         with (
             patch.object(watchdog, "API", return_value=api),
             patch.object(watchdog, "load_state", return_value={}),
             patch.object(watchdog, "save_state"),
             patch.object(watchdog, "probe", return_value=(False, "HTTP 503")) as probe,
-            patch.object(watchdog.time, "sleep"),
-            patch.object(watchdog, "wait_for_service"),
             patch.object(watchdog, "notify") as notify,
             patch.object(watchdog, "API_KEY", "test-key"),
-            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
-            patch.object(watchdog, "DRY_RUN", False),
             patch.object(watchdog, "MACHINE_ID", "machine-123"),
-            patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"),
         ):
             self.assertEqual(watchdog.main(), 0)
-        self.assertEqual(probe.call_count, 3)
-        actions = [call[1].rsplit("/", 1)[-1] for call in api.calls if call[0] == "POST"]
-        self.assertEqual(actions, ["stop", "start"])
-        notify.assert_called_once()
+        probe.assert_not_called()
+        self.assertEqual([call[0] for call in api.calls], ["GET"])
+        notify.assert_not_called()
 
     def test_repeated_liveness_failure_in_dry_run_never_stops_machine(self):
         api = FakeAPI()
@@ -422,7 +407,7 @@ class WatchdogTests(unittest.TestCase):
         self.assertIn("secrets.INSTABOX_MACHINE_ID", workflow)
         self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagramdb'", workflow)
         self.assertIn("https://api.testagram.site/healthz", workflow)
-        self.assertIn("check_running_service(api, state)", Path("scripts/instabox_watchdog.py").read_text())
+        self.assertIn("provider reports VPS running; no lifecycle action initiated", Path("scripts/instabox_watchdog.py").read_text())
         self.assertIn("idle-suspended", Path("scripts/instabox_watchdog.py").read_text())
         self.assertNotIn("WATCHDOG_FAILURES_REQUIRED", workflow)
         self.assertNotIn("WATCHDOG_RESTART_COOLDOWN_SECONDS", workflow)
