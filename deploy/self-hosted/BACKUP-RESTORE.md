@@ -1,6 +1,6 @@
 # Testagram self-hosted backup and restore
 
-This runbook backs up PostgreSQL metadata and both MinIO media buckets into an
+This runbook backs up PostgreSQL metadata and all four MinIO buckets (private media, public media, identity evidence, and metadata) into an
 encrypted [restic](https://restic.net/) repository. Valkey is intentionally not
 backed up: its cache and queue data are operational state and must be rebuilt or
 replayed according to each consumer's recovery policy. Do not treat this as a
@@ -156,7 +156,16 @@ run migrations, or restart application containers.
 
 This workflow does not keep the machine awake. It is a genuine, bounded backup
 task, and the machine can return to its normal 30-minute idle-pause behavior
-after it completes. The free plan has a fixed 20 GiB machine disk and includes
+after it completes.
+
+The current helper deliberately fails closed if `DATA_CENTRE_MEDIA_ENABLED`,
+`MEDIA_REPLICATION_ENABLED`, or `FRESH_MEDIA_ENABLED` is enabled in the
+production `.env`. In that configuration, external B2/R2 object storage may
+contain canonical or replicated bytes that are not in MinIO. Do not disable
+that guard or declare backups complete until a separate encrypted mirror for
+every active external bucket has been added and restore-tested. With the
+current local MinIO configuration, the backup includes private media, public
+media, identity-evidence objects, and the metadata sidecar bucket. The free plan has a fixed 20 GiB machine disk and includes
 100 GiB of egress per month; monitor the first backup and storage-provider
 usage, especially if media grows. InstaBox's free plan also has a 200 GiB
 stored-data cap and five snapshots. This workflow does not create machine
