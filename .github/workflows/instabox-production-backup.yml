@@ -135,7 +135,6 @@ jobs:
           payload = {
               "cmd": os.environ["BACKUP_EXEC_CMD"],
               "cwd": "/data/home/testagram/repos/backend",
-              "historyCommand": "testagram encrypted production backup",
               "timeoutSeconds": 600,
               "envs": {
                   "RESTIC_REPOSITORY": os.environ["BACKUP_RESTIC_REPOSITORY"],
