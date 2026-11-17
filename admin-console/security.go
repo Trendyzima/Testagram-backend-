@@ -71,7 +71,7 @@ func (a *app) hasPermission(user authUser, permission string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var granted bool
-	err := a.database.QueryRow(ctx, "SELECT granted FROM testagram_auth.staff_permission_overrides WHERE user_id=$1::uuid AND permission_key=$2", user.ID, permission).Scan(&granted)
+	err := a.database.QueryRow(ctx, "SELECT granted FROM testagram_auth.native_staff_permission_overrides WHERE user_id=$1::uuid AND permission_key=$2", user.ID, permission).Scan(&granted)
 	if err == nil { return granted, nil }
 	if !errors.Is(err, pgx.ErrNoRows) { return false, err }
 	err = a.database.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM testagram_auth.staff_role_grants rg JOIN testagram_auth.staff_role_permissions rp ON rp.role=rg.role WHERE rg.user_id=$1::uuid AND rg.revoked_at IS NULL AND rp.permission_key=$2)", user.ID, permission).Scan(&granted)
@@ -132,8 +132,8 @@ func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request
 	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Approval service is unavailable"}); return }
 	defer func(){_ = tx.Rollback(context.Background())}()
 	var id string
-	err=tx.QueryRow(ctx,"INSERT INTO testagram_auth.sensitive_action_requests (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256,required_approvals) VALUES($1,$2,$3,$4,$5::jsonb,$6,2) RETURNING id::text",input.ActionType,actor.ID,input.TargetReference,input.Reason,string(canonical),hex.EncodeToString(digest[:])).Scan(&id)
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,request_id,metadata) VALUES($1,'sensitive_action.requested',$2,$3,jsonb_build_object('action_type',$4))",actor.ID,input.TargetReference,id,input.ActionType) }
+	err=tx.QueryRow(ctx,"INSERT INTO testagram_auth.native_sensitive_action_requests (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256,required_approvals) VALUES($1,$2,$3,$4,$5::jsonb,$6,2) RETURNING id::text",input.ActionType,actor.ID,input.TargetReference,input.Reason,string(canonical),hex.EncodeToString(digest[:])).Scan(&id)
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,request_id,metadata) VALUES($1,'sensitive_action.requested',$2,$3,jsonb_build_object('action_type',$4))",actor.ID,input.TargetReference,id,input.ActionType) }
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely record the approval request"}); return }
 	writeJSON(w,201,map[string]any{"id":id,"status":"pending","required_approvals":2,"message":"Request recorded. Two different authorised staff members must approve it. The action has not been executed."})
@@ -184,7 +184,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	var requiredApprovals, recordedApprovals int
 	err = tx.QueryRow(ctx, `
 		SELECT action_type, status, target_reference, required_approvals
-		FROM testagram_auth.sensitive_action_requests
+		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid
 		FOR UPDATE
 	`, requestID).Scan(&actionType, &requestStatus, &targetReference, &requiredApprovals)
@@ -193,7 +193,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	}
 	err = tx.QueryRow(ctx, `
 		SELECT count(DISTINCT approver_user_id)
-		FROM testagram_auth.sensitive_action_approvals
+		FROM testagram_auth.native_sensitive_action_approvals
 		WHERE request_id=$1::uuid AND decision='approved'
 	`, requestID).Scan(&recordedApprovals)
 	if err != nil || recordedApprovals != approvalCount {
@@ -219,7 +219,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO testagram_identity.identity_application_reviews
+		INSERT INTO testagram_identity.native_identity_application_reviews
 		  (application_id, reviewer_user_id, decision, reason, evidence_audit_reference)
 		VALUES ($1::uuid, $2, $3, $4, $5)
 	`, applicationID, reviewerID, decision, reason, snapshot.EvidenceAuditReference)
@@ -249,7 +249,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 	var payload []byte
 	err := tx.QueryRow(ctx, `
 		SELECT action_type, requested_by_user_id, status, target_reference, payload
-		FROM testagram_auth.sensitive_action_requests
+		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 		FOR UPDATE
 	`, requestID).Scan(&actionType, &requesterID, &requestStatus, &targetReference, &payload)
@@ -267,7 +267,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 	}
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals
+		INSERT INTO testagram_auth.native_sensitive_action_approvals
 		  (request_id, approver_user_id, decision, reason)
 		VALUES ($1::uuid, $2, $3, $4)
 	`, requestID, approverID, decision, reason); err != nil {
@@ -277,7 +277,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 	var approvalCount int
 	if err := tx.QueryRow(ctx, `
 		SELECT count(DISTINCT approver_user_id)
-		FROM testagram_auth.sensitive_action_approvals
+		FROM testagram_auth.native_sensitive_action_approvals
 		WHERE request_id=$1::uuid AND decision='approved'
 	`, requestID).Scan(&approvalCount); err != nil {
 		return "", "", 0, err
@@ -291,7 +291,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 	}
 	if state != "pending" {
 		tag, err := tx.Exec(ctx, `
-			UPDATE testagram_auth.sensitive_action_requests
+			UPDATE testagram_auth.native_sensitive_action_requests
 			SET status=$2, decided_at=now()
 			WHERE id=$1::uuid AND status='pending'
 		`, requestID, state)
@@ -314,7 +314,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO testagram_auth.admin_security_audit
+		INSERT INTO testagram_auth.native_admin_security_audit
 		  (actor_user_id, action, target_reference, request_id, metadata)
 		VALUES ($1, $2, $3, $4::uuid,
 		        jsonb_build_object('action_type', $5::text, 'decision', $6::text, 'approval_count', $7::integer))
@@ -352,7 +352,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	var action, requester, status string
 	err := a.database.QueryRow(ctx, `
 		SELECT action_type, requested_by_user_id, status
-		FROM testagram_auth.sensitive_action_requests
+		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 	`, id).Scan(&action, &requester, &status)
 	if err != nil {
@@ -428,7 +428,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	}
 	if !canReview { writeJSON(w,403,map[string]string{"error":"You do not have permission to review sensitive actions"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
+	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.native_sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the approval queue"}); return }
 	defer rows.Close()
 	type item struct {
@@ -501,9 +501,9 @@ func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
 	if err!=nil || !exists { writeJSON(w,404,map[string]string{"error":"Staff account not found"}); return }
 	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.admin_permissions WHERE permission_key=$1)",input.Permission).Scan(&exists)
 	if err!=nil || !exists { writeJSON(w,400,map[string]string{"error":"Unknown permission"}); return }
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_permission_overrides(user_id,permission_key,granted,reason,changed_by_user_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,permission_key) DO UPDATE SET granted=EXCLUDED.granted,reason=EXCLUDED.reason,changed_by_user_id=EXCLUDED.changed_by_user_id,created_at=now()",target,input.Permission,input.Granted,input.Reason,actor.ID)
+	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_staff_permission_overrides(user_id,permission_key,granted,reason,changed_by_user_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(user_id,permission_key) DO UPDATE SET granted=EXCLUDED.granted,reason=EXCLUDED.reason,changed_by_user_id=EXCLUDED.changed_by_user_id,created_at=now()",target,input.Permission,input.Granted,input.Reason,actor.ID)
 	if err==nil {
-		_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.permission_changed',$2,jsonb_build_object('permission',$3,'granted',$4,'reason',$5))",actor.ID,target,input.Permission,input.Granted,input.Reason)
+		_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.permission_changed',$2,jsonb_build_object('permission',$3,'granted',$4,'reason',$5))",actor.ID,target,input.Permission,input.Granted,input.Reason)
 	}
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely update staff permissions"}); return }
@@ -550,7 +550,7 @@ func (a *app) handleStaffRoleChange(w http.ResponseWriter,r *http.Request) {
 	if currentRole=="owner" { writeJSON(w,403,map[string]string{"error":"The Master owner account cannot be changed through staff management"}); return }
 	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET role=$2,updated_at=now() WHERE user_id=$1",target,input.Role)
 	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_user_id,target_user_id,action,role) VALUES($1,$2,'role_changed',$3)",actor.ID,target,input.Role) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.role_changed',$2,jsonb_build_object('old_role',$3,'new_role',$4))",actor.ID,target,currentRole,input.Role) }
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.role_changed',$2,jsonb_build_object('old_role',$3,'new_role',$4))",actor.ID,target,currentRole,input.Role) }
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely change staff role"}); return }
 	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"role":input.Role})
@@ -570,7 +570,7 @@ func (a *app) handleStaffRevoke(w http.ResponseWriter,r *http.Request) {
 	if role=="owner" { writeJSON(w,403,map[string]string{"error":"The Master owner account cannot be revoked through staff management"}); return }
 	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET access_revoked_at=now(),updated_at=now() WHERE user_id=$1",target)
 	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_user_id,target_user_id,action,role) VALUES($1,$2,'revoked',$3)",actor.ID,target,role) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.access_revoked',$2,jsonb_build_object('former_role',$3))",actor.ID,target,role) }
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.access_revoked',$2,jsonb_build_object('former_role',$3))",actor.ID,target,role) }
 	if err==nil { err=tx.Commit(ctx) }
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely revoke staff access"}); return }
 	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"access_revoked":true})
@@ -581,7 +581,7 @@ func (a *app) handleAdminAudit(w http.ResponseWriter,r *http.Request) {
 	if _,_,ok:=a.requirePermission(w,r,"audit.read"); !ok { return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
 	rows,err:=a.database.Query(ctx,`SELECT id,actor_user_id,action,target_reference,request_id::text,metadata,created_at
-		FROM testagram_auth.admin_security_audit ORDER BY created_at DESC LIMIT 200`)
+		FROM testagram_auth.native_admin_security_audit ORDER BY created_at DESC LIMIT 200`)
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the security audit ledger"}); return }
 	defer rows.Close()
 	type auditEntry struct {
@@ -607,7 +607,7 @@ func (a *app) handleAdminAudit(w http.ResponseWriter,r *http.Request) {
 
 
 type internalAuthorizationInput struct {
-	AppwriteUserID string `json:"user_id"`
+	UserID string `json:"user_id"`
 	Permission string `json:"permission"`
 }
 
@@ -626,20 +626,23 @@ func (a *app) handleInternalAuthorize(w http.ResponseWriter,r *http.Request) {
 	}
 	var input internalAuthorizationInput
 	if !decodeBody(w,r,&input) { return }
-	input.AppwriteUserID=strings.TrimSpace(input.AppwriteUserID)
+	input.UserID=strings.TrimSpace(input.UserID)
 	input.Permission=strings.TrimSpace(input.Permission)
-	if len(input.AppwriteUserID)<1 || len(input.AppwriteUserID)>36 || len(input.Permission)<1 || len(input.Permission)>100 {
+	if len(input.UserID)<1 || len(input.UserID)>36 || len(input.Permission)<1 || len(input.Permission)>100 {
 		writeJSON(w,http.StatusBadRequest,map[string]string{"error":"A valid staff identity and permission are required"}); return
 	}
 	ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second); defer cancel()
 	var role string
-	err:=a.database.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE user_id=$1 AND access_revoked_at IS NULL",input.AppwriteUserID).Scan(&role)
+	err:=a.database.QueryRow(ctx,`SELECT rg.role FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		ORDER BY CASE rg.role WHEN 'owner' THEN 0 WHEN 'administrator' THEN 1 ELSE 2 END LIMIT 1`,input.UserID).Scan(&role)
 	if err!=nil {
 		if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusForbidden,map[string]any{"authorized":false,"reason":"not_active_staff"}); return }
 		writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Staff authorization database is unavailable"}); return
 	}
-	user:=authUser{ID:input.AppwriteUserID,StaffRole:role}
+	user:=authUser{ID:input.UserID,StaffRole:role}
 	allowed,err:=a.hasPermission(user,input.Permission)
 	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Permission service is unavailable"}); return }
-	writeJSON(w,http.StatusOK,map[string]any{"authorized":allowed,"user_id":input.AppwriteUserID,"permission":input.Permission,"role":role})
+	writeJSON(w,http.StatusOK,map[string]any{"authorized":allowed,"user_id":input.UserID,"permission":input.Permission,"role":role})
 }
