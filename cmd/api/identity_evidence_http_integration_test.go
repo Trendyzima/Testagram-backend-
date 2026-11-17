@@ -157,14 +157,14 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	replicaB2 := newIdentityHTTPFakeProvider()
 
 	buckets := map[string]string{
-		"media-private": "primary-private",
-		"media-public": "primary-public",
+		"media-private":           "primary-private",
+		"media-public":            "primary-public",
 		identityEvidenceNamespace: "primary-identity-evidence",
 	}
 	replicaBuckets := func(prefix string) map[string]string {
 		return map[string]string{
-			"media-private": prefix + "-private",
-			"media-public": prefix + "-public",
+			"media-private":           prefix + "-private",
+			"media-public":            prefix + "-public",
 			identityEvidenceNamespace: prefix + "-identity-evidence",
 		}
 	}
@@ -176,13 +176,13 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		t.Fatal(err)
 	}
 	manager, err := virtualstorage.New(primary, []virtualstorage.Namespace{{
-		Name: identityEvidenceNamespace,
+		Name:           identityEvidenceNamespace,
 		PhysicalBucket: buckets[identityEvidenceNamespace],
-		Public: false,
+		Public:         false,
 		MaxObjectBytes: maxIdentityEvidenceBytes,
-		AllowedTypes: map[string]struct{}{"image/jpeg": {}, "image/png": {}, "image/webp": {}, "application/pdf": {}},
-		UploadTTL: 5*time.Minute,
-		DownloadTTL: 5*time.Minute,
+		AllowedTypes:   map[string]struct{}{"image/jpeg": {}, "image/png": {}, "image/webp": {}, "application/pdf": {}},
+		UploadTTL:      5 * time.Minute,
+		DownloadTTL:    5 * time.Minute,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +211,9 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	call := func(method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(string(body)))
 		req.RemoteAddr = "192.0.2.73:4567"
-		for key, value := range headers { req.Header.Set(key, value) }
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		return rec
@@ -224,8 +226,8 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	}
 	var created struct {
 		ApplicationID string `json:"application_id"`
-		SessionID string `json:"verification_session_id"`
-		SessionToken string `json:"verification_session_token"`
+		SessionID     string `json:"verification_session_id"`
+		SessionToken  string `json:"verification_session_token"`
 	}
 	if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
@@ -242,7 +244,7 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	})
 	sessionPath := "/api/identity/sessions/" + created.SessionID
 	sessionHeaders := map[string]string{
-		"Content-Type": "application/json",
+		"Content-Type":                 "application/json",
 		"X-Verification-Session-Token": created.SessionToken,
 	}
 	reservation := call(http.MethodPost, sessionPath+"/evidence/upload-url", reservationBody, sessionHeaders)
@@ -251,7 +253,7 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	}
 	var reserved struct {
 		EvidenceID string `json:"evidence_id"`
-		UploadURL string `json:"upload_url"`
+		UploadURL  string `json:"upload_url"`
 	}
 	if err := json.Unmarshal(reservation.Body.Bytes(), &reserved); err != nil {
 		t.Fatal(err)
@@ -260,7 +262,7 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		t.Fatalf("invalid evidence reservation: %#v", reserved)
 	}
 	uploaded := call(http.MethodPut, reserved.UploadURL, evidenceBytes, map[string]string{
-		"Content-Type": "image/jpeg",
+		"Content-Type":                 "image/jpeg",
 		"X-Verification-Session-Token": created.SessionToken,
 	})
 	if uploaded.Code != http.StatusNoContent {
