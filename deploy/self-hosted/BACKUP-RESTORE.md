@@ -54,10 +54,14 @@ stdout/stderr and exit status to the operator alerting channel. Run backup at
 least daily and run the integrity check on a separate schedule. Review available
 space on both the application host and backup destination.
 
-The script requires a password file with mode 0600 and refuses to run if it is
-more permissive. For S3-compatible restic repositories, use the documented
-restic environment variables and a dedicated least-privilege backup identity.
-Do not reuse MinIO root credentials for an off-host backup destination.
+The script accepts either a password file with mode 0600 (and refuses to
+run if it is more permissive) or `RESTIC_PASSWORD` for a short-lived automated
+job. Prefer the file for interactive operator runs; the InstaBox workflow passes
+the password only as a temporary exec environment variable and never stores it
+in the production `.env` or a command line. For S3-compatible restic
+repositories, use the documented restic environment variables and a dedicated
+least-privilege backup identity. Do not reuse MinIO root credentials for an
+off-host backup destination.
 
 
 ## InstaBox free-plan production schedule
