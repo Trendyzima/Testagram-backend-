@@ -91,6 +91,17 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(probe.call_count, 2)
         self.assertFalse(hasattr(watchdog, "READY_URL"))
 
+    def test_post_resume_404_does_not_erase_provider_resume_success(self):
+        with patch.object(
+            watchdog, "probe",
+            side_effect=watchdog.ProbeConfigurationError(
+                "Health probe /healthz returned HTTP 404; refusing automatic lifecycle action until the probe contract is corrected"
+            ),
+        ):
+            result = watchdog.wait_for_service()
+        self.assertIn("application liveness unverified", result)
+        self.assertIn("HTTP 404", result)
+
     def test_probe_404_is_a_configuration_error_not_an_outage(self):
         error = watchdog.urllib.error.HTTPError(
             "https://api.example.test/healthz", 404, "Not Found", {}, None
