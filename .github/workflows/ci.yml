@@ -75,10 +75,15 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${BASE_SHA:-}" || "${BASE_SHA}" =~ ^0+$ ]]; then
-            mapfile -t go_files < <(git ls-files 'cmd/*.go' 'cmd/**/*.go')
+            mapfile -t candidates < <(git ls-files 'cmd/*.go' 'cmd/**/*.go')
           else
-            mapfile -t go_files < <(git diff --name-only "${BASE_SHA}"...HEAD -- 'cmd/*.go' 'cmd/**/*.go')
+            # Deleted Go files are part of the diff but are not format-check inputs.
+            mapfile -t candidates < <(git diff --diff-filter=ACMRT --name-only "${BASE_SHA}"...HEAD -- 'cmd/*.go' 'cmd/**/*.go')
           fi
+          go_files=()
+          for file in "${candidates[@]}"; do
+            [[ -f "$file" ]] && go_files+=("$file")
+          done
           if (("${#go_files[@]}" > 0)); then
             unformatted="$(printf '%s\n' "${go_files[@]}" | xargs -r gofmt -l)"
             if [[ -n "$unformatted" ]]; then
