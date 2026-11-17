@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestIdentityApplicationConflictOnlyMasksDuplicateEmailOrUsername(t *testing.T) {
@@ -41,10 +41,10 @@ func TestIdentityApplicationConflictOnlyMasksDuplicateEmailOrUsername(t *testing
 
 func TestIdentityApplicationRecoveryDoesNotReopenVerifiedOrProvisionedSessions(t *testing.T) {
 	cases := []struct {
-		name              string
-		status            string
+		name               string
+		status             string
 		provisioningExists bool
-		wantRenew         bool
+		wantRenew          bool
 	}{
 		{name: "new pending application", status: "pending", wantRenew: true},
 		{name: "initial verification pending", status: "verification_pending", wantRenew: true},
@@ -143,8 +143,8 @@ func TestIdentityDerivedCapabilityTokensAreStableAndSeparated(t *testing.T) {
 func TestIdentityEvidenceExtensionAllowlist(t *testing.T) {
 	cases := []struct {
 		contentType string
-		want string
-		ok bool
+		want        string
+		ok          bool
 	}{
 		{"image/jpeg", ".jpg", true},
 		{"image/png", ".png", true},
@@ -179,10 +179,10 @@ func TestIdentityRequestTokenShapes(t *testing.T) {
 
 func TestIdentityEvidenceContentTypeSniffing(t *testing.T) {
 	cases := []struct {
-		name string
+		name        string
 		contentType string
-		payload []byte
-		want bool
+		payload     []byte
+		want        bool
 	}{
 		{"jpeg", "image/jpeg", []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00"), true},
 		{"png", "image/png", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), true},
