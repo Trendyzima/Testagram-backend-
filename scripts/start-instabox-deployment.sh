@@ -1,12 +1,12 @@
 set -euo pipefail
 API="https://api.instabox.sh"
 MACHINE_ID="${MACHINE_ID:?machine output is required}"
-TESTAGRAM_AUTH_PROVIDER="${TESTAGRAM_AUTH_PROVIDER:-appwrite}"
+TESTAGRAM_AUTH_PROVIDER="${TESTAGRAM_AUTH_PROVIDER:-native}"
 AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 SMTP_PORT="${SMTP_PORT:-587}"
 case "$TESTAGRAM_AUTH_PROVIDER" in
-  appwrite|native) ;;
-  *) echo "::error::TESTAGRAM_AUTH_PROVIDER must be appwrite or native."; exit 1 ;;
+  native) ;;
+  *) echo "::error::Testagram supports only native authentication; legacy identity providers are not accepted."; exit 1 ;;
 esac
 if [[ "$TESTAGRAM_AUTH_PROVIDER" == "native" ]]; then
   TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
@@ -134,8 +134,6 @@ B2_S3_PUBLIC_BUCKET=
 B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=
 B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
-APPWRITE_ENDPOINT=${APPWRITE_ENDPOINT:-https://fra.cloud.appwrite.io/v1}
-APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-6af01d97002875d6d7bd}
 TESTAGRAM_AUTH_PROVIDER=$TESTAGRAM_AUTH_PROVIDER
 TESTAGRAM_AUTH_JWT_SECRET=${TESTAGRAM_AUTH_JWT_SECRET:-}
 AUTH_PUBLIC_BASE_URL=$AUTH_PUBLIC_BASE_URL
@@ -150,7 +148,6 @@ FEDERATION_INTERNAL_URL=http://federation:8081
 FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
 FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
 FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
-APPWRITE_API_KEY=
 MEDIA_S3_ENDPOINT=
 MEDIA_S3_SIGNING_HOST=
 MEDIA_S3_ACCESS_KEY=
@@ -202,7 +199,6 @@ ensure_random_secret FEDERATION_INGRESS_TOKEN
 # Private identity evidence is stored in a dedicated MinIO bucket.
 # Registration and three-provider replication remain fail-closed until
 # a separate staging acceptance and explicit operator activation.
-write_env_value APPWRITE_ENDPOINT "$APPWRITE_ENDPOINT"
 write_env_value TESTAGRAM_AUTH_PROVIDER "$TESTAGRAM_AUTH_PROVIDER"
 write_env_value AUTH_PUBLIC_BASE_URL "$AUTH_PUBLIC_BASE_URL"
 write_env_value SMTP_PORT "$SMTP_PORT"
@@ -210,7 +206,6 @@ for key in TESTAGRAM_AUTH_JWT_SECRET SMTP_HOST SMTP_USERNAME SMTP_PASSWORD AUTH_
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
-for key in APPWRITE_API_KEY MEDIA_MODERATION_TOKEN MPESA_ENV MPESA_SHORTCODE MPESA_PASSKEY MPESA_CONSUMER_KEY MPESA_CONSUMER_SECRET MPESA_CALLBACK_URL ADMIN_SERVICE_AUTH_KEY; do
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
@@ -291,24 +286,12 @@ if [[ "$CDN_MEDIA_BASE_URL" != https://* ]]; then
   echo "::error::CDN_MEDIA_BASE_URL must be HTTPS; refusing an insecure public media origin."
   exit 1
 fi
-if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
-  if grep -q '^APPWRITE_PROJECT_ID=' "$BASE_ENV"; then
-    sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$BASE_ENV"
-  else
-    echo "APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID" >> "$BASE_ENV"
-  fi
-fi
-
 set -a
 # shellcheck disable=SC1090
 source "$BASE_ENV"
 set +a
 
-# Appwrite remains the separate staff-reviewer identity dependency during the migration window.
-if [[ -z "${APPWRITE_PROJECT_ID:-}" ]]; then
-  echo "::error::APPWRITE_PROJECT_ID is required for the staff identity-review console and legacy compatibility path."
-  exit 1
-fi
+# Staff identity review and account authentication are Testagram-native. No external identity-provider credentials are required.
 # No third-party AI vendor is part of Testagram deployment. The Backend
 # retains its own fail-closed publishing behavior when moderation is unavailable.
 echo "No external AI moderation provider is configured; protected publishing remains fail-closed."
@@ -422,8 +405,6 @@ FEDERATION_SERVICE_ACTOR_USERNAME=testagram
 FEDERATION_DELIVERY_WORKER_ENABLED=false
 FEDERATION_OUTBOX_POLLER_ENABLED=false
 FEDERATION_INBOX_WORKER_ENABLED=false
-APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
-APPWRITE_PROJECT_ID=${APPWRITE_PROJECT_ID:-not-configured}
 VIDEO_SIGNING_SECRET=$(openssl rand -hex 32)
 VIDEO_ACCOUNT_QUOTA_BYTES=21474836480
 VIDEO_MIN_FREE_BYTES=2147483648
@@ -448,9 +429,6 @@ write_dc_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERN
 # Existing Data Centre .env files must receive the reviewed immutable image pins too.
 write_dc_env_value TESTAGRAM_ALGORITHM_IMAGE "$TESTAGRAM_ALGORITHM_IMAGE"
 write_dc_env_value TESTAGRAM_FEDERATION_IMAGE "$TESTAGRAM_FEDERATION_IMAGE"
-if [[ -n "${APPWRITE_PROJECT_ID:-}" ]]; then
-  sed -i "s|^APPWRITE_PROJECT_ID=.*|APPWRITE_PROJECT_ID=$APPWRITE_PROJECT_ID|" "$DC_ENV"
-fi
 # Provider credentials are not copied to the VPS unless the private
 # media profile has been explicitly enabled for this deployment.
 chmod 600 "$DC_ENV"
@@ -529,14 +507,10 @@ if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compo
   if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" run --rm migrate; then
     if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" pull algorithm federation-api && sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build --force-recreate algorithm federation-api platform worker video-worker; then
       overlay_status=core_services_running
-      if [[ -n "${APPWRITE_PROJECT_ID:-}" && "$APPWRITE_PROJECT_ID" != "not-configured" ]]; then
-        if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build video notification; then
-          overlay_status=all_data_centre_services_running
-        else
-          overlay_status=core_running_appwrite_services_failed
-        fi
+      if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build video notification; then
+        overlay_status=all_data_centre_services_running
       else
-        overlay_status=core_running_appwrite_project_id_missing
+        overlay_status=core_data_centre_services_failed
       fi
     else
       overlay_status=core_services_failed_check_logs
@@ -549,7 +523,7 @@ else
 fi
 
 case "$overlay_status" in
-  core_services_running|all_data_centre_services_running|core_running_appwrite_project_id_missing)
+  core_services_running|all_data_centre_services_running)
     ;;
   *)
     echo "::error::Data Centre deployment did not reach an accepted core-services state: $overlay_status"
@@ -712,8 +686,6 @@ fi
 
 payload="$(jq -nc \
   --arg cmd "$REMOTE_COMMAND" \
-  --arg appwrite_endpoint "$APPWRITE_ENDPOINT" \
-  --arg appwrite "${APPWRITE_PROJECT_ID:-}" \
   --arg auth_provider "$TESTAGRAM_AUTH_PROVIDER" \
   --arg auth_jwt_secret "${TESTAGRAM_AUTH_JWT_SECRET:-}" \
   --arg auth_public_base_url "$AUTH_PUBLIC_BASE_URL" \
@@ -727,7 +699,6 @@ payload="$(jq -nc \
   --arg identity_migration_confirmation "${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
   --arg terms_version "$TESTAGRAM_TERMS_VERSION" \
   --arg privacy_version "$TESTAGRAM_PRIVACY_VERSION" \
-  --arg appwrite_api_key "${APPWRITE_API_KEY:-}" \
   --arg moderation_token "${MEDIA_MODERATION_TOKEN:-}" \
   --arg mpesa_env "${MPESA_ENV:-}" --arg mpesa_shortcode "${MPESA_SHORTCODE:-}" \
   --arg mpesa_passkey "${MPESA_PASSKEY:-}" --arg mpesa_consumer_key "${MPESA_CONSUMER_KEY:-}" \
@@ -739,7 +710,7 @@ payload="$(jq -nc \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-  '{cmd:$cmd,envs:{APPWRITE_ENDPOINT:$appwrite_endpoint,APPWRITE_PROJECT_ID:$appwrite,TESTAGRAM_AUTH_PROVIDER:$auth_provider,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,SMTP_HOST:$smtp_host,SMTP_PORT:$smtp_port,SMTP_USERNAME:$smtp_username,SMTP_PASSWORD:$smtp_password,AUTH_FROM_EMAIL:$auth_from_email,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,APPWRITE_API_KEY:$appwrite_api_key,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{TESTAGRAM_AUTH_PROVIDER:$auth_provider,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,SMTP_HOST:$smtp_host,SMTP_PORT:$smtp_port,SMTP_USERNAME:$smtp_username,SMTP_PASSWORD:$smtp_password,AUTH_FROM_EMAIL:$auth_from_email,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \
