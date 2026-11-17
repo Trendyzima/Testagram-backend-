@@ -129,3 +129,18 @@ test("never starts a running machine or one with an active operation", async () 
     });
   }
 });
+
+
+test("accepts and safely ignores signed non-stop lifecycle events", async () => {
+  const body = JSON.stringify({ id: "evt_started_123", type: "sandbox.started", data: { sandbox: { id: "machine-123" } } });
+  const result = await validateWebhookRequest(signedRequest({ body, deliveryId: "evt_started_123" }), secret, now);
+  assert.equal(result.ok, true);
+  assert.equal(result.event.type, "sandbox.started");
+});
+
+test("rejects stopped events without a sandbox identity", async () => {
+  const body = JSON.stringify({ id: "evt_missing_machine", type: "sandbox.stopped", data: {} });
+  const result = await validateWebhookRequest(signedRequest({ body, deliveryId: "evt_missing_machine" }), secret, now);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 400);
+});
