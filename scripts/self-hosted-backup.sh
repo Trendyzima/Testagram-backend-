@@ -57,6 +57,7 @@ cd "$compose_dir"
 # buckets require their own explicit backup and restore-tested targets.
 read_env_flag() {
   local key="$1"
+  # shellcheck disable=SC2016
   awk -F= -v key="$key" '$1 == key {
     value = $2
     gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
