@@ -57,7 +57,13 @@ cd "$BACKEND"
 # Compose files, migrations, environment files, or running containers.
 git fetch --depth 1 origin main
 for file in scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh scripts/instabox-production-backup.sh; do
-  git show FETCH_HEAD:"$file" > "$BACKEND/$file.new"
+  if git show "FETCH_HEAD:$file" | cmp -s - "$BACKEND/$file"; then
+    continue
+  fi
+  if ! git diff --quiet -- "$file" || ! git diff --cached --quiet -- "$file"; then
+    die "local edits to $file differ from the approved main-branch backup helper; review them before refreshing"
+  fi
+  git show "FETCH_HEAD:$file" > "$BACKEND/$file.new"
   chmod 700 "$BACKEND/$file.new"
   mv "$BACKEND/$file.new" "$BACKEND/$file"
 done
