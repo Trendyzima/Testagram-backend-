@@ -146,11 +146,11 @@ fi
     printf 'Backup complete. Temporary plaintext staging will now be removed.\n'
     ;;
   check)
-    restic snapshots --tag testagram
+    restic snapshots --host testagram-self-hosted --tag testagram
     restic check --read-data-subset=1/20
     ;;
   prune)
-    restic forget --tag testagram \
+    restic forget --host testagram-self-hosted --tag testagram \
       --keep-daily "${RESTIC_KEEP_DAILY:-7}" \
       --keep-weekly "${RESTIC_KEEP_WEEKLY:-5}" \
       --keep-monthly "${RESTIC_KEEP_MONTHLY:-12}" --prune
