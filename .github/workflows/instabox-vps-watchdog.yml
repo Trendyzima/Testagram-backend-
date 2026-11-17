@@ -96,7 +96,8 @@ jobs:
             echo "- Schedule: every five minutes"
             echo "- Recovery: start only when provider state is stopped but desiredState remains running"
             echo "- Idle suspend: left to InstaBox wake-on-real-request and Paradev SSH"
-            echo "- Routine monitoring: provider API only; no scheduled HTTP keepalive probes"
+            echo "- Health monitoring: provider state first; probe public /healthz only while provider reports running"
+            echo "- Suspended idle machines are left to real-request auto-wake; three failed running-machine probes trigger a guarded stop/start"
             echo
             echo "See the run log for provider state and any recovery verification details."
           } >> "$GITHUB_STEP_SUMMARY"
