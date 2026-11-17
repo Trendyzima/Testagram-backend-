@@ -81,7 +81,7 @@ jobs:
             export INSTABOX_WATCHDOG_API_KEY_HEADER=X-API-Key
           fi
           python3 scripts/instabox_watchdog.py
-      - name: Ensure cooldown state file exists
+      - name: Ensure watchdog state file exists
         if: always()
         run: test -f .watchdog-state.json || printf '{}' > .watchdog-state.json
       - name: Persist watchdog incident state for the next scheduled run
