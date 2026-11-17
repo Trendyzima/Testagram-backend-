@@ -108,6 +108,10 @@ jobs:
             echo "::error::Could not safely identify the production machine. Name it testagramdb or set INSTABOX_MACHINE_ID as a repository variable/secret."
             exit 1
           fi
+          if [[ ! "$machine_id" =~ ^m_[a-z2-7]{26}$ ]]; then
+            echo "::error::InstaBox returned an invalid machine identifier."
+            exit 1
+          fi
           printf 'machine_id=%s\\n' "$machine_id" >> "$GITHUB_OUTPUT"
 
       - name: Wake only the idle-suspended production machine
