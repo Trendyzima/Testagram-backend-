@@ -497,7 +497,7 @@ func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
 	defer func(){_ = tx.Rollback(context.Background())}()
 	var exists bool
-	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_roles WHERE user_id=$1)",target).Scan(&exists)
+	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_principals WHERE user_id=$1::uuid AND enabled=TRUE AND mfa_enrolled_at IS NOT NULL)",target).Scan(&exists)
 	if err!=nil || !exists { writeJSON(w,404,map[string]string{"error":"Staff account not found"}); return }
 	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.admin_permissions WHERE permission_key=$1)",input.Permission).Scan(&exists)
 	if err!=nil || !exists { writeJSON(w,400,map[string]string{"error":"Unknown permission"}); return }
@@ -517,63 +517,38 @@ func (a *app) handleStaffList(w http.ResponseWriter,r *http.Request) {
 	s,_,ok:=a.requireStaff(w,r,"owner"); if !ok { return }
 	if !a.requireRecentStepUp(w,s) { return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,"SELECT user_id,role,created_at,updated_at,access_revoked_at FROM testagram_auth.staff_roles ORDER BY created_at DESC LIMIT 500")
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load staff directory"}); return }
+	rows,err:=a.database.Query(ctx,`SELECT sp.user_id::text,i.email_normalized,
+		sp.enabled,sp.mfa_enrolled_at,sp.created_at,
+		COALESCE(string_agg(rg.role,',' ORDER BY rg.role) FILTER (WHERE rg.revoked_at IS NULL),'')
+		FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+		LEFT JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id
+		GROUP BY sp.user_id,i.email_normalized,sp.enabled,sp.mfa_enrolled_at,sp.created_at
+		ORDER BY sp.created_at DESC LIMIT 500`)
+	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load native staff directory"}); return }
 	defer rows.Close()
 	type staffItem struct {
 		UserID string `json:"user_id"`
-		Role string `json:"role"`
+		Email string `json:"email"`
+		Enabled bool `json:"enabled"`
+		MFAEnrolledAt *time.Time `json:"mfa_enrolled_at"`
 		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		RevokedAt *time.Time `json:"revoked_at"`
+		Roles string `json:"roles"`
 	}
 	items:=make([]staffItem,0)
-	for rows.Next() { var item staffItem; if err:=rows.Scan(&item.UserID,&item.Role,&item.CreatedAt,&item.UpdatedAt,&item.RevokedAt); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read staff directory"}); return }; items=append(items,item) }
-	if err:=rows.Err(); err!=nil { writeJSON(w,503,map[string]string{"error":"Could not read staff directory"}); return }
+	for rows.Next(){var item staffItem;if err:=rows.Scan(&item.UserID,&item.Email,&item.Enabled,&item.MFAEnrolledAt,&item.CreatedAt,&item.Roles);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not read native staff directory"});return};items=append(items,item)}
+	if err:=rows.Err();err!=nil{writeJSON(w,503,map[string]string{"error":"Could not read native staff directory"});return}
 	writeJSON(w,200,map[string]any{"items":items})
 }
 
 func (a *app) handleStaffRoleChange(w http.ResponseWriter,r *http.Request) {
-	s,actor,ok:=a.requireStaff(w,r,"owner"); if !ok { return }
-	if !a.requireRecentStepUp(w,s) { return }
-	target:=r.PathValue("id")
-	if len(target)<1 || len(target)>36 { writeJSON(w,400,map[string]string{"error":"Invalid staff user ID"}); return }
-	var input staffRoleInput
-	if !decodeBody(w,r,&input) { return }
-	switch input.Role { case "administrator","engineer","operations","support","moderator": default: writeJSON(w,400,map[string]string{"error":"Unsupported staff role"}); return }
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Staff access service is unavailable"}); return }
-	defer func(){_ = tx.Rollback(context.Background())}()
-	var currentRole string
-	err=tx.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE user_id=$1 AND access_revoked_at IS NULL FOR UPDATE",target).Scan(&currentRole)
-	if err!=nil { writeJSON(w,404,map[string]string{"error":"Active staff account not found"}); return }
-	if currentRole=="owner" { writeJSON(w,403,map[string]string{"error":"The Master owner account cannot be changed through staff management"}); return }
-	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET role=$2,updated_at=now() WHERE user_id=$1",target,input.Role)
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_user_id,target_user_id,action,role) VALUES($1,$2,'role_changed',$3)",actor.ID,target,input.Role) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.role_changed',$2,jsonb_build_object('old_role',$3,'new_role',$4))",actor.ID,target,currentRole,input.Role) }
-	if err==nil { err=tx.Commit(ctx) }
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely change staff role"}); return }
-	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"role":input.Role})
+	if _,_,ok:=a.requireStaff(w,r,"owner");!ok{return}
+	writeJSON(w,http.StatusNotImplemented,map[string]string{"error":"Staff role changes require the two-person native staff approval workflow. No direct role mutation is permitted."})
 }
 
 func (a *app) handleStaffRevoke(w http.ResponseWriter,r *http.Request) {
-	s,actor,ok:=a.requireStaff(w,r,"owner"); if !ok { return }
-	if !a.requireRecentStepUp(w,s) { return }
-	target:=r.PathValue("id")
-	if len(target)<1 || len(target)>36 { writeJSON(w,400,map[string]string{"error":"Invalid staff user ID"}); return }
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Staff access service is unavailable"}); return }
-	defer func(){_ = tx.Rollback(context.Background())}()
-	var role string
-	err=tx.QueryRow(ctx,"SELECT role FROM testagram_auth.staff_roles WHERE user_id=$1 AND access_revoked_at IS NULL FOR UPDATE",target).Scan(&role)
-	if err!=nil { writeJSON(w,404,map[string]string{"error":"Active staff account not found"}); return }
-	if role=="owner" { writeJSON(w,403,map[string]string{"error":"The Master owner account cannot be revoked through staff management"}); return }
-	_,err=tx.Exec(ctx,"UPDATE testagram_auth.staff_roles SET access_revoked_at=now(),updated_at=now() WHERE user_id=$1",target)
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.staff_role_audit(actor_user_id,target_user_id,action,role) VALUES($1,$2,'revoked',$3)",actor.ID,target,role) }
-	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.access_revoked',$2,jsonb_build_object('former_role',$3))",actor.ID,target,role) }
-	if err==nil { err=tx.Commit(ctx) }
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely revoke staff access"}); return }
-	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"access_revoked":true})
+	if _,_,ok:=a.requireStaff(w,r,"owner");!ok{return}
+	writeJSON(w,http.StatusNotImplemented,map[string]string{"error":"Staff revocation requires the two-person native staff approval workflow. No direct role mutation is permitted."})
 }
 
 
