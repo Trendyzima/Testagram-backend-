@@ -736,12 +736,8 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	access, err := s.identitySessionAccess(r)
-	if err != nil || (access.Status != "in_progress" && access.Status != "created") {
+	if err != nil {
 		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
-		return
-	}
-	if s.virtualStorage == nil || s.mediaReplicator == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -749,6 +745,33 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	var input identityEvidenceSubmitInput
 	if err := decodeSingleJSON(r.Body, &input); err != nil || !identityApplicationIDPattern.MatchString(input.EvidenceID) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_EVIDENCE_REFERENCE", "Evidence reference is invalid", requestID(r)))
+		return
+	}
+	if access.Status == "manual_review" {
+		var evidenceReference string
+		if err := s.db.QueryRow(r.Context(), `
+			SELECT COALESCE(evidence_reference,'')
+			FROM testagram_identity.verification_sessions
+			WHERE id=$1::uuid AND application_id=$2::uuid
+		`, r.PathValue("session_id"), access.ApplicationID).Scan(&evidenceReference); err == nil &&
+			evidenceReference == "identity-evidence:"+input.EvidenceID {
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"ok": true, "status": "manual_review",
+				"idempotent_replay": true,
+				"message": "Evidence was already securely received and queued for manual review.",
+			})
+			return
+		}
+		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_ALREADY_SUBMITTED", "This verification session has already submitted different evidence", requestID(r)))
+		return
+	}
+	if access.Status != "in_progress" && access.Status != "created" {
+		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
+		return
+	}
+	if s.virtualStorage == nil || s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
