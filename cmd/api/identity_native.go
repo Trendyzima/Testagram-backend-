@@ -162,6 +162,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	} else {
+		log.Printf("identity application preflight lookup failed request_id=%s: %v", requestID(r), preflightErr)
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Application recovery state is unavailable", requestID(r)))
 		return
 	}
@@ -205,6 +206,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	if !existing {
 		if err := tx.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
+			log.Printf("identity application UUID generation failed request_id=%s: %v", requestID(r), err)
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Registration is temporarily unavailable", requestID(r)))
 			return
 		}
