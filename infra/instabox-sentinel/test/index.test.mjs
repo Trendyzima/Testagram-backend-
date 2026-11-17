@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { validateWebhookRequest, reconcileStoppedEvent } from "../src/index.mjs";
+import { validateWebhookRequest, reconcileStoppedEvent, EventLedger } from "../src/index.mjs";
 
 const secretBytes = Buffer.from("test-only-webhook-signing-key");
 const secret = `whsec_${secretBytes.toString("base64")}`;
@@ -143,4 +143,62 @@ test("rejects stopped events without a sandbox identity", async () => {
   const result = await validateWebhookRequest(signedRequest({ body, deliveryId: "evt_missing_machine" }), secret, now);
   assert.equal(result.ok, false);
   assert.equal(result.status, 400);
+});
+
+
+test("persists a verified delivery before acknowledging InstaBox", async () => {
+  const records = new Map();
+  let alarmAt = null;
+  const state = {
+    storage: {
+      get: async (key) => records.get(key),
+      put: async (key, value) => records.set(key, value),
+      setAlarm: async (value) => { alarmAt = value; },
+      list: async () => records,
+      delete: async (key) => records.delete(key),
+    },
+    blockConcurrencyWhile: async (callback) => callback(),
+  };
+  const ledger = new EventLedger(state, {});
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("provider I/O must not run before the webhook acknowledgement"); };
+  try {
+    const response = await ledger.fetch(new Request("https://ledger/process", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deliveryId: "evt_durable_123", event: stoppedEvent }),
+    }));
+    assert.equal(response.status, 202);
+    assert.equal(records.get("event:evt_durable_123").status, "pending");
+    assert.equal(records.get("event:evt_durable_123").attempts, 0);
+    assert.ok(Number.isFinite(alarmAt));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("re-acknowledges pending duplicate deliveries without resetting their retry state", async () => {
+  const records = new Map([["event:evt_pending_123", {
+    status: "pending", deliveryId: "evt_pending_123", event: stoppedEvent, attempts: 3, updatedAt: 1,
+  }]]);
+  let alarmAt = null;
+  const state = {
+    storage: {
+      get: async (key) => records.get(key),
+      put: async (key, value) => records.set(key, value),
+      setAlarm: async (value) => { alarmAt = value; },
+      list: async () => records,
+      delete: async (key) => records.delete(key),
+    },
+    blockConcurrencyWhile: async (callback) => callback(),
+  };
+  const ledger = new EventLedger(state, {});
+  const response = await ledger.fetch(new Request("https://ledger/process", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deliveryId: "evt_pending_123", event: stoppedEvent }),
+  }));
+  assert.equal(response.status, 202);
+  assert.equal(records.get("event:evt_pending_123").attempts, 3);
+  assert.ok(Number.isFinite(alarmAt));
 });
