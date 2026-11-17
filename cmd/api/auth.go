@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/mail"
@@ -582,8 +583,9 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 			link := base + "/reset-password?token=" + url.QueryEscape(token)
 			if sendErr := s.authSendEmail(ctx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>"); sendErr != nil {
-				writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the account exists, password recovery instructions will be sent."})
-				return true
+				// Keep the response indistinguishable from an unknown account, but
+				// leave a request-correlated operational signal for delivery repair.
+				log.Printf("password recovery email delivery failed request_id=%s: %v", requestID(r), sendErr)
 			}
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the account exists, password recovery instructions will be sent."})
@@ -591,6 +593,42 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 	case "reset-password":
 		token := strings.TrimSpace(in.Token)
 		if len(token) < 32 || len(token) > 128 {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
+			return true
+		}
+		// Rate-limit unauthenticated recovery before running the deliberately
+		// expensive Argon2id KDF. A cheap token preflight avoids spending KDF
+		// resources on unknown, expired or already-consumed capabilities; the
+		// token is re-locked and revalidated in the transaction below.
+		allowed, rateErr := s.authRateAllowed(ctx, "password-reset-ip", ip, 10)
+		if rateErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Password recovery is temporarily unavailable", requestID(r)))
+			return true
+		}
+		if !allowed {
+			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Too many password reset attempts. Try again later.", requestID(r)))
+			return true
+		}
+		allowed, rateErr = s.authRateAllowed(ctx, "password-reset-token", token, 3)
+		if rateErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Password recovery is temporarily unavailable", requestID(r)))
+			return true
+		}
+		if !allowed {
+			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "This password reset link has been attempted too many times. Request a new link.", requestID(r)))
+			return true
+		}
+		var tokenEligible bool
+		if err := s.db.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM testagram_auth.password_reset_tokens
+				WHERE token_hash=$1 AND consumed_at IS NULL AND expires_at>now()
+			)
+		`, authTokenHash(token)).Scan(&tokenEligible); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
+			return true
+		}
+		if !tokenEligible {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Reset token is invalid or expired", requestID(r)))
 			return true
 		}
