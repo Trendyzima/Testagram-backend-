@@ -171,6 +171,8 @@ fi
     [[ "$postgres_user" =~ ^[A-Za-z0-9_]+$ && "$postgres_primary_db" =~ ^[A-Za-z0-9_]+$ ]] || die "PostgreSQL user/database names are missing or unsupported"
     extra_postgres_roles="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND rolname NOT IN ('postgres', '$postgres_user') ORDER BY rolname")"
     [[ -z "$extra_postgres_roles" ]] || die "additional PostgreSQL roles detected ($extra_postgres_roles); add a tested globals backup/restore before relying on this backup"
+    extra_tablespaces="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT spcname FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname")"
+    [[ -z "$extra_tablespaces" ]] || die "user-defined PostgreSQL tablespaces detected ($extra_tablespaces); back up their external paths before relying on this workflow"
     postgres_database_names="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")"
     [[ -n "$postgres_database_names" ]] || die "PostgreSQL returned no connectable databases"
     grep -Fxq "$postgres_primary_db" <<< "$postgres_database_names" || die "primary PostgreSQL database is absent from the database inventory"
