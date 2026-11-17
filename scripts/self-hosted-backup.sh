@@ -69,6 +69,10 @@ for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENAB
     die "$flag is enabled; extend the backup to active external object-store buckets before relying on it"
   fi
 done
+
+if [[ -n "$(read_env_flag MEDIA_S3_ENDPOINT)" ]]; then
+  die "MEDIA_S3_ENDPOINT is configured; extend the backup to that external primary bucket before relying on it"
+fi
 "${DOCKER[@]}" compose config --quiet
 
 case "${1:-}" in
