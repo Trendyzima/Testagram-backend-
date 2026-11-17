@@ -77,5 +77,7 @@ table_count="$("${DOCKER[@]}" exec "$container_name" psql -U testagram -d testag
 
 private_count="$(find "$restore_dir" -type f -path '*/minio-private/*' | wc -l | tr -d ' ')"
 public_count="$(find "$restore_dir" -type f -path '*/minio-public/*' | wc -l | tr -d ' ')"
-printf 'Restore drill passed: application_tables=%s private_media_files=%s public_media_files=%s\n' "$table_count" "$private_count" "$public_count"
+identity_count="$(find "$restore_dir" -type f -path '*/minio-identity-evidence/*' | wc -l | tr -d ' ')"
+metadata_count="$(find "$restore_dir" -type f -path '*/minio-metadata/*' | wc -l | tr -d ' ')"
+printf 'Restore drill passed: application_tables=%s private_media_files=%s public_media_files=%s identity_evidence_files=%s metadata_files=%s\n' "$table_count" "$private_count" "$public_count" "$identity_count" "$metadata_count"
 printf 'This validates a database restore in isolation; it does not switch traffic or restore a live MinIO service.\n'
