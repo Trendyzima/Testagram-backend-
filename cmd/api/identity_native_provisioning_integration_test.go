@@ -130,7 +130,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		   verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_user_id)
 		VALUES($1::uuid,$2::uuid,$5,'age_assurance',18,'verified',
 		       'opaque-native-provisioning-evidence',decode($3,'hex'),'document_review','reviewed',
-		       TRUE,now()+interval '1 day',now(),now(),$4)
+		       TRUE,now()+interval '1 day',now(),now(),$4::uuid)
 	`, sessionID, applicationID, fingerprint, reviewerOne, sessionTokenHash); err != nil {
 		t.Fatal(err)
 	}
