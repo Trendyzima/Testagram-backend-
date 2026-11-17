@@ -42,7 +42,7 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "probe") as probe,
             patch.object(watchdog, "API") as api_factory,
         ):
-            with self.assertRaisesRegex(watchdog.WatchdogError, "An InstaBox API key is required"):
+            with self.assertRaisesRegex(watchdog.WatchdogError, "INSTABOX_WATCHDOG_API_KEY is required"):
                 watchdog.main()
         probe.assert_not_called()
         api_factory.assert_not_called()
@@ -56,7 +56,7 @@ class WatchdogTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 watchdog.WatchdogError,
-                "An InstaBox API key is required",
+                "INSTABOX_WATCHDOG_API_KEY is required",
             ):
                 watchdog.main()
 
@@ -204,6 +204,7 @@ class WatchdogTests(unittest.TestCase):
              patch.object(watchdog, "wait_for_service"), \
              patch.object(watchdog, "API_KEY", "test-key"), \
              patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"), \
+             patch.object(watchdog, "DRY_RUN", False), \
              patch.object(watchdog, "MACHINE_ID", "machine-123"), \
              patch.object(watchdog, "HEALTH_URL", "https://example.test/healthz"):
 
