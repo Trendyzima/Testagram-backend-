@@ -13,10 +13,14 @@ BACKEND="$ROOT/repos/backend"
 [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]] || die "dedicated S3 backup credentials are required"
 [[ -n "${AWS_DEFAULT_REGION:-}" ]] || die "AWS_DEFAULT_REGION is required"
 
-# Use the persistent /data/tmp filesystem, not the RAM-backed /tmp tmpfs.
-export TMPDIR="${TMPDIR:-/data/tmp}"
-mkdir -p "$TMPDIR"
-chmod 700 "$TMPDIR"
+# Use a private subdirectory on InstaBox's persistent /data/tmp filesystem,
+# not the RAM-backed /tmp tmpfs. Never chmod the shared parent directory.
+TMP_ROOT="${TMPDIR:-/data/tmp}"
+mkdir -p "$TMP_ROOT"
+BACKUP_TMP_ROOT="$TMP_ROOT/testagram-production-backup"
+mkdir -p "$BACKUP_TMP_ROOT"
+chmod 700 "$BACKUP_TMP_ROOT"
+export TMPDIR="$BACKUP_TMP_ROOT"
 
 # Restic is not part of every InstaBox template. Install it once if needed.
 if ! command -v restic >/dev/null 2>&1; then
@@ -30,7 +34,7 @@ export BACKUP_STAGE_DIR="${BACKUP_STAGE_DIR:-$TMPDIR/testagram-backup-stage}"
 mkdir -p "$RESTIC_CACHE_DIR" "$BACKUP_STAGE_DIR"
 chmod 700 "$RESTIC_CACHE_DIR" "$BACKUP_STAGE_DIR"
 cleanup() {
-  rm -rf -- "$RESTIC_CACHE_DIR"
+  rm -rf -- "$BACKUP_TMP_ROOT"
 }
 trap cleanup EXIT INT TERM
 
