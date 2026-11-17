@@ -95,9 +95,22 @@ for bucket_dir in minio-private minio-public minio-identity-evidence minio-metad
   [[ -n "$restored_bucket" ]] || die "snapshot is missing the $bucket_dir backup directory"
 done
 
+manifest_path="$(find "$restore_dir" -type f -name manifest.txt -print -quit)"
+[[ -n "$manifest_path" ]] || die "snapshot is missing its backup manifest"
+if grep -qx 'data_centre_video_media_included=true' "$manifest_path"; then
+  restored_video="$(find "$restore_dir" -type d -name data-centre-video-media -print -quit)"
+  [[ -n "$restored_video" ]] || die "manifest requires Data Centre video media but the snapshot is missing it"
+fi
+if grep -qx 'data_centre_node_storage_included=true' "$manifest_path"; then
+  restored_nodes="$(find "$restore_dir" -type d -name data-centre-node-storage -print -quit)"
+  [[ -n "$restored_nodes" ]] || die "manifest requires Data Centre node storage but the snapshot is missing it"
+fi
+
 private_count="$(find "$restore_dir" -type f -path '*/minio-private/*' | wc -l | tr -d ' ')"
 public_count="$(find "$restore_dir" -type f -path '*/minio-public/*' | wc -l | tr -d ' ')"
 identity_count="$(find "$restore_dir" -type f -path '*/minio-identity-evidence/*' | wc -l | tr -d ' ')"
 metadata_count="$(find "$restore_dir" -type f -path '*/minio-metadata/*' | wc -l | tr -d ' ')"
-printf 'Restore drill passed: application_tables=%s private_media_files=%s public_media_files=%s identity_evidence_files=%s metadata_files=%s\n' "$table_count" "$private_count" "$public_count" "$identity_count" "$metadata_count"
+video_count="$(find "$restore_dir" -type f -path '*/data-centre-video-media/*' | wc -l | tr -d ' ')"
+node_count="$(find "$restore_dir" -type f -path '*/data-centre-node-storage/*' | wc -l | tr -d ' ')"
+printf 'Restore drill passed: application_tables=%s private_media_files=%s public_media_files=%s identity_evidence_files=%s metadata_files=%s data_centre_video_files=%s node_storage_files=%s\n' "$table_count" "$private_count" "$public_count" "$identity_count" "$metadata_count" "$video_count" "$node_count"
 printf 'This validates a database restore in isolation; it does not switch traffic or restore a live MinIO service.\n'
