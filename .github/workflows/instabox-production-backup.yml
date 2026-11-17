@@ -48,24 +48,41 @@ jobs:
         shell: bash
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
-          BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
-          BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
+          R2_BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+          R2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+          B2_BACKUP_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+          B2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
         run: |
           set -euo pipefail
           umask 077
-          for name in INSTABOX_API_KEY BACKUP_ENDPOINT BACKUP_BUCKET BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY RESTIC_PASSWORD; do
+          for name in INSTABOX_API_KEY BACKUP_ENDPOINT BACKUP_BUCKET RESTIC_PASSWORD; do
             [[ -n "${!name:-}" ]] || { echo "::error::Missing required InstaBox backup setting: $name"; exit 1; }
           done
-          for secret in "$INSTABOX_API_KEY" "$BACKUP_ACCESS_KEY_ID" "$BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
-            echo "::add-mask::$secret"
+          for secret in "$INSTABOX_API_KEY" "$R2_BACKUP_ACCESS_KEY_ID" "$R2_BACKUP_SECRET_ACCESS_KEY" "$B2_BACKUP_ACCESS_KEY_ID" "$B2_BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
+            [[ -z "$secret" ]] || echo "::add-mask::$secret"
           done
-          # Cloudflare R2 requires the literal S3 region "auto"; ignore stale overrides.
+          # Never mix a key from one S3 provider with another provider's endpoint.
           case "$BACKUP_ENDPOINT" in
             https://*.r2.cloudflarestorage.com|https://*.r2.cloudflarestorage.com/)
+              BACKUP_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID"
+              BACKUP_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
               BACKUP_REGION=auto
+              BACKUP_PROVIDER="Cloudflare R2"
+              ;;
+            https://*.backblazeb2.com|https://*.backblazeb2.com/)
+              BACKUP_ACCESS_KEY_ID="$B2_BACKUP_ACCESS_KEY_ID"
+              BACKUP_SECRET_ACCESS_KEY="$B2_BACKUP_SECRET_ACCESS_KEY"
+              BACKUP_PROVIDER="Backblaze B2"
+              ;;
+            *)
+              echo "::error::Unsupported backup endpoint. Use a Cloudflare R2 or Backblaze B2 S3 endpoint."
+              exit 1
               ;;
           esac
+          [[ -n "$BACKUP_ACCESS_KEY_ID" ]] || { echo "::error::Missing access-key secret for $BACKUP_PROVIDER."; exit 1; }
+          [[ -n "$BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::Missing secret-access-key secret for $BACKUP_PROVIDER."; exit 1; }
+          echo "Selected backup provider: $BACKUP_PROVIDER (provider-specific credentials)."
           python3 - "$MACHINE_ID" "$BACKUP_ENDPOINT" "$BACKUP_BUCKET" "$BACKUP_REGION" <<'PY'
           import ipaddress, re, sys
           from urllib.parse import urlparse
@@ -200,6 +217,18 @@ jobs:
           BACKUP_REGION: ${{ steps.config.outputs.backup_region }}
         run: |
           set -euo pipefail
+          case "$BACKUP_ENDPOINT" in
+            https://*.r2.cloudflarestorage.com|https://*.r2.cloudflarestorage.com/)
+              BACKUP_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID"
+              BACKUP_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
+              ;;
+            https://*.backblazeb2.com|https://*.backblazeb2.com/)
+              BACKUP_ACCESS_KEY_ID="$B2_BACKUP_ACCESS_KEY_ID"
+              BACKUP_SECRET_ACCESS_KEY="$B2_BACKUP_SECRET_ACCESS_KEY"
+              ;;
+            *) echo "::error::Unsupported S3 provider endpoint."; exit 1 ;;
+          esac
+          [[ -n "$BACKUP_ACCESS_KEY_ID" && -n "$BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::The selected provider's S3 credential pair is incomplete."; exit 1; }
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
           cmd='set -Eeuo pipefail
           mapfile -t env_files < <(find /data/home -type f -path "*/deploy/self-hosted/.env" -print 2>/dev/null)
