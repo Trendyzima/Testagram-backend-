@@ -22,12 +22,15 @@ mkdir -p "$BACKUP_TMP_ROOT"
 chmod 700 "$BACKUP_TMP_ROOT"
 export TMPDIR="$BACKUP_TMP_ROOT"
 
-# Restic is not part of every InstaBox template. Install it once if needed.
-if ! command -v restic >/dev/null 2>&1; then
+# Restic and jq are not guaranteed on every InstaBox template. Install
+# only these small backup utilities when missing; do not upgrade the OS or
+# restart production services as part of a backup.
+if ! command -v restic >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
   sudo -n apt-get update -qq
-  sudo -n apt-get install -y restic
+  sudo -n apt-get install -y restic jq
 fi
 command -v restic >/dev/null || die "restic installation did not produce a restic executable"
+command -v jq >/dev/null || die "jq installation did not produce a jq executable"
 
 export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-$TMPDIR/testagram-restic-cache}"
 export BACKUP_STAGE_DIR="${BACKUP_STAGE_DIR:-$TMPDIR/testagram-backup-stage}"
