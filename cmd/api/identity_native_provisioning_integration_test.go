@@ -149,10 +149,34 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	`, requestID, reviewerOne); err != nil {
 		t.Fatal(err)
 	}
+	// The database guard must reject a completed approval request while only
+	// one account approver is recorded. Roll back to the savepoint after the
+	// expected trigger error, then complete the independent second approval.
+	if _, err := db.Exec(ctx, "SAVEPOINT single_approval_attempt"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `
-		UPDATE testagram_identity.identity_applications SET status='approved'
+		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
 		WHERE id=$1::uuid
-	`, applicationID); err != nil {
+	`, requestID); err == nil {
+		t.Fatal("database accepted a completed identity approval with only one approver")
+	}
+	if _, err := db.Exec(ctx, "ROLLBACK TO SAVEPOINT single_approval_attempt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, "RELEASE SAVEPOINT single_approval_attempt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
+		VALUES($1::uuid,$2::uuid,'approved','Second independent account approval')
+	`, requestID, reviewerTwo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
+		WHERE id=$1::uuid
+	`, requestID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
