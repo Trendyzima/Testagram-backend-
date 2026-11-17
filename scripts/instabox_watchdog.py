@@ -437,6 +437,7 @@ def main() -> int:
             emit(result)
         return 0
     if machine_state == "suspended":
+        # An idle-suspended VPS is force-resumed under the operator-approved policy.
         result = recover_suspended(api, state)
         if result.startswith("resumed"):
             notify(result, "recovery")
