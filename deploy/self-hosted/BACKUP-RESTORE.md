@@ -208,7 +208,7 @@ the full manual drill below before cutover and periodically thereafter.
    PostgreSQL client tools, MinIO client, and restic.
 2. Configure `RESTIC_REPOSITORY` and `RESTIC_PASSWORD_FILE` for the backup
    repository, then run `./scripts/self-hosted-backup.sh check`.
-3. List snapshots with `restic snapshots --tag testagram`, select a known
+3. List snapshots with `restic snapshots --host testagram-self-hosted --tag testagram`, select a known
    snapshot ID, and restore it to an empty recovery directory:
    `restic restore <snapshot-id> --target /secure/restore`.
 4. Inspect the restored manifest and validate the database dump:
