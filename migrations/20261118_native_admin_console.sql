@@ -75,23 +75,12 @@ CREATE INDEX IF NOT EXISTS native_admin_security_audit_created_idx
 CREATE INDEX IF NOT EXISTS native_admin_security_audit_actor_idx
   ON testagram_auth.native_admin_security_audit(actor_user_id,created_at DESC);
 
-CREATE TABLE IF NOT EXISTS testagram_identity.native_identity_application_reviews (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  application_id UUID NOT NULL,
-  reviewer_user_id UUID NOT NULL REFERENCES testagram_auth.staff_principals(user_id),
-  decision TEXT NOT NULL CHECK (decision IN ('approved','rejected')),
-  reason TEXT NOT NULL,
-  evidence_audit_reference TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(application_id,reviewer_user_id)
-);
 
 REVOKE ALL ON TABLE
   testagram_auth.native_staff_permission_overrides,
   testagram_auth.native_sensitive_action_requests,
   testagram_auth.native_sensitive_action_approvals,
-  testagram_auth.native_admin_security_audit,
-  testagram_identity.native_identity_application_reviews
+  testagram_auth.native_admin_security_audit
 FROM PUBLIC;
 
 DO $grants$
@@ -107,8 +96,6 @@ BEGIN
       testagram_auth.native_sensitive_action_approvals_id_seq,
       testagram_auth.native_admin_security_audit_id_seq
     TO testagram_app;
-    GRANT SELECT,INSERT ON testagram_identity.native_identity_application_reviews TO testagram_app;
-    GRANT USAGE,SELECT ON SEQUENCE testagram_identity.native_identity_application_reviews_id_seq TO testagram_app;
   END IF;
 END;
 $grants$;
