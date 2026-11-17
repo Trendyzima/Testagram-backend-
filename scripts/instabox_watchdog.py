@@ -311,38 +311,43 @@ def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
 
 
 def check_running_service(api: API, state: dict[str, Any]) -> str:
-    """Probe only a provider-running machine; require three failures before restart."""
-    for attempt in range(3):
-        try:
-            healthy, detail = probe(HEALTH_URL)
-        except ProbeConfigurationError as exc:
-            # A 404 is evidence that the configured health route is absent or
-            # misrouted, not evidence that a running VPS is unhealthy. Do not
-            # count it toward the restart threshold and never power-cycle a
-            # machine to try to repair a routing/hostname contract defect.
-            detail = str(exc)
-            emit(f"running machine provider state verified; application liveness UNVERIFIED: {detail}")
-            return f"provider running; application liveness unverified ({detail})"
-        if healthy:
-            state["last_successful_health_at"] = int(time.time())
-            state["consecutive_health_failures"] = 0
-            save_state(state)
-            emit(f"running machine public liveness healthy: {detail}")
-            return "healthy"
-        emit(f"public liveness failure {attempt + 1}/3: {detail}")
-        if attempt < 2:
-            time.sleep(PROBE_INTERVAL)
+    """A provider-running VPS is healthy for lifecycle purposes: never restart it."""
+    emit("provider reports VPS running; no lifecycle action initiated")
+    return "running; no restart triggered"
+
+
+
+def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
+    """Safely power-cycle a still-desired-running machine after repeated liveness failure."""
+    now = int(time.time())
+    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
+        return "DRY RUN: public liveness failed repeatedly; would perform controlled stop/start"
+    last_action_at = state.get("last_action_at", 0)
     try:
-        previous_failures = int(state.get("consecutive_health_failures", 0))
+        last_action_at = int(last_action_at)
     except (TypeError, ValueError):
-        raise WatchdogError("Watchdog state has an invalid consecutive_health_failures value")
-    if previous_failures < 0:
-        raise WatchdogError("Watchdog state has a negative consecutive_health_failures value")
-    state["consecutive_health_failures"] = previous_failures + 3
-    state["last_health_failure_at"] = int(time.time())
+        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
+    if last_action_at > now + 60:
+        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
+    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
+        remaining = RESTART_COOLDOWN - (now - last_action_at)
+        return f"local recovery cooldown active for another {remaining}s; not restarting machine"
+
+    # Re-read immediately before the disruptive action. Never override an
+    # operator stop, an in-flight provider operation, or a changed machine.
+    latest = machine_snapshot(api)
+    if latest["state"] != "running" or latest["desiredState"] != "running":
+        return ("machine state changed during health investigation "
+                f"(state={latest['state']}, desiredState={latest['desiredState']}); no action")
+    if latest.get("operationId"):
+        return f"machine has active operation {latest['operationId']}; no restart"
+
+    state.update(last_action_at=now, last_action="stop-start")
     save_state(state)
-    result = recover_unhealthy_running(api, state)
-    return result
+    lifecycle(api, "stop")
+    lifecycle(api, "start")
+    wait_for_service()
+    return "controlled stop/start completed; public API liveness verified"
 
 
 def recover_suspended(api: API, state: dict[str, Any]) -> str:
@@ -398,12 +403,9 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
     return f"started stopped machine; {application_status}"
 
 
+
 def main() -> int:
     global MACHINE_ID
-    if not HEALTH_URL:
-        raise WatchdogError("Configure TESTAGRAM_HEALTH_URL")
-    if urlparse(HEALTH_URL).scheme != "https":
-        raise WatchdogError("Health URL must use HTTPS")
     if WEBHOOK_URL and urlparse(WEBHOOK_URL).scheme != "https":
         raise WatchdogError("Alert webhook URL must use HTTPS")
     if (PROBE_INTERVAL < 1 or PROBE_TIMEOUT < 1
@@ -441,10 +443,11 @@ def main() -> int:
         emit(f"machine has active operation {machine['operationId']}; leaving it undisturbed")
         return 0
 
-    # A suspended InstaBox machine is the provider's paused/stopped state for
-    # this deployment. Operator authorization requires waking it even when
-    # desiredState still reports "suspended".
-    if desired != "running" and machine_state != "suspended":
+    # Operator-approved recovery policy: a stopped or suspended VPS must
+    # be brought back even when desiredState still says stopped/suspended.
+    # Keep the desired-state guard for other states so an operator-requested
+    # non-running state is not mistaken for a recoverable outage.
+    if desired != "running" and machine_state not in ("stopped", "suspended"):
         emit(f"desiredState={desired}; respecting provider/operator intent")
         return 0
 
@@ -472,15 +475,10 @@ def main() -> int:
         raise WatchdogError("Machine is in provider error state; refusing automatic stop/start")
     if machine_state != "running":
         raise WatchdogError(f"Unrecognized machine state {machine_state!r}; refusing action")
-    # Only probe after provider confirms the machine is running. Suspended
-    # idle machines returned above without an HTTP request, preserving the
-    # Free-plan real-request auto-wake behavior.
+    # Running means no restart trigger. Only provider stopped/suspended
+    # states above can initiate lifecycle recovery.
     state["last_provider_running_at"] = int(time.time())
-    result = check_running_service(api, state)
-    if result.startswith("controlled"):
-        notify(result, "recovery")
-    else:
-        emit(result)
+    emit("provider reports VPS running; no lifecycle action initiated")
     return 0
 
 
