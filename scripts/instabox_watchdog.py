@@ -313,7 +313,16 @@ def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
 def check_running_service(api: API, state: dict[str, Any]) -> str:
     """Probe only a provider-running machine; require three failures before restart."""
     for attempt in range(3):
-        healthy, detail = probe(HEALTH_URL)
+        try:
+            healthy, detail = probe(HEALTH_URL)
+        except ProbeConfigurationError as exc:
+            # A 404 is evidence that the configured health route is absent or
+            # misrouted, not evidence that a running VPS is unhealthy. Do not
+            # count it toward the restart threshold and never power-cycle a
+            # machine to try to repair a routing/hostname contract defect.
+            detail = str(exc)
+            emit(f"running machine provider state verified; application liveness UNVERIFIED: {detail}")
+            return f"provider running; application liveness unverified ({detail})"
         if healthy:
             state["last_successful_health_at"] = int(time.time())
             state["consecutive_health_failures"] = 0
