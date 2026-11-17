@@ -55,7 +55,7 @@ done
 
 # Initialize only an empty/uninitialized repository. Existing repositories are
 # never reinitialized or overwritten; bad credentials still fail closed.
-if ! restic snapshots --tag testagram >/dev/null 2>&1; then
+if ! restic snapshots --host testagram-self-hosted --tag testagram >/dev/null 2>&1; then
   restic init
 fi
 
