@@ -699,12 +699,8 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	access, err := s.identitySessionAccess(r)
-	if err != nil || (access.Status != "in_progress" && access.Status != "created") {
+	if err != nil || (access.Status != "in_progress" && access.Status != "created" && access.Status != "manual_review") {
 		writeJSON(w, http.StatusNotFound, errorBody("SESSION_NOT_FOUND", "Verification session was not found", requestID(r)))
-		return
-	}
-	if s.virtualStorage == nil || s.mediaReplicator == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -716,6 +712,37 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
+
+	// A client may lose the response after the transaction commits. Recognize
+	// only the exact evidence item already linked to this session/application;
+	// never accept a different upload after the session enters manual review.
+	if access.Status == "manual_review" {
+		var evidenceStatus, sessionEvidenceReference, applicationStatus string
+		err := s.db.QueryRow(ctx, `
+			SELECT e.status,v.evidence_reference,a.status
+			FROM testagram_identity.verification_evidence e
+			JOIN testagram_identity.verification_sessions v ON v.id=e.session_id
+			JOIN testagram_identity.identity_applications a ON a.id=v.application_id
+			WHERE e.id=$1::uuid AND e.session_id=$2::uuid
+			  AND v.status='manual_review'
+		`, input.EvidenceID, r.PathValue("session_id")).Scan(&evidenceStatus, &sessionEvidenceReference, &applicationStatus)
+		if err == nil && evidenceStatus == "verified" &&
+			sessionEvidenceReference == "identity-evidence:"+input.EvidenceID &&
+			applicationStatus == "under_review" {
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"ok": true, "status": "manual_review", "idempotent_replay": true,
+				"message": "Evidence was securely received and queued for manual review.",
+			})
+			return
+		}
+		writeJSON(w, http.StatusConflict, errorBody("SESSION_NOT_SUBMITTABLE", "Verification session is no longer accepting evidence", requestID(r)))
+		return
+	}
+	if s.virtualStorage == nil || s.mediaReplicator == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
+		return
+	}
 	var objectKey, contentType string
 	var size int64
 	var digest []byte
