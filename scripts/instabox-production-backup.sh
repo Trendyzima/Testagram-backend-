@@ -26,6 +26,9 @@ case "$TMP_ROOT" in
   *) die "backup staging parent must be on InstaBox persistent /data storage, not tmpfs" ;;
 esac
 BACKUP_TMP_ROOT="$TMP_ROOT/testagram-production-backup"
+# A prior hard kill may have bypassed EXIT cleanup. The machine-side lock is
+# already held, so remove only this dedicated backup scratch directory.
+rm -rf -- "$BACKUP_TMP_ROOT"
 mkdir -p "$BACKUP_TMP_ROOT"
 chmod 700 "$BACKUP_TMP_ROOT"
 export TMPDIR="$BACKUP_TMP_ROOT"
@@ -48,7 +51,9 @@ chmod 700 "$RESTIC_CACHE_DIR" "$BACKUP_STAGE_DIR"
 cleanup() {
   rm -rf -- "$BACKUP_TMP_ROOT"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cd "$BACKEND"
 
