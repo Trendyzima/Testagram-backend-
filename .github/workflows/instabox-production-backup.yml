@@ -231,6 +231,7 @@ jobs:
             *) echo "::error::Unsupported S3 provider endpoint."; exit 1 ;;
           esac
           [[ -n "$BACKUP_ACCESS_KEY_ID" && -n "$BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::The selected provider's S3 credential pair is incomplete."; exit 1; }
+          export BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
           cmd='set -Eeuo pipefail
           mapfile -t env_files < <(find /data/home -type f -path "*/deploy/self-hosted/.env" -print 2>/dev/null)
