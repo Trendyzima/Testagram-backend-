@@ -221,12 +221,12 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 			return nil
 		},
 	}
+	router := svc.routes()
 
 	tokenReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/provisioning-token", nil)
-	tokenReq.SetPathValue("application_id", applicationID)
 	tokenReq.Header.Set("X-Application-Token", applicationToken)
 	tokenResp := httptest.NewRecorder()
-	svc.identityProvisioningToken(tokenResp, tokenReq)
+	router.ServeHTTP(tokenResp, tokenReq)
 	if tokenResp.Code != http.StatusOK {
 		t.Fatalf("native grant issue status=%d body=%s", tokenResp.Code, tokenResp.Body.String())
 	}
@@ -243,12 +243,11 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	redeem := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/redeem",
 			strings.NewReader("{\"password\":\"native-ci-password-123\"}"))
-		req.SetPathValue("application_id", applicationID)
 		req.Header.Set("X-Application-Token", applicationToken)
 		req.Header.Set("X-Identity-Approval-Token", issuedApproval)
 		req.Header.Set("X-Identity-Approval-JTI", issuedJTI)
 		rec := httptest.NewRecorder()
-		svc.identityProvisioningRedeemNative(rec, req)
+		router.ServeHTTP(rec, req)
 		return rec
 	}
 
@@ -347,10 +346,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	resendReq := httptest.NewRequest(http.MethodPost,
 		"/api/identity/applications/"+applicationID+"/resend-verification", nil)
-	resendReq.SetPathValue("application_id", applicationID)
 	resendReq.Header.Set("X-Application-Token", applicationToken)
 	resendResp := httptest.NewRecorder()
-	svc.identityProvisioningResendVerification(resendResp, resendReq)
+	router.ServeHTTP(resendResp, resendReq)
 	if resendResp.Code != http.StatusAccepted {
 		t.Fatalf("native verification resend status=%d body=%s", resendResp.Code, resendResp.Body.String())
 	}
@@ -384,9 +382,8 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	verifyReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/verify-email",
 		strings.NewReader(fmt.Sprintf("{\"token\":%q}", verifyToken)))
-	verifyReq.SetPathValue("application_id", applicationID)
 	verifyResp := httptest.NewRecorder()
-	svc.identityProvisioningVerifyEmail(verifyResp, verifyReq)
+	router.ServeHTTP(verifyResp, verifyReq)
 	if verifyResp.Code != http.StatusOK {
 		t.Fatalf("native email verification status=%d body=%s", verifyResp.Code, verifyResp.Body.String())
 	}
