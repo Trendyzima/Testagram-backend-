@@ -32,6 +32,40 @@ jobs:
           bash -n scripts/self-hosted-backup.sh
           bash -n scripts/self-hosted-restore-drill.sh
           bash -n scripts/instabox-production-backup.sh
+      - name: Test embedded Federation database safety guard
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          source = Path("scripts/self-hosted-backup.sh").read_text()
+          match = re.search(
+              r'FEDERATION_DATABASE_URL_CHECK="\\$federation_database_url" python3 - <<\'PY\'\\n(.*?)\\nPY',
+              source,
+              re.S,
+          )
+          if not match:
+              raise SystemExit("could not locate the embedded Federation database URL validator")
+          validator = match.group(1)
+          def check(url):
+              env = dict(os.environ, FEDERATION_DATABASE_URL_CHECK=url)
+              return subprocess.run([sys.executable, "-c", validator], env=env, check=False).returncode
+
+          valid = "postgresql://testagram:masked@federation-db:5432/testagram_federation?sslmode=disable"
+          if check(valid) != 0:
+              raise SystemExit("same-cluster federation-db alias should be accepted")
+          for invalid in (
+              "postgresql://testagram:masked@external-db.example:5432/testagram_federation",
+              "postgresql://testagram:masked@postgres:5433/testagram_federation",
+              "https://testagram:masked@postgres:5432/testagram_federation",
+          ):
+              if check(invalid) == 0:
+                  raise SystemExit("external or invalid Federation database target was accepted")
+          print("Federation database routing guard passed.")
+          PY
       - name: Install ShellCheck
         run: |
           sudo apt-get update
