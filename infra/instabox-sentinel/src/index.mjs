@@ -96,6 +96,7 @@ function unwrap(payload, key) {
 }
 
 async function instaboxRequest(env, path, options = {}) {
+  if (!env.INSTABOX_API_KEY) throw new Error("InstaBox API key is not configured");
   const headers = new Headers({ accept: "application/json", authorization: `Bearer ${env.INSTABOX_API_KEY}` });
   if (options.body !== undefined) headers.set("content-type", "application/json");
   if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
@@ -223,7 +224,7 @@ export class EventLedger {
   async alarm() {
     await this.state.blockConcurrencyWhile(async () => {
       const entries = await this.state.storage.list({ prefix: "event:" });
-      let retryPending = false;
+      let retryDelay = 0;
       for (const [key, record] of entries) {
         if (record?.status !== "pending") {
           if (record?.expiresAt && record.expiresAt < Date.now()) await this.state.storage.delete(key);
@@ -246,12 +247,12 @@ export class EventLedger {
           if (exhausted) {
             console.error("Testagram Sentinel stopped retrying an event after the retry limit", { eventId: record.deliveryId, attempts, error: message });
           } else {
-            retryPending = true;
+            retryDelay = Math.max(retryDelay, Math.min(30 * 60_000, 30_000 * (2 ** (attempts - 1))));
             console.warn("Testagram Sentinel provider retry failed", { eventId: record.deliveryId, attempts, error: message });
           }
         }
       }
-      if (retryPending) await this.state.storage.setAlarm(Date.now() + 60_000);
+      if (retryDelay) await this.state.storage.setAlarm(Date.now() + retryDelay);
     });
   }
 }
