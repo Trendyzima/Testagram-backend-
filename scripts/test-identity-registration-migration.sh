@@ -111,6 +111,11 @@ INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enab
   ('123e4567-e89b-42d3-a456-426614174101',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174103'),
   ('123e4567-e89b-42d3-a456-426614174102',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174103'),
   ('123e4567-e89b-42d3-a456-426614174103',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174103');
+-- The legacy request ledger still references the requester through staff_roles.
+-- Keep this distinct intake principal separate from both native approvers.
+INSERT INTO testagram_auth.staff_roles(appwrite_user_id,role,created_by_appwrite_user_id)
+VALUES ('ci-intake-service','operations','ci-fixture');
+
 INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES
   ('123e4567-e89b-42d3-a456-426614174101','administrator','123e4567-e89b-42d3-a456-426614174103'),
   ('123e4567-e89b-42d3-a456-426614174102','administrator','123e4567-e89b-42d3-a456-426614174103'),
