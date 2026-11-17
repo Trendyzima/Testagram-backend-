@@ -143,6 +143,7 @@ fi
     stage_parent_real="$(realpath "$stage_parent")"
     for source_path in "$video_media_source" "$node_storage_source"; do
       [[ -n "$source_path" ]] || continue
+      [[ "$source_path" != "/" ]] || die "refusing to back up the entire filesystem as Data Centre media"
       case "$stage_parent_real/" in
         "$source_path/"*) die "backup staging directory is inside a Data Centre source directory" ;;
       esac
