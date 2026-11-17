@@ -52,7 +52,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 
 	for i, reviewer := range []string{reviewerOne, reviewerTwo} {
 		email := fmt.Sprintf("native-reviewer-%d-%s@example.test", i+1, suffix)
-		username := fmt.Sprintf("native_reviewer_%d_%s", i+1, suffix)
+		username := fmt.Sprintf("nr%d_%s", i+1, suffix[len(suffix)-12:])
 		if _, err := db.Exec(ctx, `
 			INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
 			VALUES($1::uuid,$2,$3,'ci-only-invalid-password-hash',now())
@@ -63,7 +63,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
 		VALUES($1::uuid,$2,$3,'ci-only-invalid-password-hash',now())
-	`, staffGrantor, "native-staff-grantor-"+suffix+"@example.test", "native_staff_grantor_"+suffix); err != nil {
+	`, staffGrantor, "native-staff-grantor-"+suffix+"@example.test", "nsg_"+suffix[len(suffix)-12:]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
