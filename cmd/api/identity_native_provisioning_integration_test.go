@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"os"
 	"strings"
 	"testing"
@@ -173,7 +175,12 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.example")
 	t.Setenv("APPWRITE_ENDPOINT", "")
 	t.Setenv("APPWRITE_PROJECT_ID", "")
-	svc := &service{db: db}
+	type deliveredEmail struct { recipient, subject, html string }
+	var delivered []deliveredEmail
+	svc := &service{db: db, authEmailSender: func(_ context.Context, recipient, subject, html string) error {
+		delivered = append(delivered, deliveredEmail{recipient: recipient, subject: subject, html: html})
+		return nil
+	}}
 
 	tokenReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/provisioning-token", nil)
 	tokenReq.SetPathValue("application_id", applicationID)
@@ -226,6 +233,11 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 			t.Fatalf("concurrent redemption created different users: %q != %q", userID, got)
 		}
 		userID = got
+	}
+	if len(delivered) != 1 || delivered[0].recipient != applicantEmail ||
+		delivered[0].subject != "Verify your Testagram account" ||
+		!strings.Contains(delivered[0].html, "/verify-email?application_id="+applicationID+"&token=") {
+		t.Fatalf("provisioning verification email delivery contract failed: %#v", delivered)
 	}
 
 	var identityCount, profileCount, pendingCount, consumedCount int
@@ -296,6 +308,19 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if resendResp.Code != http.StatusAccepted {
 		t.Fatalf("native verification resend status=%d body=%s", resendResp.Code, resendResp.Body.String())
 	}
+	if len(delivered) != 2 || delivered[1].recipient != applicantEmail ||
+		delivered[1].subject != "Verify your Testagram account" ||
+		!strings.Contains(delivered[1].html, "/verify-email?application_id="+applicationID+"&token=") {
+		t.Fatalf("verification resend did not deliver a fresh email: %#v", delivered)
+	}
+	tokenMatch := regexp.MustCompile(`token=([^&"]+)`).FindStringSubmatch(delivered[1].html)
+	if len(tokenMatch) != 2 {
+		t.Fatalf("verification email did not contain a tokenized link: %q", delivered[1].html)
+	}
+	verifyToken, err := url.QueryUnescape(tokenMatch[1])
+	if err != nil || verifyToken == "" {
+		t.Fatalf("verification email token is invalid: %v", err)
+	}
 	var rotatedVerificationHash []byte
 	if err := db.QueryRow(ctx, `
 		SELECT verification_token_hash FROM testagram_auth.identities WHERE user_id=$1::uuid
@@ -306,17 +331,6 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal("application-scoped resend did not rotate the stored email-verification capability")
 	}
 
-	verifyToken, err := authRandomToken()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, `
-		UPDATE testagram_auth.identities
-		SET verification_token_hash=$2,verification_expires_at=now()+interval '1 hour'
-		WHERE user_id=$1::uuid
-	`, userID, authTokenHash(verifyToken)); err != nil {
-		t.Fatal(err)
-	}
 	verifyReq := httptest.NewRequest(http.MethodPost, "/api/identity/applications/"+applicationID+"/verify-email",
 		strings.NewReader(fmt.Sprintf("{\"token\":%q}", verifyToken)))
 	verifyReq.SetPathValue("application_id", applicationID)
