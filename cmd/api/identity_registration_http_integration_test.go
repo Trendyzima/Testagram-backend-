@@ -36,7 +36,9 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	svc := &service{db: db, virtualStorage: &virtualstorage.Manager{}, mediaReplicator: &virtualstorage.Replicator{}}
 	router := svc.routes()
 	idempotencyKey, err := authRandomToken()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	username := "u" + suffix[len(suffix)-12:]
 	email := "http-journey-" + suffix + "@example.test"
@@ -45,7 +47,9 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		"adult_confirmed": true, "terms_accepted": true, "privacy_accepted": true,
 	}
 	body, err := json.Marshal(payload)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	call := func(method, path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewReader(body))
 		req.RemoteAddr = "192.0.2.41:4567"
