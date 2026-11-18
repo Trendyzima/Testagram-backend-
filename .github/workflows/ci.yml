@@ -35,6 +35,8 @@ jobs:
           cache: true
       - name: Validate production deployment shell syntax
         run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh
+      - name: Verify Federation deployment database and canonical identity contract
+        run: python3 tests/test_instabox_federation_runtime_contract.py
       - name: Validate native authentication staging smoke client syntax
         run: python3 -m py_compile scripts/native-auth-staging-smoke.py
       - name: Resolve and verify Go modules
