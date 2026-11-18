@@ -14,6 +14,7 @@ const testToken = "data-centre-private-service-token-0123456789"
 
 func TestClientCallsPrivateMediaLifecycleWithBearerAndVersionHeaders(t *testing.T) {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK); _, _ = w.Write([]byte("ready\n")) })
 	mux.HandleFunc("POST /internal/v1/media/upload-url", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+testToken || r.Header.Get("X-Testagram-API-Version") != "1" || r.Header.Get("X-Request-ID") == "" {
 			t.Fatalf("missing private API headers: %+v", r.Header)
@@ -64,6 +65,7 @@ func TestClientCallsPrivateMediaLifecycleWithBearerAndVersionHeaders(t *testing.
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	if err := client.Ready(ctx); err != nil { t.Fatalf("Ready = %v", err) }
 	grant, err := client.CreateUploadURL(ctx, "user-123", "media-public", "users/user-123/0123456789abcdef0123456789abcdef", "image/jpeg", 2048)
 	if err != nil || grant.UploadURL == "" {
 		t.Fatalf("CreateUploadURL = %+v, %v", grant, err)
