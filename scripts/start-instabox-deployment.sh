@@ -15,6 +15,18 @@ case "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" in
   true|false) ;;
   *) echo "::error::TESTAGRAM_IDENTITY_REGISTRATION_ENABLED must be true or false."; exit 1 ;;
 esac
+case "${FRESH_MEDIA_ENABLED:-false}" in
+  true|false) ;;
+  *) echo "::error::FRESH_MEDIA_ENABLED must be true or false."; exit 1 ;;
+esac
+case "${DATA_CENTRE_MEDIA_ENABLED:-false}" in
+  true|false) ;;
+  *) echo "::error::DATA_CENTRE_MEDIA_ENABLED must be true or false."; exit 1 ;;
+esac
+if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]; then
+  echo "::error::FRESH_MEDIA_ENABLED and DATA_CENTRE_MEDIA_ENABLED must both be true or both be false; refusing an ambiguous media profile."
+  exit 1
+fi
 if [[ "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" == "true" ]]; then
   [[ "$MEDIA_REPLICATION_ENABLED" == "true" ]] || { echo "::error::Identity registration requires MEDIA_REPLICATION_ENABLED=true."; exit 1; }
   [[ -n "$TESTAGRAM_TERMS_VERSION" && ${#TESTAGRAM_TERMS_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_TERMS_VERSION (1-64 characters)."; exit 1; }
@@ -450,7 +462,7 @@ set +a
 # are fully configured. It remains off otherwise; Backend must not receive a
 # half-configured URL/token pair.
 media_enabled=false
-if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then
+if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then
   media_enabled=true
   for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
     value="${!key:-}"
@@ -502,9 +514,8 @@ if [[ "$media_enabled" == true ]]; then
 else
   write_dc_env_value COMPOSE_PROFILES ""
 fi
-# Backend reads FRESH_MEDIA_ENABLED; keep it synchronized with the
-# deployment-level DATA_CENTRE_MEDIA_ENABLED gate.
-write_env_value FRESH_MEDIA_ENABLED "$media_enabled"
+# Keep the independently approved Backend Fresh Media switch explicit.
+write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"
 chmod 600 "$BASE_ENV"
 
 overlay_status=not_started
@@ -703,6 +714,7 @@ payload="$(jq -nc \
   --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
   --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
   --arg media_replication_enabled "$MEDIA_REPLICATION_ENABLED" \
+  --arg fresh_media_enabled "$FRESH_MEDIA_ENABLED" \
   --arg identity_registration_enabled "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" \
   --arg identity_migration_confirmation "${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
   --arg terms_version "$TESTAGRAM_TERMS_VERSION" \
@@ -718,7 +730,7 @@ payload="$(jq -nc \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
-  '{cmd:$cmd,envs:{TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,CLOUDFLARE_EMAIL_ACCOUNT_ID:$cloudflare_email_account_id,CLOUDFLARE_EMAIL_API_TOKEN:$cloudflare_email_api_token,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,CLOUDFLARE_EMAIL_ACCOUNT_ID:$cloudflare_email_account_id,CLOUDFLARE_EMAIL_API_TOKEN:$cloudflare_email_api_token,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \
