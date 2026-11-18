@@ -116,15 +116,10 @@ jobs:
           if not re.fullmatch(r"[a-z0-9-]{2,32}", region):
               raise SystemExit("TESTAGRAM_BACKUP_S3_REGION must be a valid region label")
           host = parsed.hostname.lower()
-          if host.endswith(".backblazeb2.com"):
-              expected_b2_host = f"s3.{region}.backblazeb2.com"
-              if host != expected_b2_host:
-                  raise SystemExit("Backblaze B2 endpoint host must match the configured B2_S3_REGION")
-          elif host.endswith(".r2.cloudflarestorage.com"):
-              if region != "auto":
-                  raise SystemExit("Cloudflare R2 backup region must be 'auto'")
-          else:
-              raise SystemExit("Selected backup endpoint must be the configured Backblaze B2 or Cloudflare R2 S3 origin")
+          if not host.endswith(".r2.cloudflarestorage.com"):
+              raise SystemExit("Dedicated production backup endpoint must be the existing Cloudflare R2 S3 origin")
+          if region != "auto":
+              raise SystemExit("Cloudflare R2 backup region must be 'auto'")
           PY
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             run_prune="${{ inputs.run_prune }}"
