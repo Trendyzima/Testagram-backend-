@@ -32,9 +32,9 @@ Configure these values in the InstaBox deployment environment (never commit real
 
 | Variable | Value |
 |---|---|
-| `CLOUDFLARE_EMAIL_ACCOUNT_ID` | Cloudflare account ID (32 hexadecimal characters) |
-| `CLOUDFLARE_EMAIL_API_TOKEN` | Account API token with Email Sending: Edit |
-| `AUTH_FROM_EMAIL` | `no-reply@testagram.site` |
+| `CLOUDFLARE_ACCOUNT_ID` | Existing Cloudflare account ID secret (32 hexadecimal characters) |
+| `CLOUDFLARE_API_TOKEN` | Existing Cloudflare API token secret with Email Sending: Edit permission |
+| `TESTAGRAM_MAIL_FROM` | `no-reply@testagram.site` |
 | `TESTAGRAM_MAIL_ENCRYPTION_KEY` | 32 random bytes encoded as 64 hexadecimal characters |
 
 Generate the encryption key with:
@@ -45,10 +45,10 @@ openssl rand -hex 32
 
 Configure these exact GitHub repository settings for the InstaBox deployment workflow:
 
-- Repository variable: `CLOUDFLARE_EMAIL_ACCOUNT_ID`
-- Repository secret: `CLOUDFLARE_EMAIL_API_TOKEN`
-- Repository secret: `TESTAGRAM_MAIL_ENCRYPTION_KEY`
-- Optional repository variable: `AUTH_FROM_EMAIL` (defaults to `no-reply@testagram.site`)
+- Existing repository secret: `CLOUDFLARE_ACCOUNT_ID`
+- Existing repository secret: `CLOUDFLARE_API_TOKEN`
+- New repository secret: `TESTAGRAM_MAIL_ENCRYPTION_KEY`
+- New repository variable: `TESTAGRAM_MAIL_FROM` (defaults to `no-reply@testagram.site`)
 
 The deployment workflow transfers these values to the existing InstaBox environment over the authenticated control-plane request. Never paste credentials into chat, source files, issue comments, or workflow logs.
 
