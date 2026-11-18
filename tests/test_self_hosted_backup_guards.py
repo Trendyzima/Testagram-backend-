@@ -52,17 +52,21 @@ class SelfHostedBackupGuardTests(unittest.TestCase):
         self.assertIn("Backblaze B2", docs)
         self.assertIn("B2_S3_ENDPOINT", workflow)
         self.assertIn("B2_S3_BUCKET", workflow)
-        self.assertIn("B2_S3_PRIVATE_BUCKET", workflow)
+        self.assertIn("B2_BACKUP_BUCKET: ${{ secrets.B2_S3_BUCKET }}", workflow)
+        self.assertNotIn("vars.B2_S3_PRIVATE_BUCKET ||", workflow)
         self.assertIn("B2_S3_ACCESS_KEY_ID", workflow)
         self.assertIn("R2_BACKUP_ENDPOINT", workflow)
         self.assertIn("fall back to the existing dedicated Cloudflare R2 backup", docs)
         self.assertIn("TESTAGRAM_BACKUP_RESTIC_PASSWORD", docs)
 
-    def test_backup_still_fails_closed_for_external_storage_and_replication(self):
-        self.assertIn(
-            "for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENABLED",
-            self.source,
-        )
+    def test_backup_includes_active_b2_r2_media_and_keeps_legacy_replication_fail_closed(self):
+        self.assertIn("mc mirror --preserve \"b2/$B2_S3_BUCKET\" /backup/b2-media", self.source)
+        self.assertIn("mc mirror --preserve \"r2/$CLOUDFLARE_R2_BUCKET\" /backup/r2-media", self.source)
+        self.assertIn("mc mirror --preserve \"r2/$CLOUDFLARE_R2_METADATA_BUCKET\" /backup/r2-metadata", self.source)
+        self.assertIn("media-objects.tsv", self.source)
+        self.assertIn("MEDIA_REPLICATION_ENABLED is active", self.source)
+        self.assertIn("Data Centre media is configured but its runtime container is missing", self.source)
+        self.assertIn("media outbox is not drained", self.source)
         self.assertIn("for endpoint_var in MEDIA_S3_ENDPOINT R2_S3_ENDPOINT", self.source)
 
 
