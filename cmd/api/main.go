@@ -73,7 +73,7 @@ type service struct {
 	media                     *media.Signer
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
-	identityEvidenceMedia     *datacentreclient.Client
+	identityEvidenceMedia     identityEvidenceMediaClient
 	freshMediaEnabled         bool
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
