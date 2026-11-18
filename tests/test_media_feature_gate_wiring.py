@@ -35,6 +35,15 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""', self.deployer)
         self.assertIn('write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""', self.deployer)
 
+    def test_native_jwt_and_session_database_are_shared_with_data_centre_consumers(self):
+        self.assertIn('write_dc_env_value TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"', self.deployer)
+        self.assertIn('write_dc_env_value DATABASE_URL "$shared_database_url"', self.deployer)
+        self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"', self.deployer)
+        self.assertIn('verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"', self.deployer)
+        self.assertIn('verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"', self.deployer)
+        self.assertIn('verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video DATABASE_URL "$shared_database_url"', self.deployer)
+        self.assertIn('verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification DATABASE_URL "$shared_database_url"', self.deployer)
+
     def test_identity_evidence_token_is_passed_to_the_private_backend_service(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         self.assertIn("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}", compose)
