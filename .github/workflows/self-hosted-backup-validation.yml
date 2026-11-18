@@ -97,6 +97,8 @@ jobs:
               raise SystemExit("production backup must provision the dedicated R2 bucket using existing Cloudflare credentials")
           if 'repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram-backups"' not in workflow:
               raise SystemExit("Restic repository path must use the dedicated backup endpoint and bucket")
+          if "mc mb --ignore-existing" not in workflow or "ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z" not in workflow:
+              raise SystemExit("R2 backup bucket provisioning must fall back to the existing S3 key pair")
           print("Dedicated R2 backup destination guards passed.")
           print("Restic initialization and deployed checkout path guards passed.")
           PY
