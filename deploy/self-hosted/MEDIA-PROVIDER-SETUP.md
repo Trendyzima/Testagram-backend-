@@ -6,7 +6,7 @@ This guide covers the standard self-hosted Backend media path. Provider credenti
 
 There are two distinct implementations in this repository:
 
-1. **Standard self-hosted API** (`cmd/api` + `deploy/self-hosted/docker-compose.yml`): Instabox VPS/MinIO is the primary store; Cloudflare R2 and Backblaze B2 are independent replicas. This path uses the provider variables below and is controlled by `VIRTUAL_STORAGE_ENABLED` and `MEDIA_REPLICATION_ENABLED`.
+1. **Standard self-hosted API** (`cmd/api` + `deploy/self-hosted/docker-compose.yml`): Instabox VPS/MinIO is the primary store; Cloudflare R2 and Backblaze B2 are independent replicas. This path uses the provider settings below and is controlled by `VIRTUAL_STORAGE_ENABLED` and `MEDIA_REPLICATION_ENABLED`.
 2. **Fresh Appwrite preview** (`cmd/fresh-api` + `vps/docker-compose.fresh.yml`): B2 and R2 are configured as a separate provider set using `B2_S3_BUCKET` and `CLOUDFLARE_R2_BUCKET`. It is a separate deployment path; do not mix its single-bucket names with the standard API's private/public bucket mappings. Keep `FRESH_MEDIA_ENABLED=false` until its own release gates pass.
 
 The Data Centre coordinates node placement and operations. It must not receive the long-lived B2/R2 provider keys.
@@ -17,14 +17,14 @@ Store the following in the **Backend** repository's Actions secrets if a GitHub 
 
 | Secret | Purpose |
 |---|---|
-| `B2_S3_ACCESS_KEY_ID` | Backblaze application key ID |
+| `B2_S3_ENDPOINT` | Exact HTTPS S3 endpoint for the selected B2 bucket region; shared by smoke and production deployment workflows |\n| `B2_S3_REGION` | Exact B2 bucket region (for example, `us-west-004`); shared by smoke and production deployment workflows |\n| `B2_S3_ACCESS_KEY_ID` | Backblaze application key ID |
 | `B2_S3_SECRET_ACCESS_KEY` | Backblaze application key |
 | `CLOUDFLARE_R2_ACCESS_KEY_ID` | R2 S3 access key ID |
 | `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | R2 S3 secret access key |
 
 Do not place these in the Data Centre repository, Flutter build variables, mobile apps, public CI logs, or source files.
 
-## Standard self-hosted API: Actions variables / runtime configuration
+## Standard self-hosted API: Actions variables / runtime configuration\n\nB2 endpoint and region are stored as repository **Secrets** to match the exact source used by both live smoke workflows and the production InstaBox deployment. The remaining non-sensitive bucket names and R2 endpoint/region are repository **Variables**.
 
 | Variable | Required value |
 |---|---|
