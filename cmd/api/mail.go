@@ -33,6 +33,16 @@ func (permanentMailError) Error() string {
 	return "recipient was permanently bounced or suppressed"
 }
 
+type ambiguousMailError struct {
+	cause error
+}
+
+func (e ambiguousMailError) Error() string {
+	return "Cloudflare delivery outcome is unknown; manual reconciliation is required"
+}
+
+func (e ambiguousMailError) Unwrap() error { return e.cause }
+
 type queuedMail struct {
 	Recipient string `json:"recipient"`
 	Subject   string `json:"subject"`
@@ -149,16 +159,22 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", ambiguousMailError{cause: err}
 	}
 	defer resp.Body.Close()
 	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if readErr != nil {
-		return "", readErr
+		return "", ambiguousMailError{cause: readErr}
 	}
 	var result cloudflareMailResponse
 	if err := json.Unmarshal(data, &result); err != nil {
-		return "", fmt.Errorf("Cloudflare Email Sending returned an unreadable response (HTTP %d)", resp.StatusCode)
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 || resp.StatusCode >= 500 {
+			return "", ambiguousMailError{cause: fmt.Errorf("unreadable provider response (HTTP %d)", resp.StatusCode)}
+		}
+		return "", fmt.Errorf("Cloudflare Email Sending returned an unreadable rejection (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode >= 500 {
+		return "", ambiguousMailError{cause: fmt.Errorf("provider server error (HTTP %d)", resp.StatusCode)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.Success {
 		if len(result.Errors) > 0 {
@@ -167,13 +183,13 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		return "", fmt.Errorf("Cloudflare Email Sending rejected the request (HTTP %d)", resp.StatusCode)
 	}
 	if strings.TrimSpace(result.Result.MessageID) == "" {
-		return "", errors.New("Cloudflare accepted the request without a provider message ID")
+		return "", ambiguousMailError{cause: errors.New("provider accepted the request without returning a message ID")}
 	}
 	if len(result.Result.PermanentBounces) > 0 || len(result.Result.Suppressed) > 0 {
 		return result.Result.MessageID, permanentMailError{}
 	}
 	if len(result.Result.Delivered) == 0 && len(result.Result.Queued) == 0 {
-		return result.Result.MessageID, errors.New("Cloudflare accepted no recipient for delivery")
+		return result.Result.MessageID, ambiguousMailError{cause: errors.New("provider returned no recipient outcome")}
 	}
 	return result.Result.MessageID, nil
 }
@@ -259,6 +275,15 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	messageID, sendErr := s.sendCloudflareMail(sendCtx, message)
 	cancel()
 	if sendErr != nil {
+		var ambiguous ambiguousMailError
+		if errors.As(sendErr, &ambiguous) {
+			_, err := s.db.Exec(ctx, `
+				UPDATE testagram_mail.outbox
+				SET status='uncertain',lease_until=NULL,last_error_code='CLOUDFLARE_OUTCOME_UNKNOWN',updated_at=now()
+				WHERE id=$1 AND status='sending'
+			`, id)
+			return true, err
+		}
 		var permanent permanentMailError
 		if errors.As(sendErr, &permanent) {
 			_, err := s.db.Exec(ctx, `
