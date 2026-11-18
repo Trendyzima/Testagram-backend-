@@ -14,6 +14,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         cls.workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         cls.deployer = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
 
+    def test_r2_bucket_provisioning_uses_the_same_normalized_media_gates_as_remote_deploy(self):
+        self.assertNotIn("if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)
+        self.assertIn('DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || \'false\' }}', self.workflow)
+        self.assertIn('FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || \'false\' }}', self.workflow)
+        self.assertIn('normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}"', self.workflow)
+        self.assertIn('normalize_flag "${FRESH_MEDIA_ENABLED:-false}"', self.workflow)
+
     def test_workflow_keeps_legacy_replicator_off_and_preserves_data_centre_gates(self):
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
