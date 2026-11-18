@@ -55,7 +55,7 @@ jobs:
     needs: validate
     # Pushes and pull requests validate only. Production deployment requires
     # an explicit workflow_dispatch approval on main for this run.
-    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true))
     name: Deploy backend and private services
     runs-on: ubuntu-latest
     environment: production
