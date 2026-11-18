@@ -163,6 +163,18 @@ schema_ready() {
             AND conname='\''verification_events_event_type_check'\''
             AND pg_get_constraintdef(oid) LIKE '\''%evidence_access_attempted%'\''
         )
+        AND EXISTS (
+          SELECT 1 FROM pg_attribute
+          WHERE attrelid=to_regclass('\''testagram_identity.identity_applications'\'')
+            AND attname='\''evidence_fingerprint_sha256'\''
+            AND NOT attnotnull AND NOT attisdropped
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_trigger
+          WHERE tgrelid=to_regclass('\''testagram_identity.identity_approval_tokens'\'')
+            AND tgname='\''identity_approval_token_requires_verified_evidence'\''
+            AND NOT tgisinternal
+        )
     "'
 }
 
@@ -228,6 +240,7 @@ for file in \
   054_native_admin_console.sql \
   055_native_identity_approval_ledger.sql \
   056_native_verification_decider.sql \
+  20261121_native_identity_intake_optional_fingerprint.sql \
   057_testagram_mail_outbox.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
@@ -255,6 +268,7 @@ apply_migration 053_native_staff_reviewer_grants.sql
 apply_migration 054_native_admin_console.sql
 apply_migration 055_native_identity_approval_ledger.sql
 apply_migration 056_native_verification_decider.sql
+apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 apply_migration 057_testagram_mail_outbox.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
