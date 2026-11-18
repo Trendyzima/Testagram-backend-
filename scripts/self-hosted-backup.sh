@@ -219,6 +219,13 @@ PY
 fi
 
 
+if [[ "$media_external_enabled" == "true" ]]; then
+  provider_mc() {
+    local mount_dir="$1" mount_point="$2" script="$3"
+    "${DOCKER[@]}" compose run --rm --no-deps --network testagram-egress -v "$mount_dir:$mount_point" -e B2_S3_ENDPOINT="$media_b2_endpoint" -e B2_S3_REGION="$media_b2_region" -e B2_S3_BUCKET="$media_b2_bucket" -e B2_S3_ACCESS_KEY_ID="$media_b2_access" -e B2_S3_SECRET_ACCESS_KEY="$media_b2_secret" -e CLOUDFLARE_R2_ENDPOINT="$media_r2_endpoint" -e CLOUDFLARE_R2_REGION="$media_r2_region" -e CLOUDFLARE_R2_BUCKET="$media_r2_bucket" -e CLOUDFLARE_R2_ACCESS_KEY_ID="$media_r2_access" -e CLOUDFLARE_R2_SECRET_ACCESS_KEY="$media_r2_secret" -e CLOUDFLARE_R2_METADATA_BUCKET="$media_r2_metadata_bucket" --entrypoint /bin/sh object-init -ec "$script"
+  }
+fi
+
 federation_db_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.service=federation-db --format '{{.ID}}')"
 [[ -z "$federation_db_ids" ]] || die "a separate federation-db container exists; back it up and restore-test it before relying on this backup"
 
@@ -256,8 +263,11 @@ fi
     postgres_user="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_USER | tr -d '\r')"
     postgres_primary_db="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')"
     [[ "$postgres_user" =~ ^[A-Za-z0-9_]+$ && "$postgres_primary_db" =~ ^[A-Za-z0-9_]+$ ]] || die "PostgreSQL user/database names are missing or unsupported"
-    extra_postgres_roles="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND rolname NOT IN ('postgres', '$postgres_user') ORDER BY rolname")"
-    [[ -z "$extra_postgres_roles" ]] || die "additional PostgreSQL roles detected ($extra_postgres_roles); add a tested globals backup/restore before relying on this backup"
+    allowed_postgres_roles="'postgres', '$postgres_user'"
+    [[ -z "$federation_database_user" ]] || allowed_postgres_roles+=", '$federation_database_user'"
+    [[ -z "$media_database_user" ]] || allowed_postgres_roles+=", '$media_database_user'"
+    extra_postgres_roles="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND rolname NOT IN ($allowed_postgres_roles) ORDER BY rolname")"
+    [[ -z "$extra_postgres_roles" ]] || die "unexpected PostgreSQL roles detected ($extra_postgres_roles); add them to the coordinated service database backup contract"
     extra_tablespaces="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT spcname FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname")"
     [[ -z "$extra_tablespaces" ]] || die "user-defined PostgreSQL tablespaces detected ($extra_tablespaces); back up their external paths before relying on this workflow"
     postgres_database_names="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")"
@@ -266,12 +276,36 @@ fi
     if [[ -n "$federation_database_name" ]]; then
       grep -Fxq "$federation_database_name" <<< "$postgres_database_names" || die "Federation API points to a database that is not present in the backed-up PostgreSQL cluster"
     fi
+    if [[ -n "$media_database_name" ]]; then
+      grep -Fxq "$media_database_name" <<< "$postgres_database_names" || die "Data Centre media points to a database that is not present in the backed-up PostgreSQL cluster"
+    fi
     while IFS= read -r database_name; do
       [[ "$database_name" =~ ^[A-Za-z0-9_]+$ ]] || die "unsupported PostgreSQL database name discovered; refusing unsafe dump path"
     done <<< "$postgres_database_names"
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
     stage_parent_real="$(realpath "$stage_parent")"
+    if [[ "$media_external_enabled" == "true" ]]; then
+      provider_inventory_dir="$(mktemp -d "${stage_parent_real%/}/testagram-provider-inventory.XXXXXXXX")"
+      chmod 700 "$provider_inventory_dir"
+      provider_mc "$provider_inventory_dir" /inventory '
+        mc alias set b2 "$B2_S3_ENDPOINT" "$B2_S3_ACCESS_KEY_ID" "$B2_S3_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$B2_S3_REGION" >/dev/null
+        mc alias set r2 "$CLOUDFLARE_R2_ENDPOINT" "$CLOUDFLARE_R2_ACCESS_KEY_ID" "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$CLOUDFLARE_R2_REGION" >/dev/null
+        mc ls --recursive --json "b2/$B2_S3_BUCKET" > /inventory/b2-media.jsonl
+        mc ls --recursive --json "r2/$CLOUDFLARE_R2_BUCKET" > /inventory/r2-media.jsonl
+        mc ls --recursive --json "r2/$CLOUDFLARE_R2_METADATA_BUCKET" > /inventory/r2-metadata.jsonl
+      '
+      b2_inventory_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/b2-media.jsonl" --bucket "$media_b2_bucket")"
+      r2_inventory_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/r2-media.jsonl" --bucket "$media_r2_bucket")"
+      r2_metadata_inventory_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/r2-metadata.jsonl" --bucket "$media_r2_metadata_bucket")"
+      b2_media_count="$(jq -er '.count' <<< "$b2_inventory_stats")"; b2_media_bytes="$(jq -er '.bytes' <<< "$b2_inventory_stats")"
+      r2_media_count="$(jq -er '.count' <<< "$r2_inventory_stats")"; r2_media_bytes="$(jq -er '.bytes' <<< "$r2_inventory_stats")"
+      r2_metadata_count="$(jq -er '.count' <<< "$r2_metadata_inventory_stats")"; r2_metadata_bytes="$(jq -er '.bytes' <<< "$r2_metadata_inventory_stats")"
+      external_media_bytes=$((b2_media_bytes + r2_media_bytes + r2_metadata_bytes))
+    else
+      external_media_bytes=0
+      b2_media_count=0; b2_media_bytes=0; r2_media_count=0; r2_media_bytes=0; r2_metadata_count=0; r2_metadata_bytes=0
+    fi
     for source_path in "$video_media_source" "$node_storage_source"; do
       [[ -n "$source_path" ]] || continue
       [[ "$source_path" != "/" ]] || die "refusing to back up the entire filesystem as Data Centre media"
@@ -303,31 +337,148 @@ fi
     if [[ -n "$node_storage_source" ]]; then
       node_storage_bytes="$(du -sb "$node_storage_source" | awk '{print $1}')"
     fi
-    [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ && "$video_media_bytes" =~ ^[0-9]+$ && "$node_storage_bytes" =~ ^[0-9]+$ ]] || die "could not determine database, MinIO or Data Centre storage sizes"
-    required_stage_bytes=$(( (minio_bytes + postgres_bytes + video_media_bytes + node_storage_bytes) * 120 / 100 + 1073741824 ))
+    [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ && "$video_media_bytes" =~ ^[0-9]+$ && "$node_storage_bytes" =~ ^[0-9]+$ && "$external_media_bytes" =~ ^[0-9]+$ ]] || die "could not determine database, MinIO, Data Centre or external media storage sizes"
+    required_stage_bytes=$(( (minio_bytes + postgres_bytes + video_media_bytes + node_storage_bytes + external_media_bytes) * 120 / 100 + 1073741824 ))
     available_stage_bytes="$(df -PB1 "$stage_parent" | awk 'NR == 2 { print $4 }')"
     docker_root="$("${DOCKER[@]}" info --format '{{.DockerRootDir}}')"
     available_docker_bytes="$(df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
     [[ "$available_stage_bytes" =~ ^[0-9]+$ && "$available_docker_bytes" =~ ^[0-9]+$ ]] || die "could not determine free disk space"
-    printf 'Estimated backup source: PostgreSQL=%s bytes, MinIO=%s bytes, Data Centre video=%s bytes, node storage=%s bytes; staging free=%s bytes.\n' \
-      "$postgres_bytes" "$minio_bytes" "$video_media_bytes" "$node_storage_bytes" "$available_stage_bytes"
+    printf 'Estimated backup source: PostgreSQL=%s bytes, MinIO=%s bytes, Data Centre video=%s bytes, node storage=%s bytes, external media=%s bytes; staging free=%s bytes.\n' \
+      "$postgres_bytes" "$minio_bytes" "$video_media_bytes" "$node_storage_bytes" "$external_media_bytes" "$available_stage_bytes"
     (( available_stage_bytes >= required_stage_bytes )) || die "insufficient staging space; need at least ${required_stage_bytes} bytes free for a safe full copy"
     (( available_docker_bytes >= 1073741824 )) || die "less than 1 GiB remains in Docker storage; refusing to risk production containers"
 
     stage=$(mktemp -d "${stage_parent%/}/testagram-backup.XXXXXXXX")
     chmod 700 "$stage"
-    cleanup() { rm -rf -- "$stage"; }
-    trap cleanup EXIT INT TERM
-
+    if [[ "$media_external_enabled" == "true" ]]; then
+      cp "$provider_inventory_dir/b2-media.jsonl" "$stage/b2-media-inventory.jsonl"
+      cp "$provider_inventory_dir/r2-media.jsonl" "$stage/r2-media-inventory.jsonl"
+      cp "$provider_inventory_dir/r2-metadata.jsonl" "$stage/r2-metadata-inventory.jsonl"
+    fi
     printf '%s\n' "$postgres_database_names" > "$stage/postgres-databases.txt"
+    { [[ -z "$federation_database_name" ]] || printf '%s|%s\n' "$federation_database_name" "$federation_database_user"; [[ -z "$media_database_name" ]] || printf '%s|%s\n' "$media_database_name" "$media_database_user"; } > "$stage/service-db-roles.txt"
+    capture_media_snapshot() {
+      local prefix="$1" pending_objects pending_jobs
+      "${DOCKER[@]}" compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d "$media_database_name" -At -F 
+
+    if [[ -n "$video_media_source" ]]; then
+      printf 'Copying Data Centre video media into protected staging...\n'
+      cp -a -- "$video_media_source" "$stage/data-centre-video-media"
+    fi
+    if [[ -n "$node_storage_source" ]]; then
+      printf 'Copying Data Centre node storage into protected staging...\n'
+      cp -a -- "$node_storage_source" "$stage/data-centre-node-storage"
+    fi
+
+    printf 'Mirroring all MinIO buckets to protected staging...\n'
+    mkdir -p "$stage/minio-private" "$stage/minio-public" "$stage/minio-identity-evidence" "$stage/minio-metadata"
+    chmod 700 "$stage/minio-private" "$stage/minio-public" "$stage/minio-identity-evidence" "$stage/minio-metadata"
+    # shellcheck disable=SC2016
+    "${DOCKER[@]}" compose run --rm --no-deps \
+      -v "$stage:/backup" \
+      --entrypoint /bin/sh object-init -ec '
+        mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+        mc mirror --preserve local/"$MINIO_BUCKET" /backup/minio-private >/dev/null
+        mc mirror --preserve local/"$PUBLIC_MEDIA_BUCKET" /backup/minio-public >/dev/null
+        mc mirror --preserve local/"$IDENTITY_EVIDENCE_PRIVATE_BUCKET" /backup/minio-identity-evidence >/dev/null
+        mc mirror --preserve local/"$MINIO_METADATA_BUCKET" /backup/minio-metadata >/dev/null
+      '
+    if [[ "$media_external_enabled" == "true" ]]; then
+      mkdir -p "$stage/b2-media" "$stage/r2-media" "$stage/r2-metadata"
+      chmod 700 "$stage/b2-media" "$stage/r2-media" "$stage/r2-metadata"
+      provider_mc "$stage" /backup '
+        mc alias set b2 "$B2_S3_ENDPOINT" "$B2_S3_ACCESS_KEY_ID" "$B2_S3_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$B2_S3_REGION" >/dev/null
+        mc alias set r2 "$CLOUDFLARE_R2_ENDPOINT" "$CLOUDFLARE_R2_ACCESS_KEY_ID" "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$CLOUDFLARE_R2_REGION" >/dev/null
+        mc mirror --preserve "b2/$B2_S3_BUCKET" /backup/b2-media >/dev/null
+        mc mirror --preserve "r2/$CLOUDFLARE_R2_BUCKET" /backup/r2-media >/dev/null
+        mc mirror --preserve "r2/$CLOUDFLARE_R2_METADATA_BUCKET" /backup/r2-metadata >/dev/null
+      '
+      python3 "$media_backup_helper" verify-mirror --inventory "$stage/b2-media-inventory.jsonl" --root "$stage/b2-media" --bucket "$media_b2_bucket"
+      python3 "$media_backup_helper" verify-mirror --inventory "$stage/r2-media-inventory.jsonl" --root "$stage/r2-media" --bucket "$media_r2_bucket"
+      python3 "$media_backup_helper" verify-mirror --inventory "$stage/r2-metadata-inventory.jsonl" --root "$stage/r2-metadata" --bucket "$media_r2_metadata_bucket"
+      capture_media_snapshot "$provider_inventory_dir/media-after-mirror"
+      cmp -s "$stage/media-objects.tsv" "$provider_inventory_dir/media-after-mirror.objects" || die "Data Centre media changed while external objects were mirrored; retry the coordinated backup"
+      cmp -s "$provider_inventory_dir/media-after-dump.outbox" "$provider_inventory_dir/media-after-mirror.outbox" || die "Data Centre media outbox changed while external objects were mirrored; retry the coordinated backup"
+      media_verified_stats="$(python3 "$media_backup_helper" verify-media --checksums "$stage/media-objects.tsv" --b2 "$stage/b2-media" --r2 "$stage/r2-media")"
+      media_objects_verified="$(jq -er '.verified_objects' <<< "$media_verified_stats")"
+    else
+      media_objects_verified=0
+    fi
+    printf '%s\n' \
+      "Testagram self-hosted backup" \
+      "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "postgres_user=$postgres_user" \
+      "postgres_primary_database=$postgres_primary_db" \
+      "postgres_database_count=$(wc -l < "$stage/postgres-databases.txt" | tr -d ' ')" \
+      "postgres_source_bytes=$postgres_bytes" \
+      "private_bucket=${MINIO_BUCKET:-testagram-private-media}" \
+      "public_bucket=${PUBLIC_MEDIA_BUCKET:-testagram-public-media}" \
+      "identity_evidence_bucket=${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}" \
+      "metadata_bucket=${MINIO_METADATA_BUCKET:-testagram-media-metadata}" \
+      "data_centre_video_media_included=$([[ -n "$video_media_source" ]] && echo true || echo false)" \
+      "data_centre_video_media_source=$video_media_source" \
+      "data_centre_video_media_bytes=$video_media_bytes" \
+      "data_centre_node_storage_included=$([[ -n "$node_storage_source" ]] && echo true || echo false)" \
+      "data_centre_node_storage_source=$node_storage_source" \
+      "data_centre_node_storage_bytes=$node_storage_bytes" \
+      "media_external_included=$media_external_enabled" \
+      "media_database_name=$media_database_name" \
+      "media_b2_bucket=$media_b2_bucket" \
+      "media_b2_object_count=$b2_media_count" \
+      "media_b2_bytes=$b2_media_bytes" \
+      "media_r2_bucket=$media_r2_bucket" \
+      "media_r2_object_count=$r2_media_count" \
+      "media_r2_bytes=$r2_media_bytes" \
+      "media_r2_metadata_bucket=$media_r2_metadata_bucket" \
+      "media_r2_metadata_object_count=$r2_metadata_count" \
+      "media_r2_metadata_bytes=$r2_metadata_bytes" \
+      "media_objects_verified=$media_objects_verified" \
+      "repository=${RESTIC_REPOSITORY}" > "$stage/manifest.txt"
+    chmod 600 "$stage/manifest.txt"
+    printf 'Writing encrypted restic snapshot...\n'
+    restic backup --host testagram-self-hosted --tag testagram --tag automated "$stage"
+    printf 'Verifying repository metadata and a data subset...\n'
+    restic check --read-data-subset=1/20
+    printf 'Backup complete. Temporary plaintext staging will now be removed.\n'
+    ;;
+  check)
+    restic snapshots --host testagram-self-hosted --tag testagram
+    restic check --read-data-subset=1/20
+    ;;
+  prune)
+    restic forget --host testagram-self-hosted --tag testagram \
+      --keep-daily "${RESTIC_KEEP_DAILY:-7}" \
+      --keep-weekly "${RESTIC_KEEP_WEEKLY:-5}" \
+      --keep-monthly "${RESTIC_KEEP_MONTHLY:-12}" --prune
+    restic check
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+\\t' -c "SELECT namespace, object_key, COALESCE(size_bytes,0), COALESCE(trim(sha256),''), status FROM media_objects ORDER BY namespace, object_key" > "$prefix.objects"
+      "${DOCKER[@]}" compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d "$media_database_name" -At -c "SELECT status || ':' || count(*) FROM media_outbox GROUP BY status ORDER BY status" > "$prefix.outbox"
+      pending_objects="$("${DOCKER[@]}" compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d "$media_database_name" -Atqc "SELECT count(*) FROM media_objects WHERE status NOT IN ('protected','deleted')")"
+      pending_jobs="$("${DOCKER[@]}" compose exec -T postgres psql -v ON_ERROR_STOP=1 -U "$postgres_user" -d "$media_database_name" -Atqc "SELECT count(*) FROM media_outbox WHERE status IN ('pending','processing','retry')")"
+      [[ "$pending_objects" == "0" ]] || die "Data Centre media has objects outside protected/deleted states; reconcile before backup"
+      [[ "$pending_jobs" == "0" ]] || die "Data Centre media outbox is not drained; retry after replication completes"
+    }
     printf 'Exporting %s PostgreSQL databases...\n' "$(wc -l < "$stage/postgres-databases.txt" | tr -d ' ')"
     while IFS= read -r database_name; do
+      if [[ "$media_external_enabled" == "true" && "$database_name" == "$media_database_name" ]]; then capture_media_snapshot "$provider_inventory_dir/media-before-dump"; fi
       dump_path="$stage/postgres-$database_name.dump"
       "${DOCKER[@]}" compose exec -T postgres pg_dump -Fc --no-owner --no-acl -U "$postgres_user" -d "$database_name" > "$dump_path"
       [[ -s "$dump_path" ]] || die "PostgreSQL dump for $database_name is empty"
       "${DOCKER[@]}" compose exec -T postgres pg_restore --list < "$dump_path" > "$dump_path.list"
       [[ -s "$dump_path.list" ]] || die "PostgreSQL dump for $database_name failed archive-list validation"
       chmod 600 "$dump_path" "$dump_path.list"
+      if [[ "$media_external_enabled" == "true" && "$database_name" == "$media_database_name" ]]; then
+        capture_media_snapshot "$provider_inventory_dir/media-after-dump"
+        cmp -s "$provider_inventory_dir/media-before-dump.objects" "$provider_inventory_dir/media-after-dump.objects" || die "Data Centre media changed during its database dump; retry the coordinated backup"
+        cmp -s "$provider_inventory_dir/media-before-dump.outbox" "$provider_inventory_dir/media-after-dump.outbox" || die "Data Centre media outbox changed during its database dump; retry the coordinated backup"
+        cp "$provider_inventory_dir/media-after-dump.objects" "$stage/media-objects.tsv"
+      fi
     done < "$stage/postgres-databases.txt"
 
     if [[ -n "$video_media_source" ]]; then
