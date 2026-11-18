@@ -428,18 +428,19 @@ func sortedStatusCodes(statuses map[int]uint64) []int {
 
 func (s *service) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		// Liveness is deliberately independent of PostgreSQL readiness. The
-		// public health identity lets release checks distinguish this Backend
-		// from a stale Worker, proxy fallback, or unrelated service.
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
+		// Public liveness is independent of PostgreSQL readiness. Keep both
+		// paths identical; /health is the canonical externally probed route.
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Testagram-Service", "testagram-api")
 		w.Header().Set("X-Testagram-Health-Contract", "v1")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{\"ok\":true,\"service\":\"testagram-api\"}\n"))
-	})
+		_, _ = w.Write([]byte("{\"ok\":true,\"service\":\"testagram-api\"}\\n"))
+	}
+	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("GET /healthz", healthHandler)
 	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
