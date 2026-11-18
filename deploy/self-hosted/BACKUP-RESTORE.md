@@ -113,10 +113,12 @@ The workflow uses:
 Unless `TESTAGRAM_BACKUP_S3_BUCKET` is already configured as a repository
 secret or variable, the workflow provisions the dedicated
 `testagram-production-backups` bucket in the existing Cloudflare account, in
-the APAC location. The Cloudflare API token must have R2 bucket-list permission
-and `Workers R2 Storage Write` permission for bucket creation. The S3 key pair
-must have read/write access to this dedicated bucket. The workflow rejects a
-destination whose bucket name matches the configured live B2 bucket.
+the APAC location. The workflow first tries the existing Cloudflare API token for bucket
+discovery/creation. If that token lacks R2 bucket-management permission, it
+falls back to the existing R2 S3 key pair using the MinIO client. The S3 key
+pair must be able to access the dedicated bucket and, if it does not exist yet,
+create it. The workflow rejects a destination whose bucket name matches the
+configured live B2 bucket.
 
 The Restic repository is isolated under the `testagram-backups` object-key
 prefix inside the dedicated backup bucket. Repository initialization remains

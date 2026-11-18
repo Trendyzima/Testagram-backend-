@@ -64,8 +64,7 @@ jobs:
           for secret in "$INSTABOX_API_KEY" "$CLOUDFLARE_API_TOKEN" "$R2_BACKUP_ACCESS_KEY_ID" "$R2_BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
             [[ -z "$secret" ]] || echo "::add-mask::$secret"
           done
-          [[ -n "$R2_BACKUP_ENDPOINT" && -n "$R2_BACKUP_BUCKET" && -n "$R2_BACKUP_ACCESS_KEY_ID" && -n "$R2_BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::The existing dedicated Cloudflare R2 backup credentials are incomplete."; exit 1; }
-          [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]] || { echo "::error::Existing Cloudflare account credentials are required to provision the dedicated backup bucket."; exit 1; }
+          [[ -n "$R2_BACKUP_ENDPOINT" && -n "$R2_BACKUP_BUCKET" && -n "$R2_BACKUP_ACCESS_KEY_ID" && -n "$R2_BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::The existing dedicated R2 backup credentials are incomplete."; exit 1; }
           BACKUP_ENDPOINT="$R2_BACKUP_ENDPOINT"
           BACKUP_BUCKET="$R2_BACKUP_BUCKET"
           BACKUP_REGION=auto
@@ -73,24 +72,49 @@ jobs:
           BACKUP_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
           BACKUP_PROVIDER="Cloudflare R2"
           [[ "$BACKUP_BUCKET" != "$LIVE_B2_BUCKET" ]] || { echo "::error::The backup bucket must not be the live B2 media bucket."; exit 1; }
-          # Create only the dedicated backup bucket; never alter or delete live media buckets.
-          bucket_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-buckets.json" -w '%{http_code}' \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets?name_contains=$BACKUP_BUCKET")"
-          [[ "$bucket_status" == "200" ]] || { echo "::error::Could not list Cloudflare R2 buckets using the existing account token."; exit 1; }
-          if ! jq -e --arg name "$BACKUP_BUCKET" '.result.buckets[]? | select(.name == $name)' "$RUNNER_TEMP/r2-buckets.json" >/dev/null; then
-            create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
-              -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-              --data "$(jq -nc --arg name "$BACKUP_BUCKET" '{name:$name,locationHint:"apac"}')" \
+          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
+            bucket_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-buckets.json" -w '%{http_code}' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-            if [[ "$create_status" != "200" ]] || ! jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
-              echo "::error::Could not create the dedicated Cloudflare R2 backup bucket; check the existing token's Workers R2 Storage Write permission."
-              exit 1
+            if [[ "$bucket_status" == "200" ]]; then
+              if jq -e --arg name "$BACKUP_BUCKET" '.result.buckets[]? | select(.name == $name)' "$RUNNER_TEMP/r2-buckets.json" >/dev/null; then
+                echo "Dedicated R2 backup bucket already exists."
+              else
+                create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
+                  -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                  --data "$(jq -nc --arg name "$BACKUP_BUCKET" '{name:$name,locationHint:"apac"}')" \
+                  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
+                if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+                  echo "Created dedicated R2 backup bucket through Cloudflare API."
+                else
+                  echo "Cloudflare API could not create the backup bucket; falling back to the existing R2 S3 key pair."
+                  jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
+                fi
+              fi
+            else
+              echo "Cloudflare R2 bucket listing returned HTTP $bucket_status; trying bucket creation permission before S3 fallback."
+              create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
+                -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                --data "$(jq -nc --arg name "$BACKUP_BUCKET" '{name:$name,locationHint:"apac"}')" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
+              if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+                echo "Created dedicated R2 backup bucket through Cloudflare API."
+              else
+                jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-buckets.json" || true
+                jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
+              fi
             fi
+          else
+            echo "Cloudflare account token unavailable; using the existing R2 S3 key pair for bucket access."
           fi
-          for secret in "$CLOUDFLARE_API_TOKEN" "$R2_BACKUP_ACCESS_KEY_ID" "$R2_BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
-            [[ -z "$secret" ]] || echo "::add-mask::$secret"
-          done
+          docker run --rm --entrypoint /bin/sh \
+            -e R2_ENDPOINT="$BACKUP_ENDPOINT" -e R2_REGION="$BACKUP_REGION" \
+            -e R2_BUCKET="$BACKUP_BUCKET" -e R2_ACCESS_KEY_ID="$BACKUP_ACCESS_KEY_ID" \
+            -e R2_SECRET_ACCESS_KEY="$BACKUP_SECRET_ACCESS_KEY" \
+            ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
+              mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+              mc mb --ignore-existing "r2/$R2_BUCKET"
+            '
           export BACKUP_ENDPOINT BACKUP_BUCKET BACKUP_REGION BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY
           [[ -n "$INSTABOX_API_KEY" && -n "$RESTIC_PASSWORD" ]] || { echo "::error::Missing InstaBox API or Restic encryption credential."; exit 1; }
           [[ -n "$BACKUP_ACCESS_KEY_ID" ]] || { echo "::error::Missing access-key secret for $BACKUP_PROVIDER."; exit 1; }

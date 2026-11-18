@@ -60,7 +60,10 @@ class SelfHostedBackupGuardTests(unittest.TestCase):
         self.assertIn("TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID", docs)
         self.assertIn("CLOUDFLARE_API_TOKEN", docs)
         self.assertIn("testagram-production-backups", docs)
+        self.assertIn("S3 key pair using the MinIO client", docs)
         self.assertIn("TESTAGRAM_BACKUP_RESTIC_PASSWORD", docs)
+        self.assertIn("mc mb --ignore-existing", workflow)
+        self.assertIn("ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z", workflow)
 
     def test_backup_still_fails_closed_for_external_storage_and_replication(self):
         self.assertIn(
