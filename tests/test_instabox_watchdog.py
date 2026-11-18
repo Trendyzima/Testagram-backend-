@@ -39,7 +39,7 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "DRY_RUN", True),
             patch.object(watchdog, "API_KEY", ""),
             patch.object(watchdog, "HEALTH_URL", "https://api.example.test/healthz"),
-            patch.object(watchdog, "probe") as probe,
+            patch.object(watchdog, "probe", return_value=(True, "HTTP 200")) as probe,
             patch.object(watchdog, "API") as api_factory,
         ):
             with self.assertRaisesRegex(watchdog.WatchdogError, "INSTABOX_WATCHDOG_API_KEY is required"):
@@ -169,6 +169,21 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(api.calls[1][1], "/v1/operations/op-1")
         self.assertEqual(api.calls[2][1], "/v1/machines/machine-123")
 
+    def test_provider_cooldown_fails_visibly_instead_of_reporting_success(self):
+        api = FakeAPI({
+            "id": "machine-123", "name": "testagramdb", "state": "suspended",
+            "desiredState": "suspended", "operationId": None,
+            "cooldownUntil": "2099-01-01T00:00:00Z"
+        })
+        with (
+            patch.object(watchdog, "API", return_value=api),
+            patch.object(watchdog, "load_state", return_value={}),
+            patch.object(watchdog, "API_KEY", "test-key"),
+            patch.object(watchdog, "MACHINE_ID", "machine-123"),
+        ):
+            with self.assertRaisesRegex(watchdog.WatchdogError, "provider cooldown is active"):
+                watchdog.main()
+
     def test_active_operation_is_not_interrupted(self):
         api = FakeAPI({
             "id": "machine-123", "name": "testagramdb", "state": "running",
@@ -287,18 +302,20 @@ class WatchdogTests(unittest.TestCase):
             ):
                 watchdog.main()
 
-    def test_running_machine_never_triggers_restart_even_after_prior_health_failures(self):
+    def test_running_machine_probes_liveness_but_never_restarts(self):
         api = FakeAPI()
-        state = {"consecutive_health_failures": 99}
-        with patch.object(watchdog, "probe") as probe, patch.object(watchdog, "lifecycle") as lifecycle:
+        state = {}
+        with patch.object(watchdog, "probe", return_value=(True, "HTTP 200")) as probe, \\
+             patch.object(watchdog, "save_state"), \\
+             patch.object(watchdog, "lifecycle") as lifecycle:
             result = watchdog.check_running_service(api, state)
         self.assertIn("no restart triggered", result)
-        probe.assert_not_called()
+        probe.assert_called_once()
         lifecycle.assert_not_called()
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
-        self.assertEqual(state["consecutive_health_failures"], 99)
+        self.assertEqual(state["consecutive_health_failures"], 0)
 
-    def test_running_machine_is_read_only_and_does_not_probe_or_restart(self):
+    def test_running_machine_probes_liveness_and_does_not_restart(self):
         api = FakeAPI()
         with (
             patch.object(watchdog, "API", return_value=api),
@@ -324,9 +341,9 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "MACHINE_ID", "machine-123"),
         ):
             self.assertEqual(watchdog.main(), 0)
-        probe.assert_not_called()
+        self.assertEqual(probe.call_count, 3)
         self.assertEqual([call[0] for call in api.calls], ["GET"])
-        notify.assert_not_called()
+        notify.assert_called_once()
 
     def test_repeated_liveness_failure_in_dry_run_never_stops_machine(self):
         api = FakeAPI()
@@ -400,21 +417,21 @@ class WatchdogTests(unittest.TestCase):
 
     def test_workflow_reuses_existing_secret_and_preserves_pr_validation(self):
         workflow = Path(".github/workflows/instabox-vps-watchdog.yml").read_text()
-        self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY", workflow)
+        self.assertIn("secrets.INSTABOX_WATCHDOG_API_KEY || secrets.INSTABOX_API_KEY", workflow)
         self.assertIn("WATCHDOG_AUTO_RECOVERY_ENABLED", workflow)
         self.assertIn("export INSTABOX_WATCHDOG_API_KEY_HEADER=Authorization", workflow)
         self.assertNotIn("INSTABOX_READONLY_API_KEY", workflow)
         self.assertIn("secrets.INSTABOX_MACHINE_ID", workflow)
         self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagramdb'", workflow)
         self.assertIn("https://api.testagram.site/healthz", workflow)
-        self.assertIn("provider reports VPS running; no lifecycle action initiated", Path("scripts/instabox_watchdog.py").read_text())
+        self.assertIn("provider reports VPS running but public API liveness failed three consecutive probes", Path("scripts/instabox_watchdog.py").read_text())
         self.assertIn("idle-suspended", Path("scripts/instabox_watchdog.py").read_text())
         self.assertNotIn("WATCHDOG_FAILURES_REQUIRED", workflow)
         self.assertNotIn("WATCHDOG_RESTART_COOLDOWN_SECONDS", workflow)
         self.assertNotIn("TESTAGRAM_READINESS_URL", workflow)
         self.assertNotIn("/readyz", workflow)
         self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
-        self.assertIn('WATCHDOG_AUTO_RECOVERY_ENABLED: "true"', workflow)
+        self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'true'", workflow)
         self.assertIn("github.event_name == 'workflow_dispatch' && inputs.dry_run", workflow)
         self.assertIn("pull_request:", workflow)
 
