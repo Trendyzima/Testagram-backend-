@@ -30,6 +30,10 @@ The Testagram Backend owns the application, verification session, private eviden
 - Unverified email, disabled identity, pending provisioning or mandatory password reset.
 - Staff reviewer lacking an enabled principal, explicit role grant or recorded MFA-enrollment marker.
 
+## Staff MFA release blocker
+
+The current Admin Console step-up handler reauthenticates the staff password; it does not verify a TOTP or passkey challenge. The Backend also checks the recorded `mfa_enrolled_at` marker and explicit role grants, but that marker is not proof that a second factor was just verified. Keep production staff identity-review activation fail-closed until real factor enrollment, challenge verification, recovery and replay protection are implemented and tested. Two-person approval does not substitute for MFA.
+
 ## Legacy Appwrite records
 
 `scripts/migrate-appwrite-identities.sql` is a controlled reconciliation tool only. It uses explicit Appwrite-ID-to-canonical-UUID mappings, detects ambiguous collisions and does not import Appwrite password hashes. Reconciled users receive a reset-required credential state and must complete native password reset. It does not disable Appwrite or authorize Appwrite bearer tokens on native API routes.
