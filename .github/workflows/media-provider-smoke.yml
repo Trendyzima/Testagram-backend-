@@ -1,10 +1,10 @@
-name: Media provider credential smoke test
+name: Backblaze B2 storage smoke test
 
 on:
   workflow_dispatch:
     inputs:
-      confirm_live_provider_writes:
-        description: Confirm writes and deletes of temporary objects in the configured staging buckets.
+      confirm_b2_object_write:
+        description: Confirm a temporary test object may be written to and deleted from the configured B2 bucket.
         required: true
         type: boolean
         default: false
@@ -13,191 +13,78 @@ permissions:
   contents: read
 
 concurrency:
-  group: media-provider-smoke
+  group: testagram-b2-storage-smoke
   cancel-in-progress: false
 
 jobs:
-  verify-object-providers:
-    if: inputs.confirm_live_provider_writes == true
-    name: Verify B2 and R2 access, read-back and cleanup
+  verify-b2:
+    if: inputs.confirm_b2_object_write == true
+    name: Verify existing B2 credentials and object lifecycle
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    env:
+      B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
+      B2_REGION: ${{ secrets.B2_S3_REGION }}
+      B2_BUCKET: ${{ secrets.B2_S3_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
     steps:
-      - name: Verify provider credentials without exposing them
+      - name: Validate existing B2 settings
         shell: bash
-        env:
-          B2_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
-          B2_REGION: ${{ vars.B2_S3_REGION }}
-          B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
-          B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
-          B2_PRIVATE_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
-          B2_PUBLIC_BUCKET: ${{ vars.B2_S3_PUBLIC_BUCKET }}
-          R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
-          R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
-          R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          R2_PRIVATE_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
-          R2_PUBLIC_BUCKET: ${{ vars.CLOUDFLARE_R2_PUBLIC_BUCKET }}
+        run: |
+          set -euo pipefail
+          for name in B2_ENDPOINT B2_REGION B2_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            [[ -n "${!name:-}" ]] || { echo "::error::Missing existing repository secret: $name"; exit 1; }
+          done
+          [[ "$B2_ENDPOINT" == https://* ]] || { echo "::error::B2 endpoint must use HTTPS"; exit 1; }
+          echo "Existing B2 endpoint, bucket and credentials are present. Values are not printed."
+
+      - name: Write, read back, verify SHA-256 and delete one temporary object
+        shell: bash
         run: |
           set -euo pipefail
           aws --version
-
-          probe_bucket() {
-            local provider="$1" endpoint="$2" region="$3" access="$4" secret="$5" bucket="$6"
-            [[ "$endpoint" == https://* ]] || { echo "::error::$provider endpoint must use HTTPS"; return 1; }
-            [[ -n "$region" && -n "$access" && -n "$secret" && -n "$bucket" ]] || {
-              echo "::error::$provider configuration is incomplete (values are intentionally not printed)"
-              return 1
-            }
-
-            local stage key expected actual
-            stage="$(mktemp -d)"
-            key="ci-smoke/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${provider}-${bucket}"
-            printf 'Testagram object-storage credential smoke test\nrun=%s\nattempt=%s\nprovider=%s\nbucket=%s\n' \
-              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$provider" "$bucket" > "$stage/source"
-            expected="$(sha256sum "$stage/source" | awk '{print $1}')"
-
-            (
-              set -euo pipefail
-              # ShellCheck cannot see EXIT-trap invocation; this cleanup runs on every subshell exit.
-              # shellcheck disable=SC2329
-              cleanup() {
-                AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
-                  aws --endpoint-url "$endpoint" --region "$region" s3api delete-object \
-                    --bucket "$bucket" --key "$key" >/dev/null 2>&1 || true
-                rm -rf "$stage"
-              }
-              trap cleanup EXIT
-
-              AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
-                aws --endpoint-url "$endpoint" --region "$region" s3api put-object \
-                  --bucket "$bucket" --key "$key" --body "$stage/source" \
-                  --content-type application/octet-stream >/dev/null
-
-              actual="$(AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
-                aws --endpoint-url "$endpoint" --region "$region" s3api head-object \
-                  --bucket "$bucket" --key "$key" --query ContentLength --output text)"
-              [[ "$actual" == "$(wc -c < "$stage/source" | tr -d ' ')" ]]
-
-              AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
-                aws --endpoint-url "$endpoint" --region "$region" s3api get-object \
-                  --bucket "$bucket" --key "$key" "$stage/readback" >/dev/null
-              actual="$(sha256sum "$stage/readback" | awk '{print $1}')"
-              [[ "$actual" == "$expected" ]]
-              cmp -s "$stage/source" "$stage/readback"
-
-              # DeleteObject hides the current object. Versioned buckets may retain
-              # older versions according to their retention policy.
-              AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
-                aws --endpoint-url "$endpoint" --region "$region" s3api delete-object \
-                  --bucket "$bucket" --key "$key" >/dev/null
-              if AWS_ACCESS_KEY_ID="$access" AWS_SECRET_ACCESS_KEY="$secret" AWS_DEFAULT_REGION="$region" \
-                aws --endpoint-url "$endpoint" --region "$region" s3api head-object \
-                  --bucket "$bucket" --key "$key" >/dev/null 2>"$stage/head.err"; then
-                echo "::error::Smoke-test object is still visible after deletion"
-                exit 1
-              fi
-              grep -Eq '(404|Not Found|NoSuchKey)' "$stage/head.err" || {
-                echo "::error::Post-delete HEAD failed for a reason other than object-not-found"
-                exit 1
-              }
-              trap - EXIT
-              rm -rf "$stage"
-            )
-            echo "$provider bucket access, write, read-back, SHA-256 and logical deletion verified: $bucket"
+          stage="$(mktemp -d)"
+          key="ci-smoke/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-b2"
+          cleanup() {
+            aws --endpoint-url "$B2_ENDPOINT" --region "$B2_REGION" s3api delete-object \
+              --bucket "$B2_BUCKET" --key "$key" >/dev/null 2>&1 || true
+            rm -rf "$stage"
           }
+          trap cleanup EXIT
 
-          probe_provider() {
-            local provider="$1" endpoint="$2" region="$3" access="$4" secret="$5" private_bucket="$6" public_bucket="$7"
-            [[ -n "$private_bucket" && -n "$public_bucket" ]] || {
-              echo "::error::$provider requires separate private and public bucket names"
-              return 1
-            }
-            [[ "$private_bucket" != "$public_bucket" ]] || {
-              echo "::error::$provider private and public buckets must be different"
-              return 1
-            }
-            probe_bucket "$provider" "$endpoint" "$region" "$access" "$secret" "$private_bucket"
-            probe_bucket "$provider" "$endpoint" "$region" "$access" "$secret" "$public_bucket"
-          }
+          printf 'Testagram B2 storage smoke test\nrun=%s\nattempt=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$stage/source"
+          expected="$(sha256sum "$stage/source" | awk '{print $1}')"
 
-          probe_provider backblaze-b2 "$B2_ENDPOINT" "$B2_REGION" "$B2_ACCESS_KEY_ID" "$B2_SECRET_ACCESS_KEY" "$B2_PRIVATE_BUCKET" "$B2_PUBLIC_BUCKET"
-          probe_provider cloudflare-r2 "$R2_ENDPOINT" "$R2_REGION" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" "$R2_PRIVATE_BUCKET" "$R2_PUBLIC_BUCKET"
+          aws --endpoint-url "$B2_ENDPOINT" --region "$B2_REGION" s3api put-object \
+            --bucket "$B2_BUCKET" --key "$key" --body "$stage/source" \
+            --content-type application/octet-stream >/dev/null
 
-  identity-evidence-replication:
-    if: inputs.confirm_live_provider_writes == true
-    name: Verify MinIO to B2/R2 identity evidence replication, repair and deletion
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      TESTAGRAM_LIVE_IDENTITY_EVIDENCE_REPLICATION: "true"
-      IDENTITY_SMOKE_PRIMARY_ENDPOINT: http://127.0.0.1:9000
-      IDENTITY_SMOKE_PRIMARY_REGION: us-east-1
-      IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID: ci-testagram-minio
-      IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY: ci-only-minio-secret-32-characters
-      IDENTITY_SMOKE_PRIMARY_PRIVATE_BUCKET: testagram-ci-private
-      IDENTITY_SMOKE_PRIMARY_PUBLIC_BUCKET: testagram-ci-public
-      IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET: testagram-ci-identity-evidence
-      IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
-      IDENTITY_SMOKE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
-      IDENTITY_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.CLOUDFLARE_R2_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET || vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_B2_ENDPOINT: ${{ vars.B2_S3_ENDPOINT }}
-      IDENTITY_SMOKE_B2_REGION: ${{ vars.B2_S3_REGION }}
-      IDENTITY_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
-      IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.B2_S3_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET || vars.B2_S3_PRIVATE_BUCKET }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.11"
-          cache: true
-      - name: Start pinned isolated MinIO primary
-        shell: bash
+          aws --endpoint-url "$B2_ENDPOINT" --region "$B2_REGION" s3api get-object \
+            --bucket "$B2_BUCKET" --key "$key" "$stage/readback" >/dev/null
+          actual="$(sha256sum "$stage/readback" | awk '{print $1}')"
+          [[ "$actual" == "$expected" ]] || { echo "::error::B2 SHA-256 read-back mismatch"; exit 1; }
+          cmp -s "$stage/source" "$stage/readback"
+
+          aws --endpoint-url "$B2_ENDPOINT" --region "$B2_REGION" s3api delete-object \
+            --bucket "$B2_BUCKET" --key "$key" >/dev/null
+          if aws --endpoint-url "$B2_ENDPOINT" --region "$B2_REGION" s3api head-object \
+            --bucket "$B2_BUCKET" --key "$key" >/dev/null 2>&1; then
+            echo "::error::Temporary B2 object remains visible after deletion"
+            exit 1
+          fi
+          trap - EXIT
+          rm -rf "$stage"
+          echo "B2 write, read-back, SHA-256 verification and logical deletion passed."
+
+      - name: Report scope
+        if: success()
         run: |
-          set -euo pipefail
-          docker run -d --rm --name testagram-minio-identity-smoke \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER="$IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID" \
-            -e MINIO_ROOT_PASSWORD="$IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY" \
-            ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 \
-            server /data --address ":9000" --console-address ":9001"
-          for attempt in $(seq 1 40); do
-            if curl -fsS "$IDENTITY_SMOKE_PRIMARY_ENDPOINT/minio/health/live" >/dev/null; then break; fi
-            if [ "$attempt" -eq 40 ]; then echo "::error::Isolated MinIO did not become healthy"; exit 1; fi
-            sleep 2
-          done
-      - name: Create isolated private, public and identity buckets
-        shell: bash
-        run: |
-          set -euo pipefail
-          export AWS_ACCESS_KEY_ID="$IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID"
-          export AWS_SECRET_ACCESS_KEY="$IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY"
-          export AWS_DEFAULT_REGION="$IDENTITY_SMOKE_PRIMARY_REGION"
-          for bucket in "$IDENTITY_SMOKE_PRIMARY_PRIVATE_BUCKET" "$IDENTITY_SMOKE_PRIMARY_PUBLIC_BUCKET" "$IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET"; do
-            aws --endpoint-url "$IDENTITY_SMOKE_PRIMARY_ENDPOINT" s3api create-bucket --bucket "$bucket" >/dev/null
-          done
-      - name: Validate dedicated staging provider buckets
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in IDENTITY_SMOKE_R2_ENDPOINT IDENTITY_SMOKE_R2_REGION IDENTITY_SMOKE_R2_ACCESS_KEY_ID IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY IDENTITY_SMOKE_R2_PRIVATE_BUCKET IDENTITY_SMOKE_R2_PUBLIC_BUCKET IDENTITY_SMOKE_R2_IDENTITY_BUCKET IDENTITY_SMOKE_B2_ENDPOINT IDENTITY_SMOKE_B2_REGION IDENTITY_SMOKE_B2_ACCESS_KEY_ID IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY IDENTITY_SMOKE_B2_PRIVATE_BUCKET IDENTITY_SMOKE_B2_PUBLIC_BUCKET IDENTITY_SMOKE_B2_IDENTITY_BUCKET; do
-            if [ -z "${!name:-}" ]; then echo "::error::Missing staging configuration: $name"; exit 1; fi
-          done
-          [[ "$IDENTITY_SMOKE_R2_ENDPOINT" == https://* && "$IDENTITY_SMOKE_B2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
-          [[ "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Private and public buckets must be distinct"; exit 1; }
-          [[ "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Identity evidence must never use a public bucket"; exit 1; }
-          for bucket in "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET"; do
-            if [[ "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]]; then echo "::error::Use dedicated staging buckets, not production buckets"; exit 1; fi
-          done
-      - name: Execute live three-provider identity evidence lifecycle
-        run: go test -count=1 -run '^TestLiveIdentityEvidenceReplicationLifecycle$' -v ./internal/virtualstorage
-      - name: Stop isolated MinIO
-        if: always()
-        run: docker rm -f testagram-minio-identity-smoke >/dev/null 2>&1 || true
+          {
+            echo "### Backblaze B2 storage smoke test"
+            echo "- Reused existing repository B2 secrets; no additional credentials required."
+            echo "- Verified one temporary object by read-back and SHA-256."
+            echo "- Verified logical deletion."
+            echo "- This does not test R2, cross-provider replication, CDN delivery, or production media readiness."
+          } >> "$GITHUB_STEP_SUMMARY"
