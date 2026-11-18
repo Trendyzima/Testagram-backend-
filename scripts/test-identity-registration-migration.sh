@@ -486,10 +486,13 @@ BEGIN
      OR to_regclass('testagram_mail.outbox') IS NULL THEN
     RAISE EXCEPTION 'native authentication schema is incomplete';
   END IF;
-  IF NOT has_table_privilege('testagram_app','testagram_mail.outbox','SELECT')
+  IF NOT has_schema_privilege('testagram_app','testagram_mail','USAGE')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','SELECT')
      OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','INSERT')
-     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','UPDATE') THEN
-    RAISE EXCEPTION 'Backend runtime role lacks transactional mail outbox privileges';
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','UPDATE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','USAGE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','SELECT') THEN
+    RAISE EXCEPTION 'Backend runtime role lacks transactional mail schema, table or sequence privileges';
   END IF;
   IF NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','SELECT')
      OR NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','INSERT')
