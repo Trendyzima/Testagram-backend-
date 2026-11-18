@@ -241,8 +241,11 @@ fi
     postgres_user="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_USER | tr -d '\r')"
     postgres_primary_db="$("${DOCKER[@]}" compose exec -T postgres printenv POSTGRES_DB | tr -d '\r')"
     [[ "$postgres_user" =~ ^[A-Za-z0-9_]+$ && "$postgres_primary_db" =~ ^[A-Za-z0-9_]+$ ]] || die "PostgreSQL user/database names are missing or unsupported"
-    extra_postgres_roles="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND rolname NOT IN ('postgres', '$postgres_user') ORDER BY rolname")"
-    [[ -z "$extra_postgres_roles" ]] || die "additional PostgreSQL roles detected ($extra_postgres_roles); add a tested globals backup/restore before relying on this backup"
+    allowed_postgres_roles="'postgres', '$postgres_user'"
+    [[ -z "$federation_database_user" ]] || allowed_postgres_roles+=", '$federation_database_user'"
+    [[ -z "$media_database_user" ]] || allowed_postgres_roles+=", '$media_database_user'"
+    extra_postgres_roles="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND rolname NOT IN ($allowed_postgres_roles) ORDER BY rolname")"
+    [[ -z "$extra_postgres_roles" ]] || die "unexpected PostgreSQL roles detected ($extra_postgres_roles); add them to the coordinated service database backup contract"
     extra_tablespaces="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT spcname FROM pg_tablespace WHERE spcname NOT IN ('pg_default', 'pg_global') ORDER BY spcname")"
     [[ -z "$extra_tablespaces" ]] || die "user-defined PostgreSQL tablespaces detected ($extra_tablespaces); back up their external paths before relying on this workflow"
     postgres_database_names="$("${DOCKER[@]}" compose exec -T postgres psql -U "$postgres_user" -d "$postgres_primary_db" -Atqc "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname")"
@@ -250,6 +253,9 @@ fi
     grep -Fxq "$postgres_primary_db" <<< "$postgres_database_names" || die "primary PostgreSQL database is absent from the database inventory"
     if [[ -n "$federation_database_name" ]]; then
       grep -Fxq "$federation_database_name" <<< "$postgres_database_names" || die "Federation API points to a database that is not present in the backed-up PostgreSQL cluster"
+    fi
+    if [[ -n "$media_database_name" ]]; then
+      grep -Fxq "$media_database_name" <<< "$postgres_database_names" || die "Data Centre media points to a database that is not present in the backed-up PostgreSQL cluster"
     fi
     while IFS= read -r database_name; do
       [[ "$database_name" =~ ^[A-Za-z0-9_]+$ ]] || die "unsupported PostgreSQL database name discovered; refusing unsafe dump path"
