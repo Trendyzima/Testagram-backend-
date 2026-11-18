@@ -285,9 +285,20 @@ fi
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
     stage_parent_real="$(realpath "$stage_parent")"
+    provider_inventory_dir="$(mktemp -d "${stage_parent_real%/}/testagram-provider-inventory.XXXXXXXX")"
+    chmod 700 "$provider_inventory_dir"
+    "${DOCKER[@]}" compose run --rm --no-deps -v "$provider_inventory_dir:/inventory" --entrypoint /bin/sh object-init -ec '
+      mc alias set local http://object-storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+      mc ls --recursive --json "local/$MINIO_BUCKET" > /inventory/minio-private.jsonl
+      mc ls --recursive --json "local/$PUBLIC_MEDIA_BUCKET" > /inventory/minio-public.jsonl
+      mc ls --recursive --json "local/$IDENTITY_EVIDENCE_PRIVATE_BUCKET" > /inventory/minio-identity-evidence.jsonl
+      mc ls --recursive --json "local/$MINIO_METADATA_BUCKET" > /inventory/minio-metadata.jsonl
+    '
+    minio_private_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/minio-private.jsonl" --bucket "${MINIO_BUCKET:-testagram-private-media}")"
+    minio_public_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/minio-public.jsonl" --bucket "${PUBLIC_MEDIA_BUCKET:-testagram-public-media}")"
+    minio_identity_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/minio-identity-evidence.jsonl" --bucket "${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}")"
+    minio_metadata_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/minio-metadata.jsonl" --bucket "${MINIO_METADATA_BUCKET:-testagram-media-metadata}")"
     if [[ "$media_external_enabled" == "true" ]]; then
-      provider_inventory_dir="$(mktemp -d "${stage_parent_real%/}/testagram-provider-inventory.XXXXXXXX")"
-      chmod 700 "$provider_inventory_dir"
       provider_mc "$provider_inventory_dir" /inventory '
         mc alias set b2 "$B2_S3_ENDPOINT" "$B2_S3_ACCESS_KEY_ID" "$B2_S3_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$B2_S3_REGION" >/dev/null
         mc alias set r2 "$CLOUDFLARE_R2_ENDPOINT" "$CLOUDFLARE_R2_ACCESS_KEY_ID" "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$CLOUDFLARE_R2_REGION" >/dev/null
@@ -306,6 +317,10 @@ fi
       external_media_bytes=0
       b2_media_count=0; b2_media_bytes=0; r2_media_count=0; r2_media_bytes=0; r2_metadata_count=0; r2_metadata_bytes=0
     fi
+    minio_private_count="$(jq -er '.count' <<< "$minio_private_stats")"
+    minio_public_count="$(jq -er '.count' <<< "$minio_public_stats")"
+    minio_identity_count="$(jq -er '.count' <<< "$minio_identity_stats")"
+    minio_metadata_count="$(jq -er '.count' <<< "$minio_metadata_stats")"
     for source_path in "$video_media_source" "$node_storage_source"; do
       [[ -n "$source_path" ]] || continue
       [[ "$source_path" != "/" ]] || die "refusing to back up the entire filesystem as Data Centre media"
@@ -350,6 +365,10 @@ fi
 
     stage=$(mktemp -d "${stage_parent%/}/testagram-backup.XXXXXXXX")
     chmod 700 "$stage"
+    cp "$provider_inventory_dir/minio-private.jsonl" "$stage/minio-private-inventory.jsonl"
+    cp "$provider_inventory_dir/minio-public.jsonl" "$stage/minio-public-inventory.jsonl"
+    cp "$provider_inventory_dir/minio-identity-evidence.jsonl" "$stage/minio-identity-evidence-inventory.jsonl"
+    cp "$provider_inventory_dir/minio-metadata.jsonl" "$stage/minio-metadata-inventory.jsonl"
     if [[ "$media_external_enabled" == "true" ]]; then
       cp "$provider_inventory_dir/b2-media.jsonl" "$stage/b2-media-inventory.jsonl"
       cp "$provider_inventory_dir/r2-media.jsonl" "$stage/r2-media-inventory.jsonl"
@@ -383,6 +402,10 @@ fi
         mc mirror --preserve local/"$IDENTITY_EVIDENCE_PRIVATE_BUCKET" /backup/minio-identity-evidence >/dev/null
         mc mirror --preserve local/"$MINIO_METADATA_BUCKET" /backup/minio-metadata >/dev/null
       '
+    python3 "$media_backup_helper" verify-mirror --inventory "$stage/minio-private-inventory.jsonl" --root "$stage/minio-private" --bucket "${MINIO_BUCKET:-testagram-private-media}"
+    python3 "$media_backup_helper" verify-mirror --inventory "$stage/minio-public-inventory.jsonl" --root "$stage/minio-public" --bucket "${PUBLIC_MEDIA_BUCKET:-testagram-public-media}"
+    python3 "$media_backup_helper" verify-mirror --inventory "$stage/minio-identity-evidence-inventory.jsonl" --root "$stage/minio-identity-evidence" --bucket "${IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private}"
+    python3 "$media_backup_helper" verify-mirror --inventory "$stage/minio-metadata-inventory.jsonl" --root "$stage/minio-metadata" --bucket "${MINIO_METADATA_BUCKET:-testagram-media-metadata}"
     if [[ "$media_external_enabled" == "true" ]]; then
       mkdir -p "$stage/b2-media" "$stage/r2-media" "$stage/r2-metadata"
       chmod 700 "$stage/b2-media" "$stage/r2-media" "$stage/r2-metadata"
