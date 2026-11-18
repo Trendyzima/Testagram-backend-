@@ -138,7 +138,7 @@ user = unquote(parsed.username or "")
 database = unquote(parsed.path.lstrip("/"))
 if parsed.scheme not in {"postgres", "postgresql"} or host not in {"postgres", "federation-db"} or port != 5432 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", user) or not re.fullmatch(r"[A-Za-z0-9_]{1,63}", database):
     sys.exit(1)
-print(user + "\\t" + database)
+print(user + "|" + database)
 PY
 }
 
@@ -155,7 +155,9 @@ if [[ -n "$federation_api_ids" ]]; then
 fi
 if [[ -n "$federation_database_url" ]]; then
   federation_identity="$(parse_postgres_identity "$federation_database_url")" || die "Federation database is not on the backed-up PostgreSQL service"
-  IFS=
+  IFS='|' read -r federation_database_user federation_database_name <<< "$federation_identity"
+fi
+
 data_centre_media_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=media --format '{{.ID}}')"
 media_database_url=""
 media_database_name=""
@@ -192,6 +194,8 @@ if [[ -n "$data_centre_media_ids" ]]; then
   media_r2_secret="$(container_env "$media_container_id" CLOUDFLARE_R2_SECRET_ACCESS_KEY)" || true
   media_r2_metadata_bucket="$(container_env "$media_container_id" CLOUDFLARE_R2_METADATA_BUCKET)" || true
   media_vps_metadata_bucket="$(container_env "$media_container_id" VPS_MINIO_METADATA_BUCKET)" || true
+  media_identity="$(parse_postgres_identity "$media_database_url")" || die "Data Centre media database is not on the backed-up PostgreSQL service"
+  IFS='|' read -r media_database_user media_database_name <<< "$media_identity"
   for value in "$media_b2_endpoint" "$media_b2_region" "$media_b2_bucket" "$media_b2_access" "$media_b2_secret" "$media_r2_endpoint" "$media_r2_region" "$media_r2_bucket" "$media_r2_access" "$media_r2_secret" "$media_r2_metadata_bucket" "$media_vps_metadata_bucket"; do
     [[ -n "$value" ]] || die "Data Centre media provider configuration is incomplete; refusing to omit external objects"
   done
@@ -609,7 +613,7 @@ parsed = urlparse(value[3:])
 parts = [part for part in parsed.path.split("/") if part]
 if parsed.scheme != "https" or not parsed.hostname or not parts:
     sys.exit(1)
-print(parsed.hostname.lower() + "\\t" + parts[0])
+print(parsed.hostname.lower() + "|" + parts[0])
 PY
   )" || die "Restic destination must be an S3 HTTPS repository with a bucket path"
   IFS=
