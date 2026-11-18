@@ -21,12 +21,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(f"vars.{key} || 'false'", self.workflow)
 
-    def test_deployer_rejects_invalid_or_mismatched_media_approvals(self):
-        self.assertIn('case "${FRESH_MEDIA_ENABLED:-false}" in', self.deployer)
-        self.assertIn('case "${DATA_CENTRE_MEDIA_ENABLED:-false}" in', self.deployer)
-        self.assertIn('if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]', self.deployer)
+    def test_deployer_normalizes_boolean_flags_before_fail_closed_validation(self):
+        self.assertIn("normalize_boolean FRESH_MEDIA_ENABLED false", self.deployer)
+        self.assertIn("normalize_boolean DATA_CENTRE_MEDIA_ENABLED false", self.deployer)
+        self.assertIn("normalize_boolean MEDIA_REPLICATION_ENABLED false", self.deployer)
+        self.assertIn("tr -d", self.deployer)
+        self.assertIn("surrounding whitespace is ignored", self.deployer)
         self.assertIn("refusing an ambiguous media profile", self.deployer)
-
     def test_fresh_media_approval_reaches_remote_deployment(self):
         self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
@@ -41,7 +42,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('value="${value%"${value##*[![:space:]]}"}"', self.deployer)
 
     def test_pushes_cannot_implicitly_deploy_to_production(self):
-        deploy_gate = self.workflow.split("  deploy:", 1)[1].split("\\n  ", 1)[0]
+        deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
         self.assertIn("github.event_name == 'workflow_dispatch'", deploy_gate)
         self.assertIn("inputs.confirm_production_deploy == true", deploy_gate)
         self.assertNotIn("github.event_name == 'push' ||", deploy_gate)
