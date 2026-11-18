@@ -93,7 +93,7 @@ func (s *service) identityReviewQueue(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, errorBody("STAFF_ACCESS_DENIED", err.Error(), requestID(r)))
 		return
 	}
-	if s.virtualStorage == nil {
+	if !s.identityEvidenceStorageConfigured() {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
 		return
 	}
@@ -205,7 +205,7 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 	}
 	sessionID := strings.TrimSpace(r.PathValue("session_id"))
 	evidenceID := strings.TrimSpace(r.PathValue("evidence_id"))
-	if !identityApplicationIDPattern.MatchString(sessionID) || !identityApplicationIDPattern.MatchString(evidenceID) || s.virtualStorage == nil || s.mediaReplicator == nil {
+	if !identityApplicationIDPattern.MatchString(sessionID) || !identityApplicationIDPattern.MatchString(evidenceID) || !s.identityEvidenceStorageConfigured() {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
 		return
 	}
@@ -242,36 +242,7 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence was not found", requestID(r)))
 		return
 	}
-	var payload []byte
-	primaryURL, primaryErr := s.virtualStorage.DownloadURL(ctx, applicationID, applicationID, identityEvidenceNamespace, objectKey)
-	if primaryErr == nil {
-		payload, err = fetchIdentityEvidenceBytes(ctx, primaryURL, size, contentType, expectedSHA256)
-	} else {
-		err = primaryErr
-	}
-	if err != nil {
-		restoreCtx, restoreCancel := context.WithTimeout(ctx, 25*time.Second)
-		restoreErr := s.mediaReplicator.RestorePrimary(restoreCtx, applicationID, identityEvidenceNamespace, objectKey, size, contentType, expectedSHA256)
-		restoreCancel()
-		if restoreErr == nil {
-			if restoredURL, urlErr := s.virtualStorage.DownloadURL(ctx, applicationID, applicationID, identityEvidenceNamespace, objectKey); urlErr == nil {
-				payload, err = fetchIdentityEvidenceBytes(ctx, restoredURL, size, contentType, expectedSHA256)
-			} else {
-				err = urlErr
-			}
-		}
-	}
-	if err != nil {
-		replicas, replicaErr := s.mediaReplicator.ReplicaDownloadURLs(ctx, applicationID, identityEvidenceNamespace, objectKey, size, contentType, expectedSHA256)
-		if replicaErr == nil {
-			for _, replica := range replicas {
-				payload, err = fetchIdentityEvidenceBytes(ctx, replica.URL, size, contentType, expectedSHA256)
-				if err == nil {
-					break
-				}
-			}
-		}
-	}
+	payload, err := s.identityEvidenceDownload(ctx, applicationID, objectKey, size, contentType, expectedSHA256)
 	if err != nil || int64(len(payload)) != size {
 		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Verified evidence could not be retrieved from primary or replicas", requestID(r)))
 		return
