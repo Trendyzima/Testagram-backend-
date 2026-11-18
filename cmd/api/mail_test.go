@@ -140,7 +140,7 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 		{
 			name: "empty accepted recipient set", status: http.StatusOK,
 			response: `{"success":true,"errors":[],"result":{"message_id":"cf-empty","delivered":[],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}`,
-			wantErr:  "accepted no recipient",
+			wantErr:  "delivery outcome is unknown",
 		},
 		{
 			name: "missing provider message ID", status: http.StatusOK,
@@ -158,7 +158,7 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 			_, err := sendCloudflareMailRequest(context.Background(), server.Client(), server.URL, "test-token", "no-reply@testagram.site", queuedMail{
 				Recipient: "person@example.test", Subject: "Test", HTML: "<p>Test</p>",
 			})
-			if tt.name == "missing provider message ID" || tt.name == "provider server error has ambiguous outcome" {
+			if tt.name == "missing provider message ID" || tt.name == "provider server error has ambiguous outcome" || tt.name == "empty accepted recipient set" {
 				var ambiguous ambiguousMailError
 				if !errors.As(err, &ambiguous) {
 					t.Fatalf("error = %v, want ambiguousMailError", err)
