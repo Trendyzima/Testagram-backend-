@@ -153,6 +153,13 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 			_, err := sendCloudflareMailRequest(context.Background(), server.Client(), server.URL, "test-token", "no-reply@testagram.site", queuedMail{
 				Recipient: "person@example.test", Subject: "Test", HTML: "<p>Test</p>",
 			})
+			if tt.name == "missing provider message ID" {
+				var ambiguous ambiguousMailError
+				if !errors.As(err, &ambiguous) {
+					t.Fatalf("error = %v, want ambiguousMailError", err)
+				}
+				return
+			}
 			if tt.permanent {
 				var permanent permanentMailError
 				if !errors.As(err, &permanent) {
