@@ -20,7 +20,7 @@ on:
         type: boolean
         default: false
       confirm_identity_registration:
-        description: "Separately authorize public identity registration only after B2/R2 evidence replication and two-reviewer acceptance are complete"
+        description: "Separately authorize public identity registration only after the private Data Centre B2/R2 evidence lifecycle and two-reviewer acceptance are complete"
         required: true
         type: boolean
         default: false
