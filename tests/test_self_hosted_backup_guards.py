@@ -45,8 +45,10 @@ class SelfHostedBackupGuardTests(unittest.TestCase):
                 self.assertNotEqual(self.check(endpoint).returncode, 0)
 
     def test_backup_still_fails_closed_for_external_storage_and_replication(self):
-        for flag in ("DATA_CENTRE_MEDIA_ENABLED", "MEDIA_REPLICATION_ENABLED", "FRESH_MEDIA_ENABLED"):
-            self.assertIn(f'for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENABLED', self.source)
+        self.assertIn(
+            "for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENABLED",
+            self.source,
+        )
         self.assertIn("for endpoint_var in MEDIA_S3_ENDPOINT R2_S3_ENDPOINT", self.source)
 
 
