@@ -247,20 +247,100 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 		"Content-Type":                 "application/json",
 		"X-Verification-Session-Token": created.SessionToken,
 	}
-	reservation := call(http.MethodPost, sessionPath+"/evidence/upload-url", reservationBody, sessionHeaders)
-	if reservation.Code != http.StatusCreated {
-		t.Fatalf("evidence reservation status=%d body=%s", reservation.Code, reservation.Body.String())
+	// Concurrent identical retries must converge on one reservation and one
+	// evidence ID. The session advisory lock serializes requests across replicas.
+	type reservationResult struct {
+		response *httptest.ResponseRecorder
 	}
-	var reserved struct {
+	reservationResults := make(chan reservationResult, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			reservationResults <- reservationResult{
+				response: call(http.MethodPost, sessionPath+"/evidence/upload-url", reservationBody, sessionHeaders),
+			}
+		}()
+	}
+	firstReservation := (<-reservationResults).response
+	secondReservation := (<-reservationResults).response
+	if firstReservation.Code != http.StatusCreated || secondReservation.Code != http.StatusCreated {
+		t.Fatalf("matching evidence reservation retries returned %d and %d: %s | %s",
+			firstReservation.Code, secondReservation.Code, firstReservation.Body.String(), secondReservation.Body.String())
+	}
+	var reserved, replayed struct {
 		EvidenceID string `json:"evidence_id"`
 		UploadURL  string `json:"upload_url"`
 	}
-	if err := json.Unmarshal(reservation.Body.Bytes(), &reserved); err != nil {
+	if err := json.Unmarshal(firstReservation.Body.Bytes(), &reserved); err != nil {
 		t.Fatal(err)
 	}
-	if reserved.EvidenceID == "" || !strings.HasPrefix(reserved.UploadURL, sessionPath+"/evidence/") {
-		t.Fatalf("invalid evidence reservation: %#v", reserved)
+	if err := json.Unmarshal(secondReservation.Body.Bytes(), &replayed); err != nil {
+		t.Fatal(err)
 	}
+	if reserved.EvidenceID == "" || reserved.EvidenceID != replayed.EvidenceID ||
+		reserved.UploadURL != replayed.UploadURL ||
+		!strings.HasPrefix(reserved.UploadURL, sessionPath+"/evidence/") {
+		t.Fatalf("matching retries did not recover the same evidence reservation: first=%#v replay=%#v", reserved, replayed)
+	}
+
+	// Reusing the session with different metadata must not silently bind the
+	// caller to the first document's reservation.
+	changedReservationBody, _ := json.Marshal(map[string]any{
+		"content_type": "image/jpeg", "size_bytes": len(evidenceBytes),
+		"sha256": strings.Repeat("0", 64),
+	})
+	conflictingReservation := call(http.MethodPost, sessionPath+"/evidence/upload-url", changedReservationBody, sessionHeaders)
+	if conflictingReservation.Code != http.StatusConflict ||
+		!strings.Contains(conflictingReservation.Body.String(), "EVIDENCE_ALREADY_RESERVED") {
+		t.Fatalf("different evidence metadata status=%d body=%s", conflictingReservation.Code, conflictingReservation.Body.String())
+	}
+	var reservationCount int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_identity.verification_evidence
+		WHERE session_id=$1::uuid AND status='upload_pending'
+	`, created.SessionID).Scan(&reservationCount); err != nil {
+		t.Fatal(err)
+	}
+	if reservationCount != 1 {
+		t.Fatalf("matching concurrent retries created %d live reservations; want exactly one", reservationCount)
+	}
+
+	// After the five-minute upload capability expires, the unuploaded row is
+	// retired and a fresh reservation is issued. The old ID must not be reused.
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_identity.verification_evidence
+		SET created_at=now()-interval '6 minutes'
+		WHERE id=$1::uuid AND status='upload_pending'
+	`, reserved.EvidenceID); err != nil {
+		t.Fatal(err)
+	}
+	renewedReservation := call(http.MethodPost, sessionPath+"/evidence/upload-url", reservationBody, sessionHeaders)
+	if renewedReservation.Code != http.StatusCreated {
+		t.Fatalf("expired reservation renewal status=%d body=%s", renewedReservation.Code, renewedReservation.Body.String())
+	}
+	var renewed struct {
+		EvidenceID string `json:"evidence_id"`
+		UploadURL  string `json:"upload_url"`
+	}
+	if err := json.Unmarshal(renewedReservation.Body.Bytes(), &renewed); err != nil {
+		t.Fatal(err)
+	}
+	if renewed.EvidenceID == "" || renewed.EvidenceID == reserved.EvidenceID ||
+		!strings.HasPrefix(renewed.UploadURL, sessionPath+"/evidence/") {
+		t.Fatalf("expired reservation was not replaced safely: old=%#v renewed=%#v", reserved, renewed)
+	}
+	var retiredCount, activeCount int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE id=$2::uuid AND status='deleted'),
+		       count(*) FILTER (WHERE status='upload_pending')
+		FROM testagram_identity.verification_evidence
+		WHERE session_id=$1::uuid
+	`, created.SessionID, reserved.EvidenceID).Scan(&retiredCount, &activeCount); err != nil {
+		t.Fatal(err)
+	}
+	if retiredCount != 1 || activeCount != 1 {
+		t.Fatalf("expired reservation lifecycle retired=%d active=%d; want 1 and 1", retiredCount, activeCount)
+	}
+	reserved = renewed
 	uploaded := call(http.MethodPut, reserved.UploadURL, evidenceBytes, map[string]string{
 		"Content-Type":                 "image/jpeg",
 		"X-Verification-Session-Token": created.SessionToken,
