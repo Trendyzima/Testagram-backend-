@@ -19,7 +19,13 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	deleted := false
 	mux := http.NewServeMux()
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/internal/v1/identity-evidence/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/upload-url", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("X-Testagram-API-Version") != "1" {
 			t.Fatal("Data Centre upload request did not carry the private service credentials")
