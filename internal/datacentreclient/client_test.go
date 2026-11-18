@@ -180,8 +180,8 @@ func TestCreateUploadURLRejectsUnsafeOrOverlongGrant(t *testing.T) {
 func TestIdentityEvidenceClientUsesSeparateTokenAndRoutePrefix(t *testing.T) {
 	const token = "identity-evidence-dedicated-service-token-012345"
 	const owner = "00000000-0000-4000-8000-000000000001"
-	const key = "identity/" + owner + "/10000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000003.jpg-" + strings.Repeat("a", 43)
-	const digest = strings.Repeat("b", 64)
+	key := "identity/" + owner + "/10000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000003.jpg-" + strings.Repeat("a", 43)
+	digest := strings.Repeat("b", 64)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/v1/identity-evidence/upload-url", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token { t.Fatal("identity evidence token was not used") }
