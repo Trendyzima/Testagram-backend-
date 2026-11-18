@@ -5,7 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 )
+
+type identityEvidenceMediaClient interface {
+	Ready(context.Context) error
+	CreateUploadURL(context.Context, string, string, string, string, int64) (datacentreclient.UploadGrant, error)
+	Verify(context.Context, string, string, string, string, string, int64) (datacentreclient.Verification, error)
+	Status(context.Context, string, string, string) (datacentreclient.MediaStatus, error)
+	DownloadURL(context.Context, string, string, string, string) (datacentreclient.DownloadGrant, error)
+	Delete(context.Context, string, string, string, string) (string, error)
+}
 
 // Identity evidence is owned by the Data Centre media service. There is
 // deliberately no Backend-local object-store fallback: missing service
