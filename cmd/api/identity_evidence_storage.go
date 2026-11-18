@@ -8,12 +8,12 @@ import (
 )
 
 func (s *service) identityEvidenceStorageConfigured() bool {
-	return s.dataCentreMedia != nil || (s.virtualStorage != nil && s.mediaReplicator != nil)
+	return s.identityEvidenceMedia != nil || (s.virtualStorage != nil && s.mediaReplicator != nil)
 }
 
 func (s *service) identityEvidenceStorageAvailable(ctx context.Context) error {
-	if s.dataCentreMedia != nil {
-		return s.dataCentreMedia.Ready(ctx)
+	if s.identityEvidenceMedia != nil {
+		return s.identityEvidenceMedia.Ready(ctx)
 	}
 	if s.virtualStorage == nil || s.mediaReplicator == nil {
 		return errors.New("private identity evidence storage is not configured")
@@ -22,8 +22,8 @@ func (s *service) identityEvidenceStorageAvailable(ctx context.Context) error {
 }
 
 func (s *service) identityEvidenceUploadURL(ctx context.Context, ownerID, objectKey, contentType string, size int64) (string, error) {
-	if s.dataCentreMedia != nil {
-		grant, err := s.dataCentreMedia.CreateUploadURL(ctx, ownerID, identityEvidenceNamespace, objectKey, contentType, size)
+	if s.identityEvidenceMedia != nil {
+		grant, err := s.identityEvidenceMedia.CreateUploadURL(ctx, ownerID, identityEvidenceNamespace, objectKey, contentType, size)
 		if err != nil {
 			return "", err
 		}
@@ -36,14 +36,14 @@ func (s *service) identityEvidenceUploadURL(ctx context.Context, ownerID, object
 }
 
 func (s *service) identityEvidenceVerifyAndReplicate(ctx context.Context, ownerID, objectKey, contentType string, size int64, sha256Hex string) error {
-	if s.dataCentreMedia != nil {
-		if _, err := s.dataCentreMedia.Verify(ctx, ownerID, identityEvidenceNamespace, objectKey, contentType, sha256Hex, size); err != nil {
+	if s.identityEvidenceMedia != nil {
+		if _, err := s.identityEvidenceMedia.Verify(ctx, ownerID, identityEvidenceNamespace, objectKey, contentType, sha256Hex, size); err != nil {
 			return err
 		}
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
-			status, err := s.dataCentreMedia.Status(ctx, ownerID, identityEvidenceNamespace, objectKey)
+			status, err := s.identityEvidenceMedia.Status(ctx, ownerID, identityEvidenceNamespace, objectKey)
 			if err != nil {
 				return err
 			}
@@ -77,8 +77,8 @@ func (s *service) identityEvidenceVerifyAndReplicate(ctx context.Context, ownerI
 }
 
 func (s *service) identityEvidenceDownload(ctx context.Context, ownerID, objectKey string, size int64, contentType, sha256Hex string) ([]byte, error) {
-	if s.dataCentreMedia != nil {
-		grant, err := s.dataCentreMedia.DownloadURL(ctx, ownerID, ownerID, identityEvidenceNamespace, objectKey)
+	if s.identityEvidenceMedia != nil {
+		grant, err := s.identityEvidenceMedia.DownloadURL(ctx, ownerID, ownerID, identityEvidenceNamespace, objectKey)
 		if err != nil {
 			return nil, err
 		}
@@ -115,15 +115,15 @@ func (s *service) identityEvidenceDownload(ctx context.Context, ownerID, objectK
 }
 
 func (s *service) identityEvidenceDelete(ctx context.Context, ownerID, objectKey string) error {
-	if s.dataCentreMedia != nil {
-		state, err := s.dataCentreMedia.Delete(ctx, ownerID, ownerID, identityEvidenceNamespace, objectKey)
+	if s.identityEvidenceMedia != nil {
+		state, err := s.identityEvidenceMedia.Delete(ctx, ownerID, ownerID, identityEvidenceNamespace, objectKey)
 		if err != nil || state == "deleted" {
 			return err
 		}
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			status, statusErr := s.dataCentreMedia.Status(ctx, ownerID, identityEvidenceNamespace, objectKey)
+			status, statusErr := s.identityEvidenceMedia.Status(ctx, ownerID, identityEvidenceNamespace, objectKey)
 			if statusErr != nil {
 				return statusErr
 			}
