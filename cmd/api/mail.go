@@ -135,6 +135,7 @@ func (s *service) runMailOutboxWorker(ctx context.Context) {
 
 func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if s.db == nil { return false, errors.New("mail database unavailable") }
+	if strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID")) == "" || strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN")) == "" || strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL")) == "" { return false, nil }
 	var id int64
 	var ciphertext, nonce []byte
 	var attempt int
@@ -180,7 +181,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 func (s *service) failMail(ctx context.Context,id int64,attempt int,code string) error {
 	if attempt >= mailMaxAttempts {
 		_,err:=s.db.Exec(ctx,`UPDATE testagram_mail.outbox SET status='dead',lease_until=NULL,last_error_code=$2,
-			payload_ciphertext='',payload_nonce='',updated_at=now() WHERE id=$1`,id,code)
+			updated_at=now() WHERE id=$1`,id,code)
 		return err
 	}
 	delay:=time.Duration(1<<min(attempt-1,8))*time.Minute
