@@ -83,6 +83,7 @@ func (s *service) sendCloudflareMail(ctx context.Context, message queuedMail) (s
 		return "", errors.New("Cloudflare Email Sending is not configured")
 	}
 	if _, err := mail.ParseAddress(from); err != nil { return "", errors.New("AUTH_FROM_EMAIL is invalid") }
+	if decoded, decodeErr := hex.DecodeString(accountID); decodeErr != nil || len(decoded) != 16 { return "", errors.New("CLOUDFLARE_EMAIL_ACCOUNT_ID must be a 32-character hexadecimal account ID") }
 	body, err := json.Marshal(map[string]string{
 		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
 	})
@@ -136,6 +137,7 @@ func (s *service) runMailOutboxWorker(ctx context.Context) {
 func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if s.db == nil { return false, errors.New("mail database unavailable") }
 	if strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID")) == "" || strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN")) == "" || strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL")) == "" { return false, nil }
+	if _, err := mailCipher(); err != nil { return false, nil }
 	var id int64
 	var ciphertext, nonce []byte
 	var attempt int
@@ -145,7 +147,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 			WHERE (status='pending' AND available_at<=now())
 			   OR (status='sending' AND lease_until<now())
 			ORDER BY available_at,id
-			FOR UPDATE SKIP LOCKED LIMIT 1
+			LIMIT 1 FOR UPDATE SKIP LOCKED
 		)
 		UPDATE testagram_mail.outbox AS o
 		SET status='sending',attempts=o.attempts+1,lease_until=now()+interval '2 minutes',updated_at=now()
