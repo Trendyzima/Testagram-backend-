@@ -97,79 +97,49 @@ It calls InstaBox's `POST /v1/machines/{id}/wake` and then `POST
 
 ### Off-host destination and credentials
 
-Create a **dedicated private Cloudflare R2 bucket** for backups, separate from
-the live media, identity-evidence, and metadata buckets. The current InstaBox
-backup workflow accepts Cloudflare R2 only; it does not accept a Backblaze B2
-endpoint as the Restic destination. Create a dedicated R2 access key restricted
-to that backup bucket; do not reuse the media key. Restic encrypts the
-repository before uploading it. Keep the bucket private and do not apply an
-object-expiration rule that can delete restic pack/index files behind its back.
-This Restic destination is separate from the R2 media replica and does not mean
-the backup job has copied the active B2/R2 media replica buckets.
+The InstaBox backup workflow uses the repository's existing private Backblaze B2 S3
+bucket (the `B2_S3_PRIVATE_BUCKET` variable, falling back to the configured
+`B2_S3_BUCKET` secret) as its primary encrypted Restic destination:
 
-Configure these GitHub repository variables:
+- `B2_S3_ENDPOINT`
+- `B2_S3_BUCKET`
+- `B2_S3_REGION`
+- `B2_S3_ACCESS_KEY_ID`
+- `B2_S3_SECRET_ACCESS_KEY`
 
-- `TESTAGRAM_BACKUP_S3_BUCKET`: required dedicated backup bucket name, e.g.
-  `testagram-backups`.
-- `TESTAGRAM_BACKUP_S3_ENDPOINT`: the Cloudflare R2 account S3 endpoint
-  (`https://<account-id>.r2.cloudflarestorage.com`), stored as a secret
-  (recommended) or variable. The workflow sets the R2 signing region to
-  `auto`; there is no separate region variable.
+The Restic repository is isolated under the `testagram-backups` object-key
+prefix inside that configured bucket. This avoids requiring a new bucket
+variable and prevents Restic's repository files from being written into the
+application's normal object-key namespace. The same B2 credentials are reused
+because these are the configured credentials already present in this repository;
+they are not copied into the production `.env`. For stronger least-privilege
+isolation, the B2 application key should be restricted to the backup prefix
+when the provider supports that restriction.
 
-The workflow requires the dedicated `TESTAGRAM_BACKUP_S3_*` backup settings.
-It does **not** fall back to the application's B2 media credentials or infer a
-backup provider from the media-storage endpoints. Do not reuse the media
-provider keys for Restic backups.
-- `INSTABOX_MACHINE_ID`: the existing production machine-ID secret used by
-  the deployment workflow. The backup job accepts an environment variable
-  override named `INSTABOX_MACHINE_ID`, but has no hard-coded machine-ID
-  fallback; it fails closed if this value is missing or malformed.
-- `TESTAGRAM_PRODUCTION_BACKUP_ENABLED`: set to `true` only after the first
-  manual backup and restore drill succeed.
-- `TESTAGRAM_BACKUP_PRUNE_ENABLED`: leave unset/false until restore has been
-  proven; set to `true` to apply the weekly retention policy.
+The workflow can fall back to the existing dedicated Cloudflare R2 backup
+tuple only if all of its endpoint, bucket, and matching R2 access-key values
+are present. It never mixes B2 keys with an R2 endpoint or vice versa.
 
-Configure these GitHub repository secrets:
+The workflow also requires:
 
-- `INSTABOX_BACKUP_API_KEY`: recommended dedicated InstaBox API key with
-  permission to wake this machine and execute a command on it. If omitted,
-  the workflow falls back to the existing `TESTAGRAM_DB_API` deployment
-  secret, which is already used by the production deployment workflow. Do not
-  paste either key into chat or commit it.
-- `TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID` and
-  `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`: required dedicated credentials
-  scoped only to the R2 backup bucket. There is no fallback to the B2 media
-  credentials.
-- `TESTAGRAM_BACKUP_RESTIC_PASSWORD`: a strong independent password; generate
-  it locally with `openssl rand -hex 32` and store it in a password manager as
-  well as GitHub Secrets. Losing it makes the encrypted repository
-  unrecoverable.
+- `TESTAGRAM_BACKUP_RESTIC_PASSWORD`: independent encryption password for the
+  Restic repository. Losing it makes the encrypted repository unrecoverable.
+- `INSTABOX_BACKUP_API_KEY`: dedicated InstaBox key with permission to wake
+  and execute on the production machine. If absent, the workflow uses the
+  existing `TESTAGRAM_DB_API` secret.
 
-The workflow intentionally does not target the protected GitHub
-`production` deployment environment: a required human approval there could
-block a scheduled backup indefinitely. It reads repository-level GitHub
-variables and secrets. Use a dedicated, least-privilege
-`INSTABOX_BACKUP_API_KEY` and bucket-scoped storage credentials; never put
-machine IDs, keys, or passwords directly in workflow YAML.
-
-The workflow constructs the repository as
-`s3:<endpoint>/<bucket>/testagram`. Repository initialization is an explicit
-manual-dispatch input and is never inferred from a failed repository read;
-this prevents a transient storage/network error from triggering an attempted
-reinitialization. It passes credentials only to the
-single InstaBox exec request as temporary environment variables; it does not
-write the S3 keys or restic password into the machine's persistent `.env`.
-The remote helper refreshes only the backup scripts from GitHub main before
-running them. It does not reset the production checkout, change Compose files,
-run migrations, or restart application containers.
+No new GitHub variables are required for the selected B2 configuration. The
+workflow validates the endpoint, bucket and region before waking the machine.
+It keeps repository initialization an explicit manual action and never
+reinitializes after a transient read failure.
 
 ### First run and ongoing operation
 
-1. Create the private bucket and scoped S3 key, then add the variables/secrets
-   above. Keep `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` unset/false for now.
+1. Verify the existing B2 bucket is private and that the `testagram-backups`
+   prefix is unused. Keep `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` unset/false for now.
 2. In Actions, run **InstaBox production backup (free-plan safe)** manually.
    On the very first run only, set `initialize_restic_repository=true` after
-   confirming the dedicated bucket/prefix is empty and reserved for this
+   confirming the `testagram-backups` prefix is empty and reserved for this
    Testagram repository. Also set `run_restore_drill=true`. The workflow
    explicitly initializes Restic, creates the encrypted backup, then restores
    it into a disposable PostgreSQL container with no network or published
