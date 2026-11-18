@@ -420,7 +420,7 @@ FEDERATION_DATABASE_URL=""
 # Pin the exact immutable GHCR manifest digests produced by the latest
 # successful main-branch image workflows in their owning repositories.
 TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8"
-TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation@sha256:a84cbc8d6e82048a5d20e21dadd1ec6a429ce9284420f02cb92c43dfa218a8b6"
+TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation@sha256:ea7cb61c38bc971be55c1f164133e8781e11f5fc324ea8997b3e00322d06e88c"
 if [[ ! -f "$DC_ENV" ]]; then
   cat > "$DC_ENV" <<EOF
 DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
@@ -434,12 +434,13 @@ FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
 FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
 FEDERATION_DATABASE_NAME=testagram_federation
 FEDERATION_DATABASE_URL=$FEDERATION_DATABASE_URL
+FEDERATION_INBOX_ACCEPT_ENABLED=true
 FEDERATION_PUBLIC_BASE_URL=https://testagram.site
 FEDERATION_INSTANCE_DOMAIN=testagram.site
 FEDERATION_SERVICE_ACTOR_USERNAME=testagram
-FEDERATION_DELIVERY_WORKER_ENABLED=false
-FEDERATION_OUTBOX_POLLER_ENABLED=false
-FEDERATION_INBOX_WORKER_ENABLED=false
+FEDERATION_DELIVERY_WORKER_ENABLED=true
+FEDERATION_OUTBOX_POLLER_ENABLED=true
+FEDERATION_INBOX_WORKER_ENABLED=true
 VIDEO_SIGNING_SECRET=$(openssl rand -hex 32)
 VIDEO_ACCOUNT_QUOTA_BYTES=21474836480
 VIDEO_MIN_FREE_BYTES=2147483648
@@ -493,6 +494,11 @@ write_dc_env_value TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 write_dc_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 write_dc_env_value FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 write_dc_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+write_dc_env_value ALGORITHM_INTERNAL_TOKEN "$ALGORITHM_INTERNAL_TOKEN"
+write_dc_env_value FEDERATION_DELIVERY_WORKER_ENABLED true
+write_dc_env_value FEDERATION_OUTBOX_POLLER_ENABLED true
+write_dc_env_value FEDERATION_INBOX_WORKER_ENABLED true
+write_dc_env_value FEDERATION_INBOX_ACCEPT_ENABLED true
 # Existing Data Centre .env files must receive the reviewed immutable image pins too.
 write_dc_env_value TESTAGRAM_ALGORITHM_IMAGE "$TESTAGRAM_ALGORITHM_IMAGE"
 write_dc_env_value TESTAGRAM_FEDERATION_IMAGE "$TESTAGRAM_FEDERATION_IMAGE"
@@ -623,6 +629,30 @@ case "$overlay_status" in
     ;;
 esac
 
+# The Federation container's healthcheck proves PostgreSQL and the private
+# Backend dependency are ready. Then ask it over the private Backend network
+# to report the four active worker/acceptance switches.
+federation_ready=false
+for attempt in $(seq 1 24); do
+  if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" exec -T federation-api /federation-api --healthcheck; then
+    federation_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$federation_ready" != "true" ]]; then
+  echo "::error::Federation API did not become ready with its database and private Backend dependency."
+  sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" logs --tail=120 federation-api
+  exit 1
+fi
+federation_worker_status="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -qO- --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" http://federation-api:8081/internal/v1/worker-status)"
+if ! jq -e '.workers.delivery_worker == true and .workers.outbox_poller == true and .workers.inbox_worker == true and .workers.inbox_accept == true' <<<"$federation_worker_status" >/dev/null; then
+  echo "::error::Federation runtime did not report all four required worker/acceptance switches enabled."
+  jq -c '{status, workers}' <<<"$federation_worker_status" || true
+  exit 1
+fi
+echo "Verified authenticated Federation runtime status: outbound delivery, Backend outbox poller, signed inbox processor and inbound acceptance are active."
+
 verify_running_image() {
   local service="$1" expected="$2" container actual_ref actual_digests
   container="$(sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q "$service")"
@@ -653,6 +683,29 @@ fi
 echo "Verified Go CDN immutable image digest: ${TESTAGRAM_CDN_IMAGE##*@}"
 verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
 verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
+
+# Prove Backend-to-Algorithm service DNS, the shared private token and the
+# exact candidate JSON contract with a real authenticated request from api.
+algorithm_ready=false
+for attempt in $(seq 1 24); do
+  if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" exec -T algorithm wget -qO- http://127.0.0.1:8092/readyz >/dev/null 2>&1; then
+    algorithm_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$algorithm_ready" != "true" ]]; then
+  echo "::error::Algorithm ranker did not become ready."
+  sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" logs --tail=100 algorithm
+  exit 1
+fi
+algorithm_response="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -qO- --header="Authorization: Bearer $ALGORITHM_INTERNAL_TOKEN" --header="Content-Type: application/json" --post-data='{"feedMode":"for_you","limit":1,"candidates":[{"id":"https://remote.example/objects/testagram-deploy-acceptance","authorId":"https://remote.example/users/testagram-deploy-acceptance","source":"activitypub","sourceIdentity":"https://remote.example/users/testagram-deploy-acceptance","visible":true,"createdAt":"2026-11-18T00:00:00Z"}]}' http://algorithm:8092/v1/feed/rank)"
+if ! jq -e '.items | length == 1 and .[0].id == "https://remote.example/objects/testagram-deploy-acceptance"' <<<"$algorithm_response" >/dev/null; then
+  echo "::error::Authenticated Backend-to-Algorithm ranking request did not return the expected remote candidate."
+  jq -c '{error, items}' <<<"$algorithm_response" || true
+  exit 1
+fi
+echo "Verified authenticated Backend-to-Algorithm request/response with ActivityPub candidate provenance."
 
 # Verify the actual container Config.Env values without ever printing credentials.
 verify_container_env() {
