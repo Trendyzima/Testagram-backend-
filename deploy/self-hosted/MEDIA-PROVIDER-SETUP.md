@@ -17,19 +17,21 @@ Store the following in the **Backend** repository's Actions secrets if a GitHub 
 
 | Secret | Purpose |
 |---|---|
-| `B2_S3_ENDPOINT` | Exact HTTPS S3 endpoint for the selected B2 bucket region; shared by smoke and production deployment workflows |\n| `B2_S3_REGION` | Exact B2 bucket region (for example, `us-west-004`); shared by smoke and production deployment workflows |\n| `B2_S3_ACCESS_KEY_ID` | Backblaze application key ID |
+| `B2_S3_ENDPOINT` | Exact HTTPS S3 endpoint for the selected B2 bucket region; shared by smoke and production deployment workflows |
+| `B2_S3_REGION` | Exact B2 bucket region (for example, `us-west-004`); shared by smoke and production deployment workflows |
+| `B2_S3_ACCESS_KEY_ID` | Backblaze application key ID |
 | `B2_S3_SECRET_ACCESS_KEY` | Backblaze application key |
 | `CLOUDFLARE_R2_ACCESS_KEY_ID` | R2 S3 access key ID |
 | `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | R2 S3 secret access key |
 
 Do not place these in the Data Centre repository, Flutter build variables, mobile apps, public CI logs, or source files.
 
-## Standard self-hosted API: Actions variables / runtime configuration\n\nB2 endpoint and region are stored as repository **Secrets** to match the exact source used by both live smoke workflows and the production InstaBox deployment. The remaining non-sensitive bucket names and R2 endpoint/region are repository **Variables**.
+## Standard self-hosted API: Actions variables / runtime configuration
+
+B2 endpoint and region are stored as repository **Secrets** to match the exact source used by both live smoke workflows and the production InstaBox deployment. The remaining non-sensitive bucket names and R2 endpoint/region are repository **Variables**.
 
 | Variable | Required value |
 |---|---|
-| `B2_S3_ENDPOINT` | `https://s3.us-east-005.backblazeb2.com` for the current B2 bucket region |
-| `B2_S3_REGION` | `us-east-005` |
 | `B2_S3_PRIVATE_BUCKET` | Existing private bucket: `audiostrendy` |
 | `B2_S3_PUBLIC_BUCKET` | A second, separately named B2 bucket; keep it private |
 | `CLOUDFLARE_R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
