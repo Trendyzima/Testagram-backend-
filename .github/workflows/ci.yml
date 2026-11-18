@@ -617,7 +617,7 @@ jobs:
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" not in deploy_workflow, "deployment must not require a manually configured Federation read secret"
           assert 'FEDERATION_BACKEND_INTERNAL_TOKEN="${FEDERATION_BACKEND_INTERNAL_TOKEN:-$(openssl rand -hex 32)}"' in deploy_script, "deployment must generate a strong Federation service credential when none is supplied"
           assert "envs:{" in deploy_script and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy_script and "APPWRITE" not in deploy_script.upper(), "native deployment must forward Federation credentials without legacy Appwrite configuration"
-          dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then')
+          dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then')
           dc_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', dc_media_gate)
           backend_media_gate = deploy.index('if [[ "$(read_env_value MEDIA_REPLICATION_ENABLED)" == "true" ]]; then')
           backend_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', backend_media_gate)
