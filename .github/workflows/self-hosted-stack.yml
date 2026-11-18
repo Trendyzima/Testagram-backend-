@@ -150,7 +150,7 @@ jobs:
           web_image = str(web.get("image", ""))
           web_expose = [str(port) for port in web.get("expose", [])]
           web_env_image = next((line.split("=", 1)[1] for line in env_example.splitlines() if line.startswith("TESTAGRAM_WEB_IMAGE=")), "")
-          if "TESTAGRAM_WEB_IMAGE" not in web_image or web_env_image != "ghcr.io/trendyzima/testagram-web:main":
+          if "TESTAGRAM_WEB_IMAGE" not in web_image or web_env_image != "ghcr.io/trendyzima/testagram-web@sha256:be1d80e65506c44912ac16bccd9b57a8a31914f2ee4f2fa7ec026af65715bf68":
               raise SystemExit("Self-hosted Flutter web must use the reviewed GHCR release tag, resolved to a digest by the deployment script.")
           if "8080" not in web_expose or "ports" in web or "edge" not in web.get("networks", []):
               raise SystemExit("Flutter web must expose only its private 8080 listener on the Caddy edge network.")

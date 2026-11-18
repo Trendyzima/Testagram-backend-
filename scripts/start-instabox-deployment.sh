@@ -280,9 +280,9 @@ FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
 write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:d0b1fa4c1cbd579c8674ba520566d39ca3b7be90132939d880753c17fe80b425"
 write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
-if [[ -z "$(read_env_value TESTAGRAM_WEB_IMAGE)" ]]; then
-  write_env_value TESTAGRAM_WEB_IMAGE "ghcr.io/trendyzima/testagram-web:main"
-fi
+# Always deploy the reviewed immutable Flutter web manifest; never follow :main.
+TESTAGRAM_WEB_IMAGE="ghcr.io/trendyzima/testagram-web@sha256:be1d80e65506c44912ac16bccd9b57a8a31914f2ee4f2fa7ec026af65715bf68"
+write_env_value TESTAGRAM_WEB_IMAGE "$TESTAGRAM_WEB_IMAGE"
 if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
 CDN_MEDIA_BASE_URL="$(read_env_value CDN_MEDIA_BASE_URL)"
 if [[ "$CDN_MEDIA_BASE_URL" != https://* ]]; then
@@ -309,8 +309,8 @@ if [[ -z "$web_image_ref" ]]; then
 fi
 sudo docker pull --platform linux/amd64 "$web_image_ref"
 web_image_digest="$(sudo docker image inspect --format='{{index .RepoDigests 0}}' "$web_image_ref")"
-if [[ ! "$web_image_digest" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
-  echo "::error::Flutter web image did not resolve to the expected immutable GHCR digest."
+if [[ "$web_image_digest" != "$web_image_ref" || ! "$web_image_digest" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
+  echo "::error::Flutter web image did not resolve to the exact reviewed immutable GHCR digest."
   exit 1
 fi
 write_env_value TESTAGRAM_WEB_IMAGE "$web_image_digest"
@@ -364,6 +364,16 @@ if [[ "$web_ready" != "true" ]]; then
   sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=100 flutter-web caddy
   exit 1
 fi
+web_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q flutter-web)"
+web_actual_ref="$(sudo docker inspect --format '{{.Config.Image}}' "$web_container")"
+web_actual_digests="$(sudo docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$web_container")"
+if [[ "$web_actual_ref" != "$TESTAGRAM_WEB_IMAGE" ]] || ! grep -Fqx -- "$TESTAGRAM_WEB_IMAGE" <<<"$web_actual_digests"; then
+  echo "::error::Flutter web container is not running the exact reviewed image digest."
+  echo "Configured reference: $web_actual_ref"
+  echo "Expected digest reference: $TESTAGRAM_WEB_IMAGE"
+  exit 1
+fi
+echo "Verified Flutter web immutable image digest: ${TESTAGRAM_WEB_IMAGE##*@}"
 
 echo "Pulling the immutable Go CDN image and starting the private Backend-origin edge..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" pull media-cache
