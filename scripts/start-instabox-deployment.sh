@@ -446,6 +446,11 @@ write_dc_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$DC_ENV"
   fi
 }
+# Backend and Data Centre user-facing services must validate against the same
+# PostgreSQL identities/sessions and the same JWT signing secret.
+shared_database_url="postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable"
+write_dc_env_value DATABASE_URL "$shared_database_url"
+write_dc_env_value TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 write_dc_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 write_dc_env_value FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 write_dc_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
@@ -614,6 +619,12 @@ verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache PURGE_TOKEN "$CDN_P
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://api:8080"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video DATABASE_URL "$shared_database_url"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification DATABASE_URL "$shared_database_url"
 
 if [[ "$media_enabled" == true ]]; then
   echo "Applying the additive media lifecycle migration to its dedicated database..."
