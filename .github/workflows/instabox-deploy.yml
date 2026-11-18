@@ -45,6 +45,7 @@ jobs:
         run: |
           bash -n scripts/start-instabox-deployment.sh
           python3 tests/test_instabox_postgres_readiness.py -v
+          python3 tests/test_media_feature_gate_wiring.py -v
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests
