@@ -148,6 +148,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.deployer)
 
+    def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
+        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
+        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
+        self.assertIn('docker inspect --format \'{{.Image}}\' "$api_container"', self.deployer)
+        self.assertIn('"$api_actual_image_id" != "$api_expected_image_id"', self.deployer)
+        self.assertIn('Verified Backend running immutable image ID', self.deployer)
+
     def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
         deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
         self.assertIn("github.ref == 'refs/heads/main'", deploy_gate)
