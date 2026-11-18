@@ -24,6 +24,35 @@ on:
         required: true
         type: boolean
         default: false
+      testagram_api_contract_ref:
+        description: "Exact merged-main commit SHA of testagram-api whose source lock matches this release"
+        required: true
+        type: string
+      data_centre_ref:
+        description: "Exact Data Centre commit SHA from the Testagram API source lock"
+        required: true
+        type: string
+        default: "bbf08499bcd80adcdafd8fff38b7bd34e8edd741"
+      algorithm_ref:
+        description: "Exact Algorithm commit SHA from the Testagram API source lock"
+        required: true
+        type: string
+        default: "da8e90e79150636a6efe8e03c2cbc8fb9357764d"
+      federation_ref:
+        description: "Exact Federation commit SHA from the Testagram API source lock"
+        required: true
+        type: string
+        default: "b0e75e8d005d3a014badd762bec4e81fe09559fe"
+      flutter_ref:
+        description: "Exact Flutter commit SHA from the Testagram API source lock"
+        required: true
+        type: string
+        default: "a90ae7cf77034308ff205d66614d1061821f27d4"
+      cdn_ref:
+        description: "Exact CDN source commit SHA from the Testagram API source lock"
+        required: true
+        type: string
+        default: "eb30f4f2b7ecfaaf121411657a281f4195d8d314"
 
 permissions:
   contents: read
@@ -46,6 +75,7 @@ jobs:
           bash -n scripts/start-instabox-deployment.sh
           python3 tests/test_instabox_postgres_readiness.py -v
           python3 tests/test_media_feature_gate_wiring.py -v
+          python3 tests/test_instabox_deployment_pins.py -v
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests
@@ -69,6 +99,14 @@ jobs:
       CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
+      TESTAGRAM_BACKEND_REF: ${{ github.sha }}
+      TESTAGRAM_API_CONTRACT_REF: ${{ inputs.testagram_api_contract_ref }}
+      TESTAGRAM_DATA_CENTRE_REF: ${{ inputs.data_centre_ref }}
+      TESTAGRAM_ALGORITHM_REF: ${{ inputs.algorithm_ref }}
+      TESTAGRAM_FEDERATION_REF: ${{ inputs.federation_ref }}
+      TESTAGRAM_FLUTTER_REF: ${{ inputs.flutter_ref }}
+      TESTAGRAM_CDN_REF: ${{ inputs.cdn_ref }}
+      TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-cdn@sha256:39fe7cf0a27bbf9d09a0f0a311202030359d6e95ca414269af712f7281c8ae41
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
