@@ -57,3 +57,42 @@ func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
 		t.Fatalf("decrypted outbox message did not match queued content: %#v", message)
 	}
 }
+
+
+func TestMailOutboxInsertRollsBackWithCallerTransaction(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("ef", 32))
+
+	var before int64
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.outbox").Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enqueueAuthEmailWith(ctx, tx, "atomic-mail@example.test", "Atomic queue test", "<p>transactional</p>"); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	var inside int64
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.outbox").Scan(&inside); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if inside != before+1 {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("outbox rows inside transaction = %d, want %d", inside, before+1)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var after int64
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.outbox").Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("outbox rows after rollback = %d, want %d", after, before)
+	}
+}
