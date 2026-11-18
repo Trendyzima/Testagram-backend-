@@ -1,0 +1,59 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("cd", 32))
+
+	svc := &service{db: db}
+	recipient := fmt.Sprintf("mail-outbox-%d@example.test", time.Now().UnixNano())
+	const secretLink = "https://testagram.example/reset-password?token=one-time-secret-token"
+	if err := svc.enqueueAuthEmail(ctx, recipient, "Testagram security notice", "<a href=\""+secretLink+"\">Continue</a>"); err != nil {
+		t.Fatal(err)
+	}
+
+	var id int64
+	var ciphertext, nonce []byte
+	var status string
+	if err := db.QueryRow(ctx, `
+		SELECT id,payload_ciphertext,payload_nonce,status
+		FROM testagram_mail.outbox
+		WHERE payload_ciphertext IS NOT NULL
+		ORDER BY id DESC LIMIT 1
+	`).Scan(&id, &ciphertext, &nonce, &status); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", id) }()
+
+	if status != "pending" {
+		t.Fatalf("new mail status = %q, want pending", status)
+	}
+	if bytes.Contains(ciphertext, []byte(secretLink)) || bytes.Contains(ciphertext, []byte(recipient)) {
+		t.Fatal("mail recipient or one-time link was stored in plaintext")
+	}
+	aead, err := mailCipher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := aead.Open(nil, nonce, ciphertext, []byte("testagram-mail-v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message queuedMail
+	if err := json.Unmarshal(plain, &message); err != nil {
+		t.Fatal(err)
+	}
+	if message.Recipient != recipient || message.Subject != "Testagram security notice" || !strings.Contains(message.HTML, secretLink) {
+		t.Fatalf("decrypted outbox message did not match queued content: %#v", message)
+	}
+}
