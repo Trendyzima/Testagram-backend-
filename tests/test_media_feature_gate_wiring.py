@@ -105,11 +105,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
 
-    def test_pushes_cannot_implicitly_deploy_to_production(self):
+    def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
         deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
-        self.assertIn("github.event_name == 'workflow_dispatch'", deploy_gate)
+        self.assertIn("github.ref == 'refs/heads/main'", deploy_gate)
+        self.assertIn("github.event_name == 'push' ||", deploy_gate)
         self.assertIn("inputs.confirm_production_deploy == true", deploy_gate)
-        self.assertNotIn("github.event_name == 'push' ||", deploy_gate)
+        self.assertNotIn("github.event_name == 'pull_request' ||", deploy_gate)
+        self.assertIn("environment: production", deploy_gate)
 
 
 if __name__ == "__main__":
