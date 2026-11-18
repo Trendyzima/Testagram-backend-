@@ -97,41 +97,40 @@ It calls InstaBox's `POST /v1/machines/{id}/wake` and then `POST
 
 ### Off-host destination and credentials
 
-The InstaBox backup workflow uses the repository's existing private Backblaze B2 S3
-bucket (the `B2_S3_PRIVATE_BUCKET` variable, falling back to the configured
-`B2_S3_BUCKET` secret) as its primary encrypted Restic destination:
+The InstaBox backup workflow uses the repository's existing dedicated Cloudflare R2
+backup endpoint and S3 key pair. It does **not** use the Backblaze B2 media bucket
+as its Restic destination: B2 is an application media source, and writing Restic
+data into that same bucket would mix backup repository objects with live media.
 
-- `B2_S3_ENDPOINT`
-- `B2_S3_BUCKET`
-- `B2_S3_REGION`
-- `B2_S3_ACCESS_KEY_ID`
-- `B2_S3_SECRET_ACCESS_KEY`
+The workflow uses:
+
+- `TESTAGRAM_BACKUP_S3_ENDPOINT`
+- `TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID`
+- `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`
+- `TESTAGRAM_BACKUP_RESTIC_PASSWORD`
+- `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` to ensure the backup bucket exists
+
+Unless `TESTAGRAM_BACKUP_S3_BUCKET` is already configured as a repository
+secret or variable, the workflow provisions the dedicated
+`testagram-production-backups` bucket in the existing Cloudflare account, in
+the APAC location. The Cloudflare API token must have R2 bucket-list permission
+and `Workers R2 Storage Write` permission for bucket creation. The S3 key pair
+must have read/write access to this dedicated bucket. The workflow rejects a
+destination whose bucket name matches the configured live B2 bucket.
 
 The Restic repository is isolated under the `testagram-backups` object-key
-prefix inside that configured bucket. This avoids requiring a new bucket
-variable and prevents Restic's repository files from being written into the
-application's normal object-key namespace. The same B2 credentials are reused
-because these are the configured credentials already present in this repository;
-they are not copied into the production `.env`. For stronger least-privilege
-isolation, the B2 application key should be restricted to the backup prefix
-when the provider supports that restriction.
-
-The workflow can fall back to the existing dedicated Cloudflare R2 backup
-tuple only if all of its endpoint, bucket, and matching R2 access-key values
-are present. It never mixes B2 keys with an R2 endpoint or vice versa.
+prefix inside the dedicated backup bucket. Repository initialization remains
+an explicit first-run action; a failed repository read never triggers implicit
+initialization.
 
 The workflow also requires:
 
-- `TESTAGRAM_BACKUP_RESTIC_PASSWORD`: independent encryption password for the
-  Restic repository. Losing it makes the encrypted repository unrecoverable.
 - `INSTABOX_BACKUP_API_KEY`: dedicated InstaBox key with permission to wake
   and execute on the production machine. If absent, the workflow uses the
   existing `TESTAGRAM_DB_API` secret.
 
-No new GitHub variables are required for the selected B2 configuration. The
-workflow validates the endpoint, bucket and region before waking the machine.
-It keeps repository initialization an explicit manual action and never
-reinitializes after a transient read failure.
+No new GitHub secrets are requested. The backup workflow uses the existing
+R2, Cloudflare, InstaBox, and Restic credentials already configured in Actions.
 
 ### First run and ongoing operation
 
