@@ -2,6 +2,20 @@ set -euo pipefail
 API="https://api.instabox.sh"
 MACHINE_ID="${MACHINE_ID:?machine output is required}"
 AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
+
+# A production deployment is an immutable seven-repository release, not a
+# best-effort checkout of whatever happens to be on main at execution time.
+require_commit_ref() {
+  local name="$1" value="$2"
+  if [[ ! "$value" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "::error::$name must be a full 40-character immutable commit SHA."
+    exit 1
+  fi
+}
+for name in TESTAGRAM_BACKEND_REF TESTAGRAM_API_CONTRACT_REF TESTAGRAM_DATA_CENTRE_REF TESTAGRAM_ALGORITHM_REF TESTAGRAM_FEDERATION_REF TESTAGRAM_FLUTTER_REF TESTAGRAM_CDN_REF; do
+  require_commit_ref "$name" "${!name:-}"
+done
+TESTAGRAM_CDN_IMAGE="${TESTAGRAM_CDN_IMAGE:-ghcr.io/trendyzima/testagram-cdn@sha256:39fe7cf0a27bbf9d09a0f0a311202030359d6e95ca414269af712f7281c8ae41}"
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
@@ -75,20 +89,65 @@ fi
 sudo docker info >/dev/null
 
 sync_repo() {
-  local url="$1" path="$2"
-  if [[ -d "$path/.git" ]]; then
-    git -C "$path" fetch --depth 1 origin main
-    git -C "$path" reset --hard FETCH_HEAD
-  else
-    git clone --depth 1 --branch main "$url" "$path"
+  local url="$1" path="$2" ref="$3" actual
+  if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "::error::Refusing non-immutable source ref for $path."
+    exit 1
   fi
+  if [[ -e "$path" && ! -d "$path/.git" ]]; then
+    echo "::error::Refusing to replace non-repository path: $path"
+    exit 1
+  fi
+  if [[ ! -d "$path/.git" ]]; then
+    mkdir -p "$path"
+    git -C "$path" init -q
+    git -C "$path" remote add origin "$url"
+  else
+    git -C "$path" remote set-url origin "$url"
+  fi
+  git -C "$path" fetch --depth 1 origin "$ref"
+  git -C "$path" checkout --detach --force FETCH_HEAD
+  git -C "$path" clean -fdx
+  actual="$(git -C "$path" rev-parse HEAD)"
+  if [[ "$actual" != "$ref" ]]; then
+    echo "::error::Source checkout mismatch for $path: expected $ref, got $actual"
+    exit 1
+  fi
+  echo "Pinned $path at $actual"
 }
 
-sync_repo https://github.com/Trendyzima/Testagram-backend-.git "$BACKEND"
-sync_repo https://github.com/Trendyzima/Testagram-data-centre-.git "$DATACENTRE"
-sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
-sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content"
-sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/flutter-client"
+sync_repo https://github.com/Trendyzima/Testagram-backend-.git "$BACKEND" "$TESTAGRAM_BACKEND_REF"
+sync_repo https://github.com/Trendyzima/Testagram-data-centre-.git "$DATACENTRE" "$TESTAGRAM_DATA_CENTRE_REF"
+sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm" "$TESTAGRAM_ALGORITHM_REF"
+sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content" "$TESTAGRAM_FEDERATION_REF"
+sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/flutter-client" "$TESTAGRAM_FLUTTER_REF"
+sync_repo https://github.com/Trendyzima/cdn-.git "$REPOS/cdn" "$TESTAGRAM_CDN_REF"
+sync_repo https://github.com/Trendyzima/testagram-api.git "$REPOS/api-contracts" "$TESTAGRAM_API_CONTRACT_REF"
+
+# The API control plane is not deployed. Its immutable lock must match every
+# runtime source selected for this release, otherwise stop before Compose.
+API_MAIN_REF="$(git -C "$REPOS/api-contracts" ls-remote origin refs/heads/main | awk '{print $1}')"
+if [[ "$API_MAIN_REF" != "$TESTAGRAM_API_CONTRACT_REF" ]]; then
+  echo "::error::The supplied Testagram API contract SHA is not current merged main; refusing an unreviewed control-plane snapshot."
+  exit 1
+fi
+LOCK_FILE="$REPOS/api-contracts/contracts/sources.lock.json"
+jq -e \
+  --arg backend "$TESTAGRAM_BACKEND_REF" \
+  --arg data_centre "$TESTAGRAM_DATA_CENTRE_REF" \
+  --arg algorithm "$TESTAGRAM_ALGORITHM_REF" \
+  --arg federation "$TESTAGRAM_FEDERATION_REF" \
+  --arg flutter "$TESTAGRAM_FLUTTER_REF" \
+  --arg cdn "$TESTAGRAM_CDN_REF" \
+  '.repositories.backend.ref == $backend
+   and .repositories["data-centre"].ref == $data_centre
+   and .repositories.algorithm.ref == $algorithm
+   and .repositories.federation.ref == $federation
+   and .repositories["flutter-client"].ref == $flutter
+   and .repositories.cdn.ref == $cdn' "$LOCK_FILE" >/dev/null || {
+     echo "::error::Runtime source refs do not match the immutable Testagram API release lock."
+     exit 1
+   }
 
 BASE_ENV="$BACKEND/deploy/self-hosted/.env"
 BASE_COMPOSE="$BACKEND/deploy/self-hosted/docker-compose.yml"
@@ -278,11 +337,43 @@ if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; th
 fi
 FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
 write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
-TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-cdn@sha256:39fe7cf0a27bbf9d09a0f0a311202030359d6e95ca414269af712f7281c8ae41"
-write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
-if [[ -z "$(read_env_value TESTAGRAM_WEB_IMAGE)" ]]; then
-  write_env_value TESTAGRAM_WEB_IMAGE "ghcr.io/trendyzima/testagram-web:main"
+resolve_immutable_image() {
+  local image_ref="$1" repository="$2" expected_revision="$3" digest revision
+  sudo docker pull --platform linux/amd64 "$image_ref"
+  digest="$(sudo docker image inspect --format='{{index .RepoDigests 0}}' "$image_ref")"
+  revision="$(sudo docker image inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image_ref")"
+  if [[ ! "$digest" =~ ^${repository//\//\/}@sha256:[a-f0-9]{64}$ ]]; then
+    echo "::error::Image $image_ref did not resolve to an immutable digest for $repository."
+    exit 1
+  fi
+  if [[ "$revision" != "$expected_revision" ]]; then
+    echo "::error::Image $image_ref source label mismatch; expected $expected_revision, got ${revision:-missing}."
+    exit 1
+  fi
+  printf '%s\n' "$digest"
+}
+
+# Resolve the commit-tagged images and verify their OCI source labels before
+# Compose is allowed to consume them. No :main or :latest image is accepted.
+TESTAGRAM_ALGORITHM_IMAGE_REF="ghcr.io/trendyzima/testagram-feed:sha-$TESTAGRAM_ALGORITHM_REF"
+TESTAGRAM_FEDERATION_IMAGE_REF="ghcr.io/trendyzima/testagram-federation:sha-$TESTAGRAM_FEDERATION_REF"
+TESTAGRAM_WEB_IMAGE_REF="ghcr.io/trendyzima/testagram-web:sha-$TESTAGRAM_FLUTTER_REF"
+TESTAGRAM_ALGORITHM_IMAGE="$(resolve_immutable_image "$TESTAGRAM_ALGORITHM_IMAGE_REF" "ghcr.io/trendyzima/testagram-feed" "$TESTAGRAM_ALGORITHM_REF")"
+TESTAGRAM_FEDERATION_IMAGE="$(resolve_immutable_image "$TESTAGRAM_FEDERATION_IMAGE_REF" "ghcr.io/trendyzima/testagram-federation" "$TESTAGRAM_FEDERATION_REF")"
+TESTAGRAM_WEB_IMAGE="$(resolve_immutable_image "$TESTAGRAM_WEB_IMAGE_REF" "ghcr.io/trendyzima/testagram-web" "$TESTAGRAM_FLUTTER_REF")"
+
+# The CDN is pinned by digest. Verify its OCI source revision and prove that
+# its Go/build inputs are identical to the locked CDN source checkout.
+sudo docker pull --platform linux/amd64 "$TESTAGRAM_CDN_IMAGE"
+TESTAGRAM_CDN_IMAGE_SOURCE_REF="$(sudo docker image inspect --format='{{index .Config.Labels "org.opencontainers.image.revision"}}' "$TESTAGRAM_CDN_IMAGE")"
+require_commit_ref TESTAGRAM_CDN_IMAGE_SOURCE_REF "$TESTAGRAM_CDN_IMAGE_SOURCE_REF"
+git -C "$REPOS/cdn" fetch --depth 1 origin "$TESTAGRAM_CDN_IMAGE_SOURCE_REF"
+if ! git -C "$REPOS/cdn" diff --quiet "$TESTAGRAM_CDN_IMAGE_SOURCE_REF" "$TESTAGRAM_CDN_REF" -- '*.go' go.mod go.sum Dockerfile.runtime; then
+  echo "::error::Pinned CDN image source does not match the locked CDN Go/build sources."
+  exit 1
 fi
+write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
+write_env_value TESTAGRAM_WEB_IMAGE "$TESTAGRAM_WEB_IMAGE"
 if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
 CDN_MEDIA_BASE_URL="$(read_env_value CDN_MEDIA_BASE_URL)"
 if [[ "$CDN_MEDIA_BASE_URL" != https://* ]]; then
@@ -300,21 +391,10 @@ set +a
 # retains its own fail-closed publishing behavior when moderation is unavailable.
 echo "No external AI moderation provider is configured; protected publishing remains fail-closed."
 
-# Pull the Flutter web release and immediately pin its resolved registry digest.
-# The GHCR package must be public or the host must have a read-only registry login.
-web_image_ref="$(read_env_value TESTAGRAM_WEB_IMAGE)"
-if [[ -z "$web_image_ref" ]]; then
-  echo "::error::TESTAGRAM_WEB_IMAGE is missing from the protected deployment environment."
-  exit 1
-fi
-sudo docker pull --platform linux/amd64 "$web_image_ref"
-web_image_digest="$(sudo docker image inspect --format='{{index .RepoDigests 0}}' "$web_image_ref")"
-if [[ ! "$web_image_digest" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
-  echo "::error::Flutter web image did not resolve to the expected immutable GHCR digest."
-  exit 1
-fi
+# The Flutter web image was already resolved from the exact source commit and
+# its OCI revision label verified above. Keep the digest in the protected env.
+web_image_digest="$TESTAGRAM_WEB_IMAGE"
 write_env_value TESTAGRAM_WEB_IMAGE "$web_image_digest"
-TESTAGRAM_WEB_IMAGE="$web_image_digest"
 export TESTAGRAM_WEB_IMAGE
 
 echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API..."
@@ -407,8 +487,6 @@ echo "Preparing the Data Centre overlay and shared PostgreSQL migrations..."
 DC_ENV="$DATACENTRE/backend/.env"
 mkdir -p "$DATACENTRE/backend"
 FEDERATION_DATABASE_URL="postgresql://testagram:$POSTGRES_PASSWORD@federation-db:5432/testagram_federation?sslmode=disable"
-TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed:sha-6ae0532c171383b84731063d590d775524f9da1e"
-TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation:sha-edf4f59f843514596d35273c888ff1c16ec0f73e"
 if [[ ! -f "$DC_ENV" ]]; then
   cat > "$DC_ENV" <<EOF
 DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
@@ -686,6 +764,34 @@ echo "Data Centre overlay status: $overlay_status"
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
 sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
 printf '%s\n' "$overlay_status" > "$ROOT/overlay-status.txt"
+
+# Persist a non-secret release manifest that ties every running component to
+# its exact source and immutable image identity for later acceptance evidence.
+api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+dc_platform_container="$(sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q platform)"
+backend_image_id="$(sudo docker inspect --format '{{.Image}}' "$api_container")"
+dc_platform_image_id="$(sudo docker inspect --format '{{.Image}}' "$dc_platform_container")"
+jq -n \
+  --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg apiContractRef "$TESTAGRAM_API_CONTRACT_REF" \
+  --arg backendRef "$TESTAGRAM_BACKEND_REF" \
+  --arg dataCentreRef "$TESTAGRAM_DATA_CENTRE_REF" \
+  --arg algorithmRef "$TESTAGRAM_ALGORITHM_REF" \
+  --arg algorithmImage "$TESTAGRAM_ALGORITHM_IMAGE" \
+  --arg federationRef "$TESTAGRAM_FEDERATION_REF" \
+  --arg federationImage "$TESTAGRAM_FEDERATION_IMAGE" \
+  --arg flutterRef "$TESTAGRAM_FLUTTER_REF" \
+  --arg flutterImage "$TESTAGRAM_WEB_IMAGE" \
+  --arg cdnRef "$TESTAGRAM_CDN_REF" \
+  --arg cdnImage "$TESTAGRAM_CDN_IMAGE" \
+  --arg cdnImageSourceRef "$TESTAGRAM_CDN_IMAGE_SOURCE_REF" \
+  --arg backendImageId "$backend_image_id" \
+  --arg dataCentrePlatformImageId "$dc_platform_image_id" \
+  --arg overlayStatus "$overlay_status" \
+  '{schemaVersion:1,createdAt:$createdAt,environment:"production",controlPlane:{repository:"Trendyzima/testagram-api",commit:$apiContractRef,runtime:false},services:{backend:{repository:"Trendyzima/Testagram-backend-",commit:$backendRef,imageId:$backendImageId},dataCentre:{repository:"Trendyzima/Testagram-data-centre-",commit:$dataCentreRef,platformImageId:$dataCentrePlatformImageId},algorithm:{repository:"Trendyzima/the-algorithm",commit:$algorithmRef,image:$algorithmImage},federation:{repository:"Trendyzima/federated-content",commit:$federationRef,image:$federationImage},flutter:{repository:"Trendyzima/testagram-flutter-client-",commit:$flutterRef,webImage:$flutterImage},cdn:{repository:"Trendyzima/cdn-",commit:$cdnRef,image:$cdnImage,imageSourceCommit:$cdnImageSourceRef}},dataCentreOverlayStatus:$overlayStatus}' \
+  > "$ROOT/release-manifest.json"
+chmod 600 "$ROOT/release-manifest.json"
+echo "Release manifest written to $ROOT/release-manifest.json"
 echo "DEPLOY_EXIT=0"
 REMOTE_SCRIPT
 chmod 700 "$ROOT/deploy.sh"
