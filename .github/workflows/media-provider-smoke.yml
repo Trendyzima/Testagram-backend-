@@ -132,11 +132,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --rm --name testagram-minio-identity-smoke \\
-            -p 9000:9000 \\
-            -e MINIO_ROOT_USER="$IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID" \\
-            -e MINIO_ROOT_PASSWORD="$IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY" \\
-            ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 \\
+          docker run -d --rm --name testagram-minio-identity-smoke \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER="$IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY" \
+            ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 \
             server /data --address ":9000" --console-address ":9001"
           for attempt in $(seq 1 40); do
             if curl -fsS "$IDENTITY_SMOKE_PRIMARY_ENDPOINT/minio/health/live" >/dev/null; then break; fi
