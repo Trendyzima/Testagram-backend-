@@ -167,38 +167,62 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}
+          R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION || 'auto' }}
+          R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
           R2_MEDIA_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET || 'testagram-media-production-r2' }}
           R2_METADATA_BUCKET: ${{ vars.CLOUDFLARE_R2_METADATA_BUCKET || 'testagram-media-production-metadata' }}
         shell: bash
         run: |
           set -euo pipefail
-          echo "::add-mask::$CLOUDFLARE_API_TOKEN"
-          [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]] || { echo "::error::Existing Cloudflare account credentials are required for the R2 media buckets."; exit 1; }
+          [[ -n "$R2_ENDPOINT" && -n "$R2_ACCESS_KEY_ID" && -n "$R2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing R2 S3 endpoint and key pair are required."; exit 1; }
           [[ "$R2_MEDIA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 media bucket name."; exit 1; }
           [[ "$R2_METADATA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 metadata bucket name."; exit 1; }
           [[ "$R2_MEDIA_BUCKET" != "$R2_METADATA_BUCKET" && "$R2_MEDIA_BUCKET" != "testagram-production-backups" && "$R2_METADATA_BUCKET" != "testagram-production-backups" ]] || { echo "::error::R2 media, metadata and backup buckets must be distinct."; exit 1; }
-          status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-media-buckets.json" -w '%{http_code}' \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-          [[ "$status" == "200" ]] || { echo "::error::Could not list Cloudflare R2 buckets."; exit 1; }
-          ensure_bucket() {
-            local bucket="$1" status
-            if jq -e --arg name "$bucket" '.result.buckets[]? | select(.name == $name)' "$RUNNER_TEMP/r2-media-buckets.json" >/dev/null; then
-              echo "R2 bucket already exists: $bucket"
-              return
-            fi
-            status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
-              -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-              --data "$(jq -nc --arg name "$bucket" '{name:$name,locationHint:"apac"}')" \
+          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo "::add-mask::$CLOUDFLARE_API_TOKEN"
+            status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-media-buckets.json" -w '%{http_code}' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-            if [[ "$status" != "200" ]] || ! jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
-              echo "::error::Could not create R2 bucket $bucket; check the existing token's Workers R2 Storage Write permission."
-              exit 1
+            if [[ "$status" == "200" ]]; then
+              ensure_bucket() {
+                local bucket="$1" create_status
+                if jq -e --arg name "$bucket" '.result.buckets[]? | select(.name == $name)' "$RUNNER_TEMP/r2-media-buckets.json" >/dev/null; then
+                  echo "R2 bucket already exists: $bucket"
+                  return
+                fi
+                create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
+                  -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                  --data "$(jq -nc --arg name "$bucket" '{name:$name,locationHint:"apac"}')" \
+                  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
+                if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+                  echo "Created R2 bucket: $bucket"
+                  return
+                fi
+                echo "Cloudflare API could not create $bucket; falling back to the existing S3 key pair."
+                jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
+                return 1
+              }
+              if ensure_bucket "$R2_MEDIA_BUCKET" && ensure_bucket "$R2_METADATA_BUCKET"; then
+                echo "media_bucket=$R2_MEDIA_BUCKET" >> "$GITHUB_OUTPUT"
+                echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            else
+              echo "Cloudflare R2 bucket listing returned HTTP $status; falling back to the existing S3 key pair."
+              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-media-buckets.json" || true
             fi
-            echo "Created R2 bucket: $bucket"
-          }
-          ensure_bucket "$R2_MEDIA_BUCKET"
-          ensure_bucket "$R2_METADATA_BUCKET"
+          fi
+          docker run --rm --entrypoint /bin/sh \
+            -e R2_ENDPOINT="$R2_ENDPOINT" -e R2_REGION="$R2_REGION" \
+            -e R2_MEDIA_BUCKET="$R2_MEDIA_BUCKET" -e R2_METADATA_BUCKET="$R2_METADATA_BUCKET" \
+            -e R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" -e R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+            ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
+              mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+              mc mb --ignore-existing "r2/$R2_MEDIA_BUCKET"
+              mc mb --ignore-existing "r2/$R2_METADATA_BUCKET"
+            '
           echo "media_bucket=$R2_MEDIA_BUCKET" >> "$GITHUB_OUTPUT"
           echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
 
