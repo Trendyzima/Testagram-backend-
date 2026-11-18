@@ -184,7 +184,7 @@ func (s *service) failMail(ctx context.Context,id int64,attempt int,code string)
 		return err
 	}
 	delay:=time.Duration(1<<min(attempt-1,8))*time.Minute
-	_,err:=s.db.Exec(ctx,`UPDATE testagram_mail.outbox SET status='pending',available_at=now()+$2::interval,
-		lease_until=NULL,last_error_code=$3,updated_at=now() WHERE id=$1`,id,delay.String(),code)
+	_,err:=s.db.Exec(ctx,`UPDATE testagram_mail.outbox SET status='pending',available_at=now()+($2 * interval '1 second'),
+		lease_until=NULL,last_error_code=$3,updated_at=now() WHERE id=$1`,id,int64(delay.Seconds()),code)
 	return err
 }
