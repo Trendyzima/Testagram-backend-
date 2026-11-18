@@ -274,6 +274,90 @@ apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
+  echo "Native identity schema preflight diagnostics (only failed requirements):"
+  docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+    sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -f -' <<'SQL'
+      SELECT requirement FROM (
+        SELECT name AS requirement FROM (VALUES
+          ('admin_rate_limits','testagram_auth.admin_rate_limits'),
+          ('admin_permissions','testagram_auth.admin_permissions'),
+          ('sensitive_action_requests','testagram_auth.sensitive_action_requests'),
+          ('sensitive_action_approvals','testagram_auth.sensitive_action_approvals'),
+          ('admin_security_audit','testagram_auth.admin_security_audit'),
+          ('identity_applications','testagram_identity.identity_applications'),
+          ('identity_application_reviews','testagram_identity.identity_application_reviews'),
+          ('identity_approval_tokens','testagram_identity.identity_approval_tokens'),
+          ('registration_provisioning','testagram_identity.registration_provisioning'),
+          ('verification_sessions','testagram_identity.verification_sessions'),
+          ('verification_events','testagram_identity.verification_events'),
+          ('verification_reviews','testagram_identity.verification_reviews'),
+          ('verification_evidence','testagram_identity.verification_evidence'),
+          ('legal_consent_audit','testagram_identity.legal_consent_audit'),
+          ('appwrite_registration_consents','testagram_identity.appwrite_registration_consents'),
+          ('auth_sessions','testagram_auth.sessions'),
+          ('auth_rate_limits','testagram_auth.rate_limits'),
+          ('password_reset_tokens','testagram_auth.password_reset_tokens'),
+          ('security_audit','testagram_auth.security_audit'),
+          ('legacy_account_reconciliation','testagram_auth.legacy_account_reconciliation'),
+          ('staff_principals','testagram_auth.staff_principals'),
+          ('staff_role_grants','testagram_auth.staff_role_grants'),
+          ('native_staff_permission_overrides','testagram_auth.native_staff_permission_overrides'),
+          ('native_sensitive_action_requests','testagram_auth.native_sensitive_action_requests'),
+          ('native_sensitive_action_approvals','testagram_auth.native_sensitive_action_approvals'),
+          ('native_admin_security_audit','testagram_auth.native_admin_security_audit'),
+          ('native_registration_provisioning','testagram_identity.native_registration_provisioning'),
+          ('mail_outbox','testagram_mail.outbox')
+        ) AS required(name, rel)
+        WHERE to_regclass(rel) IS NULL
+        UNION ALL
+        SELECT 'column ' || table_schema || '.' || table_name || '.' || column_name
+        FROM (VALUES
+          ('testagram_identity','identity_application_reviews','reviewer_user_id'),
+          ('testagram_identity','verification_reviews','reviewer_user_id'),
+          ('testagram_identity','identity_applications','status_access_token_sha256'),
+          ('testagram_identity','identity_applications','evidence_fingerprint_sha256'),
+          ('testagram_identity','identity_approval_tokens','consumed_by_native_user_id'),
+          ('testagram_auth','sensitive_action_approvals','approver_user_id'),
+          ('testagram_auth','admin_security_audit','actor_user_id'),
+          ('testagram_identity','identity_approval_tokens','first_approver_user_id'),
+          ('testagram_identity','identity_approval_tokens','second_approver_user_id'),
+          ('testagram_identity','verification_sessions','decided_by_user_id'),
+          ('testagram_identity','identity_applications','native_sensitive_action_request_id'),
+          ('testagram_auth','identities','password_reset_required')
+        ) AS required(table_schema,table_name,column_name)
+        WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+          WHERE c.table_schema=required.table_schema AND c.table_name=required.table_name
+            AND c.column_name=required.column_name)
+        UNION ALL
+        SELECT 'trigger ' || required.trigger_name FROM (VALUES
+          ('testagram_identity.identity_approval_tokens','identity_approval_token_requires_verified_evidence'),
+          ('testagram_identity.identity_approval_tokens','identity_approval_token_requires_two_person_approval'),
+          ('testagram_identity.verification_events','verification_events_append_only'),
+          ('testagram_identity.verification_reviews','verification_reviews_append_only'),
+          ('testagram_identity.legal_consent_audit','legal_consent_audit_append_only')
+        ) AS required(table_name,trigger_name)
+        WHERE NOT EXISTS (SELECT 1 FROM pg_trigger t
+          WHERE t.tgrelid=to_regclass(required.table_name) AND t.tgname=required.trigger_name
+            AND NOT t.tgisinternal)
+        UNION ALL
+        SELECT 'mail outbox app privileges' WHERE NOT (
+          COALESCE((SELECT has_schema_privilege(oid,'testagram_mail','USAGE') FROM pg_roles WHERE rolname='testagram_app'),false)
+          AND COALESCE((SELECT has_table_privilege(oid,'testagram_mail.outbox','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)
+          AND COALESCE((SELECT has_table_privilege(oid,'testagram_mail.outbox','INSERT') FROM pg_roles WHERE rolname='testagram_app'),false)
+          AND COALESCE((SELECT has_table_privilege(oid,'testagram_mail.outbox','UPDATE') FROM pg_roles WHERE rolname='testagram_app'),false)
+          AND COALESCE((SELECT has_sequence_privilege(oid,'testagram_mail.outbox_id_seq','USAGE') FROM pg_roles WHERE rolname='testagram_app'),false)
+          AND COALESCE((SELECT has_sequence_privilege(oid,'testagram_mail.outbox_id_seq','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)
+        )
+        UNION ALL
+        SELECT 'identity_applications.evidence_fingerprint_sha256 must be nullable'
+        WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity'
+          AND table_name='identity_applications' AND column_name='evidence_fingerprint_sha256' AND is_nullable='YES')
+        UNION ALL
+        SELECT 'verification_events_event_type_check must include evidence_access_attempted'
+        WHERE NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('testagram_identity.verification_events')
+          AND conname='verification_events_event_type_check' AND pg_get_constraintdef(oid) LIKE '%evidence_access_attempted%')
+      ) failures;
+SQL
   exit 1
 fi
 
