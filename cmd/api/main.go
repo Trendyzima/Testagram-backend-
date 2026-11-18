@@ -1310,6 +1310,7 @@ func main() {
 	go svc.runStorageDeletionWorker(signalCtx)
 	go svc.runStorageCleanupWorker(signalCtx)
 	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
+	go svc.runMailOutboxWorker(signalCtx)
 	if replicationApplyEnabled {
 		if replicationStore == nil {
 			log.Fatal("REPLICATION_APPLY_ENABLED requires replication configuration and database access")
