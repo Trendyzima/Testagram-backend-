@@ -53,6 +53,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         self.assertIn("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}", compose)
     def test_media_profile_reuses_existing_r2_backup_credentials(self):
+        self.assertIn("B2_S3_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}", self.workflow)
+        self.assertIn("B2_S3_PRIVATE_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}", self.workflow)
         self.assertIn("CLOUDFLARE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}", self.workflow)
         self.assertIn("CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}", self.workflow)
         self.assertIn("CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}", self.workflow)
