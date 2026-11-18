@@ -60,9 +60,9 @@ jobs:
 
           {
             echo "### InstaBox machine metadata"
-            echo "- Machine ID: `$INSTABOX_MACHINE_ID`"
-            echo "- State: `$state`"
-            echo "- Runtime ready: `$ready`"
+            echo "- Machine ID: ${INSTABOX_MACHINE_ID}"
+            echo "- State: ${state}"
+            echo "- Runtime ready: ${ready}"
             echo ""
             echo "This job used GET requests only. It did not inspect Docker, execute commands, or query PostgreSQL."
           } >> "$GITHUB_STEP_SUMMARY"
