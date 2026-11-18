@@ -483,6 +483,7 @@ write_dc_env_value FEDERATION_DATABASE_NAME "$FEDERATION_DATABASE_NAME"
 write_dc_env_value FEDERATION_DATABASE_USER "$FEDERATION_DATABASE_USER"
 write_dc_env_value FEDERATION_DATABASE_PASSWORD "$FEDERATION_DATABASE_PASSWORD"
 write_dc_env_value FEDERATION_DATABASE_URL "$FEDERATION_DATABASE_URL"
+write_dc_env_value MEDIA_DATABASE_URL "postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram_media?sslmode=disable"
 # Federation actor IDs and WebFinger documents must use the canonical apex.
 write_dc_env_value FEDERATION_PUBLIC_BASE_URL "https://testagram.site"
 write_dc_env_value FEDERATION_INSTANCE_DOMAIN "testagram.site"
