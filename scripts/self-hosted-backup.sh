@@ -86,11 +86,24 @@ for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENAB
   fi
 done
 
-for endpoint_var in MEDIA_S3_ENDPOINT R2_S3_ENDPOINT MINIO_PUBLIC_ENDPOINT; do
-  if [[ -n "$(read_env_flag "$endpoint_var")" ]]; then
+# The production deployment intentionally sets MINIO_PUBLIC_ENDPOINT to the
+# bundled Compose service address. Allow that exact internal origin; reject any
+# override that would move the API's effective object store off the backed-up
+# MinIO instance.
+validate_local_minio_endpoint() {
+  local endpoint="$1"
+  [[ -z "$endpoint" || "$endpoint" == "http://object-storage:9000" ]]
+}
+
+for endpoint_var in MEDIA_S3_ENDPOINT R2_S3_ENDPOINT; do
+  if [[ -n "$(read_env_value "$endpoint_var")" ]]; then
     die "$endpoint_var is configured; verify and back up that effective S3 origin before relying on this local-MinIO backup"
   fi
 done
+
+if ! validate_local_minio_endpoint "$(read_env_value MINIO_PUBLIC_ENDPOINT)"; then
+  die "MINIO_PUBLIC_ENDPOINT overrides the bundled http://object-storage:9000 origin; verify and back up that effective S3 origin before relying on this local-MinIO backup"
+fi
 
 for data_centre_var in DATA_CENTRE_MEDIA_API_URL FRESH_DATA_CENTRE_INTERNAL_TOKEN MEDIA_DATABASE_URL; do
   if [[ -n "$(read_env_flag "$data_centre_var")" ]]; then
