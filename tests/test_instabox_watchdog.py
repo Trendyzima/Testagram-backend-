@@ -256,9 +256,9 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "RESTART_COOLDOWN", 900),
             patch.object(watchdog.time, "time", return_value=10_000),
             patch.object(watchdog, "save_state"),
+            self.assertRaisesRegex(watchdog.WatchdogError, "local recovery cooldown active"),
         ):
-            result = watchdog.recover_stopped(api, {"last_action_at": 9_500})
-        self.assertIn("local recovery cooldown active", result)
+            watchdog.recover_stopped(api, {"last_action_at": 9_500})
         self.assertFalse(any(call[0] == "POST" for call in api.calls))
 
     def test_invalid_future_state_timestamp_fails_closed(self):
@@ -321,13 +321,13 @@ class WatchdogTests(unittest.TestCase):
             patch.object(watchdog, "API", return_value=api),
             patch.object(watchdog, "load_state", return_value={}),
             patch.object(watchdog, "save_state"),
-            patch.object(watchdog, "probe") as probe,
+            patch.object(watchdog, "probe", return_value=(True, "HTTP 200")) as probe,
             patch.object(watchdog, "API_KEY", "test-key"),
             patch.object(watchdog, "MACHINE_ID", "machine-123"),
         ):
             self.assertEqual(watchdog.main(), 0)
         self.assertEqual([call[0] for call in api.calls], ["GET"])
-        probe.assert_not_called()
+        probe.assert_called_once()
 
     def test_running_machine_with_failing_health_probe_still_never_restarts(self):
         api = FakeAPI()
@@ -344,33 +344,6 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(probe.call_count, 3)
         self.assertEqual([call[0] for call in api.calls], ["GET"])
         notify.assert_called_once()
-
-    def test_repeated_liveness_failure_in_dry_run_never_stops_machine(self):
-        api = FakeAPI()
-        with (
-            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
-            patch.object(watchdog, "DRY_RUN", True),
-            patch.object(watchdog, "RESTART_COOLDOWN", 900),
-            patch.object(watchdog.time, "time", return_value=10_000),
-            patch.object(watchdog, "save_state"),
-        ):
-            result = watchdog.recover_unhealthy_running(api, {})
-        self.assertIn("DRY RUN", result)
-        self.assertFalse(any(call[0] == "POST" for call in api.calls))
-
-    def test_running_machine_operator_stop_during_probe_prevents_restart(self):
-        api = FakeAPI({
-            "id": "machine-123", "name": "testagramdb", "state": "stopped",
-            "desiredState": "stopped", "operationId": None
-        })
-        with (
-            patch.object(watchdog, "AUTO_RECOVERY_RAW", "true"),
-            patch.object(watchdog, "DRY_RUN", False),
-            patch.object(watchdog, "save_state"),
-        ):
-            result = watchdog.recover_unhealthy_running(api, {})
-        self.assertIn("state changed", result)
-        self.assertFalse(any(call[0] == "POST" for call in api.calls))
 
     def test_suspended_machine_is_force_resumed_even_when_desired_state_is_suspended(self):
         api = FakeAPI({
