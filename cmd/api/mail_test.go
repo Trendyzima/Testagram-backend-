@@ -70,7 +70,6 @@ func TestCloudflareMailRequiresConfiguredAccount(t *testing.T) {
 	}
 }
 
-
 func TestCloudflareMailRequestContract(t *testing.T) {
 	var requestSeen bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,26 +116,26 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 
 func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) {
 	tests := []struct {
-		name       string
-		status     int
-		response   string
-		wantErr    string
-		permanent  bool
+		name      string
+		status    int
+		response  string
+		wantErr   string
+		permanent bool
 	}{
 		{
 			name: "provider rejects request", status: http.StatusBadRequest,
 			response: `{"success":false,"errors":[{"code":10001,"message":"invalid request"}],"result":null}`,
-			wantErr: "code 10001",
+			wantErr:  "code 10001",
 		},
 		{
 			name: "suppressed recipient", status: http.StatusOK,
-			response: `{"success":true,"errors":[],"result":{"message_id":"cf-suppressed","delivered":[],"queued":[],"permanent_bounces":[],"suppressed_recipients":["person@example.test"]}}`,
+			response:  `{"success":true,"errors":[],"result":{"message_id":"cf-suppressed","delivered":[],"queued":[],"permanent_bounces":[],"suppressed_recipients":["person@example.test"]}}`,
 			permanent: true,
 		},
 		{
 			name: "empty accepted recipient set", status: http.StatusOK,
 			response: `{"success":true,"errors":[],"result":{"message_id":"cf-empty","delivered":[],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}`,
-			wantErr: "accepted no recipient",
+			wantErr:  "accepted no recipient",
 		},
 	}
 	for _, tt := range tests {
