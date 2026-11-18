@@ -125,3 +125,56 @@ func TestQueryPrometheusDistinguishesMissingSamplesFromZero(t *testing.T) {
 		})
 	}
 }
+
+
+func staffSessionCookie(t *testing.T, a *app) *http.Cookie {
+	t.Helper()
+	w := httptest.NewRecorder()
+	s := session{
+		AccessToken: strings.Repeat("a", 40),
+		RefreshToken: strings.Repeat("b", 48),
+		AccessExpiresAt: time.Now().Add(15 * time.Minute).Unix(),
+		RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour).Unix(),
+	}
+	if err := a.setSession(w, s); err != nil { t.Fatal(err) }
+	return w.Result().Cookies()[0]
+}
+
+func TestSignOutRetainsStaffCookieWhenBackendCannotRevoke(t *testing.T) {
+	requestInfo := make(chan string, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestInfo <- r.Method + " " + r.URL.Path + " " + r.Header.Get("Authorization")
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	defer backend.Close()
+	a := testApp(t)
+	a.backendAPIURL = backend.URL
+	req := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/auth/sign-out", nil)
+	req.AddCookie(staffSessionCookie(t, a))
+	rec := httptest.NewRecorder()
+	a.handleSignOut(rec, req)
+	if rec.Code != http.StatusServiceUnavailable { t.Fatalf("sign-out status=%d body=%s; want 503", rec.Code, rec.Body.String()) }
+	if got := <-requestInfo; got != "POST /api/auth/logout Bearer "+strings.Repeat("a", 40) { t.Fatalf("unexpected Backend revocation request: %s", got) }
+	if len(rec.Result().Cookies()) != 0 { t.Fatal("staff cookie was cleared despite unconfirmed Backend revocation") }
+}
+
+func TestSignOutClearsStaffCookieAfterBackendRevocation(t *testing.T) {
+	requestInfo := make(chan string, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestInfo <- r.Method + " " + r.URL.Path + " " + r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer backend.Close()
+	a := testApp(t)
+	a.backendAPIURL = backend.URL
+	req := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/auth/sign-out", nil)
+	req.AddCookie(staffSessionCookie(t, a))
+	rec := httptest.NewRecorder()
+	a.handleSignOut(rec, req)
+	if rec.Code != http.StatusOK { t.Fatalf("sign-out status=%d body=%s", rec.Code, rec.Body.String()) }
+	if got := <-requestInfo; got != "POST /api/auth/logout Bearer "+strings.Repeat("a", 40) { t.Fatalf("unexpected Backend revocation request: %s", got) }
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].MaxAge >= 0 || cookies[0].Value != "" { t.Fatalf("successful sign-out did not clear staff cookie: %#v", cookies) }
+}
