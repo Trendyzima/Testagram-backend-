@@ -32,9 +32,9 @@ Configure these values in the InstaBox deployment environment (never commit real
 
 | Variable | Value |
 |---|---|
-| `CLOUDFLARE_ACCOUNT_ID` | Existing Cloudflare account ID secret (32 hexadecimal characters) |
-| `CLOUDFLARE_API_TOKEN` | Existing Cloudflare API token secret with Email Sending: Edit permission |
-| `TESTAGRAM_MAIL_FROM` | `no-reply@testagram.site` |
+| `CLOUDFLARE_EMAIL_ACCOUNT_ID` | Runtime variable populated from the existing `CLOUDFLARE_ACCOUNT_ID` GitHub secret |
+| `CLOUDFLARE_EMAIL_API_TOKEN` | Runtime variable populated from the existing `CLOUDFLARE_API_TOKEN` GitHub secret; token needs Email Sending: Edit |
+| `AUTH_FROM_EMAIL` | `no-reply@testagram.site`, populated from the `TESTAGRAM_MAIL_FROM` GitHub variable |
 | `TESTAGRAM_MAIL_ENCRYPTION_KEY` | 32 random bytes encoded as 64 hexadecimal characters |
 
 Generate the encryption key with:
