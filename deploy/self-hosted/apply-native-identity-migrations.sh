@@ -209,7 +209,7 @@ for file in \
   053_native_staff_reviewer_grants.sql \
   054_native_admin_console.sql \
   055_native_identity_approval_ledger.sql \
-  056_native_verification_decider.sql \\
+  056_native_verification_decider.sql \
   057_testagram_mail_outbox.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
