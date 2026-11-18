@@ -92,8 +92,17 @@ jobs:
                 fi
               fi
             else
-              echo "Cloudflare R2 bucket listing returned HTTP $bucket_status; falling back to the existing R2 S3 key pair."
-              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-buckets.json" || true
+              echo "Cloudflare R2 bucket listing returned HTTP $bucket_status; trying bucket creation permission before S3 fallback."
+              create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
+                -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                --data "$(jq -nc --arg name "$BACKUP_BUCKET" '{name:$name,locationHint:"apac"}')" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
+              if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+                echo "Created dedicated R2 backup bucket through Cloudflare API."
+              else
+                jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-buckets.json" || true
+                jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
+              fi
             fi
           else
             echo "Cloudflare account token unavailable; using the existing R2 S3 key pair for bucket access."
