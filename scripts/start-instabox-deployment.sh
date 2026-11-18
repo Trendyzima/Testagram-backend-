@@ -525,8 +525,23 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
   write_dc_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
   write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"
   write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"
-  write_dc_env_value MEDIA_DATABASE_NAME "testagram_media"
-  write_dc_env_value MEDIA_DATABASE_URL "postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram_media?sslmode=disable"
+  MEDIA_DATABASE_NAME="$(read_dc_env_value MEDIA_DATABASE_NAME)"
+  if [[ ! "$MEDIA_DATABASE_NAME" =~ ^[A-Za-z0-9_]{1,63}$ ]]; then
+    MEDIA_DATABASE_NAME=testagram_media
+  fi
+  MEDIA_DATABASE_USER="$(read_dc_env_value MEDIA_DATABASE_USER)"
+  if [[ ! "$MEDIA_DATABASE_USER" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ || "$MEDIA_DATABASE_USER" == "${POSTGRES_USER:-testagram}" ]]; then
+    MEDIA_DATABASE_USER=testagram_media
+  fi
+  MEDIA_DATABASE_PASSWORD="$(read_dc_env_value MEDIA_DATABASE_PASSWORD)"
+  if [[ ! "$MEDIA_DATABASE_PASSWORD" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+    MEDIA_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+  fi
+  MEDIA_DATABASE_URL="postgresql://${MEDIA_DATABASE_USER}:${MEDIA_DATABASE_PASSWORD}@federation-db:5432/${MEDIA_DATABASE_NAME}?sslmode=disable"
+  write_dc_env_value MEDIA_DATABASE_NAME "$MEDIA_DATABASE_NAME"
+  write_dc_env_value MEDIA_DATABASE_USER "$MEDIA_DATABASE_USER"
+  write_dc_env_value MEDIA_DATABASE_PASSWORD "$MEDIA_DATABASE_PASSWORD"
+  write_dc_env_value MEDIA_DATABASE_URL "$MEDIA_DATABASE_URL"
   chmod 600 "$BASE_ENV" "$DC_ENV"
   set -a
   # shellcheck disable=SC1090
@@ -544,6 +559,8 @@ else
   write_dc_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN ""
   write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""
   write_dc_env_value MEDIA_DATABASE_NAME ""
+  write_dc_env_value MEDIA_DATABASE_USER ""
+  write_dc_env_value MEDIA_DATABASE_PASSWORD ""
   write_dc_env_value MEDIA_DATABASE_URL ""
   write_env_value DATA_CENTRE_MEDIA_API_URL ""
   write_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN ""
