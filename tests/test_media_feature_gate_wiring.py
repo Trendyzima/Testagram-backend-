@@ -14,14 +14,11 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         cls.workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         cls.deployer = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
 
-    def test_workflow_passes_all_three_repository_gates(self):
-        for key in (
-            "DATA_CENTRE_MEDIA_ENABLED",
-            "FRESH_MEDIA_ENABLED",
-            "MEDIA_REPLICATION_ENABLED",
-        ):
-            with self.subTest(key=key):
-                self.assertIn(f"vars.{key} || 'false'", self.workflow)
+    def test_workflow_keeps_legacy_replicator_off_and_preserves_data_centre_gates(self):
+        self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
+        self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
+        self.assertIn("MEDIA_REPLICATION_ENABLED: 'false'", self.workflow)
+        self.assertIn("The legacy Backend multi-bucket replicator is not the canonical media path.", self.workflow)
 
     def test_identity_registration_requires_the_private_data_centre_evidence_profile(self):
         self.assertIn("vars.DATA_CENTRE_MEDIA_ENABLED == 'true'", self.workflow)
@@ -59,6 +56,27 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}", self.workflow)
         self.assertIn("CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}", self.workflow)
         self.assertIn("CLOUDFLARE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION || 'auto' }}", self.workflow)
+        self.assertIn("CLOUDFLARE_R2_METADATA_BUCKET: ${{ steps.r2-media-buckets.outputs.metadata_bucket", self.workflow)
+        self.assertIn("Ensure Data Centre R2 media and metadata buckets exist", self.workflow)
+        self.assertIn("testagram-media-production-r2", self.workflow)
+        self.assertIn("testagram-media-production-metadata", self.workflow)
+
+    def test_data_centre_media_preserves_provider_credentials_and_initializes_metadata(self):
+        for token in (
+            'DC_B2_S3_ENDPOINT="${B2_S3_ENDPOINT:-}"',
+            'DC_R2_ENDPOINT="${CLOUDFLARE_R2_ENDPOINT:-}"',
+            'DC_R2_METADATA_BUCKET="${CLOUDFLARE_R2_METADATA_BUCKET:-}"',
+            'export -n B2_S3_ENDPOINT',
+            'MINIO_METADATA_ACCESS_KEY=testagram-metadata',
+            'ensure_random_secret MINIO_METADATA_SECRET_KEY',
+            'run --rm --no-deps object-init',
+            'write_dc_env_value VPS_MINIO_METADATA_ACCESS_KEY_ID "$MINIO_METADATA_ACCESS_KEY"',
+            'write_dc_env_value VPS_MINIO_METADATA_SECRET_ACCESS_KEY "$MINIO_METADATA_SECRET_KEY"',
+            'write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_METADATA_BUCKET',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.deployer)
 
     def test_provider_smoke_secret_sources_and_retired_identity_smoke(self):
         for key in ("B2_S3_ENDPOINT", "B2_S3_REGION"):

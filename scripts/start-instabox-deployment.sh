@@ -194,6 +194,20 @@ write_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$BASE_ENV"
   fi
 }
+# Preserve Data Centre-only provider inputs before the Backend .env is scrubbed.
+DC_B2_S3_ENDPOINT="${B2_S3_ENDPOINT:-}"
+DC_B2_S3_REGION="${B2_S3_REGION:-}"
+DC_B2_S3_BUCKET="${B2_S3_BUCKET:-}"
+DC_B2_S3_ACCESS_KEY_ID="${B2_S3_ACCESS_KEY_ID:-}"
+DC_B2_S3_SECRET_ACCESS_KEY="${B2_S3_SECRET_ACCESS_KEY:-}"
+DC_R2_ENDPOINT="${CLOUDFLARE_R2_ENDPOINT:-}"
+DC_R2_REGION="${CLOUDFLARE_R2_REGION:-auto}"
+DC_R2_BUCKET="${CLOUDFLARE_R2_BUCKET:-}"
+DC_R2_ACCESS_KEY_ID="${CLOUDFLARE_R2_ACCESS_KEY_ID:-}"
+DC_R2_SECRET_ACCESS_KEY="${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}"
+DC_R2_METADATA_BUCKET="${CLOUDFLARE_R2_METADATA_BUCKET:-}"
+DC_MEDIA_PROFILE_ENABLED="${DATA_CENTRE_MEDIA_ENABLED:-false}"
+DC_FRESH_MEDIA_ENABLED="${FRESH_MEDIA_ENABLED:-false}"
 ensure_random_secret() {
   local key="$1" value
   value="$(read_env_value "$key")"
@@ -266,6 +280,21 @@ fi
 ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
 ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
 ensure_random_secret CDN_PURGE_TOKEN
+MINIO_METADATA_ACCESS_KEY="$(read_env_value MINIO_METADATA_ACCESS_KEY)"
+if [[ ! "$MINIO_METADATA_ACCESS_KEY" =~ ^[A-Za-z0-9_-]{3,20}$ ]]; then
+  MINIO_METADATA_ACCESS_KEY=testagram-metadata
+  write_env_value MINIO_METADATA_ACCESS_KEY "$MINIO_METADATA_ACCESS_KEY"
+fi
+ensure_random_secret MINIO_METADATA_SECRET_KEY
+MINIO_METADATA_BUCKET="$(read_env_value MINIO_METADATA_BUCKET)"
+if [[ -z "$MINIO_METADATA_BUCKET" ]]; then
+  MINIO_METADATA_BUCKET=testagram-media-metadata
+  write_env_value MINIO_METADATA_BUCKET "$MINIO_METADATA_BUCKET"
+fi
+if [[ -n "$DC_R2_BUCKET" && "$DC_R2_METADATA_BUCKET" == "$DC_R2_BUCKET" ]]; then
+  echo "::error::R2 media and metadata buckets must be distinct."
+  exit 1
+fi
 if [[ "$CDN_ORIGIN_AUTH_TOKEN" == "$CDN_MEDIA_ASSERTION_SECRET" || "$CDN_ORIGIN_AUTH_TOKEN" == "$CDN_PURGE_TOKEN" || "$CDN_MEDIA_ASSERTION_SECRET" == "$CDN_PURGE_TOKEN" ]]; then echo "CDN origin, viewer-assertion and purge credentials must be distinct" >&2; exit 1; fi
 # The repository secret is the source of truth for standard Backend -> Federation reads.
 if [[ -n "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ]]; then
@@ -294,6 +323,13 @@ set -a
 # shellcheck disable=SC1090
 source "$BASE_ENV"
 set +a
+# Restore the Data Centre-only provider inputs in memory after reading Backend .env.
+B2_S3_ENDPOINT="$DC_B2_S3_ENDPOINT"; B2_S3_REGION="$DC_B2_S3_REGION"; B2_S3_BUCKET="$DC_B2_S3_BUCKET"
+B2_S3_ACCESS_KEY_ID="$DC_B2_S3_ACCESS_KEY_ID"; B2_S3_SECRET_ACCESS_KEY="$DC_B2_S3_SECRET_ACCESS_KEY"
+CLOUDFLARE_R2_ENDPOINT="$DC_R2_ENDPOINT"; CLOUDFLARE_R2_REGION="$DC_R2_REGION"; CLOUDFLARE_R2_BUCKET="$DC_R2_BUCKET"
+CLOUDFLARE_R2_ACCESS_KEY_ID="$DC_R2_ACCESS_KEY_ID"; CLOUDFLARE_R2_SECRET_ACCESS_KEY="$DC_R2_SECRET_ACCESS_KEY"; CLOUDFLARE_R2_METADATA_BUCKET="$DC_R2_METADATA_BUCKET"
+DATA_CENTRE_MEDIA_ENABLED="$DC_MEDIA_PROFILE_ENABLED"; FRESH_MEDIA_ENABLED="$DC_FRESH_MEDIA_ENABLED"
+export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET MINIO_METADATA_ACCESS_KEY MINIO_METADATA_SECRET_KEY
 
 # Staff identity review and account authentication are Testagram-native. No external identity-provider credentials are required.
 # No third-party AI vendor is part of Testagram deployment. The Backend
@@ -412,6 +448,7 @@ if ! curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
   sudo docker ps -a
   exit 1
 fi
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" run --rm --no-deps object-init
 
 echo "Preparing the Data Centre overlay and shared PostgreSQL migrations..."
 DC_ENV="$DATACENTRE/backend/.env"
@@ -463,6 +500,14 @@ write_dc_env_value() {
 read_dc_env_value() {
   sed -n "s/^$1=//p" "$DC_ENV" | tail -n 1
 }
+write_dc_env_value VPS_MINIO_ENDPOINT "http://object-storage:9000"
+write_dc_env_value VPS_MINIO_REGION "us-east-1"
+write_dc_env_value VPS_MINIO_METADATA_BUCKET "$MINIO_METADATA_BUCKET"
+write_dc_env_value VPS_MINIO_METADATA_ACCESS_KEY_ID "$MINIO_METADATA_ACCESS_KEY"
+write_dc_env_value VPS_MINIO_METADATA_SECRET_ACCESS_KEY "$MINIO_METADATA_SECRET_KEY"
+write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
+write_dc_env_value DATA_CENTRE_MEDIA_ENABLED "$DC_MEDIA_PROFILE_ENABLED"
+write_dc_env_value FRESH_MEDIA_ENABLED "$DC_FRESH_MEDIA_ENABLED"
 # Federation owns a dedicated least-privilege PostgreSQL role in the
 # Backend-owned Postgres server. Persist the generated password in the
 # protected Data Centre env file so restarts retain the same DSN.
@@ -510,6 +555,12 @@ set -a
 # shellcheck disable=SC1090
 source "$DC_ENV"
 set +a
+B2_S3_ENDPOINT="$DC_B2_S3_ENDPOINT"; B2_S3_REGION="$DC_B2_S3_REGION"; B2_S3_BUCKET="$DC_B2_S3_BUCKET"
+B2_S3_ACCESS_KEY_ID="$DC_B2_S3_ACCESS_KEY_ID"; B2_S3_SECRET_ACCESS_KEY="$DC_B2_S3_SECRET_ACCESS_KEY"
+CLOUDFLARE_R2_ENDPOINT="$DC_R2_ENDPOINT"; CLOUDFLARE_R2_REGION="$DC_R2_REGION"; CLOUDFLARE_R2_BUCKET="$DC_R2_BUCKET"
+CLOUDFLARE_R2_ACCESS_KEY_ID="$DC_R2_ACCESS_KEY_ID"; CLOUDFLARE_R2_SECRET_ACCESS_KEY="$DC_R2_SECRET_ACCESS_KEY"; CLOUDFLARE_R2_METADATA_BUCKET="$DC_R2_METADATA_BUCKET"
+DATA_CENTRE_MEDIA_ENABLED="$DC_MEDIA_PROFILE_ENABLED"; FRESH_MEDIA_ENABLED="$DC_FRESH_MEDIA_ENABLED"
+export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET MINIO_METADATA_ACCESS_KEY MINIO_METADATA_SECRET_KEY
 
 # The private media service is enabled only when both independent providers
 # are fully configured. It remains off otherwise; Backend must not receive a
@@ -521,12 +572,13 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
     value="${!key:-}"
     if [[ -n "$value" ]]; then write_dc_env_value "$key" "$value"; fi
   done
-  for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
+  for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET VPS_MINIO_METADATA_BUCKET VPS_MINIO_METADATA_ACCESS_KEY_ID VPS_MINIO_METADATA_SECRET_ACCESS_KEY; do
     if [[ -z "${!key:-}" ]]; then
-      echo "::error::DATA_CENTRE_MEDIA_ENABLED=true requires complete B2 and R2 configuration; missing $key (value redacted)."
+      echo "::error::DATA_CENTRE_MEDIA_ENABLED=true requires complete B2/R2/MinIO metadata configuration; missing $key (value redacted)."
       exit 1
     fi
   done
+  [[ "$CLOUDFLARE_R2_METADATA_BUCKET" != "$CLOUDFLARE_R2_BUCKET" ]] || { echo "::error::R2 media and metadata buckets must be distinct."; exit 1; }
   [[ "$B2_S3_ENDPOINT" == https://* && "$CLOUDFLARE_R2_ENDPOINT" == https://* ]] || {
     echo "::error::B2 and R2 media endpoints must both use HTTPS."
     exit 1
@@ -566,7 +618,9 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
   # shellcheck disable=SC1090
   source "$DC_ENV"
   set +a
-  echo "Data Centre private media profile enabled with B2/R2 configuration (all values redacted)."
+  # Provider credentials stay scoped to the Data Centre Compose env file.
+  export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET MINIO_METADATA_ACCESS_KEY MINIO_METADATA_SECRET_KEY
+  echo "Data Centre private media profile enabled with B2/R2 and MinIO metadata configuration (all values redacted)."
 else
   # Explicitly remove stale Data Centre provider/client secrets when
   # the private media profile is switched off.
@@ -793,6 +847,11 @@ if [[ "$media_enabled" == true ]]; then
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_BUCKET "$CLOUDFLARE_R2_BUCKET"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_ACCESS_KEY_ID "$CLOUDFLARE_R2_ACCESS_KEY_ID"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_SECRET_ACCESS_KEY "$CLOUDFLARE_R2_SECRET_ACCESS_KEY"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_ENDPOINT "http://object-storage:9000"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_METADATA_BUCKET "$MINIO_METADATA_BUCKET"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_METADATA_ACCESS_KEY_ID "$MINIO_METADATA_ACCESS_KEY"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_METADATA_SECRET_ACCESS_KEY "$MINIO_METADATA_SECRET_KEY"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
   sudo docker exec "$api_container" wget -q -O /dev/null http://media:8096/readyz
   echo "Verified Backend-to-Data-Centre private media readiness and redacted credential mapping."
 fi
