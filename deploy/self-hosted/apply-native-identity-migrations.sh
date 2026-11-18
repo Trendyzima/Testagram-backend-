@@ -63,6 +63,30 @@ schema_ready() {
         AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_mail'\''
+            AND table_name='\''outbox'\''
+            AND column_name='\''payload_ciphertext'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_mail'\''
+            AND table_name='\''outbox'\''
+            AND column_name='\''payload_nonce'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_mail'\''
+            AND table_name='\''outbox'\''
+            AND column_name='\''provider_message_id'\''
+        )
+        AND has_schema_privilege('\''testagram_app'\'', '\''testagram_mail'\'', '\''USAGE'\'')
+        AND has_table_privilege('\''testagram_app'\'', '\''testagram_mail.outbox'\'', '\''SELECT'\'')
+        AND has_table_privilege('\''testagram_app'\'', '\''testagram_mail.outbox'\'', '\''INSERT'\'')
+        AND has_table_privilege('\''testagram_app'\'', '\''testagram_mail.outbox'\'', '\''UPDATE'\'')
+        AND has_sequence_privilege('\''testagram_app'\'', '\''testagram_mail.outbox_id_seq'\'', '\''USAGE'\'')
+        AND has_sequence_privilege('\''testagram_app'\'', '\''testagram_mail.outbox_id_seq'\'', '\''SELECT'\'')
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_identity'\''
             AND table_name='\''identity_applications'\''
             AND column_name='\''status_access_token_sha256'\''
