@@ -605,7 +605,7 @@ jobs:
           assert "workflow_dispatch:" in trigger and "push:" in trigger and "branches: [main]" in trigger, "production deployment must support automatic main-branch pushes"
           assert "pull_request:" in trigger and "needs: validate" in deploy, "pull requests must validate first and deployment must depend on successful validation"
           assert "confirm_production_deploy" in trigger and "inputs.confirm_production_deploy == true" in deploy, "manual production deployments must retain explicit confirmation"
-          assert "github.event_name == 'push' || inputs.confirm_production_deploy == true" in deploy, "only main pushes or explicitly confirmed manual runs may deploy"
+          assert "github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true" in deploy and "github.event_name == 'push' ||" not in deploy, "production deployment must require explicit manual confirmation; main pushes only validate"
           assert "github.ref == 'refs/heads/main'" in deploy and "environment: production" in deploy, "production deployment must be restricted to main and the production environment"
           assert "confirm_native_identity_migrations" in trigger and "default: false" in trigger and "CONFIRM_NATIVE_IDENTITY_MIGRATIONS" in deploy, "native identity migrations must remain explicitly disabled by default"
           assert "confirm_identity_registration" in trigger and "default: false" in trigger, "public identity registration must require a separate manual confirmation"
