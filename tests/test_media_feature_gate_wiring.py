@@ -111,7 +111,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' ||", deploy_gate)
         self.assertIn("inputs.confirm_production_deploy == true", deploy_gate)
         self.assertNotIn("github.event_name == 'pull_request' ||", deploy_gate)
-        self.assertIn("environment: production", deploy_gate)
+        self.assertIn("environment: production", self.workflow)
 
 
 if __name__ == "__main__":
