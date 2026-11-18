@@ -21,7 +21,7 @@ func (s *service) identityEvidenceStorageAvailable(ctx context.Context) error {
 	return nil
 }
 
-func (s *service) identityEvidenceUploadURL(ctx context.Context, ownerID, objectKey, contentType string, size int64) (string, error) {
+func (s *service) identityEvidenceCreateUploadURL(ctx context.Context, ownerID, objectKey, contentType string, size int64) (string, error) {
 	if s.identityEvidenceMedia != nil {
 		grant, err := s.identityEvidenceMedia.CreateUploadURL(ctx, ownerID, identityEvidenceNamespace, objectKey, contentType, size)
 		if err != nil {
