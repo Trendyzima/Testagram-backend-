@@ -57,7 +57,7 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := svc.identityEvidenceStorageAvailable(ctx); err != nil { t.Fatalf("storage readiness: %v", err) }
-	uploadURL, err := svc.identityEvidenceUploadURL(ctx, owner, key, "image/jpeg", 1024)
+	uploadURL, err := svc.identityEvidenceCreateUploadURL(ctx, owner, key, "image/jpeg", 1024)
 	if err != nil || uploadURL != "https://b2.example/signed-upload" { t.Fatalf("upload URL = %q, %v", uploadURL, err) }
 	if err := svc.identityEvidenceVerifyAndReplicate(ctx, owner, key, "image/jpeg", 1024, digest); err != nil { t.Fatalf("verify and replicate: %v", err) }
 	if err := svc.identityEvidenceDelete(ctx, owner, key); err != nil { t.Fatalf("durable delete: %v", err) }
