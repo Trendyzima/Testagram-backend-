@@ -77,7 +77,7 @@ func enqueueAuthEmailWith(ctx context.Context, executor mailQueueExecutor, recip
 	if _, err := mail.ParseAddress(recipient); err != nil {
 		return errors.New("invalid mail recipient")
 	}
-	if len(subject) == 0 || len(subject) > 180 || strings.ContainsAny(subject, "\\r\\n") || len(html) > 256*1024 {
+	if len(subject) == 0 || len(subject) > 180 || strings.ContainsAny(subject, "\r\n") || len(html) > 256*1024 {
 		return errors.New("mail content exceeds allowed bounds")
 	}
 	aead, err := mailCipher()
