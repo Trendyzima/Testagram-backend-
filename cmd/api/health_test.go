@@ -39,3 +39,32 @@ func TestHealthzIdentifiesCanonicalBackend(t *testing.T) {
 		t.Fatalf("health body = %+v, want ok=true service=testagram-api", body)
 	}
 }
+
+func TestHealthIsCanonicalPublicProbeAndMatchesHealthz(t *testing.T) {
+	for _, path := range []string{"/health", "/healthz"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			(&service{}).routes().ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want %d; body=%s", path, rec.Code, http.StatusOK, rec.Body.String())
+			}
+			if got := rec.Header().Get("X-Testagram-Service"); got != "testagram-api" {
+				t.Fatalf("X-Testagram-Service = %q, want testagram-api", got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			var body struct {
+				OK bool `json:"ok"`
+				Service string `json:"service"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode health body: %v", err)
+			}
+			if !body.OK || body.Service != "testagram-api" {
+				t.Fatalf("health body = %+v, want ok=true service=testagram-api", body)
+			}
+		})
+	}
+}
