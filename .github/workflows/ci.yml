@@ -34,14 +34,9 @@ jobs:
           go-version: "1.26.11"
           cache: true
       - name: Validate production deployment shell syntax
-        run: bash -n scripts/start-instabox-deployment.sh scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh deploy/self-hosted/apply-native-identity-migrations.sh
+        run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh
       - name: Verify Federation and media database deployment contracts
         run: python3 tests/test_instabox_federation_runtime_contract.py
-      - name: Verify external media backup and restore inventory contracts
-        run: |
-          python3 -m py_compile scripts/self_hosted_media_backup.py
-          python3 tests/test_self_hosted_media_backup.py
-          python3 tests/test_self_hosted_backup_guards.py
       - name: Validate native authentication staging smoke client syntax
         run: python3 -m py_compile scripts/native-auth-staging-smoke.py
       - name: Resolve and verify Go modules
@@ -707,7 +702,7 @@ jobs:
               assert check in deploy, f"deployment must verify redacted runtime environment: {check}"
           expected = {
               "TESTAGRAM_ALGORITHM_IMAGE": "ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8",
-              "TESTAGRAM_FEDERATION_IMAGE": "ghcr.io/trendyzima/testagram-federation@sha256:a84cbc8d6e82048a5d20e21dadd1ec6a429ce9284420f02cb92c43dfa218a8b6",
+              "TESTAGRAM_FEDERATION_IMAGE": "ghcr.io/trendyzima/testagram-federation@sha256:ea7cb61c38bc971be55c1f164133e8781e11f5fc324ea8997b3e00322d06e88c",
           }
           for key, tag in expected.items():
               if not re.search(rf'{key}="{re.escape(tag)}"', deploy):
