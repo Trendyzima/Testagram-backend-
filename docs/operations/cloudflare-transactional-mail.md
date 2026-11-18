@@ -5,6 +5,7 @@ Testagram uses Cloudflare Email Service for outbound transactional notifications
 ## Architecture
 
 - The Go API persists email work in `testagram_mail.outbox`.
+- Signup verification and password-recovery token updates insert their encrypted outbox message in the same PostgreSQL transaction as the identity/token change, preventing a committed token with no corresponding queued email.
 - Message bodies and one-time links are encrypted with AES-256-GCM before they enter PostgreSQL.
 - A background worker claims rows with `FOR UPDATE SKIP LOCKED`, sends through Cloudflare Email Sending REST API, and records the Cloudflare message ID.
 - Expired worker leases are reclaimed. Failed submissions use exponential retry delays and eventually enter the dead-letter state.
