@@ -67,7 +67,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             'DC_R2_ENDPOINT="${CLOUDFLARE_R2_ENDPOINT:-}"',
             'DC_R2_METADATA_BUCKET="${CLOUDFLARE_R2_METADATA_BUCKET:-}"',
             'export -n B2_S3_ENDPOINT',
-            'ensure_random_secret MINIO_METADATA_ACCESS_KEY',
+            'MINIO_METADATA_ACCESS_KEY=testagram-metadata',
             'ensure_random_secret MINIO_METADATA_SECRET_KEY',
             'run --rm --no-deps object-init',
             'write_dc_env_value VPS_MINIO_METADATA_ACCESS_KEY_ID "$MINIO_METADATA_ACCESS_KEY"',
