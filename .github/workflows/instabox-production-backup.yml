@@ -83,7 +83,10 @@ jobs:
               -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
               --data "$(jq -nc --arg name "$BACKUP_BUCKET" '{name:$name,locationHint:"apac"}')" \
               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-            [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null || { echo "::error::Could not create the dedicated Cloudflare R2 backup bucket; check the existing token's Workers R2 Storage Write permission."; exit 1; }
+            if [[ "$create_status" != "200" ]] || ! jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+              echo "::error::Could not create the dedicated Cloudflare R2 backup bucket; check the existing token's Workers R2 Storage Write permission."
+              exit 1
+            fi
           fi
           for secret in "$CLOUDFLARE_API_TOKEN" "$R2_BACKUP_ACCESS_KEY_ID" "$R2_BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
             [[ -z "$secret" ]] || echo "::add-mask::$secret"
