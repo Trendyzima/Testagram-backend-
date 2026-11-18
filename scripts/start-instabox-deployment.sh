@@ -502,6 +502,8 @@ write_dc_env_value VPS_MINIO_METADATA_BUCKET "$MINIO_METADATA_BUCKET"
 write_dc_env_value VPS_MINIO_METADATA_ACCESS_KEY_ID "$MINIO_METADATA_ACCESS_KEY"
 write_dc_env_value VPS_MINIO_METADATA_SECRET_ACCESS_KEY "$MINIO_METADATA_SECRET_KEY"
 write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
+write_dc_env_value DATA_CENTRE_MEDIA_ENABLED "$DC_MEDIA_PROFILE_ENABLED"
+write_dc_env_value FRESH_MEDIA_ENABLED "$DC_FRESH_MEDIA_ENABLED"
 # Federation owns a dedicated least-privilege PostgreSQL role in the
 # Backend-owned Postgres server. Persist the generated password in the
 # protected Data Centre env file so restarts retain the same DSN.
