@@ -760,7 +760,7 @@ func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, errorBody("EVIDENCE_CONTENT_MISMATCH", "Evidence bytes do not match the declared content type", requestID(r)))
 		return
 	}
-	uploadURL, err := s.identityEvidenceUploadURL(ctx, access.ApplicationID, objectKey, contentType, size)
+	uploadURL, err := s.identityEvidenceCreateUploadURL(ctx, access.ApplicationID, objectKey, contentType, size)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
 		return
