@@ -198,11 +198,13 @@ write_env_value() {
 DC_B2_S3_ENDPOINT="${B2_S3_ENDPOINT:-}"
 DC_B2_S3_REGION="${B2_S3_REGION:-}"
 DC_B2_S3_BUCKET="${B2_S3_BUCKET:-}"
+DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"
 DC_B2_S3_ACCESS_KEY_ID="${B2_S3_ACCESS_KEY_ID:-}"
 DC_B2_S3_SECRET_ACCESS_KEY="${B2_S3_SECRET_ACCESS_KEY:-}"
 DC_R2_ENDPOINT="${CLOUDFLARE_R2_ENDPOINT:-}"
 DC_R2_REGION="${CLOUDFLARE_R2_REGION:-auto}"
 DC_R2_BUCKET="${CLOUDFLARE_R2_BUCKET:-}"
+DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"
 DC_R2_ACCESS_KEY_ID="${CLOUDFLARE_R2_ACCESS_KEY_ID:-}"
 DC_R2_SECRET_ACCESS_KEY="${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}"
 DC_R2_METADATA_BUCKET="${CLOUDFLARE_R2_METADATA_BUCKET:-}"
@@ -324,9 +326,9 @@ set -a
 source "$BASE_ENV"
 set +a
 # Restore the Data Centre-only provider inputs in memory after reading Backend .env.
-B2_S3_ENDPOINT="$DC_B2_S3_ENDPOINT"; B2_S3_REGION="$DC_B2_S3_REGION"; B2_S3_BUCKET="$DC_B2_S3_BUCKET"
+B2_S3_ENDPOINT="$DC_B2_S3_ENDPOINT"; B2_S3_REGION="$DC_B2_S3_REGION"; B2_S3_BUCKET="$DC_B2_S3_BUCKET"; B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="$DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
 B2_S3_ACCESS_KEY_ID="$DC_B2_S3_ACCESS_KEY_ID"; B2_S3_SECRET_ACCESS_KEY="$DC_B2_S3_SECRET_ACCESS_KEY"
-CLOUDFLARE_R2_ENDPOINT="$DC_R2_ENDPOINT"; CLOUDFLARE_R2_REGION="$DC_R2_REGION"; CLOUDFLARE_R2_BUCKET="$DC_R2_BUCKET"
+CLOUDFLARE_R2_ENDPOINT="$DC_R2_ENDPOINT"; CLOUDFLARE_R2_REGION="$DC_R2_REGION"; CLOUDFLARE_R2_BUCKET="$DC_R2_BUCKET"; CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET="$DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
 CLOUDFLARE_R2_ACCESS_KEY_ID="$DC_R2_ACCESS_KEY_ID"; CLOUDFLARE_R2_SECRET_ACCESS_KEY="$DC_R2_SECRET_ACCESS_KEY"; CLOUDFLARE_R2_METADATA_BUCKET="$DC_R2_METADATA_BUCKET"
 DATA_CENTRE_MEDIA_ENABLED="$DC_MEDIA_PROFILE_ENABLED"; FRESH_MEDIA_ENABLED="$DC_FRESH_MEDIA_ENABLED"
 export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET MINIO_METADATA_ACCESS_KEY MINIO_METADATA_SECRET_KEY
@@ -579,10 +581,30 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
     fi
   done
   [[ "$CLOUDFLARE_R2_METADATA_BUCKET" != "$CLOUDFLARE_R2_BUCKET" ]] || { echo "::error::R2 media and metadata buckets must be distinct."; exit 1; }
+  [[ -n "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" && -n "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" ]] || { echo "::error::Dedicated B2 and R2 identity evidence buckets are required."; exit 1; }
+  [[ "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$B2_S3_BUCKET" && "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${B2_S3_PRIVATE_BUCKET:-}" && "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${B2_S3_PUBLIC_BUCKET:-}" ]] || { echo "::error::B2 identity evidence bucket must be distinct from media buckets."; exit 1; }
+  [[ "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$CLOUDFLARE_R2_BUCKET" && "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${CLOUDFLARE_R2_PRIVATE_BUCKET:-}" && "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${CLOUDFLARE_R2_PUBLIC_BUCKET:-}" && "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$CLOUDFLARE_R2_METADATA_BUCKET" ]] || { echo "::error::R2 identity evidence bucket must be distinct from media and metadata buckets."; exit 1; }
+  [[ "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ && "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Identity evidence bucket names must be valid S3 bucket names."; exit 1; }
   [[ "$B2_S3_ENDPOINT" == https://* && "$CLOUDFLARE_R2_ENDPOINT" == https://* ]] || {
     echo "::error::B2 and R2 media endpoints must both use HTTPS."
     exit 1
   }
+  docker run --rm --entrypoint /bin/sh \
+    -e B2_ENDPOINT="$B2_S3_ENDPOINT" -e B2_REGION="$B2_S3_REGION" -e B2_BUCKET="$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" \
+    -e B2_ACCESS="$B2_S3_ACCESS_KEY_ID" -e B2_SECRET="$B2_S3_SECRET_ACCESS_KEY" \
+    -e R2_ENDPOINT="$CLOUDFLARE_R2_ENDPOINT" -e R2_REGION="$CLOUDFLARE_R2_REGION" -e R2_BUCKET="$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" \
+    -e R2_ACCESS="$CLOUDFLARE_R2_ACCESS_KEY_ID" -e R2_SECRET="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
+    ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
+      mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS" "$B2_SECRET" --api S3v4 --path auto --region "$B2_REGION" >/dev/null
+      mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+      mc mb --ignore-existing "b2/$B2_BUCKET"
+      mc mb --ignore-existing "r2/$R2_BUCKET"
+      mc anonymous set none "b2/$B2_BUCKET"
+      mc anonymous set none "r2/$R2_BUCKET"
+      mc stat "b2/$B2_BUCKET" >/dev/null
+      mc stat "r2/$R2_BUCKET" >/dev/null
+    '
+  echo "Provisioned dedicated private identity evidence buckets in B2 and R2."
   ensure_random_secret FRESH_DATA_CENTRE_INTERNAL_TOKEN
   ensure_random_secret IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN
   if [[ "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN" == "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" ]]; then
@@ -836,15 +858,19 @@ if [[ "$media_enabled" == true ]]; then
   verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATA_CENTRE_MEDIA_API_URL "http://media:8096"
   verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media MEDIA_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
+  verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media IDENTITY_EVIDENCE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media MEDIA_DATABASE_URL "$MEDIA_DATABASE_URL"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_ENDPOINT "$B2_S3_ENDPOINT"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_REGION "$B2_S3_REGION"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_BUCKET "$B2_S3_BUCKET"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_ACCESS_KEY_ID "$B2_S3_ACCESS_KEY_ID"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_SECRET_ACCESS_KEY "$B2_S3_SECRET_ACCESS_KEY"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_ENDPOINT "$CLOUDFLARE_R2_ENDPOINT"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_REGION "$CLOUDFLARE_R2_REGION"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_BUCKET "$CLOUDFLARE_R2_BUCKET"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_ACCESS_KEY_ID "$CLOUDFLARE_R2_ACCESS_KEY_ID"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_SECRET_ACCESS_KEY "$CLOUDFLARE_R2_SECRET_ACCESS_KEY"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_ENDPOINT "http://object-storage:9000"
@@ -853,7 +879,8 @@ if [[ "$media_enabled" == true ]]; then
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_METADATA_SECRET_ACCESS_KEY "$MINIO_METADATA_SECRET_KEY"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
   sudo docker exec "$api_container" wget -q -O /dev/null http://media:8096/readyz
-  echo "Verified Backend-to-Data-Centre private media readiness and redacted credential mapping."
+  sudo docker exec "$api_container" sh -ec 'wget -qO- --header="Authorization: Bearer $IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://media:8096/internal/v1/identity-evidence/readyz >/dev/null'
+  echo "Verified identity evidence database and live private B2/R2 write-read-delete probes."
 fi
 
 # Exercise both credential directions against the live private service endpoints.
@@ -891,7 +918,7 @@ echo $! > "$ROOT/deploy.pid"
 echo "REMOTE_DEPLOY_STARTED"
 REMOTE_OUTER
 
-if [[ "${MEDIA_REPLICATION_ENABLED:-false}" == "true" ]]; then
+if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then
   b2_endpoint="${B2_S3_ENDPOINT:-}" b2_region="${B2_S3_REGION:-}" b2_bucket="${B2_S3_BUCKET:-}"
   b2_private="${B2_S3_PRIVATE_BUCKET:-}" b2_public="${B2_S3_PUBLIC_BUCKET:-}" b2_identity="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"
   b2_access="$B2_S3_ACCESS_KEY_ID" b2_secret="$B2_S3_SECRET_ACCESS_KEY"
