@@ -8,6 +8,7 @@ Testagram uses Cloudflare Email Service for outbound transactional notifications
 - Message bodies and one-time links are encrypted with AES-256-GCM before they enter PostgreSQL.
 - A background worker claims rows with `FOR UPDATE SKIP LOCKED`, sends through Cloudflare Email Sending REST API, and records the Cloudflare message ID.
 - Expired worker leases are reclaimed. Failed submissions use exponential retry delays and eventually enter the dead-letter state.
+- Delivery is at-least-once: if Cloudflare accepts a message but the network response is lost before Testagram records the provider message ID, a retry can produce a duplicate. The Cloudflare send endpoint is not treated as an exactly-once transaction.
 - If Cloudflare credentials are absent, the worker leaves queued mail pending rather than discarding it.
 
 The API and worker share the existing InstaBox process and PostgreSQL database. Cloudflare is the external delivery provider.
@@ -84,5 +85,6 @@ A successful REST API response means Cloudflare accepted or queued the recipient
 - Do not log message bodies, tokens, API credentials, or recipient addresses.
 - The database payload is encrypted at rest; the encryption key must be backed up separately from PostgreSQL.
 - Keep the encryption key stable across deployments. Losing it makes pending encrypted messages unreadable.
+- Monitor dead-letter counts and provider acceptance; investigate ambiguous network failures because automatic retry can duplicate a message.
 - Keep registration enablement and the two-independent-reviewer approval gate unchanged.
 - No production deployment or DNS change is part of the code pull request.
