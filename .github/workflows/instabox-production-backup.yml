@@ -40,7 +40,7 @@ jobs:
       # Prefer the already-configured Backblaze B2 S3 credentials. Fall back
       # to the separate R2 backup destination only when its bucket is present.
       B2_BACKUP_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
-      B2_BACKUP_BUCKET: ${{ secrets.B2_S3_BUCKET }}
+      B2_BACKUP_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}
       B2_BACKUP_REGION: ${{ secrets.B2_S3_REGION }}
       R2_BACKUP_ENDPOINT: ${{ secrets.TESTAGRAM_BACKUP_S3_ENDPOINT || vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
       R2_BACKUP_BUCKET: ${{ secrets.TESTAGRAM_BACKUP_S3_BUCKET || vars.TESTAGRAM_BACKUP_S3_BUCKET }}
