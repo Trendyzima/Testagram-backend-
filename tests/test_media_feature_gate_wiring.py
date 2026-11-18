@@ -23,6 +23,21 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(f"vars.{key} || 'false'", self.workflow)
 
+    def test_identity_registration_requires_the_private_data_centre_evidence_profile(self):
+        self.assertIn("vars.DATA_CENTRE_MEDIA_ENABLED == 'true'", self.workflow)
+        self.assertIn("vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)
+        self.assertIn("inputs.confirm_identity_registration == true", self.workflow)
+        self.assertNotIn("vars.MEDIA_REPLICATION_ENABLED == 'true' && inputs.confirm_identity_registration", self.workflow)
+        self.assertIn("Identity registration requires the private Data Centre media profile", self.deployer)
+        self.assertIn('ensure_random_secret IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN', self.deployer)
+        self.assertIn('write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"', self.deployer)
+        self.assertIn('write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"', self.deployer)
+        self.assertIn('write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""', self.deployer)
+        self.assertIn('write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""', self.deployer)
+
+    def test_identity_evidence_token_is_passed_to_the_private_backend_service(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        self.assertIn("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}", compose)
     def test_production_b2_endpoint_and_region_match_live_smoke_secret_sources(self):
         for key in ("B2_S3_ENDPOINT", "B2_S3_REGION"):
             with self.subTest(key=key):
