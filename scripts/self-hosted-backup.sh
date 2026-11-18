@@ -204,6 +204,22 @@ elif [[ "$(read_env_flag FRESH_MEDIA_ENABLED)" == "true" || "$(read_env_flag FRE
   die "Data Centre media is configured but its runtime container is missing; refusing to omit external objects"
 fi
 
+if [[ "$media_external_enabled" == "true" ]]; then
+  provider_mc() {
+    local mount_dir="$1" script="$2"
+    "${DOCKER[@]}" compose run --rm --no-deps --network testagram-egress \
+      -v "$mount_dir:/inventory" \
+      -e B2_S3_ENDPOINT="$media_b2_endpoint" -e B2_S3_REGION="$media_b2_region" \
+      -e B2_S3_BUCKET="$media_b2_bucket" -e B2_S3_ACCESS_KEY_ID="$media_b2_access" \
+      -e B2_S3_SECRET_ACCESS_KEY="$media_b2_secret" \
+      -e CLOUDFLARE_R2_ENDPOINT="$media_r2_endpoint" -e CLOUDFLARE_R2_REGION="$media_r2_region" \
+      -e CLOUDFLARE_R2_BUCKET="$media_r2_bucket" -e CLOUDFLARE_R2_ACCESS_KEY_ID="$media_r2_access" \
+      -e CLOUDFLARE_R2_SECRET_ACCESS_KEY="$media_r2_secret" \
+      -e CLOUDFLARE_R2_METADATA_BUCKET="$media_r2_metadata_bucket" \
+      --entrypoint /bin/sh object-init -ec "$script"
+  }
+fi
+
 federation_db_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.service=federation-db --format '{{.ID}}')"
 [[ -z "$federation_db_ids" ]] || die "a separate federation-db container exists; back it up and restore-test it before relying on this backup"
 
@@ -263,6 +279,32 @@ fi
     stage_parent="${BACKUP_STAGE_DIR:-${TMPDIR:-/tmp}}"
     mkdir -p "$stage_parent"
     stage_parent_real="$(realpath "$stage_parent")"
+    if [[ "$media_external_enabled" == "true" ]]; then
+      provider_inventory_dir="$(mktemp -d "${stage_parent_real%/}/testagram-provider-inventory.XXXXXXXX")"
+      chmod 700 "$provider_inventory_dir"
+      provider_mc "$provider_inventory_dir" '
+        mc alias set b2 "$B2_S3_ENDPOINT" "$B2_S3_ACCESS_KEY_ID" "$B2_S3_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$B2_S3_REGION" >/dev/null
+        mc alias set r2 "$CLOUDFLARE_R2_ENDPOINT" "$CLOUDFLARE_R2_ACCESS_KEY_ID" "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$CLOUDFLARE_R2_REGION" >/dev/null
+        mc ls --recursive --json "b2/$B2_S3_BUCKET" > /inventory/b2-media.jsonl
+        mc ls --recursive --json "r2/$CLOUDFLARE_R2_BUCKET" > /inventory/r2-media.jsonl
+        mc ls --recursive --json "r2/$CLOUDFLARE_R2_METADATA_BUCKET" > /inventory/r2-metadata.jsonl
+      '
+      b2_inventory_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/b2-media.jsonl" --bucket "$media_b2_bucket")"
+      r2_inventory_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/r2-media.jsonl" --bucket "$media_r2_bucket")"
+      r2_metadata_inventory_stats="$(python3 "$media_backup_helper" stats --inventory "$provider_inventory_dir/r2-metadata.jsonl" --bucket "$media_r2_metadata_bucket")"
+      b2_media_count="$(jq -er '.count' <<< "$b2_inventory_stats")"
+      b2_media_bytes="$(jq -er '.bytes' <<< "$b2_inventory_stats")"
+      r2_media_count="$(jq -er '.count' <<< "$r2_inventory_stats")"
+      r2_media_bytes="$(jq -er '.bytes' <<< "$r2_inventory_stats")"
+      r2_metadata_count="$(jq -er '.count' <<< "$r2_metadata_inventory_stats")"
+      r2_metadata_bytes="$(jq -er '.bytes' <<< "$r2_metadata_inventory_stats")"
+      external_media_bytes=$((b2_media_bytes + r2_media_bytes + r2_metadata_bytes))
+    else
+      external_media_bytes=0
+      b2_media_count=0; b2_media_bytes=0
+      r2_media_count=0; r2_media_bytes=0
+      r2_metadata_count=0; r2_metadata_bytes=0
+    fi
     for source_path in "$video_media_source" "$node_storage_source"; do
       [[ -n "$source_path" ]] || continue
       [[ "$source_path" != "/" ]] || die "refusing to back up the entire filesystem as Data Centre media"
@@ -294,14 +336,14 @@ fi
     if [[ -n "$node_storage_source" ]]; then
       node_storage_bytes="$(du -sb "$node_storage_source" | awk '{print $1}')"
     fi
-    [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ && "$video_media_bytes" =~ ^[0-9]+$ && "$node_storage_bytes" =~ ^[0-9]+$ ]] || die "could not determine database, MinIO or Data Centre storage sizes"
-    required_stage_bytes=$(( (minio_bytes + postgres_bytes + video_media_bytes + node_storage_bytes) * 120 / 100 + 1073741824 ))
+    [[ "$minio_bytes" =~ ^[0-9]+$ && "$postgres_bytes" =~ ^[0-9]+$ && "$video_media_bytes" =~ ^[0-9]+$ && "$node_storage_bytes" =~ ^[0-9]+$ && "$external_media_bytes" =~ ^[0-9]+$ ]] || die "could not determine database, MinIO, Data Centre or external media storage sizes"
+    required_stage_bytes=$(( (minio_bytes + postgres_bytes + video_media_bytes + node_storage_bytes + external_media_bytes) * 120 / 100 + 1073741824 ))
     available_stage_bytes="$(df -PB1 "$stage_parent" | awk 'NR == 2 { print $4 }')"
     docker_root="$("${DOCKER[@]}" info --format '{{.DockerRootDir}}')"
     available_docker_bytes="$(df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
     [[ "$available_stage_bytes" =~ ^[0-9]+$ && "$available_docker_bytes" =~ ^[0-9]+$ ]] || die "could not determine free disk space"
-    printf 'Estimated backup source: PostgreSQL=%s bytes, MinIO=%s bytes, Data Centre video=%s bytes, node storage=%s bytes; staging free=%s bytes.\n' \
-      "$postgres_bytes" "$minio_bytes" "$video_media_bytes" "$node_storage_bytes" "$available_stage_bytes"
+    printf 'Estimated backup source: PostgreSQL=%s bytes, MinIO=%s bytes, Data Centre video=%s bytes, node storage=%s bytes, external media=%s bytes; staging free=%s bytes.\n' \
+      "$postgres_bytes" "$minio_bytes" "$video_media_bytes" "$node_storage_bytes" "$external_media_bytes" "$available_stage_bytes"
     (( available_stage_bytes >= required_stage_bytes )) || die "insufficient staging space; need at least ${required_stage_bytes} bytes free for a safe full copy"
     (( available_docker_bytes >= 1073741824 )) || die "less than 1 GiB remains in Docker storage; refusing to risk production containers"
 
