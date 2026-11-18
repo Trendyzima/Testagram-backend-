@@ -32,15 +32,15 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261121_native_identity_intake_optional_fingerprint.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
-        applied = set(re.findall(r"(?m)^apply_migration\\s+(\\S+)", SOURCE))
+        applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
         for name in required:
             with self.subTest(migration=name):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
 
     def test_schema_preflight_checks_optional_intake_fingerprint(self):
-        self.assertIn("column_name='\\\\''evidence_fingerprint_sha256'\\\\''", SOURCE)
-        self.assertIn("is_nullable='\\\\''YES'\\\\''", SOURCE)
+        self.assertIn("column_name='\\''evidence_fingerprint_sha256'\\''", SOURCE)
+        self.assertIn("is_nullable='\\''YES'\\''", SOURCE)
         self.assertIn("identity_approval_token_requires_verified_evidence", SOURCE)
 
     def test_migration_requires_explicit_authorization_and_verified_restore(self):
