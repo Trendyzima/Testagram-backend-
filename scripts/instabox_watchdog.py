@@ -277,77 +277,35 @@ def lifecycle(api: API, action: str) -> None:
     emit(f"provider lifecycle verified: action={action} state={final['state']} desiredState={final['desiredState']}")
 
 
-def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
-    """Safely power-cycle a still-desired-running machine after repeated liveness failure."""
-    now = int(time.time())
-    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
-        return "DRY RUN: public liveness failed repeatedly; would perform controlled stop/start"
-    last_action_at = state.get("last_action_at", 0)
-    try:
-        last_action_at = int(last_action_at)
-    except (TypeError, ValueError):
-        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
-    if last_action_at > now + 60:
-        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
-    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
-        remaining = RESTART_COOLDOWN - (now - last_action_at)
-        return f"local recovery cooldown active for another {remaining}s; not restarting machine"
-
-    # Re-read immediately before the disruptive action. Never override an
-    # operator stop, an in-flight provider operation, or a changed machine.
-    latest = machine_snapshot(api)
-    if latest["state"] != "running" or latest["desiredState"] != "running":
-        return ("machine state changed during health investigation "
-                f"(state={latest['state']}, desiredState={latest['desiredState']}); no action")
-    if latest.get("operationId"):
-        return f"machine has active operation {latest['operationId']}; no restart"
-
-    state.update(last_action_at=now, last_action="stop-start")
-    save_state(state)
-    lifecycle(api, "stop")
-    lifecycle(api, "start")
-    wait_for_service()
-    return "controlled stop/start completed; public API liveness verified"
-
-
 def check_running_service(api: API, state: dict[str, Any]) -> str:
-    """A provider-running VPS is healthy for lifecycle purposes: never restart it."""
-    emit("provider reports VPS running; no lifecycle action initiated")
-    return "running; no restart triggered"
+    """Probe public liveness while the provider says running; never restart a running VPS."""
+    failures: list[str] = []
+    for attempt in range(1, 4):
+        try:
+            healthy, detail = probe(HEALTH_URL)
+        except ProbeConfigurationError:
+            # A bad URL/route is configuration trouble, not a reason to power-cycle a VPS.
+            raise
+        if healthy:
+            state["last_provider_running_at"] = int(time.time())
+            state["consecutive_health_failures"] = 0
+            save_state(state)
+            emit(f"provider running; public API liveness healthy ({detail})")
+            return f"running; public API liveness healthy ({detail}); no restart triggered"
+        failures.append(detail)
+        emit(f"provider running; liveness probe {attempt}/3 failed ({detail})")
+        if attempt < 3:
+            time.sleep(PROBE_INTERVAL)
 
-
-
-def recover_unhealthy_running(api: API, state: dict[str, Any]) -> str:
-    """Safely power-cycle a still-desired-running machine after repeated liveness failure."""
-    now = int(time.time())
-    if AUTO_RECOVERY_RAW != "true" or DRY_RUN:
-        return "DRY RUN: public liveness failed repeatedly; would perform controlled stop/start"
-    last_action_at = state.get("last_action_at", 0)
-    try:
-        last_action_at = int(last_action_at)
-    except (TypeError, ValueError):
-        raise WatchdogError("Watchdog state has an invalid last_action_at timestamp")
-    if last_action_at > now + 60:
-        raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
-    if last_action_at and now - last_action_at < RESTART_COOLDOWN:
-        remaining = RESTART_COOLDOWN - (now - last_action_at)
-        return f"local recovery cooldown active for another {remaining}s; not restarting machine"
-
-    # Re-read immediately before the disruptive action. Never override an
-    # operator stop, an in-flight provider operation, or a changed machine.
-    latest = machine_snapshot(api)
-    if latest["state"] != "running" or latest["desiredState"] != "running":
-        return ("machine state changed during health investigation "
-                f"(state={latest['state']}, desiredState={latest['desiredState']}); no action")
-    if latest.get("operationId"):
-        return f"machine has active operation {latest['operationId']}; no restart"
-
-    state.update(last_action_at=now, last_action="stop-start")
+    state["last_provider_running_at"] = int(time.time())
+    state["consecutive_health_failures"] = int(state.get("consecutive_health_failures", 0)) + 3
     save_state(state)
-    lifecycle(api, "stop")
-    lifecycle(api, "start")
-    wait_for_service()
-    return "controlled stop/start completed; public API liveness verified"
+    message = (
+        "provider reports VPS running but public API liveness failed three consecutive probes "
+        f"({', '.join(failures)}); no lifecycle action initiated"
+    )
+    notify(message, "warning")
+    return message
 
 
 def recover_suspended(api: API, state: dict[str, Any]) -> str:
@@ -364,7 +322,10 @@ def recover_suspended(api: API, state: dict[str, Any]) -> str:
         raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
     if last_action_at and now - last_action_at < RESTART_COOLDOWN:
         remaining = RESTART_COOLDOWN - (now - last_action_at)
-        return f"local recovery cooldown active for another {remaining}s; not resuming machine"
+        raise WatchdogError(
+            f"local recovery cooldown active for another {remaining}s; "
+            "recovery is deferred and will be retried by the next scheduled check"
+        )
 
     latest = machine_snapshot(api)
     if latest["state"] != "suspended":
@@ -395,7 +356,10 @@ def recover_stopped(api: API, state: dict[str, Any]) -> str:
         raise WatchdogError("Watchdog state timestamp is in the future; refusing automatic recovery")
     if last_action_at and now - last_action_at < RESTART_COOLDOWN:
         remaining = RESTART_COOLDOWN - (now - last_action_at)
-        return f"local recovery cooldown active for another {remaining}s; not starting machine"
+        raise WatchdogError(
+            f"local recovery cooldown active for another {remaining}s; "
+            "recovery is deferred and will be retried by the next scheduled check"
+        )
     state.update(last_action_at=now, last_action="start")
     save_state(state)
     lifecycle(api, "start")
@@ -436,8 +400,10 @@ def main() -> int:
         except (AttributeError, ValueError):
             raise WatchdogError("Instabox returned an invalid cooldownUntil timestamp")
         if deadline > datetime.now(timezone.utc):
-            emit(f"provider cooldown is active until {cooldown_until}; not attempting recovery")
-            return 0
+            raise WatchdogError(
+                f"Instabox provider cooldown is active until {cooldown_until}; "
+                "recovery is deferred by the provider and will be retried on the next scheduled check"
+            )
 
     if machine.get("operationId"):
         emit(f"machine has active operation {machine['operationId']}; leaving it undisturbed")
@@ -477,8 +443,7 @@ def main() -> int:
         raise WatchdogError(f"Unrecognized machine state {machine_state!r}; refusing action")
     # Running means no restart trigger. Only provider stopped/suspended
     # states above can initiate lifecycle recovery.
-    state["last_provider_running_at"] = int(time.time())
-    emit("provider reports VPS running; no lifecycle action initiated")
+    check_running_service(api, state)
     return 0
 
 
