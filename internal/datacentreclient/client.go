@@ -159,7 +159,16 @@ func isPrivateServiceHost(host string) bool {
 
 // Ready confirms the private media service and its dedicated metadata database are reachable.
 func (c *Client) Ready(ctx context.Context) error {
-	return c.request(ctx, http.MethodGet, "/readyz", nil, nil)
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := c.get(ctx, c.prefix+"/readyz", &result); err != nil {
+		return err
+	}
+	if result.Status != "ready" {
+		return errors.New("Data Centre identity evidence readiness probe returned an invalid status")
+	}
+	return nil
 }
 
 func (c *Client) CreateUploadURL(ctx context.Context, ownerID, namespace, key, contentType string, size int64) (UploadGrant, error) {
