@@ -31,7 +31,7 @@ if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]
   exit 1
 fi
 if [[ "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" == "true" ]]; then
-  [[ "$MEDIA_REPLICATION_ENABLED" == "true" ]] || { echo "::error::Identity registration requires MEDIA_REPLICATION_ENABLED=true."; exit 1; }
+  [[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" && "$FRESH_MEDIA_ENABLED" == "true" ]] || { echo "::error::Identity registration requires the private Data Centre media profile (DATA_CENTRE_MEDIA_ENABLED=true and FRESH_MEDIA_ENABLED=true)."; exit 1; }
   [[ -n "$TESTAGRAM_TERMS_VERSION" && ${#TESTAGRAM_TERMS_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_TERMS_VERSION (1-64 characters)."; exit 1; }
   [[ -n "$TESTAGRAM_PRIVACY_VERSION" && ${#TESTAGRAM_PRIVACY_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_PRIVACY_VERSION (1-64 characters)."; exit 1; }
 fi
@@ -204,9 +204,9 @@ ensure_random_secret() {
   printf -v "$key" '%s' "$value"
 }
 ensure_random_secret FEDERATION_INGRESS_TOKEN
-# Private identity evidence is stored in a dedicated MinIO bucket.
-# Registration and three-provider replication remain fail-closed until
-# a separate staging acceptance and explicit operator activation.
+# Native identity evidence is owned by the private Data Centre media service.
+# Backend-local object storage is not an identity-evidence fallback; registration
+# remains fail-closed until the dedicated Data Centre profile is ready.
 write_env_value AUTH_PUBLIC_BASE_URL "$AUTH_PUBLIC_BASE_URL"
 for key in TESTAGRAM_AUTH_JWT_SECRET CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY; do
   value="${!key:-}"
@@ -446,6 +446,11 @@ write_dc_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$DC_ENV"
   fi
 }
+# Backend and Data Centre user-facing services must validate against the same
+# PostgreSQL identities/sessions and the same JWT signing secret.
+shared_database_url="postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable"
+write_dc_env_value DATABASE_URL "$shared_database_url"
+write_dc_env_value TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 write_dc_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 write_dc_env_value FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 write_dc_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
@@ -482,9 +487,16 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
     exit 1
   }
   ensure_random_secret FRESH_DATA_CENTRE_INTERNAL_TOKEN
+  ensure_random_secret IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN
+  if [[ "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN" == "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" ]]; then
+    IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+    write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"
+  fi
   write_env_value DATA_CENTRE_MEDIA_API_URL "http://media:8096"
   write_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
   write_dc_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN "$FRESH_DATA_CENTRE_INTERNAL_TOKEN"
+  write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"
+  write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"
   write_dc_env_value MEDIA_DATABASE_NAME "testagram_media"
   write_dc_env_value MEDIA_DATABASE_URL "postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram_media?sslmode=disable"
   chmod 600 "$BASE_ENV" "$DC_ENV"
@@ -502,10 +514,12 @@ else
     write_dc_env_value "$key" ""
   done
   write_dc_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN ""
+  write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""
   write_dc_env_value MEDIA_DATABASE_NAME ""
   write_dc_env_value MEDIA_DATABASE_URL ""
   write_env_value DATA_CENTRE_MEDIA_API_URL ""
   write_env_value FRESH_DATA_CENTRE_INTERNAL_TOKEN ""
+  write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""
   echo "Data Centre private media profile remains disabled; stale provider/client credentials cleared."
 fi
 printf '%s\n' "$media_enabled" > "$ROOT/media-enabled.txt"
@@ -605,6 +619,12 @@ verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache PURGE_TOKEN "$CDN_P
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://api:8080"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video DATABASE_URL "$shared_database_url"
+verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification DATABASE_URL "$shared_database_url"
 
 if [[ "$media_enabled" == true ]]; then
   echo "Applying the additive media lifecycle migration to its dedicated database..."

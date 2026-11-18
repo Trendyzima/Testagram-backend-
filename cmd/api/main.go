@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -72,6 +73,7 @@ type service struct {
 	media                     *media.Signer
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
+	identityEvidenceMedia     identityEvidenceMediaClient
 	freshMediaEnabled         bool
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
@@ -1112,6 +1114,20 @@ func main() {
 			log.Fatalf("configure private Data Centre media client: %v", err)
 		}
 	}
+	identityEvidenceToken := env("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN", "")
+	var identityEvidenceMedia identityEvidenceMediaClient
+	if identityEvidenceToken != "" {
+		if dataCentreToken != "" && subtle.ConstantTimeCompare([]byte(identityEvidenceToken), []byte(dataCentreToken)) == 1 {
+			log.Fatal("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN must be distinct from FRESH_DATA_CENTRE_INTERNAL_TOKEN")
+		}
+		if dataCentreURL == "" {
+			log.Fatal("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN requires DATA_CENTRE_MEDIA_API_URL")
+		}
+		identityEvidenceMedia, err = datacentreclient.NewIdentityEvidenceClient(dataCentreURL, identityEvidenceToken, &http.Client{Timeout: 10 * time.Second})
+		if err != nil || identityEvidenceMedia == nil {
+			log.Fatalf("configure private identity evidence Data Centre client: %v", err)
+		}
+	}
 	if freshMediaEnabled {
 		if dataCentreMedia == nil {
 			log.Fatal("FRESH_MEDIA_ENABLED requires DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN")
@@ -1268,7 +1284,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
+		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,

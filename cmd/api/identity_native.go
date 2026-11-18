@@ -93,8 +93,15 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return
 	}
-	if s.db == nil || s.virtualStorage == nil || s.mediaReplicator == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification requires PostgreSQL, private evidence storage and verified VPS/R2/B2 replication", requestID(r)))
+	if s.db == nil || !s.identityEvidenceStorageConfigured() {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification requires PostgreSQL and the private Data Centre evidence lifecycle or a verified private storage replica", requestID(r)))
+		return
+	}
+	storageCtx, storageCancel := context.WithTimeout(r.Context(), 3*time.Second)
+	storageErr := s.identityEvidenceStorageAvailable(storageCtx)
+	storageCancel()
+	if storageErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORAGE_UNAVAILABLE", "Private identity evidence storage is not ready", requestID(r)))
 		return
 	}
 	termsVersion := strings.TrimSpace(env("TESTAGRAM_TERMS_VERSION", ""))
@@ -673,7 +680,7 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Evidence upload could not be prepared", requestID(r)))
 		return
 	}
-	objectKey := path.Join("identity", sessionID, evidenceID+extension+"-"+nonce)
+	objectKey := path.Join("identity", access.ApplicationID, sessionID, evidenceID+extension+"-"+nonce)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_identity.verification_evidence
 		  (id,session_id,object_key,content_type,size_bytes,sha256)
@@ -714,7 +721,7 @@ func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	evidenceID := strings.TrimSpace(r.PathValue("evidence_id"))
-	if !identityApplicationIDPattern.MatchString(evidenceID) || s.virtualStorage == nil {
+	if !identityApplicationIDPattern.MatchString(evidenceID) || !s.identityEvidenceStorageConfigured() {
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
 		return
 	}
@@ -753,7 +760,7 @@ func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, errorBody("EVIDENCE_CONTENT_MISMATCH", "Evidence bytes do not match the declared content type", requestID(r)))
 		return
 	}
-	uploadURL, err := s.virtualStorage.UploadURL(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, contentType, size)
+	uploadURL, err := s.identityEvidenceCreateUploadURL(ctx, access.ApplicationID, objectKey, contentType, size)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage is unavailable", requestID(r)))
 		return
@@ -833,7 +840,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusConflict, errorBody("SESSION_NOT_SUBMITTABLE", "Verification session is no longer accepting evidence", requestID(r)))
 		return
 	}
-	if s.virtualStorage == nil || s.mediaReplicator == nil {
+	if !s.identityEvidenceStorageConfigured() {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
 		return
 	}
@@ -850,19 +857,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
 		return
 	}
-	if _, err := s.virtualStorage.VerifyUpload(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, contentType, size); err != nil {
-		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_UPLOAD_INCOMPLETE", "Evidence upload is incomplete or does not match its declared metadata", requestID(r)))
-		return
-	}
-	if err := s.virtualStorage.VerifyUploadChecksum(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, maxIdentityEvidenceBytes, hex.EncodeToString(digest)); err != nil {
-		writeJSON(w, http.StatusConflict, errorBody("EVIDENCE_CHECKSUM_MISMATCH", "Uploaded evidence failed integrity verification", requestID(r)))
-		return
-	}
-	if s.mediaReplicator == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("EVIDENCE_REPLICATION_UNAVAILABLE", "Identity evidence cannot be accepted until all three private storage providers are configured", requestID(r)))
-		return
-	}
-	if _, err := s.mediaReplicator.Replicate(ctx, access.ApplicationID, identityEvidenceNamespace, objectKey, size, contentType, hex.EncodeToString(digest)); err != nil {
+	if err := s.identityEvidenceVerifyAndReplicate(ctx, access.ApplicationID, objectKey, contentType, size, hex.EncodeToString(digest)); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("EVIDENCE_REPLICATION_INCOMPLETE", "Evidence was received but could not be verified across all private storage providers. Retry submission.", requestID(r)))
 		return
 	}

@@ -19,6 +19,7 @@ import (
 type Client struct {
 	baseURL *url.URL
 	token string
+	prefix string
 	http *http.Client
 }
 
@@ -111,9 +112,20 @@ func New(baseURL, token string, client *http.Client) (*Client, error) {
 		}
 		client = &copyClient
 	}
-	return &Client{baseURL: u, token: token, http: client}, nil
+	return &Client{baseURL: u, token: token, prefix: "/internal/v1/media", http: client}, nil
 }
 
+
+// NewIdentityEvidenceClient creates a separately authenticated client whose token
+// can call only the private identity-evidence API routes.
+func NewIdentityEvidenceClient(baseURL, token string, client *http.Client) (*Client, error) {
+	c, err := New(baseURL, token, client)
+	if err != nil || c == nil {
+		return c, err
+	}
+	c.prefix = "/internal/v1/identity-evidence"
+	return c, nil
+}
 
 // validProviderURL prevents a compromised or misconfigured media service from
 // turning the Backend upload gateway into an HTTP, loopback, private-network,
@@ -145,9 +157,23 @@ func isPrivateServiceHost(host string) bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }
 
+// Ready confirms the private media service and its dedicated metadata database are reachable.
+func (c *Client) Ready(ctx context.Context) error {
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := c.get(ctx, c.prefix+"/readyz", &result); err != nil {
+		return err
+	}
+	if result.Status != "ready" {
+		return errors.New("Data Centre identity evidence readiness probe returned an invalid status")
+	}
+	return nil
+}
+
 func (c *Client) CreateUploadURL(ctx context.Context, ownerID, namespace, key, contentType string, size int64) (UploadGrant, error) {
 	var result UploadGrant
-	err := c.post(ctx, "/internal/v1/media/upload-url", uploadRequest{
+	err := c.post(ctx, c.prefix+"/upload-url", uploadRequest{
 		OwnerID: ownerID, Namespace: namespace, Key: key, ContentType: contentType, SizeBytes: size,
 	}, &result)
 	if err != nil {
@@ -161,7 +187,7 @@ func (c *Client) CreateUploadURL(ctx context.Context, ownerID, namespace, key, c
 
 func (c *Client) Verify(ctx context.Context, ownerID, namespace, key, contentType, sha256Hex string, size int64) (Verification, error) {
 	var result Verification
-	err := c.post(ctx, "/internal/v1/media/verify", verifyRequest{
+	err := c.post(ctx, c.prefix+"/verify", verifyRequest{
 		OwnerID: ownerID, Namespace: namespace, Key: key, ContentType: contentType,
 		SizeBytes: size, SHA256: strings.ToLower(sha256Hex),
 	}, &result)
@@ -180,7 +206,7 @@ func (c *Client) Status(ctx context.Context, ownerID, namespace, key string) (Me
 	query.Set("owner_id", ownerID)
 	query.Set("namespace", namespace)
 	query.Set("key", key)
-	err := c.get(ctx, "/internal/v1/media/status?"+query.Encode(), &result)
+	err := c.get(ctx, c.prefix+"/status?"+query.Encode(), &result)
 	if err != nil {
 		return MediaStatus{}, err
 	}
@@ -198,7 +224,7 @@ func (c *Client) HeadURL(ctx context.Context, requesterID, ownerID, namespace, k
 func (c *Client) DownloadURLMethod(ctx context.Context, requesterID, ownerID, namespace, key, method string) (DownloadGrant, error) {
 	if method != http.MethodGet && method != http.MethodHead { return DownloadGrant{}, errors.New("unsupported Data Centre media delivery method") }
 	var result DownloadGrant
-	err := c.post(ctx, "/internal/v1/media/download-url", downloadRequest{
+	err := c.post(ctx, c.prefix+"/download-url", downloadRequest{
 		RequesterID: requesterID, OwnerID: ownerID, Namespace: namespace, Key: key, Method: method,
 	}, &result)
 	if err != nil {
@@ -214,7 +240,7 @@ func (c *Client) Delete(ctx context.Context, requesterID, ownerID, namespace, ke
 	var result struct {
 		Status string `json:"status"`
 	}
-	err := c.post(ctx, "/internal/v1/media/delete", deleteRequest{
+	err := c.post(ctx, c.prefix+"/delete", deleteRequest{
 		RequesterID: requesterID, OwnerID: ownerID, Namespace: namespace, Key: key,
 	}, &result)
 	if err != nil {

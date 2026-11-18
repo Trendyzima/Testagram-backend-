@@ -1,0 +1,48 @@
+name: Native authentication staging smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging_only:
+        description: Confirm that the configured API origin and test identity are staging-only
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-auth-staging-smoke
+  cancel-in-progress: false
+
+jobs:
+  native-auth:
+    name: Login, refresh, replay and revocation
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 5
+    env:
+      TESTAGRAM_STAGING_API_URL: ${{ vars.TESTAGRAM_STAGING_API_URL }}
+      TESTAGRAM_AUTH_SMOKE_EMAIL: ${{ secrets.TESTAGRAM_AUTH_SMOKE_EMAIL }}
+      TESTAGRAM_AUTH_SMOKE_PASSWORD: ${{ secrets.TESTAGRAM_AUTH_SMOKE_PASSWORD }}
+      CONFIRM_STAGING_ONLY: ${{ inputs.confirm_staging_only }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require explicit staging confirmation
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRM_STAGING_ONLY" == "true" ]] || {
+            echo "::error::Set confirm_staging_only=true only after verifying the staging origin and dedicated test account."
+            exit 1
+          }
+          [[ -n "$TESTAGRAM_STAGING_API_URL" ]] || {
+            echo "::error::Set the staging environment variable TESTAGRAM_STAGING_API_URL."
+            exit 1
+          }
+          [[ -n "$TESTAGRAM_AUTH_SMOKE_EMAIL" && -n "$TESTAGRAM_AUTH_SMOKE_PASSWORD" ]] || {
+            echo "::error::Set the dedicated staging test identity secrets."
+            exit 1
+          }
+      - name: Exercise the deployed Testagram-native authentication lifecycle
+        run: python3 scripts/native-auth-staging-smoke.py
