@@ -116,8 +116,29 @@ func (s *service) identityEvidenceDownload(ctx context.Context, ownerID, objectK
 
 func (s *service) identityEvidenceDelete(ctx context.Context, ownerID, objectKey string) error {
 	if s.dataCentreMedia != nil {
-		_, err := s.dataCentreMedia.Delete(ctx, ownerID, ownerID, identityEvidenceNamespace, objectKey)
-		return err
+		state, err := s.dataCentreMedia.Delete(ctx, ownerID, ownerID, identityEvidenceNamespace, objectKey)
+		if err != nil || state == "deleted" {
+			return err
+		}
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			status, statusErr := s.dataCentreMedia.Status(ctx, ownerID, identityEvidenceNamespace, objectKey)
+			if statusErr != nil {
+				return statusErr
+			}
+			if status.Status == "deleted" {
+				return nil
+			}
+			if status.Status != "delete_pending" {
+				return fmt.Errorf("Data Centre evidence deletion entered unexpected state %q", status.Status)
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("timed out waiting for Data Centre evidence deletion: %w", ctx.Err())
+			case <-ticker.C:
+			}
+		}
 	}
 	if s.mediaReplicator == nil {
 		return errors.New("private identity evidence replication is not configured")
