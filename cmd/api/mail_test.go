@@ -137,6 +137,11 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 			response: `{"success":true,"errors":[],"result":{"message_id":"cf-empty","delivered":[],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}`,
 			wantErr:  "accepted no recipient",
 		},
+		{
+			name: "missing provider message ID", status: http.StatusOK,
+			response: `{"success":true,"errors":[],"result":{"delivered":["person@example.test"],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}`,
+			wantErr: "without a provider message ID",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
