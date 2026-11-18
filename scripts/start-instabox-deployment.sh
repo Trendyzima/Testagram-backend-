@@ -406,9 +406,9 @@ fi
 echo "Preparing the Data Centre overlay and shared PostgreSQL migrations..."
 DC_ENV="$DATACENTRE/backend/.env"
 mkdir -p "$DATACENTRE/backend"
-FEDERATION_DATABASE_URL="postgresql://testagram:$POSTGRES_PASSWORD@federation-db:5432/testagram_federation?sslmode=disable"
-TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed:sha-6ae0532c171383b84731063d590d775524f9da1e"
-TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation:sha-edf4f59f843514596d35273c888ff1c16ec0f73e"
+FEDERATION_DATABASE_URL=""
+TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed:sha-da8e90e79150636a6efe8e03c2cbc8fb9357764d"
+TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation:sha-1a8cb7895caa7e27f9bdb3f1a2bb68ef755634b4"
 if [[ ! -f "$DC_ENV" ]]; then
   cat > "$DC_ENV" <<EOF
 DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
@@ -422,7 +422,7 @@ FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
 FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
 FEDERATION_DATABASE_NAME=testagram_federation
 FEDERATION_DATABASE_URL=$FEDERATION_DATABASE_URL
-FEDERATION_PUBLIC_BASE_URL=https://federation.testagram.site
+FEDERATION_PUBLIC_BASE_URL=https://testagram.site
 FEDERATION_INSTANCE_DOMAIN=testagram.site
 FEDERATION_SERVICE_ACTOR_USERNAME=testagram
 FEDERATION_DELIVERY_WORKER_ENABLED=false
@@ -446,6 +446,34 @@ write_dc_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$DC_ENV"
   fi
 }
+
+read_dc_env_value() {
+  sed -n "s/^$1=//p" "$DC_ENV" | tail -n 1
+}
+# Federation owns a dedicated least-privilege PostgreSQL role in the
+# Backend-owned Postgres server. Persist the generated password in the
+# protected Data Centre env file so restarts retain the same DSN.
+FEDERATION_DATABASE_NAME="$(read_dc_env_value FEDERATION_DATABASE_NAME)"
+if [[ ! "$FEDERATION_DATABASE_NAME" =~ ^[A-Za-z0-9_]{1,63}$ ]]; then
+  FEDERATION_DATABASE_NAME=testagram_federation
+fi
+FEDERATION_DATABASE_USER="$(read_dc_env_value FEDERATION_DATABASE_USER)"
+if [[ ! "$FEDERATION_DATABASE_USER" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ || "$FEDERATION_DATABASE_USER" == "${POSTGRES_USER:-testagram}" ]]; then
+  FEDERATION_DATABASE_USER=testagram_federation
+fi
+FEDERATION_DATABASE_PASSWORD="$(read_dc_env_value FEDERATION_DATABASE_PASSWORD)"
+if [[ ! "$FEDERATION_DATABASE_PASSWORD" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+  FEDERATION_DATABASE_PASSWORD="$(openssl rand -hex 32)"
+fi
+FEDERATION_DATABASE_URL="postgresql://${FEDERATION_DATABASE_USER}:${FEDERATION_DATABASE_PASSWORD}@federation-db:5432/${FEDERATION_DATABASE_NAME}?sslmode=disable"
+write_dc_env_value FEDERATION_DATABASE_NAME "$FEDERATION_DATABASE_NAME"
+write_dc_env_value FEDERATION_DATABASE_USER "$FEDERATION_DATABASE_USER"
+write_dc_env_value FEDERATION_DATABASE_PASSWORD "$FEDERATION_DATABASE_PASSWORD"
+write_dc_env_value FEDERATION_DATABASE_URL "$FEDERATION_DATABASE_URL"
+# Federation actor IDs and WebFinger documents must use the canonical apex,
+# not the retired federation subdomain.
+write_dc_env_value FEDERATION_PUBLIC_BASE_URL "https://testagram.site"
+write_dc_env_value FEDERATION_INSTANCE_DOMAIN "testagram.site"
 # Backend and Data Centre user-facing services must validate against the same
 # PostgreSQL identities/sessions and the same JWT signing secret.
 shared_database_url="postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable"
