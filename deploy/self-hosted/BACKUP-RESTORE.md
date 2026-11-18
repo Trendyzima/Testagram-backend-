@@ -97,31 +97,29 @@ It calls InstaBox's `POST /v1/machines/{id}/wake` and then `POST
 
 ### Off-host destination and credentials
 
-Create a **dedicated private S3-compatible bucket** for backups, separate from
-the live media, identity-evidence, and metadata buckets. Cloudflare R2 or
-Backblaze B2 can be used. Create a dedicated access key restricted to that
-bucket; do not reuse the MinIO root key or the application's media key. Restic
-encrypts the repository before uploading it. Keep the bucket private and do not
-apply an object-expiration rule that can delete restic pack/index files behind
-its back.
+Create a **dedicated private Cloudflare R2 bucket** for backups, separate from
+the live media, identity-evidence, and metadata buckets. The current InstaBox
+backup workflow accepts Cloudflare R2 only; it does not accept a Backblaze B2
+endpoint as the Restic destination. Create a dedicated R2 access key restricted
+to that backup bucket; do not reuse the media key. Restic encrypts the
+repository before uploading it. Keep the bucket private and do not apply an
+object-expiration rule that can delete restic pack/index files behind its back.
+This Restic destination is separate from the R2 media replica and does not mean
+the backup job has copied the active B2/R2 media replica buckets.
 
 Configure these GitHub repository variables:
 
 - `TESTAGRAM_BACKUP_S3_BUCKET`: required dedicated backup bucket name, e.g.
   `testagram-backups`.
-- `TESTAGRAM_BACKUP_S3_REGION`: set to `auto` for R2. For B2, set the
-  exact bucket region (e.g. `us-west-004`); the workflow rejects `auto` for B2.
+- `TESTAGRAM_BACKUP_S3_ENDPOINT`: the Cloudflare R2 account S3 endpoint
+  (`https://<account-id>.r2.cloudflarestorage.com`), stored as a secret
+  (recommended) or variable. The workflow sets the R2 signing region to
+  `auto`; there is no separate region variable.
 
-The workflow prefers the dedicated `TESTAGRAM_BACKUP_S3_*` settings when
-present, and falls back to the existing repository secrets
-`B2_S3_ENDPOINT`, `B2_S3_BUCKET`, `B2_S3_REGION`,
-`B2_S3_ACCESS_KEY_ID`, and `B2_S3_SECRET_ACCESS_KEY`. This lets an existing
-B2 configuration run without creating duplicate GitHub Variables. For a new
-dedicated configuration, set `TESTAGRAM_BACKUP_S3_ENDPOINT` as a secret
-(recommended) or variable; use the R2 account endpoint
-(`https://<account-id>.r2.cloudflarestorage.com`) or exact B2 S3 endpoint
-for the bucket's region. The workflow does not guess a provider from media
-storage endpoints.
+The workflow requires the dedicated `TESTAGRAM_BACKUP_S3_*` backup settings.
+It does **not** fall back to the application's B2 media credentials or infer a
+backup provider from the media-storage endpoints. Do not reuse the media
+provider keys for Restic backups.
 - `INSTABOX_MACHINE_ID`: the existing production machine-ID secret used by
   the deployment workflow. The backup job accepts an environment variable
   override named `INSTABOX_MACHINE_ID`, but has no hard-coded machine-ID
@@ -139,9 +137,9 @@ Configure these GitHub repository secrets:
   secret, which is already used by the production deployment workflow. Do not
   paste either key into chat or commit it.
 - `TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID` and
-  `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`: preferred dedicated credentials
-  scoped only to the backup bucket. If absent, the workflow falls back to the
-  existing `B2_S3_ACCESS_KEY_ID` and `B2_S3_SECRET_ACCESS_KEY` secrets.
+  `TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY`: required dedicated credentials
+  scoped only to the R2 backup bucket. There is no fallback to the B2 media
+  credentials.
 - `TESTAGRAM_BACKUP_RESTIC_PASSWORD`: a strong independent password; generate
   it locally with `openssl rand -hex 32` and store it in a password manager as
   well as GitHub Secrets. Losing it makes the encrypted repository
