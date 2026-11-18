@@ -19,6 +19,11 @@ on:
         required: true
         type: boolean
         default: false
+      confirm_identity_registration:
+        description: "Separately authorize public identity registration only after B2/R2 evidence replication and two-reviewer acceptance are complete"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -159,7 +164,9 @@ jobs:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           MEDIA_REPLICATION_ENABLED: ${{ vars.MEDIA_REPLICATION_ENABLED || 'false' }}
-          TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED || 'false' }}
+          # Registration is opt-in per manual production run. A stale repository
+          # variable must never enable registration when evidence replication is off.
+          TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED == 'true' && vars.MEDIA_REPLICATION_ENABLED == 'true' && inputs.confirm_identity_registration == true && 'true' || 'false' }}
           CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ inputs.confirm_native_identity_migrations == true && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
