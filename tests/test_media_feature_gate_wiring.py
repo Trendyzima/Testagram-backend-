@@ -47,7 +47,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_identity_evidence_token_is_passed_to_the_private_backend_service(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         self.assertIn("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}", compose)
-    def test_production_b2_endpoint_and_region_match_live_smoke_secret_sources(self):
+    def test_provider_smoke_secret_sources_and_retired_identity_smoke(self):
         for key in ("B2_S3_ENDPOINT", "B2_S3_REGION"):
             with self.subTest(key=key):
                 self.assertIn(f"{key}: ${{{{ secrets.{key} }}}}", self.workflow)
@@ -59,8 +59,10 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         media_smoke = (
             ROOT / ".github/workflows/media-provider-smoke.yml"
         ).read_text()
-        self.assertIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", identity_smoke)
-        self.assertIn("IDENTITY_SMOKE_B2_REGION: ${{ secrets.B2_S3_REGION }}", identity_smoke)
+        self.assertIn("Retired", identity_smoke)
+        self.assertIn("Testagram-data-centre-/.github/workflows/media-provider-smoke.yml", identity_smoke)
+        self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT", identity_smoke)
+        self.assertNotIn("IDENTITY_SMOKE_R2_ENDPOINT", identity_smoke)
         self.assertIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
         self.assertIn("B2_REGION: ${{ secrets.B2_S3_REGION }}", media_smoke)
 
