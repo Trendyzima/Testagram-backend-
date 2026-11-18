@@ -18,7 +18,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -593,6 +592,11 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
 			return true
 		}
+		var accountEmail string
+		if err := tx.QueryRow(ctx, "SELECT email FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&accountEmail); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to load account notification address", requestID(r)))
+			return true
+		}
 		identityTag, updateErr := tx.Exec(ctx, `
 			UPDATE testagram_auth.identities SET password_hash=$2,password_reset_required=false,
 				reset_token_hash=NULL,reset_expires_at=NULL,password_changed_at=now(),
@@ -624,6 +628,8 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to commit password reset", requestID(r)))
 			return true
 		}
+		_ = s.sendAuthEmail(ctx, accountEmail, "Your Testagram password was changed",
+			"<p>Your Testagram password was successfully changed.</p><p>If you did not make this change, contact Testagram support immediately.</p>")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Password reset. Sign in with your new password."})
 		return true
 	default:
