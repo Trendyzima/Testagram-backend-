@@ -437,7 +437,7 @@ func (s *service) routes() http.Handler {
 		w.Header().Set("X-Testagram-Service", "testagram-api")
 		w.Header().Set("X-Testagram-Health-Contract", "v1")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{\"ok\":true,\"service\":\"testagram-api\"}\\n"))
+		_, _ = w.Write([]byte("{\"ok\":true,\"service\":\"testagram-api\"}\n"))
 	}
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /healthz", healthHandler)
