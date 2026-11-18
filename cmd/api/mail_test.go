@@ -135,7 +135,7 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 		{
 			name: "provider server error has ambiguous outcome", status: http.StatusBadGateway,
 			response: `{"success":false,"errors":[],"result":null}`,
-			wantErr: "delivery outcome is unknown",
+			wantErr:  "delivery outcome is unknown",
 		},
 		{
 			name: "empty accepted recipient set", status: http.StatusOK,
