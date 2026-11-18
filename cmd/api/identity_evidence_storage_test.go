@@ -20,7 +20,7 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 	deleted := false
 	mux := http.NewServeMux()
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.HandleFunc("POST /internal/v1/media/upload-url", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /internal/v1/identity-evidence/upload-url", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("X-Testagram-API-Version") != "1" {
 			t.Fatal("Data Centre upload request did not carry the private service credentials")
 		}
@@ -31,11 +31,11 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"intent_id":"intent-1","upload_url":"https://b2.example/signed-upload","expires_at":time.Now().Add(10*time.Minute),"max_bytes":1024,"primary":"backblaze_b2"})
 	})
-	mux.HandleFunc("POST /internal/v1/media/verify", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /internal/v1/identity-evidence/verify", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status":"replication_pending","sha256":digest})
 	})
-	mux.HandleFunc("GET /internal/v1/media/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /internal/v1/identity-evidence/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("owner_id") != owner || r.URL.Query().Get("namespace") != identityEvidenceNamespace || r.URL.Query().Get("key") != key {
 			t.Fatalf("unexpected evidence status query: %s", r.URL.RawQuery)
 		}
@@ -43,16 +43,16 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 		if deleted { state = "deleted" }
 		_ = json.NewEncoder(w).Encode(map[string]any{"status":state,"content_type":"image/jpeg","size_bytes":1024,"sha256":digest})
 	})
-	mux.HandleFunc("POST /internal/v1/media/delete", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /internal/v1/identity-evidence/delete", func(w http.ResponseWriter, r *http.Request) {
 		deleted = true
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status":"delete_pending"})
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	client, err := datacentreclient.New(server.URL, token, server.Client())
+	client, err := datacentreclient.NewIdentityEvidenceClient(server.URL, token, server.Client())
 	if err != nil { t.Fatal(err) }
-	svc := &service{dataCentreMedia:client}
+	svc := &service{identityEvidenceMedia:client}
 	if !svc.identityEvidenceStorageConfigured() { t.Fatal("configured Data Centre media client was not recognized") }
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
