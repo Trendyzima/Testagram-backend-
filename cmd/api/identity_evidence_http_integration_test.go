@@ -116,27 +116,41 @@ func (p *identityHTTPFakeProvider) CopyFromProvider(_ context.Context, source vi
 }
 
 type identityHTTPDataCentreMedia struct {
-	manager *virtualstorage.Manager
+	manager    *virtualstorage.Manager
 	replicator *virtualstorage.Replicator
-	mu sync.Mutex
-	states map[string]datacentreclient.MediaStatus
+	mu         sync.Mutex
+	states     map[string]datacentreclient.MediaStatus
 }
 
 func (m *identityHTTPDataCentreMedia) Ready(context.Context) error { return nil }
 func (m *identityHTTPDataCentreMedia) CreateUploadURL(ctx context.Context, owner, namespace, key, contentType string, size int64) (datacentreclient.UploadGrant, error) {
-	if m.manager == nil { return datacentreclient.UploadGrant{}, errors.New("fake Data Centre media manager unavailable") }
+	if m.manager == nil {
+		return datacentreclient.UploadGrant{}, errors.New("fake Data Centre media manager unavailable")
+	}
 	uploadURL, err := m.manager.UploadURL(ctx, owner, namespace, key, contentType, size)
-	if err != nil { return datacentreclient.UploadGrant{}, err }
-	return datacentreclient.UploadGrant{IntentID:"test-intent", UploadURL:uploadURL, ExpiresAt:time.Now().Add(5*time.Minute), MaxBytes:size, Primary:"test-primary"}, nil
+	if err != nil {
+		return datacentreclient.UploadGrant{}, err
+	}
+	return datacentreclient.UploadGrant{IntentID: "test-intent", UploadURL: uploadURL, ExpiresAt: time.Now().Add(5 * time.Minute), MaxBytes: size, Primary: "test-primary"}, nil
 }
 func (m *identityHTTPDataCentreMedia) Verify(ctx context.Context, owner, namespace, key, contentType, sha256Hex string, size int64) (datacentreclient.Verification, error) {
-	if m.manager == nil || m.replicator == nil { return datacentreclient.Verification{}, errors.New("fake Data Centre replication unavailable") }
-	if _, err := m.manager.VerifyUpload(ctx, owner, namespace, key, contentType, size); err != nil { return datacentreclient.Verification{}, err }
-	if err := m.manager.VerifyUploadChecksum(ctx, owner, namespace, key, maxIdentityEvidenceBytes, sha256Hex); err != nil { return datacentreclient.Verification{}, err }
-	if _, err := m.replicator.Replicate(ctx, owner, namespace, key, size, contentType, sha256Hex); err != nil { return datacentreclient.Verification{}, err }
+	if m.manager == nil || m.replicator == nil {
+		return datacentreclient.Verification{}, errors.New("fake Data Centre replication unavailable")
+	}
+	if _, err := m.manager.VerifyUpload(ctx, owner, namespace, key, contentType, size); err != nil {
+		return datacentreclient.Verification{}, err
+	}
+	if err := m.manager.VerifyUploadChecksum(ctx, owner, namespace, key, maxIdentityEvidenceBytes, sha256Hex); err != nil {
+		return datacentreclient.Verification{}, err
+	}
+	if _, err := m.replicator.Replicate(ctx, owner, namespace, key, size, contentType, sha256Hex); err != nil {
+		return datacentreclient.Verification{}, err
+	}
 	m.mu.Lock()
-	if m.states == nil { m.states = make(map[string]datacentreclient.MediaStatus) }
-	m.states[key] = datacentreclient.MediaStatus{Status:"protected", ContentType:contentType, SizeBytes:size, SHA256:sha256Hex}
+	if m.states == nil {
+		m.states = make(map[string]datacentreclient.MediaStatus)
+	}
+	m.states[key] = datacentreclient.MediaStatus{Status: "protected", ContentType: contentType, SizeBytes: size, SHA256: sha256Hex}
 	m.mu.Unlock()
 	return datacentreclient.Verification{Status:"protected", SHA256:sha256Hex}, nil
 }
@@ -144,21 +158,31 @@ func (m *identityHTTPDataCentreMedia) Status(_ context.Context, _, _, key string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state, ok := m.states[key]
-	if !ok { return datacentreclient.MediaStatus{}, errors.New("fake Data Centre evidence state not found") }
+	if !ok {
+		return datacentreclient.MediaStatus{}, errors.New("fake Data Centre evidence state not found")
+	}
 	return state, nil
 }
 func (m *identityHTTPDataCentreMedia) DownloadURL(ctx context.Context, requester, owner, namespace, key string) (datacentreclient.DownloadGrant, error) {
-	if m.manager == nil { return datacentreclient.DownloadGrant{}, errors.New("fake Data Centre media manager unavailable") }
+	if m.manager == nil {
+		return datacentreclient.DownloadGrant{}, errors.New("fake Data Centre media manager unavailable")
+	}
 	downloadURL, err := m.manager.DownloadURL(ctx, requester, owner, namespace, key)
-	if err != nil { return datacentreclient.DownloadGrant{}, err }
-	return datacentreclient.DownloadGrant{URL:downloadURL, Provider:"test-primary"}, nil
+	if err != nil {
+		return datacentreclient.DownloadGrant{}, err
+	}
+	return datacentreclient.DownloadGrant{URL: downloadURL, Provider: "test-primary"}, nil
 }
 func (m *identityHTTPDataCentreMedia) Delete(ctx context.Context, requester, owner, namespace, key string) (string, error) {
-	if m.replicator == nil { return "", errors.New("fake Data Centre media replicator unavailable") }
-	if err := m.replicator.Delete(ctx, owner, namespace, key); err != nil { return "", err }
+	if m.replicator == nil {
+		return "", errors.New("fake Data Centre media replicator unavailable")
+	}
+	if err := m.replicator.Delete(ctx, owner, namespace, key); err != nil {
+		return "", err
+	}
 	m.mu.Lock()
 	if m.states == nil { m.states = make(map[string]datacentreclient.MediaStatus) }
-	m.states[key] = datacentreclient.MediaStatus{Status:"deleted"}
+	m.states[key] = datacentreclient.MediaStatus{Status: "deleted"}
 	m.mu.Unlock()
 	return "deleted", nil
 }
