@@ -83,7 +83,10 @@ psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
+psql_ci < migrations/20261122_testagram_mail_outbox.sql
+psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
+psql_ci < migrations/20261122_testagram_mail_outbox.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_identity.appwrite_registration_consents
