@@ -19,6 +19,15 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn('postgresql://${FEDERATION_DATABASE_USER}:${FEDERATION_DATABASE_PASSWORD}@federation-db:5432/${FEDERATION_DATABASE_NAME}?sslmode=disable', self.script)
         self.assertNotIn('postgresql://testagram:$POSTGRES_PASSWORD@federation-db:', self.script)
 
+    def test_media_database_uses_a_persistent_least_privilege_role(self):
+        self.assertIn('MEDIA_DATABASE_USER="$(read_dc_env_value MEDIA_DATABASE_USER)"', self.script)
+        self.assertIn('MEDIA_DATABASE_PASSWORD="$(read_dc_env_value MEDIA_DATABASE_PASSWORD)"', self.script)
+        self.assertIn('MEDIA_DATABASE_PASSWORD="$(openssl rand -hex 32)"', self.script)
+        self.assertIn('write_dc_env_value MEDIA_DATABASE_USER "$MEDIA_DATABASE_USER"', self.script)
+        self.assertIn('write_dc_env_value MEDIA_DATABASE_PASSWORD "$MEDIA_DATABASE_PASSWORD"', self.script)
+        self.assertIn('postgresql://${MEDIA_DATABASE_USER}:${MEDIA_DATABASE_PASSWORD}@federation-db:5432/${MEDIA_DATABASE_NAME}?sslmode=disable', self.script)
+        self.assertNotIn('postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram_media', self.script)
+
     def test_federation_identity_uses_the_canonical_apex(self):
         self.assertIn('write_dc_env_value FEDERATION_PUBLIC_BASE_URL "https://testagram.site"', self.script)
         self.assertIn('write_dc_env_value FEDERATION_INSTANCE_DOMAIN "testagram.site"', self.script)
