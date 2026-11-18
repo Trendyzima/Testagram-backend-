@@ -145,6 +145,11 @@ func isPrivateServiceHost(host string) bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }
 
+// Ready confirms the private media service and its dedicated metadata database are reachable.
+func (c *Client) Ready(ctx context.Context) error {
+	return c.request(ctx, http.MethodGet, "/readyz", nil, nil)
+}
+
 func (c *Client) CreateUploadURL(ctx context.Context, ownerID, namespace, key, contentType string, size int64) (UploadGrant, error) {
 	var result UploadGrant
 	err := c.post(ctx, "/internal/v1/media/upload-url", uploadRequest{
