@@ -176,3 +176,40 @@ func TestCreateUploadURLRejectsUnsafeOrOverlongGrant(t *testing.T) {
 		})
 	}
 }
+
+func TestIdentityEvidenceClientUsesSeparateTokenAndRoutePrefix(t *testing.T) {
+	const token = "identity-evidence-dedicated-service-token-012345"
+	const owner = "00000000-0000-4000-8000-000000000001"
+	const key = "identity/" + owner + "/10000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000003.jpg-" + strings.Repeat("a", 43)
+	const digest = strings.Repeat("b", 64)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /internal/v1/identity-evidence/upload-url", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token { t.Fatal("identity evidence token was not used") }
+		_ = json.NewEncoder(w).Encode(UploadGrant{IntentID:"identity-intent",UploadURL:"https://b2.example/identity",ExpiresAt:time.Now().Add(5*time.Minute),MaxBytes:1024,Primary:"backblaze_b2"})
+	})
+	mux.HandleFunc("POST /internal/v1/identity-evidence/verify", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token { t.Fatal("identity evidence verify used the wrong token") }
+		_ = json.NewEncoder(w).Encode(Verification{Status:"replication_pending",SHA256:digest})
+	})
+	mux.HandleFunc("GET /internal/v1/identity-evidence/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token || r.URL.Query().Get("namespace") != "identity-evidence-private" { t.Fatal("identity evidence status escaped its route/token boundary") }
+		_ = json.NewEncoder(w).Encode(MediaStatus{Status:"protected",ContentType:"image/jpeg",SizeBytes:1024,SHA256:digest})
+	})
+	mux.HandleFunc("POST /internal/v1/identity-evidence/delete", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token { t.Fatal("identity evidence delete used the wrong token") }
+		_ = json.NewEncoder(w).Encode(map[string]string{"status":"delete_pending"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client, err := NewIdentityEvidenceClient(server.URL, token, server.Client())
+	if err != nil { t.Fatal(err) }
+	ctx := context.Background()
+	grant, err := client.CreateUploadURL(ctx, owner, "identity-evidence-private", key, "image/jpeg", 1024)
+	if err != nil || grant.IntentID != "identity-intent" { t.Fatalf("identity evidence upload grant = %+v, %v", grant, err) }
+	verified, err := client.Verify(ctx, owner, "identity-evidence-private", key, "image/jpeg", digest, 1024)
+	if err != nil || verified.Status != "replication_pending" { t.Fatalf("identity evidence verify = %+v, %v", verified, err) }
+	status, err := client.Status(ctx, owner, "identity-evidence-private", key)
+	if err != nil || status.Status != "protected" { t.Fatalf("identity evidence status = %+v, %v", status, err) }
+	deleted, err := client.Delete(ctx, owner, owner, "identity-evidence-private", key)
+	if err != nil || deleted != "delete_pending" { t.Fatalf("identity evidence delete = %q, %v", deleted, err) }
+}
