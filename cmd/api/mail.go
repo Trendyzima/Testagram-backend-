@@ -232,14 +232,24 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
+	// A worker may have crashed after Cloudflare accepted a request but before
+	// recording the response. Never reclaim an expired sending lease: its
+	// provider outcome is unknowable and automatic resend could duplicate mail.
+	if _, err := s.db.Exec(ctx, `
+		UPDATE testagram_mail.outbox
+		SET status='uncertain',lease_until=NULL,last_error_code='MAIL_LEASE_EXPIRED_OUTCOME_UNKNOWN',updated_at=now()
+		WHERE status='sending' AND lease_until<now()
+	`); err != nil {
+		return false, err
+	}
+
 	var id int64
 	var ciphertext, nonce []byte
 	var attempt int
 	err := s.db.QueryRow(ctx, `
 		WITH candidate AS (
 			SELECT id FROM testagram_mail.outbox
-			WHERE (status='pending' AND available_at<=now())
-			   OR (status='sending' AND lease_until<now())
+			WHERE status='pending' AND available_at<=now()
 			ORDER BY available_at,id
 			LIMIT 1 FOR UPDATE SKIP LOCKED
 		)
@@ -288,9 +298,10 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		if errors.As(sendErr, &permanent) {
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
-				SET status='dead',lease_until=NULL,last_error_code='CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE',updated_at=now()
+				SET status='dead',lease_until=NULL,provider_message_id=NULLIF($2,''),
+				    last_error_code='CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE',updated_at=now()
 				WHERE id=$1 AND status='sending'
-			`, id)
+			`, id, messageID)
 			return true, err
 		}
 		code := "CLOUDFLARE_DELIVERY_FAILED"
