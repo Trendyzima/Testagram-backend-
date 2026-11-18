@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -65,14 +66,18 @@ func mailCipher() (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func (s *service) enqueueAuthEmail(ctx context.Context, recipient, subject, html string) error {
-	if s.db == nil {
+type mailQueueExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func enqueueAuthEmailWith(ctx context.Context, executor mailQueueExecutor, recipient, subject, html string) error {
+	if executor == nil {
 		return errors.New("mail queue database unavailable")
 	}
 	if _, err := mail.ParseAddress(recipient); err != nil {
 		return errors.New("invalid mail recipient")
 	}
-	if len(subject) == 0 || len(subject) > 180 || strings.ContainsAny(subject, "\r\n") || len(html) > 256*1024 {
+	if len(subject) == 0 || len(subject) > 180 || strings.ContainsAny(subject, "\\r\\n") || len(html) > 256*1024 {
 		return errors.New("mail content exceeds allowed bounds")
 	}
 	aead, err := mailCipher()
@@ -90,11 +95,15 @@ func (s *service) enqueueAuthEmail(ctx context.Context, recipient, subject, html
 	ciphertext := aead.Seal(nil, nonce, payload, []byte("testagram-mail-v1"))
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	_, err = s.db.Exec(ctx, `
+	_, err = executor.Exec(ctx, `
 		INSERT INTO testagram_mail.outbox(payload_ciphertext,payload_nonce,status,available_at)
 		VALUES($1,$2,'pending',now())
 	`, ciphertext, nonce)
 	return err
+}
+
+func (s *service) enqueueAuthEmail(ctx context.Context, recipient, subject, html string) error {
+	return enqueueAuthEmailWith(ctx, s.db, recipient, subject, html)
 }
 
 func (s *service) sendCloudflareMail(ctx context.Context, message queuedMail) (string, error) {
