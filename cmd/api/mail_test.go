@@ -140,7 +140,7 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 		{
 			name: "missing provider message ID", status: http.StatusOK,
 			response: `{"success":true,"errors":[],"result":{"delivered":["person@example.test"],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}`,
-			wantErr: "without a provider message ID",
+			wantErr:  "without a provider message ID",
 		},
 	}
 	for _, tt := range tests {
