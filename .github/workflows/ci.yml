@@ -37,6 +37,8 @@ jobs:
         run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh
       - name: Verify Federation deployment database and canonical identity contract
         run: python3 tests/test_instabox_federation_runtime_contract.py
+      - name: Verify Federation deployment database and canonical identity contract
+        run: python3 tests/test_instabox_federation_runtime_contract.py
       - name: Validate native authentication staging smoke client syntax
         run: python3 -m py_compile scripts/native-auth-staging-smoke.py
       - name: Resolve and verify Go modules
@@ -701,8 +703,8 @@ jobs:
           ):
               assert check in deploy, f"deployment must verify redacted runtime environment: {check}"
           expected = {
-              "TESTAGRAM_ALGORITHM_IMAGE": "sha-6ae0532c171383b84731063d590d775524f9da1e",
-              "TESTAGRAM_FEDERATION_IMAGE": "sha-edf4f59f843514596d35273c888ff1c16ec0f73e",
+              "TESTAGRAM_ALGORITHM_IMAGE": "sha-da8e90e79150636a6efe8e03c2cbc8fb9357764d",
+              "TESTAGRAM_FEDERATION_IMAGE": "sha-1a8cb7895caa7e27f9bdb3f1a2bb68ef755634b4",
           }
           for key, tag in expected.items():
               if not re.search(rf'{key}="ghcr\.io/trendyzima/[^"]*{re.escape(tag)}"', deploy):
