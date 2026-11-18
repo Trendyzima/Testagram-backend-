@@ -221,7 +221,7 @@ jobs:
           [[ "$ready" == "true" ]] || { echo "::error::The machine did not reach runtime-ready state within two minutes."; exit 1; }
           echo "InstaBox machine is ready for the scheduled backup task."
 
-      - name: Run encrypted PostgreSQL, MinIO, B2/R2 media and Data Centre backups through InstaBox exec
+      - name: Run encrypted PostgreSQL, MinIO and local Data Centre backups through InstaBox exec
         shell: bash
         env:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
