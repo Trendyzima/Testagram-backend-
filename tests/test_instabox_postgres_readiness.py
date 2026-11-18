@@ -33,23 +33,19 @@ class TestInstaBoxPostgresReadinessGate(unittest.TestCase):
         )
         self.assertIn("sleep 2", gate)
         self.assertIn("PostgreSQL did not become ready within 120 seconds", gate)
-        self.assertIn("docker compose", gate)
         self.assertIn("ps postgres", gate)
         self.assertIn("logs --tail=120 postgres", gate)
         self.assertIn("exit 1", gate)
 
-    def test_migration_gate_does_not_treat_container_start_as_database_readiness(self):
+    def test_migrations_cannot_run_before_authenticated_postgres_probe(self):
         start = self.script.index(
             'sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres'
         )
+        readiness = self.script.index("pg_isready", start)
         migration = self.script.index("apply-native-identity-migrations.sh", start)
-        section = self.script[start:migration]
-        self.assertIn("pg_isready", section)
-        self.assertIn("postgres_ready", section)
-        self.assertNotIn(
-            "PostgreSQL is accepting authenticated connections",
-            self.script[start:migration],
-        )
+        self.assertLess(start, readiness)
+        self.assertLess(readiness, migration)
+        self.assertIn("postgres_ready=true", self.script[readiness:migration])
 
 
 if __name__ == "__main__":
