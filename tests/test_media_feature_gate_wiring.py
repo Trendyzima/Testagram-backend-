@@ -32,38 +32,25 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("refusing an ambiguous media profile", self.deployer)
 
     def test_boolean_normalizer_accepts_whitespace_and_rejects_invalid_values(self):
-        match = re.search(r"normalize_boolean\\(\\) \\{.*?\\n\\}", self.deployer, re.S)
+        match = re.search(r"normalize_boolean\(\) \{.*?\n\}", self.deployer, re.S)
         self.assertIsNotNone(match)
         helper = match.group(0)
-        accepted = helper + r'''
-FRESH_MEDIA_ENABLED=
-        self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
-        self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
-        self.assertIn('write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"', self.deployer)
-        self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
-
-    def test_pushes_cannot_implicitly_deploy_to_production(self):
-        deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
-        self.assertIn("github.event_name == 'workflow_dispatch'", deploy_gate)
-        self.assertIn("inputs.confirm_production_deploy == true", deploy_gate)
-        self.assertNotIn("github.event_name == 'push' ||", deploy_gate)
-
-
-if __name__ == "__main__":
-    unittest.main()
- \\ttrue \\r\\n'
-normalize_boolean FRESH_MEDIA_ENABLED false
-printf '%s\\n' "$FRESH_MEDIA_ENABLED"
-'''
+        accepted = helper + "\n".join([
+            "FRESH_MEDIA_ENABLED=$' \\ttrue \\r\\n'",
+            "normalize_boolean FRESH_MEDIA_ENABLED false",
+            "printf '%s\\n' \"$FRESH_MEDIA_ENABLED\"",
+        ]) + "\n"
         result = subprocess.run(["bash", "-c", accepted], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "true")
-        rejected = helper + '''
-FRESH_MEDIA_ENABLED=tru
-normalize_boolean FRESH_MEDIA_ENABLED false
-'''
+
+        rejected = helper + "\n".join([
+            "FRESH_MEDIA_ENABLED=tru",
+            "normalize_boolean FRESH_MEDIA_ENABLED false",
+        ]) + "\n"
         result = subprocess.run(["bash", "-c", rejected], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
+
     def test_fresh_media_approval_reaches_remote_deployment(self):
         self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
