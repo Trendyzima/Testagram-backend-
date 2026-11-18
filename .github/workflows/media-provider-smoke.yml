@@ -112,16 +112,16 @@ jobs:
       IDENTITY_SMOKE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
       IDENTITY_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
       IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.CLOUDFLARE_R2_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET || vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PUBLIC_BUCKET }}
+      IDENTITY_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_R2_IDENTITY_BUCKET || vars.MEDIA_SMOKE_R2_PRIVATE_BUCKET }}
       IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
       IDENTITY_SMOKE_B2_REGION: ${{ secrets.B2_S3_REGION }}
       IDENTITY_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
       IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.B2_S3_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET || vars.B2_S3_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PUBLIC_BUCKET }}
+      IDENTITY_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_B2_IDENTITY_BUCKET || vars.MEDIA_SMOKE_B2_PRIVATE_BUCKET }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -171,3 +171,98 @@ jobs:
       - name: Stop isolated MinIO
         if: always()
         run: docker rm -f testagram-minio-identity-smoke >/dev/null 2>&1 || true
+
+  three-provider-media-replication:
+    if: inputs.confirm_live_provider_writes == true
+    name: Verify real media bytes across Instabox MinIO, Cloudflare R2 and Backblaze B2
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TESTAGRAM_LIVE_MEDIA_REPLICATION: "true"
+      MEDIA_SMOKE_INSTABOX_ENDPOINT: http://127.0.0.1:9000
+      MEDIA_SMOKE_INSTABOX_REGION: us-east-1
+      MEDIA_SMOKE_INSTABOX_ACCESS_KEY_ID: ci-testagram-media
+      MEDIA_SMOKE_INSTABOX_SECRET_ACCESS_KEY: ci-only-media-secret-32-characters
+      MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET: testagram-ci-media-private
+      MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET: testagram-ci-media-public
+      MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET: testagram-ci-media-identity-evidence
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
+      MEDIA_SMOKE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PUBLIC_BUCKET }}
+      MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_R2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
+      MEDIA_SMOKE_B2_REGION: ${{ secrets.B2_S3_REGION }}
+      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PUBLIC_BUCKET }}
+      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_B2_IDENTITY_BUCKET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start isolated MinIO media primary
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name testagram-minio-three-provider-media \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER="$MEDIA_SMOKE_INSTABOX_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$MEDIA_SMOKE_INSTABOX_SECRET_ACCESS_KEY" \
+            ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 \
+            server /data --address ":9000" --console-address ":9001"
+          for attempt in $(seq 1 40); do
+            if curl -fsS "$MEDIA_SMOKE_INSTABOX_ENDPOINT/minio/health/live" >/dev/null; then break; fi
+            if [ "$attempt" -eq 40 ]; then echo "::error::Isolated MinIO did not become healthy"; exit 1; fi
+            sleep 2
+          done
+      - name: Create isolated MinIO media namespace buckets
+        shell: bash
+        run: |
+          set -euo pipefail
+          export AWS_ACCESS_KEY_ID="$MEDIA_SMOKE_INSTABOX_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$MEDIA_SMOKE_INSTABOX_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="$MEDIA_SMOKE_INSTABOX_REGION"
+          for bucket in "$MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET" "$MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET" "$MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET"; do
+            aws --endpoint-url "$MEDIA_SMOKE_INSTABOX_ENDPOINT" s3api create-bucket --bucket "$bucket" >/dev/null
+          done
+      - name: Refuse production or ambiguous cloud buckets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for provider in R2 B2; do
+            for namespace in PRIVATE PUBLIC IDENTITY; do
+              name="MEDIA_SMOKE_${provider}_${namespace}_BUCKET"
+              bucket="${!name:-}"
+              [[ -n "$bucket" ]] || { echo "::error::Missing dedicated staging bucket: $name"; exit 1; }
+              [[ "$bucket" =~ (^|[-_])(ci|staging|smoke)([-_]|$) ]] || { echo "::error::$name must explicitly identify a CI/staging/smoke bucket"; exit 1; }
+              [[ ! "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production bucket rejected"; exit 1; }
+            done
+            private="MEDIA_SMOKE_${provider}_PRIVATE_BUCKET"
+            public="MEDIA_SMOKE_${provider}_PUBLIC_BUCKET"
+            identity="MEDIA_SMOKE_${provider}_IDENTITY_BUCKET"
+            [[ "${!private}" != "${!public}" && "${!private}" != "${!identity}" && "${!public}" != "${!identity}" ]] || { echo "::error::$provider namespace buckets must be distinct"; exit 1; }
+          done
+      - name: Verify upload, three independent SHA-256 copies, restore, repair and tombstone deletion
+        run: go test -count=1 -run '^TestLiveMediaReplicationLifecycle$' -v ./internal/virtualstorage
+      - name: Stop isolated MinIO
+        if: always()
+        run: docker rm -f testagram-minio-three-provider-media >/dev/null 2>&1 || true
+      - name: Record three-provider media acceptance scope
+        if: success()
+        run: |
+          {
+            echo "### Three-provider media lifecycle"
+            echo "- Uploaded synthetic private/public/identity-evidence objects to isolated MinIO."
+            echo "- Independently verified MinIO, R2 and B2 bytes by size and SHA-256."
+            echo "- Simulated MinIO loss and restored from a verified replica."
+            echo "- Simulated missing R2 and corrupted B2, then repaired both."
+            echo "- Verified tombstone deletion removed all three copies."
+            echo "- This validates the Backend virtual-storage path; the separate Data Centre B2/R2 media service and CDN delivery remain separate gates."
+          } >> "$GITHUB_STEP_SUMMARY"
+
