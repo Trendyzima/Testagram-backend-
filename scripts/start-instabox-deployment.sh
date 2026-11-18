@@ -11,18 +11,21 @@ done
 [[ "$CLOUDFLARE_EMAIL_ACCOUNT_ID" =~ ^[A-Fa-f0-9]{32}$ ]] || { echo "::error::CLOUDFLARE_EMAIL_ACCOUNT_ID must be 32 hexadecimal characters."; exit 1; }
 [[ "$TESTAGRAM_MAIL_ENCRYPTION_KEY" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."; exit 1; }
 [[ "$AUTH_FROM_EMAIL" == "no-reply@testagram.site" ]] || { echo "::error::AUTH_FROM_EMAIL must be no-reply@testagram.site for this release."; exit 1; }
-case "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" in
-  true|false) ;;
-  *) echo "::error::TESTAGRAM_IDENTITY_REGISTRATION_ENABLED must be true or false."; exit 1 ;;
-esac
-case "${FRESH_MEDIA_ENABLED:-false}" in
-  true|false) ;;
-  *) echo "::error::FRESH_MEDIA_ENABLED must be true or false."; exit 1 ;;
-esac
-case "${DATA_CENTRE_MEDIA_ENABLED:-false}" in
-  true|false) ;;
-  *) echo "::error::DATA_CENTRE_MEDIA_ENABLED must be true or false."; exit 1 ;;
-esac
+# GitHub Actions variables may contain accidental surrounding whitespace or CRLF.
+# Normalize the edges but reject every value other than the exact boolean literals.
+normalize_boolean() {
+  local name="$1" default="$2" value
+  value="${!name:-$default}"
+  value="$(printf '%s' "$value" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  case "$value" in
+    true|false) printf -v "$name" '%s' "$value" ;;
+    *) echo "::error::$name must be true or false (surrounding whitespace is ignored)."; exit 1 ;;
+  esac
+}
+normalize_boolean TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false
+normalize_boolean FRESH_MEDIA_ENABLED false
+normalize_boolean DATA_CENTRE_MEDIA_ENABLED false
+normalize_boolean MEDIA_REPLICATION_ENABLED false
 if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]; then
   echo "::error::FRESH_MEDIA_ENABLED and DATA_CENTRE_MEDIA_ENABLED must both be true or both be false; refusing an ambiguous media profile."
   exit 1
