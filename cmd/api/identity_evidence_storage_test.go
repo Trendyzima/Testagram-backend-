@@ -24,43 +24,69 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("X-Testagram-API-Version") != "1" {
 			t.Fatal("Data Centre upload request did not carry the private service credentials")
 		}
-		var input struct { OwnerID string `json:"owner_id"`; Namespace string `json:"namespace"`; Key string `json:"key"`; ContentType string `json:"content_type"`; SizeBytes int64 `json:"size_bytes"` }
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil { t.Fatal(err) }
+		var input struct {
+			OwnerID     string `json:"owner_id"`
+			Namespace   string `json:"namespace"`
+			Key         string `json:"key"`
+			ContentType string `json:"content_type"`
+			SizeBytes   int64  `json:"size_bytes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
 		if input.OwnerID != owner || input.Namespace != identityEvidenceNamespace || input.Key != key || input.ContentType != "image/jpeg" || input.SizeBytes != 1024 {
 			t.Fatalf("unexpected identity evidence upload request: %+v", input)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"intent_id":"intent-1","upload_url":"https://b2.example/signed-upload","expires_at":time.Now().Add(10*time.Minute),"max_bytes":1024,"primary":"backblaze_b2"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"intent_id": "intent-1", "upload_url": "https://b2.example/signed-upload", "expires_at": time.Now().Add(10 * time.Minute), "max_bytes": 1024, "primary": "backblaze_b2"})
 	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/verify", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status":"replication_pending","sha256":digest})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "replication_pending", "sha256": digest})
 	})
 	mux.HandleFunc("GET /internal/v1/identity-evidence/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("owner_id") != owner || r.URL.Query().Get("namespace") != identityEvidenceNamespace || r.URL.Query().Get("key") != key {
 			t.Fatalf("unexpected evidence status query: %s", r.URL.RawQuery)
 		}
 		state := "protected"
-		if deleted { state = "deleted" }
-		_ = json.NewEncoder(w).Encode(map[string]any{"status":state,"content_type":"image/jpeg","size_bytes":1024,"sha256":digest})
+		if deleted {
+			state = "deleted"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": state, "content_type": "image/jpeg", "size_bytes": 1024, "sha256": digest})
 	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/delete", func(w http.ResponseWriter, r *http.Request) {
 		deleted = true
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status":"delete_pending"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "delete_pending"})
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	client, err := datacentreclient.NewIdentityEvidenceClient(server.URL, token, server.Client())
-	if err != nil { t.Fatal(err) }
-	svc := &service{identityEvidenceMedia:client}
-	if !svc.identityEvidenceStorageConfigured() { t.Fatal("configured Data Centre media client was not recognized") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &service{identityEvidenceMedia: client}
+	if !svc.identityEvidenceStorageConfigured() {
+		t.Fatal("configured Data Centre media client was not recognized")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := svc.identityEvidenceStorageAvailable(ctx); err != nil { t.Fatalf("storage readiness: %v", err) }
+	if err := svc.identityEvidenceStorageAvailable(ctx); err != nil {
+		t.Fatalf("storage readiness: %v", err)
+	}
 	uploadURL, err := svc.identityEvidenceCreateUploadURL(ctx, owner, key, "image/jpeg", 1024)
-	if err != nil || uploadURL != "https://b2.example/signed-upload" { t.Fatalf("upload URL = %q, %v", uploadURL, err) }
-	if err := svc.identityEvidenceVerifyAndReplicate(ctx, owner, key, "image/jpeg", 1024, digest); err != nil { t.Fatalf("verify and replicate: %v", err) }
-	if err := svc.identityEvidenceDelete(ctx, owner, key); err != nil { t.Fatalf("durable delete: %v", err) }
-	if !deleted { t.Fatal("Data Centre delete was not requested") }
-	if strings.Contains(uploadURL, "media.internal") { t.Fatal("internal media hostname leaked into the upload grant") }
+	if err != nil || uploadURL != "https://b2.example/signed-upload" {
+		t.Fatalf("upload URL = %q, %v", uploadURL, err)
+	}
+	if err := svc.identityEvidenceVerifyAndReplicate(ctx, owner, key, "image/jpeg", 1024, digest); err != nil {
+		t.Fatalf("verify and replicate: %v", err)
+	}
+	if err := svc.identityEvidenceDelete(ctx, owner, key); err != nil {
+		t.Fatalf("durable delete: %v", err)
+	}
+	if !deleted {
+		t.Fatal("Data Centre delete was not requested")
+	}
+	if strings.Contains(uploadURL, "media.internal") {
+		t.Fatal("internal media hostname leaked into the upload grant")
+	}
 }
