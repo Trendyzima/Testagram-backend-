@@ -59,10 +59,10 @@ trap 'exit 143' TERM
 cd "$BACKEND"
 
 # The machine's deployed checkout may predate this workflow. Refresh only the
-# three backup utilities from main; do not reset the checkout or touch app code,
+# four backup utilities from main; do not reset the checkout or touch app code,
 # Compose files, migrations, environment files, or running containers.
 GIT_TERMINAL_PROMPT=0 git fetch --depth 1 origin main
-for file in scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh scripts/instabox-production-backup.sh; do
+for file in scripts/self-hosted-backup.sh scripts/self-hosted-restore-drill.sh scripts/self_hosted_media_backup.py scripts/instabox-production-backup.sh; do
   if git show "FETCH_HEAD:$file" | cmp -s - "$BACKEND/$file"; then
     chmod 700 "$BACKEND/$file"
     continue
