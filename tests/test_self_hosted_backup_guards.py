@@ -52,6 +52,7 @@ class SelfHostedBackupGuardTests(unittest.TestCase):
         self.assertIn("Backblaze B2", docs)
         self.assertIn("B2_S3_ENDPOINT", workflow)
         self.assertIn("B2_S3_BUCKET", workflow)
+        self.assertIn("B2_S3_PRIVATE_BUCKET", workflow)
         self.assertIn("B2_S3_ACCESS_KEY_ID", workflow)
         self.assertIn("R2_BACKUP_ENDPOINT", workflow)
         self.assertIn("fall back to the existing dedicated Cloudflare R2 backup", docs)
