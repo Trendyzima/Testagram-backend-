@@ -46,11 +46,11 @@ type cloudflareMailResponse struct {
 		Message string `json:"message"`
 	} `json:"errors"`
 	Result struct {
-		MessageID       string   `json:"message_id"`
-		Delivered       []string `json:"delivered"`
-		Queued          []string `json:"queued"`
+		MessageID        string   `json:"message_id"`
+		Delivered        []string `json:"delivered"`
+		Queued           []string `json:"queued"`
 		PermanentBounces []string `json:"permanent_bounces"`
-		Suppressed      []string `json:"suppressed_recipients"`
+		Suppressed       []string `json:"suppressed_recipients"`
 	} `json:"result"`
 }
 
