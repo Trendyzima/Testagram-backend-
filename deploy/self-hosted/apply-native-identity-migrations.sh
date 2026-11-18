@@ -170,6 +170,13 @@ schema_ready() {
             AND NOT attnotnull AND NOT attisdropped
         )
         AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\''
+            AND table_name='\''identity_applications'\''
+            AND column_name='\''evidence_fingerprint_sha256'\''
+            AND is_nullable='\''YES'\''
+        )
+        AND EXISTS (
           SELECT 1 FROM pg_trigger
           WHERE tgrelid=to_regclass('\''testagram_identity.identity_approval_tokens'\'')
             AND tgname='\''identity_approval_token_requires_verified_evidence'\''
