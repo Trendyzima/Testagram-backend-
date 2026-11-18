@@ -211,16 +211,18 @@ jobs:
               fi
             else
               echo "Cloudflare R2 bucket listing returned HTTP $status; trying bucket creation permission before S3 fallback."
-              create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
-                -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-                --data "$(jq -nc --arg name "$R2_MEDIA_BUCKET" '{name:$name,locationHint:"apac"}')" \
-                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-              if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
-                echo "Created R2 media bucket through Cloudflare API."
-              else
-                jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-media-buckets.json" || true
-                jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
-              fi
+              for bucket in "$R2_MEDIA_BUCKET" "$R2_METADATA_BUCKET"; do
+                create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
+                  -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                  --data "$(jq -nc --arg name "$bucket" '{name:$name,locationHint:"apac"}')" \
+                  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
+                if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+                  echo "Created R2 bucket through Cloudflare API: $bucket"
+                else
+                  jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
+                fi
+              done
+              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-media-buckets.json" || true
             fi
           fi
           docker run --rm --entrypoint /bin/sh \
