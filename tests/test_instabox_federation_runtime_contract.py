@@ -33,8 +33,23 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn('write_dc_env_value FEDERATION_INSTANCE_DOMAIN "testagram.site"', self.script)
         self.assertNotIn('FEDERATION_PUBLIC_BASE_URL=https://federation.testagram.site', self.script)
 
+    def test_existing_environment_syncs_algorithm_token_and_activates_workers(self):
+        self.assertIn('write_dc_env_value ALGORITHM_INTERNAL_TOKEN "$ALGORITHM_INTERNAL_TOKEN"', self.script)
+        for flag in (
+            "FEDERATION_DELIVERY_WORKER_ENABLED",
+            "FEDERATION_OUTBOX_POLLER_ENABLED",
+            "FEDERATION_INBOX_WORKER_ENABLED",
+            "FEDERATION_INBOX_ACCEPT_ENABLED",
+        ):
+            self.assertIn(f"write_dc_env_value {flag} true", self.script)
+        self.assertIn("/internal/v1/worker-status", self.script)
+        self.assertIn(".workers.delivery_worker == true", self.script)
+        self.assertIn(".workers.outbox_poller == true", self.script)
+        self.assertIn(".workers.inbox_worker == true", self.script)
+        self.assertIn(".workers.inbox_accept == true", self.script)
+
     def test_deployment_uses_reviewed_immutable_service_digests(self):
-        self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:d02513cdf2baf90ea2db3c45107e7026ccf6c2e32ac98cb96dccb314c1525c6c', self.script)
+        self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
         self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:a84cbc8d6e82048a5d20e21dadd1ec6a429ce9284420f02cb92c43dfa218a8b6', self.script)
 
 
