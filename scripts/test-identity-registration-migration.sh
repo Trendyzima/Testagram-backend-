@@ -482,8 +482,14 @@ BEGIN
      OR to_regclass('testagram_auth.password_reset_tokens') IS NULL
      OR to_regclass('testagram_auth.security_audit') IS NULL
      OR to_regclass('testagram_auth.legacy_account_reconciliation') IS NULL
-     OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL THEN
+     OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL
+     OR to_regclass('testagram_mail.outbox') IS NULL THEN
     RAISE EXCEPTION 'native authentication schema is incomplete';
+  END IF;
+  IF NOT has_table_privilege('testagram_app','testagram_mail.outbox','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','UPDATE') THEN
+    RAISE EXCEPTION 'Backend runtime role lacks transactional mail outbox privileges';
   END IF;
   IF NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','SELECT')
      OR NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','INSERT')
