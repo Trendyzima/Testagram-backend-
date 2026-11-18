@@ -305,9 +305,11 @@ class WatchdogTests(unittest.TestCase):
     def test_running_machine_probes_liveness_but_never_restarts(self):
         api = FakeAPI()
         state = {}
-        with patch.object(watchdog, "probe", return_value=(True, "HTTP 200")) as probe, \\
-             patch.object(watchdog, "save_state"), \\
-             patch.object(watchdog, "lifecycle") as lifecycle:
+        with (
+            patch.object(watchdog, "probe", return_value=(True, "HTTP 200")) as probe,
+            patch.object(watchdog, "save_state"),
+            patch.object(watchdog, "lifecycle") as lifecycle,
+        ):
             result = watchdog.check_running_service(api, state)
         self.assertIn("no restart triggered", result)
         probe.assert_called_once()
