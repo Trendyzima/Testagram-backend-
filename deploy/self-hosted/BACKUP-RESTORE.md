@@ -97,8 +97,9 @@ It calls InstaBox's `POST /v1/machines/{id}/wake` and then `POST
 
 ### Off-host destination and credentials
 
-The InstaBox backup workflow uses the repository's existing Backblaze B2 S3
-configuration as its primary encrypted Restic destination:
+The InstaBox backup workflow uses the repository's existing private Backblaze B2 S3
+bucket (the `B2_S3_PRIVATE_BUCKET` variable, falling back to the configured
+`B2_S3_BUCKET` secret) as its primary encrypted Restic destination:
 
 - `B2_S3_ENDPOINT`
 - `B2_S3_BUCKET`
