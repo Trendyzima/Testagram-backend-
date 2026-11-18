@@ -26,6 +26,12 @@ const (
 	mailMaxAttempts    = 12
 )
 
+type permanentMailError struct{}
+
+func (permanentMailError) Error() string {
+	return "recipient was permanently bounced or suppressed"
+}
+
 type queuedMail struct {
 	Recipient string `json:"recipient"`
 	Subject   string `json:"subject"`
@@ -145,7 +151,7 @@ func (s *service) sendCloudflareMail(ctx context.Context, message queuedMail) (s
 		return "", fmt.Errorf("Cloudflare Email Sending rejected the request (HTTP %d)", resp.StatusCode)
 	}
 	if len(result.Result.PermanentBounces) > 0 || len(result.Result.Suppressed) > 0 {
-		return result.Result.MessageID, errors.New("recipient was permanently bounced or suppressed")
+		return result.Result.MessageID, permanentMailError{}
 	}
 	if len(result.Result.Delivered) == 0 && len(result.Result.Queued) == 0 {
 		return result.Result.MessageID, errors.New("Cloudflare accepted no recipient for delivery")
@@ -234,6 +240,15 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	messageID, sendErr := s.sendCloudflareMail(sendCtx, message)
 	cancel()
 	if sendErr != nil {
+		var permanent permanentMailError
+		if errors.As(sendErr, &permanent) {
+			_, err := s.db.Exec(ctx, `
+				UPDATE testagram_mail.outbox
+				SET status='dead',lease_until=NULL,last_error_code='CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE',updated_at=now()
+				WHERE id=$1 AND status='sending'
+			`, id)
+			return true, err
+		}
 		code := "CLOUDFLARE_DELIVERY_FAILED"
 		if strings.Contains(sendErr.Error(), "not configured") {
 			code = "CLOUDFLARE_NOT_CONFIGURED"
