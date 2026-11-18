@@ -306,6 +306,25 @@ echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
+# A successful "docker compose up -d" only means the container was started;
+# PostgreSQL may still be initializing or replaying WAL. Do not invoke the
+# migration preflight until the database is accepting authenticated queries.
+postgres_ready=false
+for attempt in $(seq 1 60); do
+  if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T postgres \
+    sh -ec 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
+    postgres_ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$postgres_ready" != "true" ]]; then
+  echo "::error::PostgreSQL did not become ready within 120 seconds; migrations and application rollout are blocked."
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps postgres
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=120 postgres
+  exit 1
+fi
+echo "PostgreSQL is accepting authenticated connections; continuing to migration preflight."
 # Existing PostgreSQL volumes do not replay initdb mounts. The shared
 # preflight skips a complete schema, otherwise it fails closed unless the
 # workflow carries explicit approval. The helper takes and fully restore-tests
