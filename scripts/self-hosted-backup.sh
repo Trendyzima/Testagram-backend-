@@ -206,9 +206,9 @@ fi
 
 if [[ "$media_external_enabled" == "true" ]]; then
   provider_mc() {
-    local mount_dir="$1" script="$2"
+    local mount_dir="$1" mount_point="$2" script="$3"
     "${DOCKER[@]}" compose run --rm --no-deps --network testagram-egress \
-      -v "$mount_dir:/inventory" \
+      -v "$mount_dir:$mount_point" \
       -e B2_S3_ENDPOINT="$media_b2_endpoint" -e B2_S3_REGION="$media_b2_region" \
       -e B2_S3_BUCKET="$media_b2_bucket" -e B2_S3_ACCESS_KEY_ID="$media_b2_access" \
       -e B2_S3_SECRET_ACCESS_KEY="$media_b2_secret" \
@@ -282,7 +282,7 @@ fi
     if [[ "$media_external_enabled" == "true" ]]; then
       provider_inventory_dir="$(mktemp -d "${stage_parent_real%/}/testagram-provider-inventory.XXXXXXXX")"
       chmod 700 "$provider_inventory_dir"
-      provider_mc "$provider_inventory_dir" '
+      provider_mc "$provider_inventory_dir" /inventory '
         mc alias set b2 "$B2_S3_ENDPOINT" "$B2_S3_ACCESS_KEY_ID" "$B2_S3_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$B2_S3_REGION" >/dev/null
         mc alias set r2 "$CLOUDFLARE_R2_ENDPOINT" "$CLOUDFLARE_R2_ACCESS_KEY_ID" "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$CLOUDFLARE_R2_REGION" >/dev/null
         mc ls --recursive --json "b2/$B2_S3_BUCKET" > /inventory/b2-media.jsonl
