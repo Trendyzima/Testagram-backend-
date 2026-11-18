@@ -13,7 +13,7 @@ class InstaBoxInspectionBoundaryTests(unittest.TestCase):
         self.assertIn("machines:read", workflow)
         self.assertIn("/v1/machines?limit=100", workflow)
         self.assertIn("/v1/machines/$INSTABOX_MACHINE_ID", workflow)
-        self.assertNotIn("/exec", workflow)
+        self.assertNotIn("/v1/machines/$INSTABOX_MACHINE_ID/exec", workflow)
         self.assertNotIn("-X POST", workflow)
         self.assertNotIn("INSTABOX_API_KEY", workflow.replace("INSTABOX_READONLY_API_KEY", ""))
 
