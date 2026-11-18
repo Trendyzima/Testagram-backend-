@@ -152,7 +152,7 @@ func (m *identityHTTPDataCentreMedia) Verify(ctx context.Context, owner, namespa
 	}
 	m.states[key] = datacentreclient.MediaStatus{Status: "protected", ContentType: contentType, SizeBytes: size, SHA256: sha256Hex}
 	m.mu.Unlock()
-	return datacentreclient.Verification{Status:"protected", SHA256:sha256Hex}, nil
+	return datacentreclient.Verification{Status: "protected", SHA256: sha256Hex}, nil
 }
 func (m *identityHTTPDataCentreMedia) Status(_ context.Context, _, _, key string) (datacentreclient.MediaStatus, error) {
 	m.mu.Lock()
@@ -181,7 +181,9 @@ func (m *identityHTTPDataCentreMedia) Delete(ctx context.Context, requester, own
 		return "", err
 	}
 	m.mu.Lock()
-	if m.states == nil { m.states = make(map[string]datacentreclient.MediaStatus) }
+	if m.states == nil {
+		m.states = make(map[string]datacentreclient.MediaStatus)
+	}
 	m.states[key] = datacentreclient.MediaStatus{Status: "deleted"}
 	m.mu.Unlock()
 	return "deleted", nil
