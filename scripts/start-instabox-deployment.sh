@@ -614,7 +614,9 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
   # shellcheck disable=SC1090
   source "$DC_ENV"
   set +a
-  echo "Data Centre private media profile enabled with B2/R2 configuration (all values redacted)."
+  # Provider credentials stay scoped to the Data Centre Compose env file.
+  export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET
+  echo "Data Centre private media profile enabled with B2/R2 and MinIO metadata configuration (all values redacted)."
 else
   # Explicitly remove stale Data Centre provider/client secrets when
   # the private media profile is switched off.
