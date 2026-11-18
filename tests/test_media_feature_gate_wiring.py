@@ -28,6 +28,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("tr -d", self.deployer)
         self.assertIn("surrounding whitespace is ignored", self.deployer)
         self.assertIn("refusing an ambiguous media profile", self.deployer)
+
     def test_fresh_media_approval_reaches_remote_deployment(self):
         self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
