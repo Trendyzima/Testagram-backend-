@@ -148,6 +148,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.deployer)
 
+    def test_optional_fingerprint_migration_is_mounted_for_remote_preflight(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        migration = "20261121_native_identity_intake_optional_fingerprint.sql"
+        self.assertIn(migration + ":/docker-entrypoint-initdb.d/" + migration + ":ro", compose)
+        self.assertIn("github.event_name == 'push'", self.workflow)
+        self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
+
     def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
         self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
         self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
