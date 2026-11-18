@@ -37,9 +37,16 @@ jobs:
     env:
       API: https://api.instabox.sh
       MACHINE_ID: ${{ vars.INSTABOX_MACHINE_ID || secrets.INSTABOX_MACHINE_ID }}
-      BACKUP_ENDPOINT: ${{ secrets.TESTAGRAM_BACKUP_S3_ENDPOINT || vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
-      BACKUP_BUCKET: ${{ secrets.TESTAGRAM_BACKUP_S3_BUCKET || vars.TESTAGRAM_BACKUP_S3_BUCKET }}
-      BACKUP_REGION: auto
+      # Prefer the already-configured Backblaze B2 S3 credentials. Fall back
+      # to the separate R2 backup destination only when its bucket is present.
+      B2_BACKUP_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
+      B2_BACKUP_BUCKET: ${{ secrets.B2_S3_BUCKET }}
+      B2_BACKUP_REGION: ${{ secrets.B2_S3_REGION }}
+      R2_BACKUP_ENDPOINT: ${{ secrets.TESTAGRAM_BACKUP_S3_ENDPOINT || vars.TESTAGRAM_BACKUP_S3_ENDPOINT }}
+      R2_BACKUP_BUCKET: ${{ secrets.TESTAGRAM_BACKUP_S3_BUCKET || vars.TESTAGRAM_BACKUP_S3_BUCKET }}
+      BACKUP_ENDPOINT: ""
+      BACKUP_BUCKET: ""
+      BACKUP_REGION: ""
       RUN_RESTORE_DRILL: ${{ inputs.run_restore_drill == true && 'true' || 'false' }}
       INITIALIZE_RESTIC_REPOSITORY: ${{ inputs.initialize_restic_repository == true && 'true' || 'false' }}
     steps:
@@ -48,31 +55,40 @@ jobs:
         shell: bash
         env:
           INSTABOX_API_KEY: ${{ secrets.INSTABOX_BACKUP_API_KEY || secrets.TESTAGRAM_DB_API }}
+          B2_BACKUP_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+          B2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
           R2_BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
           R2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
         run: |
           set -euo pipefail
           umask 077
-          for name in INSTABOX_API_KEY BACKUP_ENDPOINT BACKUP_BUCKET RESTIC_PASSWORD; do
-            [[ -n "${!name:-}" ]] || { echo "::error::Missing required InstaBox backup setting: $name"; exit 1; }
-          done
-          for secret in "$INSTABOX_API_KEY" "$R2_BACKUP_ACCESS_KEY_ID" "$R2_BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
+          for secret in "$INSTABOX_API_KEY" "$B2_BACKUP_ACCESS_KEY_ID" "$B2_BACKUP_SECRET_ACCESS_KEY" "$R2_BACKUP_ACCESS_KEY_ID" "$R2_BACKUP_SECRET_ACCESS_KEY" "$RESTIC_PASSWORD"; do
             [[ -z "$secret" ]] || echo "::add-mask::$secret"
           done
-          # Never mix a key from one S3 provider with another provider's endpoint.
-          case "$BACKUP_ENDPOINT" in
-            https://*.r2.cloudflarestorage.com|https://*.r2.cloudflarestorage.com/)
-              BACKUP_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID"
-              BACKUP_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
-              BACKUP_REGION=auto
-              BACKUP_PROVIDER="Cloudflare R2"
-              ;;
-            *)
-              echo "::error::Unsupported backup endpoint. Configure the Cloudflare R2 S3 endpoint in TESTAGRAM_BACKUP_S3_ENDPOINT."
-              exit 1
-              ;;
-          esac
+          # Use the complete B2 credential set already present in this
+          # repository. Never combine one provider's endpoint with another
+          # provider's keys or bucket.
+          if [[ -n "$B2_BACKUP_ENDPOINT" && -n "$B2_BACKUP_BUCKET" && -n "$B2_BACKUP_REGION" && -n "$B2_BACKUP_ACCESS_KEY_ID" && -n "$B2_BACKUP_SECRET_ACCESS_KEY" ]]; then
+            BACKUP_ENDPOINT="$B2_BACKUP_ENDPOINT"
+            BACKUP_BUCKET="$B2_BACKUP_BUCKET"
+            BACKUP_REGION="$B2_BACKUP_REGION"
+            BACKUP_ACCESS_KEY_ID="$B2_BACKUP_ACCESS_KEY_ID"
+            BACKUP_SECRET_ACCESS_KEY="$B2_BACKUP_SECRET_ACCESS_KEY"
+            BACKUP_PROVIDER="Backblaze B2"
+          elif [[ -n "$R2_BACKUP_ENDPOINT" && -n "$R2_BACKUP_BUCKET" && -n "$R2_BACKUP_ACCESS_KEY_ID" && -n "$R2_BACKUP_SECRET_ACCESS_KEY" ]]; then
+            BACKUP_ENDPOINT="$R2_BACKUP_ENDPOINT"
+            BACKUP_BUCKET="$R2_BACKUP_BUCKET"
+            BACKUP_REGION=auto
+            BACKUP_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID"
+            BACKUP_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
+            BACKUP_PROVIDER="Cloudflare R2"
+          else
+            echo "::error::No complete existing B2 or R2 backup credential set is configured; refusing to start a backup."
+            exit 1
+          fi
+          export BACKUP_ENDPOINT BACKUP_BUCKET BACKUP_REGION BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY
+          [[ -n "$INSTABOX_API_KEY" && -n "$RESTIC_PASSWORD" ]] || { echo "::error::Missing InstaBox API or Restic encryption credential."; exit 1; }
           [[ -n "$BACKUP_ACCESS_KEY_ID" ]] || { echo "::error::Missing access-key secret for $BACKUP_PROVIDER."; exit 1; }
           [[ -n "$BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::Missing secret-access-key secret for $BACKUP_PROVIDER."; exit 1; }
           echo "Selected backup provider: $BACKUP_PROVIDER (provider-specific credentials)."
@@ -84,7 +100,7 @@ jobs:
               raise SystemExit("INSTABOX_MACHINE_ID is not a valid InstaBox machine ID")
           parsed = urlparse(endpoint)
           if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.port:
-              raise SystemExit("TESTAGRAM_BACKUP_S3_ENDPOINT must be a plain HTTPS origin")
+              raise SystemExit("Selected S3 endpoint must be a plain HTTPS origin")
           if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket) or ".." in bucket or ".-" in bucket or "-." in bucket:
               raise SystemExit("TESTAGRAM_BACKUP_S3_BUCKET must be a valid S3 bucket name")
           try:
@@ -98,6 +114,8 @@ jobs:
           host = parsed.hostname.lower()
           if "r2.cloudflarestorage.com" in host and region != "auto":
               raise SystemExit("Cloudflare R2 backup region must be 'auto'")
+          if "backblazeb2.com" in host and not re.fullmatch(r"[a-z0-9-]{2,32}", region):
+              raise SystemExit("Backblaze B2 backup region must come from B2_S3_REGION")
           PY
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             run_prune="${{ inputs.run_prune }}"
@@ -208,13 +226,6 @@ jobs:
           BACKUP_REGION: ${{ steps.config.outputs.backup_region }}
         run: |
           set -euo pipefail
-          case "$BACKUP_ENDPOINT" in
-            https://*.r2.cloudflarestorage.com|https://*.r2.cloudflarestorage.com/)
-              BACKUP_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID"
-              BACKUP_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
-              ;;
-            *) echo "::error::Backup endpoint must be a Cloudflare R2 S3 endpoint."; exit 1 ;;
-          esac
           [[ -n "$BACKUP_ACCESS_KEY_ID" && -n "$BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::The selected provider's S3 credential pair is incomplete."; exit 1; }
           export BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
