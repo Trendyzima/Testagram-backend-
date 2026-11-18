@@ -684,6 +684,29 @@ echo "Verified Go CDN immutable image digest: ${TESTAGRAM_CDN_IMAGE##*@}"
 verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
 verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
 
+# Prove Backend-to-Algorithm service DNS, the shared private token and the
+# exact candidate JSON contract with a real authenticated request from api.
+algorithm_ready=false
+for attempt in $(seq 1 24); do
+  if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" exec -T algorithm wget -qO- http://127.0.0.1:8092/readyz >/dev/null 2>&1; then
+    algorithm_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$algorithm_ready" != "true" ]]; then
+  echo "::error::Algorithm ranker did not become ready."
+  sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" logs --tail=100 algorithm
+  exit 1
+fi
+algorithm_response="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -qO- --header="Authorization: Bearer $ALGORITHM_INTERNAL_TOKEN" --header="Content-Type: application/json" --post-data='{"feedMode":"for_you","limit":1,"candidates":[{"id":"https://remote.example/objects/testagram-deploy-acceptance","authorId":"https://remote.example/users/testagram-deploy-acceptance","source":"activitypub","sourceIdentity":"https://remote.example/users/testagram-deploy-acceptance","visible":true,"createdAt":"2026-11-18T00:00:00Z"}]}' http://algorithm:8092/v1/feed/rank)"
+if ! jq -e '.items | length == 1 and .[0].id == "https://remote.example/objects/testagram-deploy-acceptance"' <<<"$algorithm_response" >/dev/null; then
+  echo "::error::Authenticated Backend-to-Algorithm ranking request did not return the expected remote candidate."
+  jq -c '{error, items}' <<<"$algorithm_response" || true
+  exit 1
+fi
+echo "Verified authenticated Backend-to-Algorithm request/response with ActivityPub candidate provenance."
+
 # Verify the actual container Config.Env values without ever printing credentials.
 verify_container_env() {
   local env_file="$1" compose_file="$2" service="$3" key="$4" expected="$5" container actual_env
