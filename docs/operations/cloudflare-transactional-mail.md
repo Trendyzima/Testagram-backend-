@@ -43,7 +43,14 @@ Generate the encryption key with:
 openssl rand -hex 32
 ```
 
-Store the account ID as a repository variable if preferred; store the API token and encryption key as GitHub Actions secrets. Never paste either credential into chat, source files, issue comments, or workflow logs.
+Configure these exact GitHub repository settings for the InstaBox deployment workflow:
+
+- Repository variable: `CLOUDFLARE_EMAIL_ACCOUNT_ID`
+- Repository secret: `CLOUDFLARE_EMAIL_API_TOKEN`
+- Repository secret: `TESTAGRAM_MAIL_ENCRYPTION_KEY`
+- Optional repository variable: `AUTH_FROM_EMAIL` (defaults to `no-reply@testagram.site`)
+
+The deployment workflow transfers these values to the existing InstaBox environment over the authenticated control-plane request. Never paste credentials into chat, source files, issue comments, or workflow logs.
 
 ## Database migration
 
