@@ -134,11 +134,11 @@ reinitializes after a transient read failure.
 
 ### First run and ongoing operation
 
-1. Create the private bucket and scoped S3 key, then add the variables/secrets
-   above. Keep `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` unset/false for now.
+1. Verify the existing B2 bucket is private and that the `testagram-backups`
+   prefix is unused. Keep `TESTAGRAM_PRODUCTION_BACKUP_ENABLED` unset/false for now.
 2. In Actions, run **InstaBox production backup (free-plan safe)** manually.
    On the very first run only, set `initialize_restic_repository=true` after
-   confirming the dedicated bucket/prefix is empty and reserved for this
+   confirming the `testagram-backups` prefix is empty and reserved for this
    Testagram repository. Also set `run_restore_drill=true`. The workflow
    explicitly initializes Restic, creates the encrypted backup, then restores
    it into a disposable PostgreSQL container with no network or published
