@@ -34,6 +34,7 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertNotIn('FEDERATION_PUBLIC_BASE_URL=https://federation.testagram.site', self.script)
 
     def test_existing_environment_syncs_algorithm_token_and_activates_workers(self):
+        self.assertIn('write_dc_env_value MEDIA_DATABASE_URL "postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram_media?sslmode=disable"', self.script)
         self.assertIn('write_dc_env_value ALGORITHM_INTERNAL_TOKEN "$ALGORITHM_INTERNAL_TOKEN"', self.script)
         for flag in (
             "FEDERATION_DELIVERY_WORKER_ENABLED",
