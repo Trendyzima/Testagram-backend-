@@ -56,7 +56,7 @@ func TestHealthIsCanonicalPublicProbeAndMatchesHealthz(t *testing.T) {
 				t.Fatalf("Cache-Control = %q, want no-store", got)
 			}
 			var body struct {
-				OK bool `json:"ok"`
+				OK      bool   `json:"ok"`
 				Service string `json:"service"`
 			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
