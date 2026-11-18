@@ -880,7 +880,7 @@ if [[ "$media_enabled" == true ]]; then
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
   sudo docker exec "$api_container" wget -q -O /dev/null http://media:8096/readyz
   sudo docker exec "$api_container" sh -ec 'wget -qO- --header="Authorization: Bearer $IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN" --header="X-Testagram-API-Version: 1" http://media:8096/internal/v1/identity-evidence/readyz >/dev/null'
-  echo "Verified identity evidence database and live private B2/R2 write-read-delete probes."
+  echo "Verified Backend-to-Data-Centre private media readiness, identity evidence database, and live private B2/R2 write-read-delete probes."
 fi
 
 # Exercise both credential directions against the live private service endpoints.
