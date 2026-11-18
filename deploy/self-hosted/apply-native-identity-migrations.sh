@@ -276,7 +276,7 @@ if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
   echo "Native identity schema preflight diagnostics (only failed requirements):"
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-    sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "
+    sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -f -' <<'SQL'
       SELECT requirement FROM (
         SELECT name AS requirement FROM (VALUES
           ('admin_rate_limits','testagram_auth.admin_rate_limits'),
@@ -357,7 +357,7 @@ if [[ "$(schema_ready)" != "t" ]]; then
         WHERE NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('testagram_identity.verification_events')
           AND conname='verification_events_event_type_check' AND pg_get_constraintdef(oid) LIKE '%evidence_access_attempted%')
       ) failures;
-    "'
+SQL
   exit 1
 fi
 
