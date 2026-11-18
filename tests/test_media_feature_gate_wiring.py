@@ -131,6 +131,23 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
 
+
+    def test_dedicated_identity_evidence_buckets_are_independent_of_legacy_replicator(self):
+        for token in (
+            'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"',
+            'DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"',
+            'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
+            'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'mc anonymous set none "b2/$B2_BUCKET"',
+            'mc anonymous set none "r2/$R2_BUCKET"',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'internal/v1/identity-evidence/readyz',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.deployer)
+
     def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
         deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
         self.assertIn("github.ref == 'refs/heads/main'", deploy_gate)
