@@ -164,8 +164,9 @@ jobs:
 
       - name: Ensure Data Centre R2 media and metadata buckets exist
         id: r2-media-buckets
-        if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'
         env:
+          DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
+          FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}
@@ -177,6 +178,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          normalize_flag() { printf '%s' "$1" | tr -d '\\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+          dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
+          fresh_media_enabled="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
+          if [[ "$dc_media_enabled" != true || "$fresh_media_enabled" != true ]]; then
+            echo "Skipping Data Centre R2 bucket provisioning because the private media profile is disabled."
+            exit 0
+          fi
           [[ -n "$R2_ENDPOINT" && -n "$R2_ACCESS_KEY_ID" && -n "$R2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing R2 S3 endpoint and key pair are required."; exit 1; }
           [[ "$R2_MEDIA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 media bucket name."; exit 1; }
           [[ "$R2_METADATA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 metadata bucket name."; exit 1; }
@@ -248,7 +256,7 @@ jobs:
           # Data Centre media owns the B2/R2 bytes and MinIO/R2 metadata sidecars.
           MEDIA_REPLICATION_ENABLED: 'false'
           TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED == 'true' && vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true' && inputs.confirm_identity_registration == true && 'true' || 'false' }}
-          CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ inputs.confirm_native_identity_migrations == true && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
+          CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ (github.event_name == 'push' || inputs.confirm_native_identity_migrations == true) && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}

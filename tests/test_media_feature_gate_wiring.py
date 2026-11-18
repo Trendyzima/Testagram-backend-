@@ -14,6 +14,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         cls.workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         cls.deployer = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
 
+    def test_r2_bucket_provisioning_uses_the_same_normalized_media_gates_as_remote_deploy(self):
+        self.assertNotIn("if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)
+        self.assertIn('DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || \'false\' }}', self.workflow)
+        self.assertIn('FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || \'false\' }}', self.workflow)
+        self.assertIn('normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}"', self.workflow)
+        self.assertIn('normalize_flag "${FRESH_MEDIA_ENABLED:-false}"', self.workflow)
+
     def test_workflow_keeps_legacy_replicator_off_and_preserves_data_centre_gates(self):
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
@@ -130,6 +137,37 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
         self.assertIn('write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
+
+
+    def test_dedicated_identity_evidence_buckets_are_independent_of_legacy_replicator(self):
+        for token in (
+            'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"',
+            'DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-r2}"',
+            'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
+            'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'mc anonymous set none "b2/$B2_BUCKET"',
+            'mc anonymous set none "r2/$R2_BUCKET"',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'internal/v1/identity-evidence/readyz',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.deployer)
+
+    def test_optional_fingerprint_migration_is_mounted_for_remote_preflight(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        migration = "20261121_native_identity_intake_optional_fingerprint.sql"
+        self.assertIn(migration + ":/docker-entrypoint-initdb.d/" + migration + ":ro", compose)
+        self.assertIn("github.event_name == 'push'", self.workflow)
+        self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
+
+    def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
+        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
+        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
+        self.assertIn('docker inspect --format \'{{.Image}}\' "$api_container"', self.deployer)
+        self.assertIn('"$api_actual_image_id" != "$api_expected_image_id"', self.deployer)
+        self.assertIn('Verified Backend running immutable image ID', self.deployer)
 
     def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
         deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
