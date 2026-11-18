@@ -96,3 +96,16 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 		t.Fatal("internal media hostname leaked into the upload grant")
 	}
 }
+
+func TestIdentityEvidenceRequiresDedicatedDataCentreClient(t *testing.T) {
+	svc := &service{
+		virtualStorage:  &virtualstorage.Manager{},
+		mediaReplicator: &virtualstorage.Replicator{},
+	}
+	if svc.identityEvidenceStorageConfigured() {
+		t.Fatal("Backend-local virtual storage must not satisfy identity evidence readiness")
+	}
+	if err := svc.identityEvidenceStorageAvailable(context.Background()); err == nil {
+		t.Fatal("identity evidence readiness accepted a missing dedicated Data Centre client")
+	}
+}
