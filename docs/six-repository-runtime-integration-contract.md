@@ -1,7 +1,7 @@
-# Testagram six-runtime-repository integration contract
+# Testagram seven-repository integration contract
 
 Status: implementation and staging contract; not production cutover authorization.
-Reviewed: 2026-11-11.
+Reviewed: 2026-11-18.
 
 This is the shared communication contract for six runtime repositories. `testagram-api` is the separate contract control plane, not a runtime service. Each runtime repository owns its domain; no repository may bypass the Backend's product authorization or become a second source of truth.
 
@@ -9,8 +9,8 @@ This is the shared communication contract for six runtime repositories. `testagr
 
 | Repository | Runtime responsibility | Allowed communication |
 |---|---|---|
-| `testagram-flutter-client-` | Native Flutter UI, navigation, local presentation state, Appwrite session acquisition | Public authenticated Backend API only |
-| `Testagram-backend-` | Canonical product authorization, account identity bridge, social API, PostgreSQL product state, media lifecycle, orchestration and outboxes | Appwrite Auth; private Algorithm, Data Centre and Federation contracts; public CDN URLs |
+| `testagram-flutter-client-` | Native Flutter UI, navigation, local presentation state, Testagram-native session and refresh client | Public authenticated Backend API only |
+| `Testagram-backend-` | Canonical product authorization, account identity bridge, social API, PostgreSQL product state, media lifecycle, orchestration and outboxes | Testagram-native identity/session authority; private Algorithm, Data Centre and Federation contracts; public CDN URLs |
 | `Testagram-data-centre-` | Private infrastructure API, storage nodes, video processing, notifications, VPS/runtime deployment, backup and operations | Private Backend/platform network; storage providers and node agents |
 | `cdn-` | Media/HLS/DASH delivery, cache, origin/shield routing, range handling and playback-token validation | Public media requests and configured private/public origins; no product authorization |
 | `federated-content` | ActivityPub actors, keys, inbox/outbox, signature verification, remote delivery and federation state | Private Backend actor/outbox APIs; remote ActivityPub peers |
@@ -21,10 +21,13 @@ This is the shared communication contract for six runtime repositories. `testagr
 
 Instabox VPS, operated through the Data Centre control plane, is the sole supported deployment target for all Testagram runtime services. Render is retired and prohibited: no Render manifests, services, URLs, credentials, deployment workflows, previews, failover or fallback may be introduced. The Backend repository enforces this with `scripts/guard-no-render.py` in CI. The Backend public product API runtime is `cmd/api`; deploy its reviewed immutable image through the Instabox VPS Compose/control-plane path only. A future hosting change requires an explicit cross-repository architecture decision in this contract; no repository may independently add a hosting provider.
 
+## API contract control plane (`testagram-api`)
+- Owns OpenAPI, internal schemas, event contracts, SDKs, route inventory, immutable source pins and compatibility CI. It is build-time only and not a runtime hop, gateway or identity authority.
+
 ## Canonical request paths
 
 ### Flutter -> Backend
-- Flutter obtains an Appwrite session JWT and sends it as `Authorization: Bearer <JWT>`.
+- Flutter obtains a short-lived Testagram-native access JWT from Backend login and sends it as `Authorization: Bearer <JWT>`. The opaque rotating refresh token is stored only in platform secure storage and sent only to Backend refresh.
 - Backend validates the session and derives the canonical user identity server-side.
 - Flutter must not call Algorithm, Federation, Data Centre platform APIs, PostgreSQL, or storage-provider credentials directly.
 - The current client API base is configured through `TESTAGRAM_API_URL`; no private service URL or secret belongs in a Flutter build.
@@ -34,14 +37,14 @@ Instabox VPS, operated through the Data Centre control plane, is the sole suppor
 - Backend sends `Authorization: Bearer <ALGORITHM_INTERNAL_TOKEN>`, `X-Testagram-API-Version: 1`, and `X-Request-ID`.
 - Candidate request is bounded to 200 candidates; requested result limit is at most 50.
 - Algorithm may return only IDs from the submitted candidate set. Backend validates the response and rechecks current visibility, blocks, follows and moderation before hydrating canonical posts.
-- Deployment contract for the current `cmd/api` runtime: `ALGORITHM_URL=http://algorithm:8092` and `ALGORITHM_INTERNAL_TOKEN` must match Algorithm's `INTERNAL_TOKEN`. The `cmd/fresh-api` runtime uses `ALGORITHM_ENDPOINT` instead; do not mix the two runtime configurations.
+- Deployment contract for the current `cmd/api` runtime: `ALGORITHM_URL=http://algorithm:8092` and `ALGORITHM_INTERNAL_TOKEN` must match Algorithm's `INTERNAL_TOKEN`. The retired Fresh API is not a supported runtime caller and must not be reintroduced as a compatibility fallback.
 
 ### Backend <-> Federated Content
 - Backend actor-resolution endpoints: `GET /internal/v1/federation/actors/{handle}`, `GET /internal/v1/federation/actors/by-id/{user_id}`, and readiness `GET /internal/v1/federation/readyz`.
 - Backend publishes authorized activities to Federation at `POST /internal/v1/activities`.
 - Publish request fields are `activity_id`, `actor_user_id`, and `activity`; duplicate activity IDs must be idempotent.
 - Backend post transaction and outbox event must commit atomically. The dispatcher retries bounded batches and acknowledges only after durable Federation acceptance.
-- Use separate credentials in each direction: Backend's `FEDERATION_INTERNAL_TOKEN` is mapped to Federation's `FEDERATION_INGRESS_TOKEN` for Backend -> Federation; Backend's `FEDERATION_BACKEND_INTERNAL_TOKEN` is mapped to Federation's `BACKEND_INTERNAL_TOKEN` for Federation -> Backend. Values must be independently generated; no legacy shared-token fallback is accepted. Never reuse Appwrite user JWTs as service credentials.
+- Use separate credentials in each direction: Backend's `FEDERATION_INTERNAL_TOKEN` is mapped to Federation's `FEDERATION_INGRESS_TOKEN` for Backend -> Federation; Backend's `FEDERATION_BACKEND_INTERNAL_TOKEN` is mapped to Federation's `BACKEND_INTERNAL_TOKEN` for Federation -> Backend. Values must be independently generated; no legacy shared-token fallback is accepted. Never reuse end-user access JWTs as service credentials.
 - Backend owns canonical remote follower relationships in `testagram_local.remote_follows`. Federation may cache accepted follower inboxes for delivery routing, but must call the private Backend Follow/Undo contract first. Undo must match the exact original Follow activity ID.
 - An opted-in account's public post is inserted into the Backend transactional Federation outbox in the same database transaction as the post. ActivityPub object dereferencing is resolved from canonical Backend data and rechecks public visibility, account status and federation consent.
 - Federation delivery, inbox and outbox polling remain disabled until signature, consent, replay, durability, idempotency and interoperability gates pass.
@@ -57,7 +60,7 @@ Instabox VPS, operated through the Data Centre control plane, is the sole suppor
 ### Backend -> CDN -> object origin
 - Backend owns upload intent, authorization, visibility, quota, retention and deletion. It emits public URLs using `MEDIA_PUBLIC_BASE_URL`.
 - The Go CDN supports the stable `/v1/` media path and HLS/DASH paths. Configure `MEDIA_PUBLIC_BASE_URL=https://media.testagram.site/v1` only when DNS, TLS, CDN routing and the CDN origin are actually configured for that hostname and path.
-- CDN is a delivery plane, not an authorization authority. Private objects require a key-bound, expiring playback token or an authenticated origin path; never mark private objects public or cache private responses as public.
+- CDN is a delivery plane, not an authorization authority. Private objects require a short-lived object/viewer-bound Backend assertion plus separate CDN origin authentication. Public cache misses are eligible only after Backend's canonical metadata proves `ready` + `public` and the origin returns `X-Testagram-Visibility: public`. Never infer visibility from an object-key prefix or cache private responses as public.
 - HLS playlists are short-lived; segments need cache lifetimes consistent with the playlist window. Range requests and content type must be preserved.
 
 ## Shared reliability and security rules
