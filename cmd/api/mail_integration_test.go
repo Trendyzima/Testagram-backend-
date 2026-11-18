@@ -58,7 +58,6 @@ func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
 	}
 }
 
-
 func TestMailOutboxInsertRollsBackWithCallerTransaction(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
