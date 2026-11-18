@@ -221,11 +221,29 @@ jobs:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
           RUN_PRUNE: ${{ steps.config.outputs.run_prune }}
           RESTIC_PASSWORD: ${{ secrets.TESTAGRAM_BACKUP_RESTIC_PASSWORD }}
+          B2_BACKUP_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+          B2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
           R2_BACKUP_ACCESS_KEY_ID: ${{ secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
           R2_BACKUP_SECRET_ACCESS_KEY: ${{ secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
           BACKUP_REGION: ${{ steps.config.outputs.backup_region }}
         run: |
           set -euo pipefail
+          # Re-select the same complete provider tuple in this isolated step;
+          # GitHub step-local exports do not leak from the validation step.
+          if [[ -n "$B2_BACKUP_ENDPOINT" && -n "$B2_BACKUP_BUCKET" && -n "$B2_BACKUP_REGION" && -n "$B2_BACKUP_ACCESS_KEY_ID" && -n "$B2_BACKUP_SECRET_ACCESS_KEY" ]]; then
+            BACKUP_ENDPOINT="$B2_BACKUP_ENDPOINT"
+            BACKUP_BUCKET="$B2_BACKUP_BUCKET"
+            BACKUP_ACCESS_KEY_ID="$B2_BACKUP_ACCESS_KEY_ID"
+            BACKUP_SECRET_ACCESS_KEY="$B2_BACKUP_SECRET_ACCESS_KEY"
+          elif [[ -n "$R2_BACKUP_ENDPOINT" && -n "$R2_BACKUP_BUCKET" && -n "$R2_BACKUP_ACCESS_KEY_ID" && -n "$R2_BACKUP_SECRET_ACCESS_KEY" ]]; then
+            BACKUP_ENDPOINT="$R2_BACKUP_ENDPOINT"
+            BACKUP_BUCKET="$R2_BACKUP_BUCKET"
+            BACKUP_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID"
+            BACKUP_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
+          else
+            echo "::error::No complete existing B2 or R2 S3 credential set is available in the backup step."
+            exit 1
+          fi
           [[ -n "$BACKUP_ACCESS_KEY_ID" && -n "$BACKUP_SECRET_ACCESS_KEY" ]] || { echo "::error::The selected provider's S3 credential pair is incomplete."; exit 1; }
           export BACKUP_ACCESS_KEY_ID BACKUP_SECRET_ACCESS_KEY
           repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram"
