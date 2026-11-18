@@ -1,59 +1,37 @@
-# Testagram Native Identity Service
+# Native Testagram identity service
 
-## Decision
+## Purpose
 
-Testagram owns registration verification sessions, state transitions, review queues, decision records and audit history. The Idswyft runtime dependency is removed from the target architecture: no Idswyft API key, webhook registration, webhook secret, callback endpoint or vendor-hosted verification URL is required.
+The Backend is the sole authority for Testagram-native credentials, account status, session state and authorization. Flutter and private user-aware services consume Backend-issued native access JWTs; no external-provider bearer fallback is accepted by the native API path.
 
-## Assurance boundary
+## Identity lifecycle
 
-A Testagram session is not proof of a person's real-world identity by itself. The service distinguishes:
-- **Self-declaration**: applicant-supplied claim; never sufficient to set a verified decision.
-- **Document review**: a trained reviewer checks evidence held in restricted private storage; only an opaque reference and digest are stored in PostgreSQL.
-- **Trusted external attestation**: optional adapter with a documented trust contract; not required for the core service.
-- **Manual escalation**: ambiguous or suspicious evidence stays pending or is rejected; it is never auto-approved.
+1. An applicant creates an idempotent identity application with accepted policy declarations.
+2. Backend creates an applicant-scoped verification session. This is not an account or a login session.
+3. Evidence upload reservations are private, size/type/SHA-256 bound and idempotent. Backend stores bytes privately and records only opaque object references and integrity metadata.
+4. Evidence is sealed for manual review only after byte verification, replication and audit requirements pass.
+5. Two distinct identity reviewers and two distinct account approvers must independently approve. One approval cannot provision an account.
+6. A one-time application-scoped provisioning authorization is redeemed transactionally. Backend creates the canonical Testagram identity and profile and records the provisioning ledger.
+7. Backend sends a single-use email-verification link. Only successful verification changes native provisioning to active.
+8. The user can then set/use a native password and obtain a Testagram session.
 
-Age assurance and identity assurance are separate purposes and decisions. Passing an age threshold does not establish legal identity, and identity review does not bypass the two-person account-approval workflow.
+## Native authentication
 
-## Session lifecycle
+- Argon2id password hashes are the write format; PBKDF2 is accepted only to upgrade explicitly reconciled legacy hashes.
+- Access JWT lifetime is 15 minutes. The opaque refresh token is stored as a one-way hash and rotates on every successful refresh.
+- Session ID, token version, issuer, audience, account state, email verification and provisioning status are checked on protected requests.
+- Refresh-token replay revokes the token family. Logout revokes one session; logout-all revokes all sessions by incrementing token version.
+- Password recovery is anti-enumerating and single-use; successful reset revokes all active sessions.
+- Data Centre user-aware video/notification routes verify the same native JWT and independently query live PostgreSQL session/account state. Platform internal tokens remain separate.
 
-`created -> in_progress -> submitted -> manual_review -> verified|failed`
+## Staff review authority
 
-Sessions are application-scoped, expiring and single-use. Only SHA-256 token digests are stored. Every transition emits an append-only event in the same database transaction. Expired sessions cannot be revived; the applicant must obtain a new session. Duplicate submissions and decisions are idempotent.
+The Admin Console authenticates through Backend native login and stores its session in an encrypted `testagram-staff` cookie. Staff authorization checks PostgreSQL staff principal and role grants plus a recorded MFA-enrollment marker. Password re-authentication is used for step-up; the current console does not yet verify TOTP/passkey challenges. Staff invitation and role-grant activation remain closed until dual-control onboarding and second-factor verification are complete.
 
-## Evidence handling
+## Legacy account reconciliation
 
-Raw document images, selfies, biometric templates and full dates of birth must not be stored in the application database or logs. Evidence belongs in a private, encrypted object store behind short-lived authorization. Persist only an opaque evidence reference, content digest, evidence type, reviewer decision and retention metadata. Delete evidence when its documented retention period expires, preserving only the minimum audit record permitted by policy.
+Appwrite IDs may be mapped to canonical Testagram UUIDs through the explicit reconciliation ledger. Appwrite password hashes are not imported; reconciled users must reset their password before native login. Appwrite bearer JWTs are not a native API compatibility mode, and email equality is not an account-linking rule.
 
-## Security controls
+## Release boundary
 
-- Appwrite remains the sole user authentication provider.
-- Applicant session tokens are high entropy, returned once, hashed at rest, and scoped to one application.
-- Reviewer actions require authenticated staff authorization and are audited.
-- A reviewer cannot approve their own application; two distinct authorized approvers remain mandatory for account activation.
-- No public endpoint may set `verified`, write reviewer identity, or mint provisioning/approval tokens.
-- No verification result is accepted from a client-supplied boolean, URL parameter or unsigned callback.
-- Rate limits, request-size limits, no-store responses, idempotency and expiry are mandatory.
-- Fail closed if the database, policy configuration or private evidence service is unavailable.
-
-## Implemented backend surface
-
-The native backend branch now provides:
-- `POST /api/identity/applications`: creates an application and a Testagram-owned age-assurance session; returns application and session bearer tokens once.
-- `GET /api/identity/applications/{application_id}`: application-scoped status lookup.
-- `GET /api/identity/sessions/{session_id}`: session status using the session bearer token.
-- `POST /api/identity/sessions/{session_id}/evidence/upload-url`: issues a short-lived PUT URL for an allowlisted document image or PDF in a private object-storage namespace.
-- `POST /api/identity/sessions/{session_id}/evidence/submit`: verifies provider-observed size, content type and SHA-256 before moving the session into manual review.
-- `GET /api/admin/identity/review-queue`: Appwrite-authenticated staff queue with short-lived private evidence URLs.
-- `POST /api/admin/identity/sessions/{session_id}/decision`: requires two matching, distinct staff decisions; self-review is rejected.
-- `POST /api/admin/identity/applications/{application_id}/approve`: connects the two verified reviewers to the existing two-person sensitive-action ledger and issues a 15-minute, single-use approval token only after both approvals.
-
-The runtime no longer registers an Idswyft webhook, checks Idswyft readiness, or calls an Idswyft API. The historical intake migration remains in migration history so already-migrated databases are upgraded safely; it is not a runtime dependency.
-
-## Remaining delivery gates
-
-1. Run and pass the isolated PostgreSQL migration/invariant workflow with the new evidence metadata migration.
-2. Pass Go formatting, unit, race, vet, build, OpenAPI and container CI on this branch.
-3. Implement approval-token redemption and connect it to the existing Appwrite/canonical-account provisioning saga, including idempotent retries and compensation.
-4. Integrate the Flutter applicant journey with native session creation, upload, submit and status polling; integrate the staff review surface.
-5. Exercise real private-bucket upload, checksum verification, short-lived reviewer download, expiry and retention deletion in staging.
-6. Run complete applicant-to-provisioned-account end-to-end and security tests. Public registration remains disabled until these gates pass.
+Registration remains fail-closed until the private evidence bucket, verified replicas, email transport, policy versions, PostgreSQL grants and independent approval workflow pass staging acceptance. Source-code implementation and green CI do not prove that the production API or Flutter build has been switched to native auth. Production cutover and account activation require separate explicit approval.
