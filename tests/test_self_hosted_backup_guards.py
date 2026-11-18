@@ -54,7 +54,7 @@ class SelfHostedBackupGuardTests(unittest.TestCase):
         self.assertIn("B2_S3_BUCKET", workflow)
         self.assertIn("B2_S3_ACCESS_KEY_ID", workflow)
         self.assertIn("R2_BACKUP_ENDPOINT", workflow)
-        self.assertIn("falls back to the existing R2 backup tuple", docs)
+        self.assertIn("fall back to the existing dedicated Cloudflare R2 backup", docs)
         self.assertIn("TESTAGRAM_BACKUP_RESTIC_PASSWORD", docs)
 
     def test_backup_still_fails_closed_for_external_storage_and_replication(self):
