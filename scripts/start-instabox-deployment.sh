@@ -386,7 +386,14 @@ sudo env \
   CONFIRM_NATIVE_IDENTITY_MIGRATIONS="${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
   COMPOSE_FILE="$BASE_COMPOSE" ENV_FILE="$BASE_ENV" BACKUP_DIR="$ROOT/backups" \
   bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --build --force-recreate object-storage object-init api flutter-web caddy
+# Build the Backend once, capture its immutable local image ID, and deploy that exact image.
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api
+api_expected_image_id="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api | head -n 1)"
+if [[ ! "$api_expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+  echo "::error::Backend build did not produce a verifiable immutable image ID."
+  exit 1
+fi
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate object-storage object-init api flutter-web caddy
 
 echo "Verifying the self-hosted Flutter web origin..."
 web_ready=false
@@ -444,6 +451,16 @@ if [[ "$backend_ready" != "true" ]]; then
   sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=100 postgres api object-storage object-init
   exit 1
 fi
+
+api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+api_actual_image_id="$(sudo docker inspect --format '{{.Image}}' "$api_container")"
+if [[ "$api_actual_image_id" != "$api_expected_image_id" ]]; then
+  echo "::error::Backend container is not running the exact image built for this deployment."
+  echo "Expected Backend image ID: $api_expected_image_id"
+  echo "Running Backend image ID: $api_actual_image_id"
+  exit 1
+fi
+echo "Verified Backend running immutable image ID: $api_actual_image_id"
 
 if ! curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null; then
   echo "MinIO is healthy inside Docker but its host loopback port is not reachable" >&2
