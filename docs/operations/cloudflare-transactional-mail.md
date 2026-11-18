@@ -89,3 +89,8 @@ A successful REST API response means Cloudflare accepted or queued the recipient
 - Monitor dead-letter counts and provider acceptance; investigate ambiguous network failures because automatic retry can duplicate a message.
 - Keep registration enablement and the two-independent-reviewer approval gate unchanged.
 - No production deployment or DNS change is part of the code pull request.
+
+
+## Ambiguous provider outcomes
+
+A transport timeout, interrupted response, provider 5xx, malformed success response, missing provider message ID, or accepted response without a recipient outcome is not treated as a normal retryable failure. The outbox row moves to `uncertain`, retains its encrypted payload, and is excluded from automatic worker claims. Operators must reconcile the recipient and request against Cloudflare Email Sending logs before deciding whether to mark the row delivered or requeue it. Never blindly requeue an uncertain message: Cloudflare may already have accepted it.
