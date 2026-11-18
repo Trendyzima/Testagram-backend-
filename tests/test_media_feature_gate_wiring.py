@@ -52,6 +52,12 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_identity_evidence_token_is_passed_to_the_private_backend_service(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         self.assertIn("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}", compose)
+    def test_media_profile_reuses_existing_r2_backup_credentials(self):
+        self.assertIn("CLOUDFLARE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}", self.workflow)
+        self.assertIn("CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}", self.workflow)
+        self.assertIn("CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}", self.workflow)
+        self.assertIn("CLOUDFLARE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION || 'auto' }}", self.workflow)
+
     def test_provider_smoke_secret_sources_and_retired_identity_smoke(self):
         for key in ("B2_S3_ENDPOINT", "B2_S3_REGION"):
             with self.subTest(key=key):
