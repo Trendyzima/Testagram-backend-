@@ -109,6 +109,31 @@ func TestNativePasswordRecoveryRequestIsAntiEnumeration(t *testing.T) {
 	if resetRows != 1 {
 		t.Fatalf("known verified account should have one pending recovery token; got %d", resetRows)
 	}
+	var ciphertext, nonce []byte
+	if err := db.QueryRow(ctx, `
+		SELECT payload_ciphertext,payload_nonce
+		FROM testagram_mail.outbox
+		WHERE status='pending'
+		ORDER BY id DESC LIMIT 1
+	`).Scan(&ciphertext, &nonce); err != nil {
+		t.Fatalf("recovery token committed without a queued email: %v", err)
+	}
+	aead, err := mailCipher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := aead.Open(nil, nonce, ciphertext, []byte("testagram-mail-v1"))
+	if err != nil {
+		t.Fatalf("recovery email payload could not be decrypted: %v", err)
+	}
+	var queued queuedMail
+	if err := json.Unmarshal(plaintext, &queued); err != nil {
+		t.Fatal(err)
+	}
+	if queued.Recipient != email || queued.Subject != "Reset your Testagram password" ||
+		!strings.Contains(queued.HTML, "/reset-password?token=") {
+		t.Fatalf("recovery email outbox payload does not match the account: %#v", queued)
+	}
 }
 
 func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *testing.T) {

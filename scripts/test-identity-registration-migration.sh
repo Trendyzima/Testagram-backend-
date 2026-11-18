@@ -83,7 +83,10 @@ psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261119_native_identity_approval_ledger.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
+psql_ci < migrations/20261122_testagram_mail_outbox.sql
+psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
+psql_ci < migrations/20261122_testagram_mail_outbox.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_identity.appwrite_registration_consents
@@ -479,8 +482,17 @@ BEGIN
      OR to_regclass('testagram_auth.password_reset_tokens') IS NULL
      OR to_regclass('testagram_auth.security_audit') IS NULL
      OR to_regclass('testagram_auth.legacy_account_reconciliation') IS NULL
-     OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL THEN
+     OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL
+     OR to_regclass('testagram_mail.outbox') IS NULL THEN
     RAISE EXCEPTION 'native authentication schema is incomplete';
+  END IF;
+  IF NOT has_schema_privilege('testagram_app','testagram_mail','USAGE')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','UPDATE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','USAGE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','SELECT') THEN
+    RAISE EXCEPTION 'Backend runtime role lacks transactional mail schema, table or sequence privileges';
   END IF;
   IF NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','SELECT')
      OR NOT has_table_privilege('testagram_app','testagram_auth.rate_limits','INSERT')
@@ -505,14 +517,14 @@ $native_auth_schema$;
 SQL
 
 # Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestMailOutboxPersistsEncryptedPayload|TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestVerifiedAppwriteUserCannotBypassTwoPersonIdentityApproval|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
 
 # Exercise the actual Appwrite session -> current-consent -> canonical account path.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent$' -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestNativePasswordRecoveryRequestIsAntiEnumeration|TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin|TestNativeSessionRefreshRotationAndReuseRevokesFamily|TestNativeSessionLogoutRevokesCurrentSession|TestNativeSessionLogoutAllRevokesEverySession|TestNativeSessionConcurrentRefreshReuseRevokesFamily)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestNativePasswordRecoveryRequestIsAntiEnumeration|TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin|TestNativeSessionRefreshRotationAndReuseRevokesFamily|TestNativeSessionLogoutRevokesCurrentSession|TestNativeSessionLogoutAllRevokesEverySession|TestNativeSessionConcurrentRefreshReuseRevokesFamily)$' -count=1
 
 
 # Exercise the Admin Console review handler against this same isolated database.

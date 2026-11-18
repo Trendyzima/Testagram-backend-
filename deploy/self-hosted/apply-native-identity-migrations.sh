@@ -60,6 +60,25 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
+        AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
+        AND (
+          SELECT count(*) = 10
+          FROM information_schema.columns
+          WHERE table_schema='\''testagram_mail'\''
+            AND table_name='\''outbox'\''
+            AND column_name IN (
+              '\''payload_ciphertext'\'', '\''payload_nonce'\'', '\''status'\'',
+              '\''attempts'\'', '\''available_at'\'', '\''lease_until'\'',
+              '\''sent_at'\'', '\''provider_message_id'\'', '\''last_error_code'\'',
+              '\''updated_at'\''
+            )
+        )
+        AND COALESCE((SELECT has_schema_privilege(oid,'\''testagram_mail'\'','\''USAGE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''INSERT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''UPDATE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_sequence_privilege(oid,'\''testagram_mail.outbox_id_seq'\'','\''USAGE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_sequence_privilege(oid,'\''testagram_mail.outbox_id_seq'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_identity'\''
@@ -208,7 +227,8 @@ for file in \
   053_native_staff_reviewer_grants.sql \
   054_native_admin_console.sql \
   055_native_identity_approval_ledger.sql \
-  056_native_verification_decider.sql; do
+  056_native_verification_decider.sql \
+  057_testagram_mail_outbox.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -235,11 +255,12 @@ apply_migration 053_native_staff_reviewer_grants.sql
 apply_migration 054_native_admin_console.sql
 apply_migration 055_native_identity_approval_ledger.sql
 apply_migration 056_native_verification_decider.sql
+apply_migration 057_testagram_mail_outbox.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."

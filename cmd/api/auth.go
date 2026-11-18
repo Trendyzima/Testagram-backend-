@@ -6,21 +6,17 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/mail"
-	"net/smtp"
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -211,76 +207,7 @@ func (s *service) sendAuthEmail(ctx context.Context, recipient, subject, html st
 }
 
 func (s *service) authSendEmail(ctx context.Context, recipient, subject, html string) error {
-	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
-	port := strings.TrimSpace(env("SMTP_PORT", "587"))
-	username := strings.TrimSpace(os.Getenv("SMTP_USERNAME"))
-	password := os.Getenv("SMTP_PASSWORD")
-	from := strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL"))
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
-	if host == "" || from == "" || base == "" || username == "" || password == "" {
-		return errors.New("SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, AUTH_FROM_EMAIL and AUTH_PUBLIC_BASE_URL are required")
-	}
-	if !strings.HasPrefix(base, "https://") {
-		return errors.New("AUTH_PUBLIC_BASE_URL must use HTTPS")
-	}
-	if _, err := strconv.Atoi(port); err != nil {
-		return errors.New("SMTP_PORT must be numeric")
-	}
-	if _, err := mail.ParseAddress(from); err != nil {
-		return errors.New("AUTH_FROM_EMAIL is invalid")
-	}
-	if _, err := mail.ParseAddress(recipient); err != nil {
-		return errors.New("recipient email is invalid")
-	}
-	address := net.JoinHostPort(host, port)
-	dialer := &net.Dialer{Timeout: 4 * time.Second}
-	var conn net.Conn
-	var err error
-	if port == "465" {
-		conn, err = tls.DialWithDialer(dialer, "tcp", address, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
-	} else {
-		conn, err = dialer.DialContext(ctx, "tcp", address)
-	}
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	client, err := smtp.NewClient(conn, host)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	if port != "465" {
-		if ok, _ := client.Extension("STARTTLS"); !ok {
-			return errors.New("SMTP server does not support required STARTTLS")
-		}
-		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
-			return err
-		}
-	}
-	if err := client.Auth(smtp.PlainAuth("", username, password, host)); err != nil {
-		return err
-	}
-	if err := client.Mail(from); err != nil {
-		return err
-	}
-	if err := client.Rcpt(recipient); err != nil {
-		return err
-	}
-	writer, err := client.Data()
-	if err != nil {
-		return err
-	}
-	message := "From: " + from + "\r\nTo: " + recipient + "\r\nSubject: " + subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n" + html
-	if _, err := writer.Write([]byte(message)); err != nil {
-		_ = writer.Close()
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	return client.Quit()
+	return s.enqueueAuthEmail(ctx, recipient, subject, html)
 }
 
 func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action string) bool {
@@ -351,25 +278,34 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Unable to create verification token", requestID(r)))
 			return true
 		}
+		tx, txErr := s.db.Begin(ctx)
+		if txErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
+			return true
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
 		var userID string
-		err = s.db.QueryRow(ctx, `
+		txErr = tx.QueryRow(ctx, `
 			INSERT INTO testagram_auth.identities(email,username,password_hash,verification_token_hash,verification_expires_at)
 			VALUES($1,$2,$3,$4,now()+interval '24 hours')
 			ON CONFLICT DO NOTHING RETURNING user_id::text
 		`, email, in.Username, passwordHash, authTokenHash(token)).Scan(&userID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(txErr, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the address is eligible, a verification email will be sent."})
 			return true
 		}
-		if err != nil {
+		if txErr != nil {
 			writeJSON(w, http.StatusConflict, errorBody("SIGNUP_FAILED", "Account could not be created", requestID(r)))
 			return true
 		}
 		base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 		link := base + "/verify-email?token=" + url.QueryEscape(token)
-		if err := s.sendAuthEmail(ctx, email, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>"); err != nil {
-			// Keep the token persisted for retry by a future delivery worker; never log it.
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Account created but verification email could not be delivered. Configure email delivery and request another verification.", requestID(r)))
+		if err := enqueueAuthEmailWith(ctx, tx, email, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>"); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Unable to queue verification email. Please try again.", requestID(r)))
+			return true
+		}
+		if err := tx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
 			return true
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "Check your email to verify your Testagram account."})
@@ -382,15 +318,22 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				token, tokenErr := authRandomToken()
 				if tokenErr == nil {
 					var savedEmail string
-					updateErr := s.db.QueryRow(ctx, `
-						UPDATE testagram_auth.identities
-						SET verification_token_hash=$2,verification_expires_at=now()+interval '24 hours',updated_at=now()
-						WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
-					`, email, authTokenHash(token)).Scan(&savedEmail)
-					if updateErr == nil {
-						base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
-						link := base + "/verify-email?token=" + url.QueryEscape(token)
-						_ = s.sendAuthEmail(ctx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
+					tx, txErr := s.db.Begin(ctx)
+					if txErr == nil {
+						defer func() { _ = tx.Rollback(context.Background()) }()
+						updateErr := tx.QueryRow(ctx, `
+							UPDATE testagram_auth.identities
+							SET verification_token_hash=$2,verification_expires_at=now()+interval '24 hours',updated_at=now()
+							WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
+						`, email, authTokenHash(token)).Scan(&savedEmail)
+						if updateErr == nil {
+							base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+							link := base + "/verify-email?token=" + url.QueryEscape(token)
+							updateErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
+						}
+						if updateErr == nil {
+							_ = tx.Commit(ctx)
+						}
 					}
 				}
 			}
@@ -582,17 +525,13 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				`, email, authTokenHash(token), authFingerprint(ip)).Scan(&savedEmail)
 				txErr = err
 			}
+			if txErr == nil && savedEmail != "" {
+				base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+				link := base + "/reset-password?token=" + url.QueryEscape(token)
+				txErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>")
+			}
 			if txErr == nil {
 				txErr = tx.Commit(ctx)
-			}
-		}
-		if txErr == nil && savedEmail != "" {
-			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
-			link := base + "/reset-password?token=" + url.QueryEscape(token)
-			if sendErr := s.sendAuthEmail(ctx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>"); sendErr != nil {
-				// Keep the response indistinguishable from an unknown account, but
-				// leave a request-correlated operational signal for delivery repair.
-				log.Printf("password recovery email delivery failed request_id=%s: %v", requestID(r), sendErr)
 			}
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the account exists, password recovery instructions will be sent."})
@@ -664,6 +603,11 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to validate reset token", requestID(r)))
 			return true
 		}
+		var accountEmail string
+		if err := tx.QueryRow(ctx, "SELECT email FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&accountEmail); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to load account notification address", requestID(r)))
+			return true
+		}
 		identityTag, updateErr := tx.Exec(ctx, `
 			UPDATE testagram_auth.identities SET password_hash=$2,password_reset_required=false,
 				reset_token_hash=NULL,reset_expires_at=NULL,password_changed_at=now(),
@@ -695,6 +639,8 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to commit password reset", requestID(r)))
 			return true
 		}
+		_ = s.sendAuthEmail(ctx, accountEmail, "Your Testagram password was changed",
+			"<p>Your Testagram password was successfully changed.</p><p>If you did not make this change, contact Testagram support immediately.</p>")
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Password reset. Sign in with your new password."})
 		return true
 	default:

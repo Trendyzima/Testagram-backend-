@@ -1055,6 +1055,7 @@ jobs:
           );
           SQL
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261122_testagram_mail_outbox.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO testagram_auth.identities(email,username,password_hash)
           VALUES ('ci@example.test','ci_user','test-hash');
@@ -1097,6 +1098,7 @@ jobs:
       - name: Run native password recovery PostgreSQL integration
         env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+          TESTAGRAM_MAIL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         run: go test -race -count=1 ./cmd/api -run '^TestNativePasswordRecovery' -v
       - name: Stop isolated PostgreSQL
         if: always()
