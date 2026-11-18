@@ -589,7 +589,7 @@ jobs:
           FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
           FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
           TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9
-          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web:main
+          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:be1d80e65506c44912ac16bccd9b57a8a31914f2ee4f2fa7ec026af65715bf68
           CDN_ORIGIN_AUTH_TOKEN: ci-only-cdn-origin-token-not-for-production-32-chars
           CDN_MEDIA_ASSERTION_SECRET: ci-only-cdn-assertion-secret-not-for-production-32
           CDN_PURGE_TOKEN: ci-only-cdn-purge-token-not-for-production-32
@@ -711,7 +711,7 @@ jobs:
               raise SystemExit("Deployment must explicitly pull the pinned Algorithm and Federation images")
           if '--force-recreate algorithm federation-api' not in deploy:
               raise SystemExit("Deployment must recreate services after updating immutable image pins")
-          if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy or "RepoDigests" not in deploy:
+          if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy or "RepoDigests" not in deploy or "Flutter web container is not running the exact reviewed image digest" not in deploy:
               raise SystemExit("Deployment must verify the exact running Algorithm and Federation image tags")
           if '::error::Data Centre deployment did not reach an accepted core-services state' not in deploy:
               raise SystemExit("Deployment must fail when Data Centre image rollout does not reach an accepted state")
