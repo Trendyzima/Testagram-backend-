@@ -5,6 +5,7 @@ on:
     paths:
       - "scripts/self-hosted-backup.sh"
       - "tests/test_self_hosted_backup_guards.py"
+      - "tests/test_self_hosted_backup_guards.py"
       - "scripts/self-hosted-restore-drill.sh"
       - "scripts/instabox-production-backup.sh"
       - ".github/workflows/instabox-production-backup.yml"
@@ -14,6 +15,7 @@ on:
     branches: [main]
     paths:
       - "scripts/self-hosted-backup.sh"
+      - "tests/test_self_hosted_backup_guards.py"
       - "scripts/self-hosted-restore-drill.sh"
       - "scripts/instabox-production-backup.sh"
       - ".github/workflows/instabox-production-backup.yml"
