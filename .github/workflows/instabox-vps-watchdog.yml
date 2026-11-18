@@ -57,8 +57,8 @@ jobs:
             instabox-watchdog-state-
       - name: Run external Instabox watchdog
         env:
-          INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY }}
-          WATCHDOG_AUTO_RECOVERY_ENABLED: "true"
+          INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY || secrets.INSTABOX_API_KEY }}
+          WATCHDOG_AUTO_RECOVERY_ENABLED: ${{ vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'true' }}
           INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
           INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
           TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://api.testagram.site/healthz' }}
@@ -77,7 +77,7 @@ jobs:
             *) echo "::error::WATCHDOG_AUTO_RECOVERY_ENABLED must be true or false."; exit 1 ;;
           esac
           if [[ -z "${INSTABOX_WATCHDOG_API_KEY:-}" ]]; then
-            echo "::error::The existing INSTABOX_WATCHDOG_API_KEY GitHub secret is required."
+            echo "::error::Set the existing INSTABOX_WATCHDOG_API_KEY or INSTABOX_API_KEY GitHub secret; do not paste credentials into logs."
             exit 1
           fi
           export INSTABOX_WATCHDOG_API_KEY_HEADER=Authorization
@@ -101,9 +101,9 @@ jobs:
             echo "- Machine: configured through repository variable"
             echo "- Schedule: every five minutes"
             echo "- Recovery: start stopped VPS and resume suspended VPS; running VPS never receives a restart trigger"
-            echo "- Suspended VPS: force-resume with existing watchdog credential, then verify public API liveness"
-            echo "- Decision rule: provider running = read-only/no restart; stopped or suspended = initiate recovery"
-            echo "- Only stopped/suspended provider states initiate lifecycle actions; application health failures alone never restart a running VPS"
+            echo "- Suspended VPS: request provider resume, verify provider state, then probe public API liveness"
+            echo "- Decision rule: provider running = liveness probes only/no restart; stopped or suspended = initiate recovery"
+            echo "- Only stopped/suspended provider states initiate lifecycle actions; three failed app probes are reported but never restart a running VPS"
             echo
             echo "See the run log for provider state and any recovery verification details."
           } >> "$GITHUB_STEP_SUMMARY"

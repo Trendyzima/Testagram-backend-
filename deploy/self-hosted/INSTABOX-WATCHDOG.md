@@ -1,6 +1,6 @@
 # Instabox VPS watchdog
 
-The watchdog runs from GitHub Actions, outside the Testagram VPS, every five minutes. It checks InstaBox machine state first, then public Testagram API liveness whenever the provider reports the machine running.
+The watchdog runs from GitHub Actions, outside the Testagram VPS, every five minutes. It checks InstaBox machine state first, then probes public Testagram API liveness three times whenever the provider reports the machine running. Running machines are never restarted by this watchdog, even when all three application probes fail.
 
 ## Required GitHub configuration
 
@@ -11,13 +11,13 @@ The workflow defaults to the previously confirmed machine and API endpoint, so n
 - `TESTAGRAM_HEALTH_URL`: default `https://api.testagram.site/healthz`
 - `TESTAGRAM_READINESS_URL`: default `https://api.testagram.site/readyz`
 
-Set this repository **Actions variable**:
+Optional repository **Actions variable**:
 
-- `WATCHDOG_AUTO_RECOVERY_ENABLED`: leave unset or set to `false` during setup. Scheduled runs remain in dry-run mode until you explicitly set it to `true` after installing the restricted API key and confirming the machine and endpoints.
+- `WATCHDOG_AUTO_RECOVERY_ENABLED`: defaults to `true` because automatic resume/start has already been explicitly approved for this machine. Set it to `false` to disable lifecycle recovery. Manual workflow runs still default to dry-run unless `dry_run=false` is selected.
 
 Set this repository **Actions secret**:
 
-- `INSTABOX_WATCHDOG_API_KEY`: a newly created, restricted Instabox API key scoped to the workspace containing the machine, with only `machines:read` and `machines:write`. Do not reuse the previously saved full-access key; rotate/revoke that key and replace the GitHub secret. Never put credentials in a repository variable, source file, issue, or workflow log.
+- Reuse the existing InstaBox API credential stored as either `INSTABOX_WATCHDOG_API_KEY` or `INSTABOX_API_KEY` in GitHub Actions secrets. The workflow checks the first name and falls back to the second. The credential must belong to the workspace containing `testagramdb` and have machine read plus lifecycle-write permissions. Never put credentials in a repository variable, source file, issue, or workflow log.
 
 Optional secret:
 
@@ -31,13 +31,13 @@ Optional secret:
 4. If the machine is running, probe the public API /healthz three times, 15 seconds apart. A single successful probe clears the failure streak. Three consecutive failures trigger a fresh provider-state read. Only if the same machine is still running, has no active lifecycle operation, and still has desiredState=running may the watchdog perform a controlled stop followed by start.
 5. Poll every accepted lifecycle operation to completion (five-minute bound) and verify the expected provider state. Then check public API liveness separately. A 404 is reported as an application routing/probe-contract defect and does not erase a confirmed VPS resume; 5xx/timeouts remain application recovery failures.
 6. Persist the last recovery action and health-failure evidence between scheduled runs. Enforce a 15-minute recovery cooldown. Serialize workflow runs to prevent concurrent lifecycle actions.
-7. Never delete, recreate, restore, resize, or alter machine disks or database volumes. A provider error state, deleted machine, active operation/cooldown, API authorization failure, billing restriction, or provider cooldown is surfaced for operator action rather than bypassed.
+7. Never delete, recreate, restore, resize, or alter machine disks or database volumes. A provider error state, deleted machine, active operation, API authorization failure, billing restriction, or provider cooldown is surfaced as a failed watchdog run (not a successful no-op) and retried on the next scheduled check; provider cooldowns are never bypassed.
 8. Do not run database migrations, docker compose down, volume deletion, image pruning, or data restoration as part of watchdog recovery.
 
-This deployment explicitly authorizes forced resume for the `testagramdb` machine when InstaBox reports `suspended`, including when desiredState also reports suspended. The watchdog does not recreate deleted machines or bypass provider cooldowns, active operations, authorization failures, or billing restrictions. The controlled stop/start path is reserved for a machine that the provider still reports as running but whose public API liveness has failed three times.
+This deployment explicitly authorizes forced resume for the `testagramdb` machine when InstaBox reports `suspended`, including when desiredState also reports suspended. The watchdog does not recreate deleted machines or bypass provider cooldowns, active operations, authorization failures, or billing restrictions. Application liveness failures never trigger a stop/start while the provider reports the machine running.
 
 ## Validation and activation
 
-The workflow is activated by merging this change to the default branch. GitHub scheduled workflows have a five-minute minimum interval and may start later under platform load. Run it manually once after setting the required secret; manual runs default to **dry-run mode**. Scheduled runs also remain in dry-run mode until `WATCHDOG_AUTO_RECOVERY_ENABLED=true`. Only enable automatic recovery after replacing the old full-access key with the restricted key and confirming the exact machine and healthy endpoints.
+The workflow is activated by merging this change to the default branch. GitHub scheduled workflows have a five-minute minimum interval and may start later under platform load. Run it manually once after setting the required secret; manual runs default to **dry-run mode**. Scheduled runs use automatic recovery by default; set `WATCHDOG_AUTO_RECOVERY_ENABLED=false` to disable it. Only enable automatic recovery after replacing the old full-access key with the restricted key and confirming the exact machine and healthy endpoints.
 
 Official API reference: https://instabox.sh/docs/api.md
