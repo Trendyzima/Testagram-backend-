@@ -280,7 +280,11 @@ fi
 ensure_random_secret CDN_ORIGIN_AUTH_TOKEN
 ensure_random_secret CDN_MEDIA_ASSERTION_SECRET
 ensure_random_secret CDN_PURGE_TOKEN
-ensure_random_secret MINIO_METADATA_ACCESS_KEY
+MINIO_METADATA_ACCESS_KEY="$(read_env_value MINIO_METADATA_ACCESS_KEY)"
+if [[ ! "$MINIO_METADATA_ACCESS_KEY" =~ ^[A-Za-z0-9_-]{3,20}$ ]]; then
+  MINIO_METADATA_ACCESS_KEY=testagram-metadata
+  write_env_value MINIO_METADATA_ACCESS_KEY "$MINIO_METADATA_ACCESS_KEY"
+fi
 ensure_random_secret MINIO_METADATA_SECRET_KEY
 MINIO_METADATA_BUCKET="$(read_env_value MINIO_METADATA_BUCKET)"
 if [[ -z "$MINIO_METADATA_BUCKET" ]]; then
