@@ -1115,7 +1115,7 @@ func main() {
 		}
 	}
 	identityEvidenceToken := env("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN", "")
-	var identityEvidenceMedia *datacentreclient.Client
+	var identityEvidenceMedia identityEvidenceMediaClient
 	if identityEvidenceToken != "" {
 		if dataCentreToken != "" && subtle.ConstantTimeCompare([]byte(identityEvidenceToken), []byte(dataCentreToken)) == 1 {
 			log.Fatal("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN must be distinct from FRESH_DATA_CENTRE_INTERNAL_TOKEN")
