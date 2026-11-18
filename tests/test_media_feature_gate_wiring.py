@@ -35,7 +35,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         match = re.search(r"normalize_boolean\(\) \{.*?\n\}", self.deployer, re.S)
         self.assertIsNotNone(match)
         helper = match.group(0)
-        accepted = helper + "\n".join([
+        accepted = helper + "\n" + "\n".join([
             "FRESH_MEDIA_ENABLED=$' \\ttrue \\r\\n'",
             "normalize_boolean FRESH_MEDIA_ENABLED false",
             "printf '%s\\n' \"$FRESH_MEDIA_ENABLED\"",
@@ -44,7 +44,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "true")
 
-        rejected = helper + "\n".join([
+        rejected = helper + "\n" + "\n".join([
             "FRESH_MEDIA_ENABLED=tru",
             "normalize_boolean FRESH_MEDIA_ENABLED false",
         ]) + "\n"
