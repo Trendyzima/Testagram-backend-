@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS testagram_mail.outbox (
   payload_ciphertext BYTEA NOT NULL,
   payload_nonce BYTEA NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','sending','sent','dead')),
+    CHECK (status IN ('pending','sending','sent','dead','uncertain')),
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   lease_until TIMESTAMPTZ,
@@ -18,6 +18,14 @@ CREATE TABLE IF NOT EXISTS testagram_mail.outbox (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK ((status='sending' AND lease_until IS NOT NULL) OR status<>'sending')
 );
+
+-- Older installations may already have the original four-state constraint.
+-- Replace it idempotently so ambiguous provider outcomes can be quarantined.
+ALTER TABLE testagram_mail.outbox
+  DROP CONSTRAINT IF EXISTS outbox_status_check;
+ALTER TABLE testagram_mail.outbox
+  ADD CONSTRAINT outbox_status_check
+  CHECK (status IN ('pending','sending','sent','dead','uncertain'));
 
 CREATE INDEX IF NOT EXISTS testagram_mail_outbox_ready_idx
   ON testagram_mail.outbox(status,available_at,id)
