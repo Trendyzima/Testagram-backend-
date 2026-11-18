@@ -40,6 +40,8 @@ export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-${HOME}/.cache/restic-testagram}"
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 compose_dir="$(cd -- "$script_dir/../deploy/self-hosted" && pwd)"
+repo_root="$(cd -- "$compose_dir/../.." && pwd)"
+media_backup_helper="$repo_root/scripts/self_hosted_media_backup.py"
 cd "$compose_dir"
 
 case "${1:-}" in
@@ -59,9 +61,18 @@ if ! docker info >/dev/null 2>&1; then
   DOCKER=(sudo -n docker)
 fi
 
-# Do not claim a complete backup if writes have moved to an external provider.
-# This helper captures local PostgreSQL + MinIO and detected Data Centre video
-# and node files; active B2/R2 media stores need separate restore-tested backups.
+stage=""
+provider_inventory_dir=""
+cleanup() {
+  [[ -z "$stage" || ! -d "$stage" ]] || rm -rf -- "$stage"
+  [[ -z "$provider_inventory_dir" || ! -d "$provider_inventory_dir" ]] || rm -rf -- "$provider_inventory_dir"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Include active Data Centre B2/R2 object stores in the same encrypted snapshot.
+# Backend's separate legacy MEDIA_REPLICATION_ENABLED path remains fail-closed.
 read_env_flag() {
   local key="$1"
   # shellcheck disable=SC2016
@@ -79,12 +90,13 @@ read_env_value() {
     gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
   } END { print value }' .env
 }
-for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENABLED; do
-  value="$(read_env_flag "$flag")"
-  if [[ "$value" == "true" || "$value" == "1" ]]; then
-    die "$flag is enabled; extend the backup to active external object-store buckets before relying on it"
-  fi
-done
+container_env() {
+  local container="$1" key="$2"
+  "${DOCKER[@]}" inspect "$container" | jq -er --arg prefix "$key=" '[.[0].Config.Env[]? | select(startswith($prefix))] | last | ltrimstr($prefix)' 2>/dev/null
+}
+if [[ "$(read_env_flag MEDIA_REPLICATION_ENABLED)" == "true" || "$(read_env_flag MEDIA_REPLICATION_ENABLED)" == "1" ]]; then
+  die "Backend MEDIA_REPLICATION_ENABLED is active; its legacy provider buckets are not included in this Data Centre media snapshot"
+fi
 
 # The production deployment intentionally sets MINIO_PUBLIC_ENDPOINT to the
 # bundled Compose service address. Allow that exact internal origin; reject any
@@ -105,47 +117,107 @@ if ! validate_local_minio_endpoint "$(read_env_value MINIO_PUBLIC_ENDPOINT)"; th
   die "MINIO_PUBLIC_ENDPOINT overrides the bundled http://object-storage:9000 origin; verify and back up that effective S3 origin before relying on this local-MinIO backup"
 fi
 
-for data_centre_var in DATA_CENTRE_MEDIA_API_URL FRESH_DATA_CENTRE_INTERNAL_TOKEN MEDIA_DATABASE_URL; do
-  if [[ -n "$(read_env_flag "$data_centre_var")" ]]; then
-    die "$data_centre_var is configured; back up and restore-test the separate Data Centre media store before relying on this backup"
-  fi
-done
-
-federation_database_url="$(read_env_value FEDERATION_DATABASE_URL)"
-federation_api_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=federation-api --format '{{.ID}}')"
-if [[ -n "$federation_api_ids" ]]; then
-  [[ "$(wc -l <<< "$federation_api_ids" | tr -d ' ')" == "1" ]] || die "multiple Data Centre federation-api containers found; verify their database targets"
-  federation_api_id="$(head -n 1 <<< "$federation_api_ids")"
-  federation_database_url="$("${DOCKER[@]}" inspect "$federation_api_id" | jq -er '[.[0].Config.Env[]? | select(startswith("FEDERATION_DATABASE_URL="))] | last | ltrimstr("FEDERATION_DATABASE_URL=")' 2>/dev/null || true)"
-  [[ -n "$federation_database_url" ]] || die "Data Centre federation-api has no readable FEDERATION_DATABASE_URL; refusing to omit its database"
-fi
-federation_database_name=""
-if [[ -n "$federation_database_url" ]]; then
-  federation_database_name="$(FEDERATION_DATABASE_URL_CHECK="$federation_database_url" python3 - <<'PY'
-import os
+parse_postgres_identity() {
+  python3 - "$1" <<'PY'
 import re
 import sys
 from urllib.parse import unquote, urlparse
-
 try:
-    parsed = urlparse(os.environ["FEDERATION_DATABASE_URL_CHECK"])
+    parsed = urlparse(sys.argv[1])
     host = (parsed.hostname or "").lower()
     port = parsed.port or 5432
 except ValueError:
     sys.exit(1)
-
+user = unquote(parsed.username or "")
 database = unquote(parsed.path.lstrip("/"))
-if parsed.scheme not in {"postgres", "postgresql"} or host not in {"postgres", "federation-db"} or port != 5432 or not re.fullmatch(r"[A-Za-z0-9_]+", database):
+if parsed.scheme not in {"postgres", "postgresql"} or host not in {"postgres", "federation-db"} or port != 5432 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", user) or not re.fullmatch(r"[A-Za-z0-9_]{1,63}", database):
     sys.exit(1)
-print(database)
+print(user + "|" + database)
 PY
-  )" || die "Federation database is not on the backed-up PostgreSQL service; add its own encrypted backup and restore-tested path"
+}
+
+federation_database_url="$(read_env_value FEDERATION_DATABASE_URL)"
+federation_api_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=federation-api --format '{{.ID}}')"
+federation_database_name=""
+federation_database_user=""
+if [[ -n "$federation_api_ids" ]]; then
+  [[ "$(wc -l <<< "$federation_api_ids" | tr -d ' ')" == "1" ]] || die "multiple Data Centre federation-api containers found"
+  federation_api_id="$(head -n 1 <<< "$federation_api_ids")"
+  [[ "$("${DOCKER[@]}" inspect "$federation_api_id" | jq -er '.[0].State.Running')" == "true" ]] || die "Data Centre federation-api is not running"
+  federation_database_url="$(container_env "$federation_api_id" FEDERATION_DATABASE_URL)" || die "Data Centre federation-api has no readable FEDERATION_DATABASE_URL"
+fi
+if [[ -n "$federation_database_url" ]]; then
+  federation_identity="$(parse_postgres_identity "$federation_database_url")" || die "Federation database is not on the backed-up PostgreSQL service"
+  IFS='|' read -r federation_database_user federation_database_name <<< "$federation_identity"
 fi
 
 data_centre_media_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=media --format '{{.ID}}')"
-[[ -z "$data_centre_media_ids" ]] || die "the Data Centre B2/R2 media service exists; its media database and external object buckets need a separate encrypted backup"
-data_centre_media_migrate_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.project=testagram-data-centre --filter label=com.docker.compose.service=media-migrate --format '{{.ID}}')"
-[[ -z "$data_centre_media_migrate_ids" ]] || die "the Data Centre media-migrate service exists; verify whether its separate media database contains data and add a tested backup path"
+media_database_url=""
+media_database_name=""
+media_database_user=""
+media_b2_endpoint=""; media_b2_region=""; media_b2_bucket=""; media_b2_access=""; media_b2_secret=""
+media_r2_endpoint=""; media_r2_region=""; media_r2_bucket=""; media_r2_access=""; media_r2_secret=""; media_r2_metadata_bucket=""
+media_vps_metadata_bucket=""
+media_external_enabled=false
+if [[ -n "$data_centre_media_ids" ]]; then
+  [[ "$(wc -l <<< "$data_centre_media_ids" | tr -d ' ')" == "1" ]] || die "multiple Data Centre media containers found"
+  media_container_id="$(head -n 1 <<< "$data_centre_media_ids")"
+  [[ "$("${DOCKER[@]}" inspect "$media_container_id" | jq -er '.[0].State.Running')" == "true" ]] || die "Data Centre media container is not running"
+  [[ "$(read_env_flag FRESH_MEDIA_ENABLED)" == "true" || "$(read_env_flag FRESH_MEDIA_ENABLED)" == "1" ]] || die "Data Centre media is running while FRESH_MEDIA_ENABLED is not true"
+  [[ "$(read_env_value DATA_CENTRE_MEDIA_API_URL)" == "http://media:8096" ]] || die "Backend is not configured for the active private Data Centre media service"
+  media_database_url="$(container_env "$media_container_id" MEDIA_DATABASE_URL)" || die "Data Centre media container has no readable MEDIA_DATABASE_URL"
+  media_b2_endpoint="$(container_env "$media_container_id" B2_S3_ENDPOINT)" || true
+  media_b2_region="$(container_env "$media_container_id" B2_S3_REGION)" || true
+  media_b2_bucket="$(container_env "$media_container_id" B2_S3_BUCKET)" || true
+  media_b2_access="$(container_env "$media_container_id" B2_S3_ACCESS_KEY_ID)" || true
+  media_b2_secret="$(container_env "$media_container_id" B2_S3_SECRET_ACCESS_KEY)" || true
+  media_r2_endpoint="$(container_env "$media_container_id" CLOUDFLARE_R2_ENDPOINT)" || true
+  media_r2_region="$(container_env "$media_container_id" CLOUDFLARE_R2_REGION)" || true
+  media_r2_bucket="$(container_env "$media_container_id" CLOUDFLARE_R2_BUCKET)" || true
+  media_r2_access="$(container_env "$media_container_id" CLOUDFLARE_R2_ACCESS_KEY_ID)" || true
+  media_r2_secret="$(container_env "$media_container_id" CLOUDFLARE_R2_SECRET_ACCESS_KEY)" || true
+  media_r2_metadata_bucket="$(container_env "$media_container_id" CLOUDFLARE_R2_METADATA_BUCKET)" || true
+  media_vps_metadata_bucket="$(container_env "$media_container_id" VPS_MINIO_METADATA_BUCKET)" || true
+  for value in "$media_b2_endpoint" "$media_b2_region" "$media_b2_bucket" "$media_b2_access" "$media_b2_secret" "$media_r2_endpoint" "$media_r2_region" "$media_r2_bucket" "$media_r2_access" "$media_r2_secret" "$media_r2_metadata_bucket" "$media_vps_metadata_bucket"; do
+    [[ -n "$value" ]] || die "Data Centre media provider configuration is incomplete"
+  done
+  media_identity="$(parse_postgres_identity "$media_database_url")" || die "Data Centre media database is not on the backed-up PostgreSQL service"
+  IFS='|' read -r media_database_user media_database_name <<< "$media_identity"
+  local_metadata_bucket="$(read_env_value MINIO_METADATA_BUCKET)"
+  [[ -n "$local_metadata_bucket" ]] || local_metadata_bucket="testagram-media-metadata"
+  [[ "$media_vps_metadata_bucket" == "$local_metadata_bucket" ]] || die "Data Centre metadata primary bucket is not included in the local MinIO backup"
+  media_external_enabled=true
+elif [[ "$(read_env_flag FRESH_MEDIA_ENABLED)" == "true" || "$(read_env_flag FRESH_MEDIA_ENABLED)" == "1" || -n "$(read_env_value DATA_CENTRE_MEDIA_API_URL)" ]]; then
+  die "Data Centre media is configured but its runtime container is missing"
+fi
+
+if [[ "$media_external_enabled" == "true" ]]; then
+  backup_identity="$(python3 - "$RESTIC_REPOSITORY" <<'PY'
+import sys
+from urllib.parse import urlparse
+value = sys.argv[1]
+if not value.startswith("s3:"):
+    sys.exit(1)
+parsed = urlparse(value[3:])
+parts = [part for part in parsed.path.split("/") if part]
+if parsed.scheme != "https" or not parsed.hostname or not parts:
+    sys.exit(1)
+print(parsed.hostname.lower() + "|" + parts[0])
+PY
+  )" || die "Restic destination must be an HTTPS S3 repository"
+  IFS='|' read -r backup_host backup_bucket <<< "$backup_identity"
+  for source in "$media_b2_endpoint|$media_b2_bucket" "$media_r2_endpoint|$media_r2_bucket" "$media_r2_endpoint|$media_r2_metadata_bucket"; do
+    source_host="$(python3 - "${source%%|*}" <<'PY'
+import sys
+from urllib.parse import urlparse
+print((urlparse(sys.argv[1]).hostname or "").lower())
+PY
+    )"
+    source_bucket="${source#*|}"
+    [[ "$backup_host" != "$source_host" || "$backup_bucket" != "$source_bucket" ]] || die "Restic backup destination must be a separate bucket from active B2/R2 media storage"
+  done
+fi
+
 
 federation_db_ids="$("${DOCKER[@]}" ps -a --filter label=com.docker.compose.service=federation-db --format '{{.ID}}')"
 [[ -z "$federation_db_ids" ]] || die "a separate federation-db container exists; back it up and restore-test it before relying on this backup"
