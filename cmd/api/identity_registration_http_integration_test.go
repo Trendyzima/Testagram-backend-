@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,7 +32,7 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "terms-ci-v1")
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "privacy-ci-v1")
 
-	svc := &service{db: db, virtualStorage: &virtualstorage.Manager{}, mediaReplicator: &virtualstorage.Replicator{}}
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{}}
 	router := svc.routes()
 	idempotencyKey, err := authRandomToken()
 	if err != nil {
