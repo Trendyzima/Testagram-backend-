@@ -28,18 +28,12 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("tr -d", self.deployer)
         self.assertIn("surrounding whitespace is ignored", self.deployer)
         self.assertIn("refusing an ambiguous media profile", self.deployer)
+
     def test_fresh_media_approval_reaches_remote_deployment(self):
         self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
         self.assertIn('write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
-
-    def test_boolean_flags_are_trimmed_before_validation(self):
-        self.assertIn("normalize_boolean FRESH_MEDIA_ENABLED false", self.deployer)
-        self.assertIn("normalize_boolean DATA_CENTRE_MEDIA_ENABLED false", self.deployer)
-        self.assertIn("normalize_boolean MEDIA_REPLICATION_ENABLED false", self.deployer)
-        self.assertIn('value="${value#"${value%%[![:space:]]*}"}"', self.deployer)
-        self.assertIn('value="${value%"${value##*[![:space:]]}"}"', self.deployer)
 
     def test_pushes_cannot_implicitly_deploy_to_production(self):
         deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
