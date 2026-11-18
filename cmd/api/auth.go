@@ -279,25 +279,34 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Unable to create verification token", requestID(r)))
 			return true
 		}
+		tx, txErr := s.db.Begin(ctx)
+		if txErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
+			return true
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
 		var userID string
-		err = s.db.QueryRow(ctx, `
+		txErr = tx.QueryRow(ctx, `
 			INSERT INTO testagram_auth.identities(email,username,password_hash,verification_token_hash,verification_expires_at)
 			VALUES($1,$2,$3,$4,now()+interval '24 hours')
 			ON CONFLICT DO NOTHING RETURNING user_id::text
 		`, email, in.Username, passwordHash, authTokenHash(token)).Scan(&userID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(txErr, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the address is eligible, a verification email will be sent."})
 			return true
 		}
-		if err != nil {
+		if txErr != nil {
 			writeJSON(w, http.StatusConflict, errorBody("SIGNUP_FAILED", "Account could not be created", requestID(r)))
 			return true
 		}
 		base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 		link := base + "/verify-email?token=" + url.QueryEscape(token)
-		if err := s.sendAuthEmail(ctx, email, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>"); err != nil {
-			// Keep the token persisted for retry by a future delivery worker; never log it.
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Account created but verification email could not be delivered. Configure email delivery and request another verification.", requestID(r)))
+		if err := enqueueAuthEmailWith(ctx, tx, email, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>"); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Unable to queue verification email. Please try again.", requestID(r)))
+			return true
+		}
+		if err := tx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
 			return true
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "Check your email to verify your Testagram account."})
@@ -310,15 +319,22 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				token, tokenErr := authRandomToken()
 				if tokenErr == nil {
 					var savedEmail string
-					updateErr := s.db.QueryRow(ctx, `
-						UPDATE testagram_auth.identities
-						SET verification_token_hash=$2,verification_expires_at=now()+interval '24 hours',updated_at=now()
-						WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
-					`, email, authTokenHash(token)).Scan(&savedEmail)
-					if updateErr == nil {
-						base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
-						link := base + "/verify-email?token=" + url.QueryEscape(token)
-						_ = s.sendAuthEmail(ctx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
+					tx, txErr := s.db.Begin(ctx)
+					if txErr == nil {
+						defer func() { _ = tx.Rollback(context.Background()) }()
+						updateErr := tx.QueryRow(ctx, `
+							UPDATE testagram_auth.identities
+							SET verification_token_hash=$2,verification_expires_at=now()+interval '24 hours',updated_at=now()
+							WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
+						`, email, authTokenHash(token)).Scan(&savedEmail)
+						if updateErr == nil {
+							base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+							link := base + "/verify-email?token=" + url.QueryEscape(token)
+							updateErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
+						}
+						if updateErr == nil {
+							_ = tx.Commit(ctx)
+						}
 					}
 				}
 			}
@@ -510,17 +526,13 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				`, email, authTokenHash(token), authFingerprint(ip)).Scan(&savedEmail)
 				txErr = err
 			}
+			if txErr == nil && savedEmail != "" {
+				base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+				link := base + "/reset-password?token=" + url.QueryEscape(token)
+				txErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>")
+			}
 			if txErr == nil {
 				txErr = tx.Commit(ctx)
-			}
-		}
-		if txErr == nil && savedEmail != "" {
-			base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
-			link := base + "/reset-password?token=" + url.QueryEscape(token)
-			if sendErr := s.sendAuthEmail(ctx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>"); sendErr != nil {
-				// Keep the response indistinguishable from an unknown account, but
-				// leave a request-correlated operational signal for delivery repair.
-				log.Printf("password recovery email delivery failed request_id=%s: %v", requestID(r), sendErr)
 			}
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the account exists, password recovery instructions will be sent."})
