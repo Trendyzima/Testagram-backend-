@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 )
 
 func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
