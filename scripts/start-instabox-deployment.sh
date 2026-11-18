@@ -434,12 +434,13 @@ FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
 FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
 FEDERATION_DATABASE_NAME=testagram_federation
 FEDERATION_DATABASE_URL=$FEDERATION_DATABASE_URL
+FEDERATION_INBOX_ACCEPT_ENABLED=true
 FEDERATION_PUBLIC_BASE_URL=https://testagram.site
 FEDERATION_INSTANCE_DOMAIN=testagram.site
 FEDERATION_SERVICE_ACTOR_USERNAME=testagram
-FEDERATION_DELIVERY_WORKER_ENABLED=false
-FEDERATION_OUTBOX_POLLER_ENABLED=false
-FEDERATION_INBOX_WORKER_ENABLED=false
+FEDERATION_DELIVERY_WORKER_ENABLED=true
+FEDERATION_OUTBOX_POLLER_ENABLED=true
+FEDERATION_INBOX_WORKER_ENABLED=true
 VIDEO_SIGNING_SECRET=$(openssl rand -hex 32)
 VIDEO_ACCOUNT_QUOTA_BYTES=21474836480
 VIDEO_MIN_FREE_BYTES=2147483648
@@ -493,6 +494,11 @@ write_dc_env_value TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 write_dc_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 write_dc_env_value FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 write_dc_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+write_dc_env_value ALGORITHM_INTERNAL_TOKEN "$ALGORITHM_INTERNAL_TOKEN"
+write_dc_env_value FEDERATION_DELIVERY_WORKER_ENABLED true
+write_dc_env_value FEDERATION_OUTBOX_POLLER_ENABLED true
+write_dc_env_value FEDERATION_INBOX_WORKER_ENABLED true
+write_dc_env_value FEDERATION_INBOX_ACCEPT_ENABLED true
 # Existing Data Centre .env files must receive the reviewed immutable image pins too.
 write_dc_env_value TESTAGRAM_ALGORITHM_IMAGE "$TESTAGRAM_ALGORITHM_IMAGE"
 write_dc_env_value TESTAGRAM_FEDERATION_IMAGE "$TESTAGRAM_FEDERATION_IMAGE"
@@ -622,6 +628,30 @@ case "$overlay_status" in
     exit 1
     ;;
 esac
+
+# The Federation container's healthcheck proves PostgreSQL and the private
+# Backend dependency are ready. Then ask it over the private Backend network
+# to report the four active worker/acceptance switches.
+federation_ready=false
+for attempt in $(seq 1 24); do
+  if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" exec -T federation-api /federation-api --healthcheck; then
+    federation_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$federation_ready" != "true" ]]; then
+  echo "::error::Federation API did not become ready with its database and private Backend dependency."
+  sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" logs --tail=120 federation-api
+  exit 1
+fi
+federation_worker_status="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -qO- --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" http://federation-api:8081/internal/v1/worker-status)"
+if ! jq -e '.workers.delivery_worker == true and .workers.outbox_poller == true and .workers.inbox_worker == true and .workers.inbox_accept == true' <<<"$federation_worker_status" >/dev/null; then
+  echo "::error::Federation runtime did not report all four required worker/acceptance switches enabled."
+  jq -c '{status, workers}' <<<"$federation_worker_status" || true
+  exit 1
+fi
+echo "Verified authenticated Federation runtime status: outbound delivery, Backend outbox poller, signed inbox processor and inbound acceptance are active."
 
 verify_running_image() {
   local service="$1" expected="$2" container actual_ref actual_digests
