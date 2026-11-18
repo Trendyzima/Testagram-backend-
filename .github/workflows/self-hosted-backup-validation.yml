@@ -88,6 +88,16 @@ jobs:
               raise SystemExit("InstaBox exec checkout path does not match the deployment script")
           if 'BACKEND="$REPOS/backend"' not in Path("scripts/start-instabox-deployment.sh").read_text():
               raise SystemExit("deployment checkout path changed; update backup workflow cwd")
+          workflow = Path(".github/workflows/instabox-production-backup.yml").read_text()
+          if "R2_BACKUP_ENDPOINT" not in workflow or "R2_BACKUP_ACCESS_KEY_ID" not in workflow:
+              raise SystemExit("production backup must use the dedicated R2 backup endpoint and credentials")
+          if "B2_BACKUP_ENDPOINT" in workflow or "B2_BACKUP_ACCESS_KEY_ID" in workflow:
+              raise SystemExit("live B2 media credentials must never be selected as the Restic destination")
+          if "testagram-production-backups" not in workflow or "r2/buckets" not in workflow:
+              raise SystemExit("production backup must provision the dedicated R2 bucket using existing Cloudflare credentials")
+          if 'repository="s3:${BACKUP_ENDPOINT%/}/${BACKUP_BUCKET}/testagram-backups"' not in workflow:
+              raise SystemExit("Restic repository path must use the dedicated backup endpoint and bucket")
+          print("Dedicated R2 backup destination guards passed.")
           print("Restic initialization and deployed checkout path guards passed.")
           PY
       - name: Install ShellCheck
