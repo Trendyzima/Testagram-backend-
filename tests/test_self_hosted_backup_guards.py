@@ -44,6 +44,16 @@ class SelfHostedBackupGuardTests(unittest.TestCase):
             with self.subTest(endpoint=endpoint):
                 self.assertNotEqual(self.check(endpoint).returncode, 0)
 
+    def test_backup_documentation_matches_r2_only_workflow_contract(self):
+        workflow = (
+            ROOT / ".github/workflows/instabox-production-backup.yml"
+        ).read_text()
+        docs = (ROOT / "deploy/self-hosted/BACKUP-RESTORE.md").read_text()
+        self.assertIn("Cloudflare R2 only", docs)
+        self.assertIn("https://*.r2.cloudflarestorage.com", workflow)
+        self.assertNotIn("falls back to the existing repository secrets", docs)
+        self.assertNotIn("TESTAGRAM_BACKUP_S3_REGION", docs)
+
     def test_backup_still_fails_closed_for_external_storage_and_replication(self):
         self.assertIn(
             "for flag in DATA_CENTRE_MEDIA_ENABLED MEDIA_REPLICATION_ENABLED FRESH_MEDIA_ENABLED",
