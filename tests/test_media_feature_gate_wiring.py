@@ -44,6 +44,11 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video DATABASE_URL "$shared_database_url"', self.deployer)
         self.assertIn('verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification DATABASE_URL "$shared_database_url"', self.deployer)
 
+    def test_missing_identity_token_keeps_the_client_interface_nil(self):
+        main = (ROOT / "cmd/api/main.go").read_text()
+        self.assertIn("var identityEvidenceMedia identityEvidenceMediaClient", main)
+        self.assertNotIn("var identityEvidenceMedia *datacentreclient.Client", main)
+
     def test_identity_evidence_token_is_passed_to_the_private_backend_service(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         self.assertIn("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}", compose)
