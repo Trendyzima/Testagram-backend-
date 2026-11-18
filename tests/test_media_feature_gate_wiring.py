@@ -23,6 +23,23 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(f"vars.{key} || 'false'", self.workflow)
 
+    def test_production_b2_endpoint_and_region_match_live_smoke_secret_sources(self):
+        for key in ("B2_S3_ENDPOINT", "B2_S3_REGION"):
+            with self.subTest(key=key):
+                self.assertIn(f"{key}: ${{{{ secrets.{key} }}}}", self.workflow)
+                self.assertNotIn(f"{key}: ${{{{ vars.{key} }}}}", self.workflow)
+
+        identity_smoke = (
+            ROOT / ".github/workflows/identity-evidence-staging-smoke.yml"
+        ).read_text()
+        media_smoke = (
+            ROOT / ".github/workflows/media-provider-smoke.yml"
+        ).read_text()
+        self.assertIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", identity_smoke)
+        self.assertIn("IDENTITY_SMOKE_B2_REGION: ${{ secrets.B2_S3_REGION }}", identity_smoke)
+        self.assertIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
+        self.assertIn("B2_REGION: ${{ secrets.B2_S3_REGION }}", media_smoke)
+
     def test_deployer_normalizes_boolean_flags_before_fail_closed_validation(self):
         self.assertIn("normalize_boolean FRESH_MEDIA_ENABLED false", self.deployer)
         self.assertIn("normalize_boolean DATA_CENTRE_MEDIA_ENABLED false", self.deployer)
