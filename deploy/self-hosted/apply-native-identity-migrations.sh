@@ -61,30 +61,24 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
+        AND (
+          SELECT count(*) = 10
+          FROM information_schema.columns
           WHERE table_schema='\''testagram_mail'\''
             AND table_name='\''outbox'\''
-            AND column_name='\''payload_ciphertext'\''
+            AND column_name IN (
+              '\''payload_ciphertext'\'', '\''payload_nonce'\'', '\''status'\'',
+              '\''attempts'\'', '\''available_at'\'', '\''lease_until'\'',
+              '\''sent_at'\'', '\''provider_message_id'\'', '\''last_error_code'\'',
+              '\''updated_at'\''
+            )
         )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_mail'\''
-            AND table_name='\''outbox'\''
-            AND column_name='\''payload_nonce'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_mail'\''
-            AND table_name='\''outbox'\''
-            AND column_name='\''provider_message_id'\''
-        )
-        AND has_schema_privilege('\''testagram_app'\'', '\''testagram_mail'\'', '\''USAGE'\'')
-        AND has_table_privilege('\''testagram_app'\'', '\''testagram_mail.outbox'\'', '\''SELECT'\'')
-        AND has_table_privilege('\''testagram_app'\'', '\''testagram_mail.outbox'\'', '\''INSERT'\'')
-        AND has_table_privilege('\''testagram_app'\'', '\''testagram_mail.outbox'\'', '\''UPDATE'\'')
-        AND has_sequence_privilege('\''testagram_app'\'', '\''testagram_mail.outbox_id_seq'\'', '\''USAGE'\'')
-        AND has_sequence_privilege('\''testagram_app'\'', '\''testagram_mail.outbox_id_seq'\'', '\''SELECT'\'')
+        AND COALESCE((SELECT has_schema_privilege(oid,'\''testagram_mail'\'','\''USAGE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''INSERT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''UPDATE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_sequence_privilege(oid,'\''testagram_mail.outbox_id_seq'\'','\''USAGE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_sequence_privilege(oid,'\''testagram_mail.outbox_id_seq'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_identity'\''
