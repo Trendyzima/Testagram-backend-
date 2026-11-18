@@ -278,7 +278,7 @@ if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; th
 fi
 FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
 write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
-TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-cdn@sha256:39fe7cf0a27bbf9d09a0f0a311202030359d6e95ca414269af712f7281c8ae41"
+TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:d0b1fa4c1cbd579c8674ba520566d39ca3b7be90132939d880753c17fe80b425"
 write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
 if [[ -z "$(read_env_value TESTAGRAM_WEB_IMAGE)" ]]; then
   write_env_value TESTAGRAM_WEB_IMAGE "ghcr.io/trendyzima/testagram-web:main"
@@ -407,8 +407,10 @@ echo "Preparing the Data Centre overlay and shared PostgreSQL migrations..."
 DC_ENV="$DATACENTRE/backend/.env"
 mkdir -p "$DATACENTRE/backend"
 FEDERATION_DATABASE_URL="postgresql://testagram:$POSTGRES_PASSWORD@federation-db:5432/testagram_federation?sslmode=disable"
-TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed:sha-6ae0532c171383b84731063d590d775524f9da1e"
-TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation:sha-edf4f59f843514596d35273c888ff1c16ec0f73e"
+# Pin the exact immutable GHCR manifest digests produced by the latest
+# successful main-branch image workflows in their owning repositories.
+TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed@sha256:d02513cdf2baf90ea2db3c45107e7026ccf6c2e32ac98cb96dccb314c1525c6c"
+TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation@sha256:a84cbc8d6e82048a5d20e21dadd1ec6a429ce9284420f02cb92c43dfa218a8b6"
 if [[ ! -f "$DC_ENV" ]]; then
   cat > "$DC_ENV" <<EOF
 DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
@@ -568,24 +570,33 @@ case "$overlay_status" in
 esac
 
 verify_running_image() {
-  local service="$1" expected="$2" container actual
+  local service="$1" expected="$2" container actual_ref actual_digests
   container="$(sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q "$service")"
   if [[ -z "$container" ]]; then
     echo "::error::Data Centre service $service has no running container"
     return 1
   fi
-  actual="$(sudo docker inspect --format '{{.Config.Image}}' "$container")"
-  if [[ "$actual" != "$expected" ]]; then
-    echo "::error::Data Centre service $service runs $actual, expected $expected"
+  actual_ref="$(sudo docker inspect --format '{{.Config.Image}}' "$container")"
+  actual_digests="$(sudo docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$container")"
+  if [[ "$actual_ref" != "$expected" ]] || ! grep -Fqx -- "$expected" <<<"$actual_digests"; then
+    echo "::error::Data Centre service $service does not run the exact approved image digest."
+    echo "Configured reference: $actual_ref"
+    echo "Expected digest reference: $expected"
     return 1
   fi
-  echo "Verified $service image: $actual"
+  echo "Verified $service immutable image digest: ${expected##*@}"
 }
 cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q media-cache)"
 if [[ -z "$cdn_container" ]]; then echo "::error::Go CDN container is not running"; exit 1; fi
 cdn_image="$(sudo docker inspect --format '{{.Config.Image}}' "$cdn_container")"
-if [[ "$cdn_image" != "$TESTAGRAM_CDN_IMAGE" ]]; then echo "::error::Go CDN image digest mismatch"; exit 1; fi
-echo "Verified Go CDN image digest: $cdn_image"
+cdn_digests="$(sudo docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$cdn_container")"
+if [[ "$cdn_image" != "$TESTAGRAM_CDN_IMAGE" ]] || ! grep -Fqx -- "$TESTAGRAM_CDN_IMAGE" <<<"$cdn_digests"; then
+  echo "::error::Go CDN is not running the exact approved immutable image digest."
+  echo "Configured reference: $cdn_image"
+  echo "Expected digest reference: $TESTAGRAM_CDN_IMAGE"
+  exit 1
+fi
+echo "Verified Go CDN immutable image digest: ${TESTAGRAM_CDN_IMAGE##*@}"
 verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
 verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
 
