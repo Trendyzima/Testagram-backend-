@@ -166,6 +166,9 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		}
 		return "", fmt.Errorf("Cloudflare Email Sending rejected the request (HTTP %d)", resp.StatusCode)
 	}
+	if strings.TrimSpace(result.Result.MessageID) == "" {
+		return "", errors.New("Cloudflare accepted the request without a provider message ID")
+	}
 	if len(result.Result.PermanentBounces) > 0 || len(result.Result.Suppressed) > 0 {
 		return result.Result.MessageID, permanentMailError{}
 	}
