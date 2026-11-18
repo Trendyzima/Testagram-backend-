@@ -120,13 +120,26 @@ func (s *service) sendCloudflareMail(ctx context.Context, message queuedMail) (s
 	if decodeErr != nil || len(decoded) != 16 {
 		return "", errors.New("CLOUDFLARE_EMAIL_ACCOUNT_ID must be a 32-character hexadecimal account ID")
 	}
+	endpoint := "https://api.cloudflare.com/client/v4/accounts/" + accountID + "/email/sending/send"
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return sendCloudflareMailRequest(ctx, client, endpoint, apiToken, from, message)
+}
+
+func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoint, apiToken, from string, message queuedMail) (string, error) {
+	if client == nil {
+		return "", errors.New("Cloudflare Email Sending HTTP client unavailable")
+	}
 	body, err := json.Marshal(map[string]string{
 		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
 	})
 	if err != nil {
 		return "", err
 	}
-	endpoint := "https://api.cloudflare.com/client/v4/accounts/" + accountID + "/email/sending/send"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -134,12 +147,6 @@ func (s *service) sendCloudflareMail(ctx context.Context, message queuedMail) (s
 	req.Header.Set("Authorization", "Bearer "+apiToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
