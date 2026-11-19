@@ -73,7 +73,8 @@ WITH checks(check_name, ok) AS (VALUES
   ('verification events append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_identity.verification_events') AND tgname='verification_events_append_only' AND NOT tgisinternal)),
   ('verification reviews append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_identity.verification_reviews') AND tgname='verification_reviews_append_only' AND NOT tgisinternal)),
   ('legal consent audit append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_identity.legal_consent_audit') AND tgname='legal_consent_audit_append_only' AND NOT tgisinternal)),
-  ('verification event audit constraint', EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('testagram_identity.verification_events') AND conname='verification_events_event_type_check' AND pg_get_constraintdef(oid) LIKE '%evidence_access_attempted%'))
+  ('verification event audit constraint', EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('testagram_identity.verification_events') AND conname='verification_events_event_type_check' AND pg_get_constraintdef(oid) LIKE '%evidence_access_attempted%')),
+  ('Federation actor consent column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_local' AND table_name='accounts' AND column_name='federation_enabled'))
 )
 SELECT check_name FROM checks WHERE NOT COALESCE(ok,false) ORDER BY check_name;
 SQL
@@ -238,11 +239,17 @@ schema_ready() {
             AND conname='\''verification_events_event_type_check'\''
             AND pg_get_constraintdef(oid) LIKE '\''%evidence_access_attempted%'\''
         )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_local'\''
+            AND table_name='\''accounts'\''
+            AND column_name='\''federation_enabled'\''
+        )
     "'
 }
 
 if [[ "$(schema_ready)" == "t" ]]; then
-  echo "Native identity PostgreSQL schema is complete; migration preflight passed without changing data."
+  echo "Native identity and Federation actor-consent PostgreSQL schemas are complete; migration preflight passed without changing data."
   exit 0
 fi
 
@@ -287,6 +294,7 @@ echo "Verified SHA-256 and completed a full restore test: $backup"
 
 docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
 for file in \
+  029_federation_actor_consent.sql \
   034_admin_security_controls.sql \
   035_identity_registration_pipeline.sql \
   039_identity_registration_hardening.sql \
@@ -316,6 +324,7 @@ apply_migration() {
     sh -ec "psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -f '/docker-entrypoint-initdb.d/$file'"
 }
 
+apply_migration 029_federation_actor_consent.sql
 apply_migration 034_admin_security_controls.sql
 apply_migration 035_identity_registration_pipeline.sql
 apply_migration 039_identity_registration_hardening.sql
@@ -348,5 +357,5 @@ if [[ "$(schema_ready)" != "t" ]]; then
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."

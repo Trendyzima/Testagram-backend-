@@ -15,7 +15,7 @@ on:
         type: boolean
         default: false
       confirm_native_identity_migrations:
-        description: "Authorize additive native identity and transactional mail PostgreSQL migrations only if the live schema preflight finds them incomplete"
+        description: "Authorize additive native identity, transactional mail and Federation actor-consent PostgreSQL migrations only if the live schema preflight finds them incomplete"
         required: true
         type: boolean
         default: false

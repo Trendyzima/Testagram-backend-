@@ -58,9 +58,12 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
   sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/024_federation_remote_follows.sql'
 
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
+  sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/029_federation_actor_consent.sql'
+
 result="$(docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-  sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT to_regclass('\''testagram_local.federation_outbox'\'') IS NOT NULL AND to_regclass('\''testagram_local.remote_follows'\'') IS NOT NULL"')"
+  sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT to_regclass('\''testagram_local.federation_outbox'\'') IS NOT NULL AND to_regclass('\''testagram_local.remote_follows'\'') IS NOT NULL AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_local'\'' AND table_name='\''accounts'\'' AND column_name='\''federation_enabled'\'')"')"
 [[ "$result" == "t" ]] || { echo "Federation schema verification failed." >&2; exit 1; }
 
-echo "Federation outbox and Backend-owned remote-follow migrations applied and verified."
+echo "Federation actor-consent, outbox and Backend-owned remote-follow migrations applied and verified."
 echo "Retain the backup until the Backend and Federation workers pass production smoke tests."
