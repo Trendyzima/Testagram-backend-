@@ -175,10 +175,11 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
           R2_MEDIA_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET || 'testagram-media-production-r2' }}
           R2_METADATA_BUCKET: ${{ vars.CLOUDFLARE_R2_METADATA_BUCKET || 'testagram-media-production-metadata' }}
+          R2_IDENTITY_BUCKET: ${{ vars.CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET || 'testagram-identity-evidence-production-r2' }}
         shell: bash
         run: |
           set -euo pipefail
-          normalize_flag() { printf '%s' "$1" | tr -d '\\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+          normalize_flag() { printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
           dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
           fresh_media_enabled="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
           if [[ "$dc_media_enabled" != true || "$fresh_media_enabled" != true ]]; then
@@ -188,7 +189,8 @@ jobs:
           [[ -n "$R2_ENDPOINT" && -n "$R2_ACCESS_KEY_ID" && -n "$R2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing R2 S3 endpoint and key pair are required."; exit 1; }
           [[ "$R2_MEDIA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 media bucket name."; exit 1; }
           [[ "$R2_METADATA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 metadata bucket name."; exit 1; }
-          [[ "$R2_MEDIA_BUCKET" != "$R2_METADATA_BUCKET" && "$R2_MEDIA_BUCKET" != "testagram-production-backups" && "$R2_METADATA_BUCKET" != "testagram-production-backups" ]] || { echo "::error::R2 media, metadata and backup buckets must be distinct."; exit 1; }
+          [[ "$R2_IDENTITY_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 identity evidence bucket name."; exit 1; }
+          [[ "$R2_MEDIA_BUCKET" != "$R2_METADATA_BUCKET" && "$R2_IDENTITY_BUCKET" != "$R2_MEDIA_BUCKET" && "$R2_IDENTITY_BUCKET" != "$R2_METADATA_BUCKET" && "$R2_MEDIA_BUCKET" != "testagram-production-backups" && "$R2_METADATA_BUCKET" != "testagram-production-backups" && "$R2_IDENTITY_BUCKET" != "testagram-production-backups" ]] || { echo "::error::R2 media, metadata, identity evidence and backup buckets must be distinct."; exit 1; }
           if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
             echo "::add-mask::$CLOUDFLARE_API_TOKEN"
             status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-media-buckets.json" -w '%{http_code}' \
@@ -213,14 +215,15 @@ jobs:
                 jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
                 return 1
               }
-              if ensure_bucket "$R2_MEDIA_BUCKET" && ensure_bucket "$R2_METADATA_BUCKET"; then
+              if ensure_bucket "$R2_MEDIA_BUCKET" && ensure_bucket "$R2_METADATA_BUCKET" && ensure_bucket "$R2_IDENTITY_BUCKET"; then
                 echo "media_bucket=$R2_MEDIA_BUCKET" >> "$GITHUB_OUTPUT"
                 echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
+                echo "identity_evidence_bucket=$R2_IDENTITY_BUCKET" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
             else
               echo "Cloudflare R2 bucket listing returned HTTP $status; trying bucket creation permission before S3 fallback."
-              for bucket in "$R2_MEDIA_BUCKET" "$R2_METADATA_BUCKET"; do
+              for bucket in "$R2_MEDIA_BUCKET" "$R2_METADATA_BUCKET" "$R2_IDENTITY_BUCKET"; do
                 create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
                   -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
                   --data "$(jq -nc --arg name "$bucket" '{name:$name,locationHint:"apac"}')" \
@@ -236,15 +239,42 @@ jobs:
           fi
           docker run --rm --entrypoint /bin/sh \
             -e R2_ENDPOINT="$R2_ENDPOINT" -e R2_REGION="$R2_REGION" \
-            -e R2_MEDIA_BUCKET="$R2_MEDIA_BUCKET" -e R2_METADATA_BUCKET="$R2_METADATA_BUCKET" \
+            -e R2_MEDIA_BUCKET="$R2_MEDIA_BUCKET" -e R2_METADATA_BUCKET="$R2_METADATA_BUCKET" -e R2_IDENTITY_BUCKET="$R2_IDENTITY_BUCKET" \
             -e R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" -e R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
             ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
               mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
               mc mb --ignore-existing "r2/$R2_MEDIA_BUCKET"
               mc mb --ignore-existing "r2/$R2_METADATA_BUCKET"
+              mc mb --ignore-existing "r2/$R2_IDENTITY_BUCKET"
+              mc anonymous set none "r2/$R2_IDENTITY_BUCKET"
+              mc stat "r2/$R2_IDENTITY_BUCKET" >/dev/null
             '
           echo "media_bucket=$R2_MEDIA_BUCKET" >> "$GITHUB_OUTPUT"
           echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
+
+      - name: Provision dedicated private B2 identity-evidence bucket
+        if: ${{ vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true' }}
+        env:
+          B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
+          B2_REGION: ${{ secrets.B2_S3_REGION }}
+          B2_BUCKET: ${{ vars.B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET || 'testagram-identity-evidence-production-b2' }}
+          B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+          B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$B2_ENDPOINT" && -n "$B2_REGION" && -n "$B2_ACCESS_KEY_ID" && -n "$B2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing B2 endpoint, region and access key pair are required for the private identity-evidence bucket."; exit 1; }
+          [[ "$B2_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid B2 identity-evidence bucket name."; exit 1; }
+          [[ "$B2_BUCKET" != "${{ vars.B2_S3_PRIVATE_BUCKET || 'testagram-media-production-b2' }}" && "$B2_BUCKET" != "testagram-production-backups" ]] || { echo "::error::Identity evidence must use a dedicated bucket, separate from media and backups."; exit 1; }
+          docker run --rm --entrypoint /bin/sh \
+            -e B2_ENDPOINT="$B2_ENDPOINT" -e B2_REGION="$B2_REGION" -e B2_BUCKET="$B2_BUCKET" \
+            -e B2_ACCESS_KEY_ID="$B2_ACCESS_KEY_ID" -e B2_SECRET_ACCESS_KEY="$B2_SECRET_ACCESS_KEY" \
+            ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
+              mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS_KEY_ID" "$B2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$B2_REGION" >/dev/null
+              mc mb --ignore-existing "b2/$B2_BUCKET"
+              mc anonymous set none "b2/$B2_BUCKET"
+              mc stat "b2/$B2_BUCKET" >/dev/null
+            '
 
       - name: Start deployment on the machine
         id: remote
@@ -278,7 +308,7 @@ jobs:
           B2_S3_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}
           B2_S3_PRIVATE_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}
           B2_S3_PUBLIC_BUCKET: ${{ vars.B2_S3_PUBLIC_BUCKET }}
-          B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET: ${{ vars.B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET }}
+          B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET: ${{ vars.B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET || 'testagram-identity-evidence-production-b2' }}
           B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
           B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
           CLOUDFLARE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}
@@ -287,7 +317,7 @@ jobs:
           CLOUDFLARE_R2_PRIVATE_BUCKET: ${{ steps.r2-media-buckets.outputs.media_bucket || vars.CLOUDFLARE_R2_PRIVATE_BUCKET || 'testagram-media-production-r2' }}
           CLOUDFLARE_R2_METADATA_BUCKET: ${{ steps.r2-media-buckets.outputs.metadata_bucket || vars.CLOUDFLARE_R2_METADATA_BUCKET || 'testagram-media-production-metadata' }}
           CLOUDFLARE_R2_PUBLIC_BUCKET: ${{ vars.CLOUDFLARE_R2_PUBLIC_BUCKET }}
-          CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET: ${{ vars.CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET }}
+          CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET: ${{ steps.r2-media-buckets.outputs.identity_evidence_bucket || vars.CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET || 'testagram-identity-evidence-production-r2' }}
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
         shell: bash
