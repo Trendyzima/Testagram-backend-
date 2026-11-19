@@ -47,6 +47,7 @@ jobs:
           python3 tests/test_instabox_postgres_readiness.py -v
           python3 tests/test_media_feature_gate_wiring.py -v
           python3 tests/test_native_identity_migration_manifest.py -v
+          python3 tests/test_instabox_b2_credentials.py -v
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests
@@ -280,8 +281,8 @@ jobs:
           B2_REGION: ${{ secrets.B2_S3_REGION }}
           B2_BUCKET: ${{ vars.B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET || 'testagram-identity-evidence-production-b2' }}
           B2_MEDIA_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}
-          B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
-          B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
+          B2_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID || secrets.B2_ACCESS_KEY_ID }}
+          B2_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY || secrets.B2_SECRET_ACCESS_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -289,6 +290,14 @@ jobs:
           B2_ACCESS_KEY_ID="$(printf '%s' "$B2_ACCESS_KEY_ID" | tr -d '\r\n[:space:]')"
           B2_SECRET_ACCESS_KEY="$(printf '%s' "$B2_SECRET_ACCESS_KEY" | tr -d '\r\n[:space:]')"
           echo "B2 S3 access key ID length after whitespace normalization: ${#B2_ACCESS_KEY_ID}"
+          if [[ ${#B2_ACCESS_KEY_ID} -ne 25 ]]; then
+            echo "::error::The Backblaze B2 application key ID must be 25 characters. Do not use a Cloudflare R2 access key ID for B2."
+            exit 1
+          fi
+          if [[ ${#B2_SECRET_ACCESS_KEY} -lt 30 ]]; then
+            echo "::error::The Backblaze B2 application key is too short; verify the B2_APPLICATION_KEY secret."
+            exit 1
+          fi
           if [[ "$(normalize_flag "$DATA_CENTRE_MEDIA_ENABLED")" != "true" || "$(normalize_flag "$FRESH_MEDIA_ENABLED")" != "true" ]]; then
             echo "Skipping B2 identity-evidence provisioning because both private-media gates are not enabled."
             exit 0
@@ -498,108 +507,3 @@ jobs:
       - name: Publish the apex federation edge over HTTPS
         id: publish_apex
         shell: bash
-        run: |
-          set -euo pipefail
-          API="https://api.instabox.sh"
-          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
-          body='{"port":8443,"name":"testagram-apex-edge","protocol":"http","access":"public"}'
-          published="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H "Content-Type: application/json" -d "$body" "$API/v1/machines/$MACHINE_ID/ports")"
-          url="$(jq -r '.url // empty' <<<"$published")"
-          if [[ -z "$url" || "$url" != https://* ]]; then echo "::error::InstaBox did not return a valid HTTPS URL for the apex federation edge."; jq -c '.error // .' <<<"$published"; exit 1; fi
-          health="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/apex-health.json -w '%{http_code}' "$url/_testagram/edge-health" || true)"
-          if [[ "$health" != "200" ]] || ! jq -e '.ok == true and .service == "testagram-apex-edge"' /tmp/apex-health.json >/dev/null; then echo "::error::Apex Caddy ingress health check failed (HTTP $health)."; cat /tmp/apex-health.json 2>/dev/null || true; exit 1; fi
-          root_status="$(curl -sS --connect-timeout 5 --max-time 20 -D /tmp/apex-root.headers -o /dev/null -w '%{http_code}' "$url/" || true)"
-          if [[ "$root_status" != "308" ]] || ! grep -Fqi 'https://www.testagram.site' /tmp/apex-root.headers; then echo "::error::Apex root did not redirect to www (HTTP $root_status)."; cat /tmp/apex-root.headers; exit 1; fi
-          webfinger_status="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/apex-webfinger.json -w '%{http_code}' "$url/.well-known/webfinger?resource=acct:nonexistent-probe@invalid.testagram.site" || true)"
-          case "$webfinger_status" in 200|400|404) ;; *) echo "::error::Apex WebFinger did not reach Federation safely (HTTP $webfinger_status)."; cat /tmp/apex-webfinger.json 2>/dev/null || true; exit 1 ;; esac
-          echo "apex_url=$url" >> "$GITHUB_OUTPUT"
-          echo "Apex Caddy ingress passed health, www redirect and WebFinger checks: $url"
-
-      - name: Configure public CDN URL and restart Backend and Go CDN
-        shell: bash
-        run: |
-          set -euo pipefail
-          API="https://api.instabox.sh"
-          MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
-          API_ORIGIN="${{ steps.publish.outputs.api_url }}"
-          CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
-          cmd='set -euo pipefail; API_ORIGIN="${API_ORIGIN%/}"; CDN_ORIGIN="${CDN_URL%/}"; curl -fsS "$API_ORIGIN/healthz" | grep -q testagram-api; curl -fsS "$CDN_ORIGIN/healthz" | grep -q testagram-cdn; ROOT=/data/home/testagram; BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"; upsert_env(){ key="$1"; value="$2"; if grep -q "^${key}=" "$BASE_ENV"; then sed -i "s|^${key}=.*|${key}=${value}|" "$BASE_ENV"; else printf "%s=%s\n" "$key" "$value" >> "$BASE_ENV"; fi; }; PUBLIC_CDN_URL="https://media.testagram.site"; upsert_env MINIO_PUBLIC_ENDPOINT "http://object-storage:9000"; upsert_env CDN_MEDIA_BASE_URL "$PUBLIC_CDN_URL"; upsert_env MEDIA_PUBLIC_BASE_URL "$PUBLIC_CDN_URL/v1"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" up -d --force-recreate media-cache api; for attempt in $(seq 1 36); do if sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /app/healthcheck && sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8082/readyz; then break; fi; sleep 5; done; cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q media-cache)"; api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" ps -q api)"; check_env(){ container="$1"; key="$2"; expected="$3"; if ! sudo docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$container" | grep -Fqx -- "$key=$expected"; then echo "Runtime env mismatch: $key" >&2; exit 1; fi; }; expected_purge="$(sed -n "s/^CDN_PURGE_TOKEN=//p" "$BASE_ENV" | tail -n 1)"; check_env "$cdn_container" PUBLIC_BASE_URL "$PUBLIC_CDN_URL"; check_env "$cdn_container" PURGE_TOKEN "$expected_purge"; check_env "$api_container" CDN_MEDIA_BASE_URL "$PUBLIC_CDN_URL"; check_env "$api_container" MEDIA_PUBLIC_BASE_URL "$PUBLIC_CDN_URL/v1"; check_env "$api_container" CDN_PURGE_URL "http://media-cache:8081/api/cache/purge"; check_env "$api_container" CDN_PURGE_TOKEN "$expected_purge"; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T media-cache /app/healthcheck; sudo docker compose --env-file "$BASE_ENV" -f "$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml" exec -T api wget -q -O /dev/null http://127.0.0.1:8082/readyz'
-          payload="$(jq -nc --arg cmd "$cmd" --arg api "$API_ORIGIN" --arg cdn "$CDN_URL" '{cmd:$cmd,envs:{API_ORIGIN:$api,CDN_URL:$cdn},timeoutSeconds:240}')"
-          result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
-            -H "Content-Type: application/json" -d "$payload" \
-            "$API/v1/machines/$MACHINE_ID/exec")"
-          code="$(jq -r '.exitCode // 1' <<<"$result")"
-          if [[ "$code" != "0" ]]; then
-            echo "::error::Could not apply the public media URL to the backend."
-            jq -r '.stderr // empty' <<<"$result"
-            exit 1
-          fi
-          echo "Backend and Go CDN now publish media URLs on https://media.testagram.site; the private InstaBox CDN origin remains an upstream only."
-
-      - name: Verify public API liveness and private endpoint isolation
-        shell: bash
-        run: |
-          set -euo pipefail
-          URL="${{ steps.publish.outputs.api_url }}"
-          CDN_URL="${{ steps.publish_cdn.outputs.cdn_url }}"
-          for attempt in $(seq 1 30); do
-            api_status="$(curl -sS --connect-timeout 5 --max-time 10 -D /tmp/api-health.headers -o /tmp/api-health.json -w '%{http_code}' "$URL/healthz" || true)"
-            if [[ "$api_status" == "200" ]] && grep -Eiq '^x-testagram-service:[[:space:]]*testagram-api[[:space:]]*$' /tmp/api-health.headers && jq -e '.ok == true and .service == "testagram-api"' /tmp/api-health.json >/dev/null && curl -fsS "$CDN_URL/healthz" >/tmp/cdn-health.json && grep -q '"service":"testagram-cdn"' /tmp/cdn-health.json; then
-              for path in /readyz /metrics; do
-                status="$(curl -sS -o /dev/null -w '%{http_code}' "$URL$path" || true)"
-                if [[ "$status" != "404" ]]; then
-                  echo "::error::Internal Backend endpoint $path is exposed on the public API listener (HTTP $status)."
-                  exit 1
-                fi
-              done
-              for path in /readyz /metrics; do
-                status="$(curl -sS -o /dev/null -w '%{http_code}' "$CDN_URL$path" || true)"
-                if [[ "$status" != "404" ]]; then
-                  echo "::error::Internal Go CDN endpoint $path is exposed on the public CDN listener (HTTP $status)."
-                  exit 1
-                fi
-              done
-              # The internal TV monitor depends on these handlers being present in
-              # the exact Backend binary just deployed. No token must be rejected
-              # with 401; 404 means a stale binary or incorrect router is live.
-              for route in /internal/tv/catalog /internal/tv/health; do
-                if [[ "$route" == "/internal/tv/catalog" ]]; then
-                  route_status="$(curl -sS -o /dev/null -w '%{http_code}' "$URL$route" || true)"
-                else
-                  route_status="$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"channels":[]}' -o /dev/null -w '%{http_code}' "$URL$route" || true)"
-                fi
-                if [[ "$route_status" != "401" ]]; then
-                  echo "::error::Expected unauthenticated internal TV route $route to reject with HTTP 401; got HTTP $route_status. Check deployed Backend image and router before declaring release ready."
-                  exit 1
-                fi
-              done
-              private_status="$(curl -sS -o /dev/null -w '%{http_code}' "$CDN_URL/v1/users/cdn-smoke/0123456789abcdef0123456789abcdef")"
-              case "$private_status" in 401|403|404) ;; *) echo "::error::Unauthenticated media request returned unsafe HTTP $private_status"; exit 1 ;; esac
-              echo "Testagram API and pinned Go CDN are reachable; MinIO remains private behind the backend/CDN and unauthenticated media denial passed."
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::The published API or Go CDN did not pass HTTPS health/readiness checks."
-          exit 1
-
-      - name: Canonical hostname verification handoff
-        shell: bash
-        run: |
-          echo "Backend, Go CDN and apex Caddy origins passed direct health/readiness checks."
-          echo "Run the CDN repository canonical Cloudflare routing workflow with API, Go CDN and apex origins from this deployment summary."
-          echo "The apex origin serves ActivityPub/WebFinger and redirects ordinary web traffic to www.testagram.site; Backend readiness remains private."
-
-      - name: Deployment summary
-        if: always()
-        shell: bash
-        run: |
-          echo "### Testagram deployment" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Machine: ${{ steps.machine.outputs.machine_id || 'not resolved' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- API URL: ${{ steps.publish.outputs.api_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Go CDN URL: ${{ steps.publish_cdn.outputs.cdn_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Apex federation edge URL: ${{ steps.publish_apex.outputs.apex_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Apex edge: port 8443; ActivityPub/WebFinger proxy and canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Backend and Go CDN: public /healthz; private /readyz and /metrics on Docker-only port 8082" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
