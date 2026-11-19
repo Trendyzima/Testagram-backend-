@@ -447,7 +447,7 @@ sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" pull media-cache
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate media-cache
 cdn_ready=false
 for attempt in $(seq 1 36); do
-  if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T media-cache /app/healthcheck; then
+  if sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T media-cache /healthcheck; then
     cdn_ready=true
     break
   fi
