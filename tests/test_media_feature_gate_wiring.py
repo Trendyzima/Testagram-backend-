@@ -96,7 +96,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("Identity registration requires TESTAGRAM_PRIVACY_VERSION", self.deployer)
         self.assertIn('write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"', self.deployer)
         self.assertIn('write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"', self.deployer)
-        self.assertIn('--arg r2_metadata_bucket "$DC_R2_METADATA_BUCKET"', self.deployer)
+        self.assertIn('--arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}"', self.deployer)
         self.assertIn("CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket", self.deployer)
         self.assertIn("TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION || '2026-11-11' }}", self.workflow)
         self.assertIn("TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION || '2026-11-11' }}", self.workflow)
