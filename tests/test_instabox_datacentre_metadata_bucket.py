@@ -28,6 +28,11 @@ class TestInstaBoxDataCentreMetadataBucketInput(unittest.TestCase):
         )
         self.assertNotIn("DC_R2_METADATA_BUCKET", self.deploy)
 
+    def test_forwards_the_metadata_bucket_through_the_instabox_exec_payload(self):
+        self.assertIn('r2_metadata_bucket="${DEPLOY_R2_METADATA_BUCKET:-}"', self.deploy)
+        self.assertIn('--arg r2_metadata_bucket "$r2_metadata_bucket"', self.deploy)
+        self.assertIn("CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket", self.deploy)
+
     def test_verifies_the_exact_metadata_bucket_in_the_live_media_container(self):
         self.assertIn(
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_METADATA_BUCKET "$DEPLOY_R2_METADATA_BUCKET"',
