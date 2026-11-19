@@ -69,7 +69,7 @@ jobs:
           page=1
           while :; do
             cf_get "/zones?per_page=50&page=$page" "$tmp/zones-$page.json"
-            jq -r '.result[]? | [.id, .name] | @tsv' "$tmp/zones-$page.json" >> "$tmp/zones.tsv"
+            jq -r '.result[]? | [.id, .name, (.account.id // "")] | @tsv' "$tmp/zones-$page.json" >> "$tmp/zones.tsv"
             pages="$(jq -r '.result_info.total_pages // 1' "$tmp/zones-$page.json")"
             [[ "$page" -ge "$pages" ]] && break
             page=$((page + 1))
