@@ -593,7 +593,7 @@ jobs:
           FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
           FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
           TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9
-          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:be1d80e65506c44912ac16bccd9b57a8a31914f2ee4f2fa7ec026af65715bf68
+          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b
           CDN_ORIGIN_AUTH_TOKEN: ci-only-cdn-origin-token-not-for-production-32-chars
           CDN_MEDIA_ASSERTION_SECRET: ci-only-cdn-assertion-secret-not-for-production-32
           CDN_PURGE_TOKEN: ci-only-cdn-purge-token-not-for-production-32
@@ -638,6 +638,9 @@ jobs:
           assert "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" not in deploy, "legacy registration kill switch must be absent from workflow and deployer"
           assert '[[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" && "$FRESH_MEDIA_ENABLED" == "true" ]]' in deploy_script, "public registration must require the private Data Centre evidence profile"
           assert "Identity registration requires TESTAGRAM_TERMS_VERSION" in deploy_script and "Identity registration requires TESTAGRAM_PRIVACY_VERSION" in deploy_script, "public registration must have explicit policy versions"
+          policy_terms_expression = "$" + "{{ vars.TESTAGRAM_TERMS_VERSION || '2026-11-11' }}"
+          policy_privacy_expression = "$" + "{{ vars.TESTAGRAM_PRIVACY_VERSION || '2026-11-11' }}"
+          assert f"TESTAGRAM_TERMS_VERSION: {policy_terms_expression}" in deploy_workflow and f"TESTAGRAM_PRIVACY_VERSION: {policy_privacy_expression}" in deploy_workflow, "deployment must use the same existing policy-version defaults as the Flutter client when repository variables are absent"
           assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in compose and "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in minio_init and 'mc anonymous set none "local/$identity_bucket"' in minio_init, "identity evidence must use a dedicated private MinIO bucket"
           assert "CLOUDFLARE_R2_SECRET_ACCESS_KEY" in compose and "B2_S3_SECRET_ACCESS_KEY" in compose, "three-provider replication credentials must reach Backend only through environment mapping"
           deploy = deploy_workflow + "\n" + deploy_script
@@ -717,6 +720,7 @@ jobs:
               raise SystemExit("Deployment must explicitly pull the pinned Algorithm and Federation images")
           if '--force-recreate algorithm federation-api' not in deploy:
               raise SystemExit("Deployment must recreate services after updating immutable image pins")
+          assert 'TESTAGRAM_WEB_IMAGE="ghcr.io/trendyzima/testagram-web@sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b"' in deploy_script, "deployment must pin the latest verified registration-enabled Flutter web image digest"
           if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy or "RepoDigests" not in deploy or "Flutter web container is not running the exact reviewed image digest" not in deploy:
               raise SystemExit("Deployment must verify the exact running Algorithm and Federation image tags")
           if '::error::Data Centre deployment did not reach an accepted core-services state' not in deploy:

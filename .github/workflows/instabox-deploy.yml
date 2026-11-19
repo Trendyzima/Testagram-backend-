@@ -329,8 +329,8 @@ jobs:
           # Data Centre media owns the B2/R2 bytes and MinIO/R2 metadata sidecars.
           MEDIA_REPLICATION_ENABLED: 'false'
           CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ (github.event_name == 'push' || inputs.confirm_native_identity_migrations == true) && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
-          TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
-          TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}
+          TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION || '2026-11-11' }}
+          TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION || '2026-11-11' }}
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
           CLOUDFLARE_EMAIL_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

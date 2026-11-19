@@ -312,7 +312,7 @@ write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:d0b1fa4c1cbd579c8674ba520566d39ca3b7be90132939d880753c17fe80b425"
 write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
 # Always deploy the reviewed immutable Flutter web manifest; never follow :main.
-TESTAGRAM_WEB_IMAGE="ghcr.io/trendyzima/testagram-web@sha256:eed4bebbf10a19aee65527c577f63f0bf7b9dd58f37b3db7e7653d30cb101b2e"
+TESTAGRAM_WEB_IMAGE="ghcr.io/trendyzima/testagram-web@sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b"
 write_env_value TESTAGRAM_WEB_IMAGE "$TESTAGRAM_WEB_IMAGE"
 if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
 CDN_MEDIA_BASE_URL="$(read_env_value CDN_MEDIA_BASE_URL)"
