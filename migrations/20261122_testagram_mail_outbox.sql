@@ -40,7 +40,7 @@ REVOKE ALL ON TABLE testagram_mail.outbox FROM PUBLIC;
 DO $role$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
-    CREATE ROLE testagram_app NOLOGIN;
+    EXECUTE 'CREATE ROLE testagram_app NOLOGIN';
   END IF;
 END;
 $role$;
