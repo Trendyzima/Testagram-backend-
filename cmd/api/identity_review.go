@@ -40,9 +40,20 @@ type nativeIdentityReviewer struct {
 	Email string
 }
 
+// requireLiveIdentityReviewMFA requires a signed native access-token claim
+// issued only after a real phishing-resistant challenge. An enrollment
+// timestamp is not a live challenge and is never sufficient by itself.
+func requireLiveIdentityReviewMFA(claims authClaims) error {
+	if !claims.MFAAuthenticated {
+		return errors.New("live phishing-resistant MFA proof is not present; identity review remains disabled")
+	}
+	return nil
+}
+
 // Identity review is authorized by Testagram-native staff principals and
 // explicit, active role grants. A provider JWT or legacy staff ID is never
-// accepted here. Staff access also requires enrolled MFA.
+// accepted here. Enrollment is necessary, but a live signed MFA proof is also
+// required before any queue, evidence, decision or approval operation.
 func (s *service) identityReviewer(r *http.Request) (nativeIdentityReviewer, int, error) {
 	if s.db == nil {
 		return nativeIdentityReviewer{}, http.StatusServiceUnavailable, errors.New("identity database is unavailable")
@@ -75,6 +86,9 @@ func (s *service) identityReviewer(r *http.Request) (nativeIdentityReviewer, int
 	}
 	if !allowed {
 		return nativeIdentityReviewer{}, http.StatusForbidden, errors.New("enabled Testagram identity reviewer role and enrolled MFA are required")
+	}
+	if err := requireLiveIdentityReviewMFA(claims); err != nil {
+		return nativeIdentityReviewer{}, http.StatusServiceUnavailable, err
 	}
 	return nativeIdentityReviewer{ID: claims.Subject, Email: claims.Email}, http.StatusOK, nil
 }
