@@ -639,7 +639,7 @@ jobs:
           assert '[[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" && "$FRESH_MEDIA_ENABLED" == "true" ]]' in deploy_script, "public registration must require the private Data Centre evidence profile"
           assert "Identity registration requires TESTAGRAM_TERMS_VERSION" in deploy_script and "Identity registration requires TESTAGRAM_PRIVACY_VERSION" in deploy_script, "public registration must have explicit policy versions"
           assert 'write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script and 'write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script, "the R2 metadata bucket must reach both Backend and Data Centre environment files"
-          assert '--arg r2_metadata_bucket "$DC_R2_METADATA_BUCKET"' in deploy_script and "CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket" in deploy_script, "the R2 metadata bucket must cross the authenticated InstaBox deployment handoff"
+          assert '--arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}"' in deploy_script and "CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket" in deploy_script, "the R2 metadata bucket must cross the authenticated InstaBox deployment handoff"
           policy_terms_expression = "$" + "{{ vars.TESTAGRAM_TERMS_VERSION || '2026-11-11' }}"
           policy_privacy_expression = "$" + "{{ vars.TESTAGRAM_PRIVACY_VERSION || '2026-11-11' }}"
           assert f"TESTAGRAM_TERMS_VERSION: {policy_terms_expression}" in deploy_workflow and f"TESTAGRAM_PRIVACY_VERSION: {policy_privacy_expression}" in deploy_workflow, "deployment must use the same existing policy-version defaults as the Flutter client when repository variables are absent"
