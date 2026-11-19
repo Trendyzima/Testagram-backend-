@@ -66,6 +66,7 @@ services:
       - ../../migrations/20261119_native_identity_approval_ledger.sql:/docker-entrypoint-initdb.d/055_native_identity_approval_ledger.sql:ro
       - ../../migrations/20261120_native_verification_decider.sql:/docker-entrypoint-initdb.d/056_native_verification_decider.sql:ro
       - ../../migrations/20261122_testagram_mail_outbox.sql:/docker-entrypoint-initdb.d/057_testagram_mail_outbox.sql:ro
+      - ../../migrations/20261123_testagram_mail_outbox_runtime_role.sql:/docker-entrypoint-initdb.d/058_testagram_mail_outbox_runtime_role.sql:ro
       - ../../migrations/20261121_native_identity_intake_optional_fingerprint.sql:/docker-entrypoint-initdb.d/20261121_native_identity_intake_optional_fingerprint.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
