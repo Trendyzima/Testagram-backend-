@@ -119,6 +119,23 @@ jobs:
             if cf_get "/accounts/$account_id/workers/scripts" "$tmp/workers.json"; then
               echo "- Workers scripts: $(jq -r '.result | length' "$tmp/workers.json")" >> "$GITHUB_STEP_SUMMARY"
               jq -r '.result[]? | "- Worker: " + (.id // .name // "unnamed")' "$tmp/workers.json" >> "$GITHUB_STEP_SUMMARY"
+              while IFS= read -r worker; do
+                [[ -z "$worker" ]] && continue
+                schedules="unavailable"
+                bindings="unavailable"
+                deployments="unavailable"
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/schedules" "$tmp/worker-schedules.json"; then
+                  schedules="$(jq -c '.result.schedules // [] | map(.cron)' "$tmp/worker-schedules.json")"
+                fi
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/settings" "$tmp/worker-settings.json"; then
+                  # Emit binding names/types only; never print secret or plain-text binding values.
+                  bindings="$(jq -c '.result.bindings // [] | map({name, type, service, namespace})' "$tmp/worker-settings.json")"
+                fi
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/deployments?per_page=1" "$tmp/worker-deployments.json"; then
+                  deployments="$(jq -c '.result.deployments // [] | map({created_on, source})' "$tmp/worker-deployments.json")"
+                fi
+                printf '%s\n' "- Worker runtime inventory: $worker; cron=$schedules; bindings=$bindings; latest_deployments=$deployments" >> "$GITHUB_STEP_SUMMARY"
+              done < <(jq -r '.result[]?.id // empty' "$tmp/workers.json")
             else
               echo "- Workers scripts: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
             fi
