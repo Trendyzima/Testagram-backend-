@@ -51,6 +51,14 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("is_nullable='\\''YES'\\''", SOURCE)
         self.assertIn("identity_approval_token_requires_verified_evidence", SOURCE)
 
+    def test_failed_schema_preflight_reports_named_acceptance_predicates(self):
+        self.assertIn("schema_diagnostics()", SOURCE)
+        self.assertIn("Failed schema acceptance predicates:", SOURCE)
+        self.assertIn("identity application evidence fingerprint nullable", SOURCE)
+        self.assertIn("identity evidence-complete approval trigger", SOURCE)
+        self.assertIn("two-person identity approval trigger", SOURCE)
+        self.assertIn("testagram_app mail outbox UPDATE", SOURCE)
+
     def test_migration_requires_explicit_authorization_and_verified_restore(self):
         self.assertIn("APPLY-NATIVE-IDENTITY-MIGRATIONS", SOURCE)
         self.assertIn("pg_restore --exit-on-error", SOURCE)
