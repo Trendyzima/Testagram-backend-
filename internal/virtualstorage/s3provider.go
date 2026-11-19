@@ -48,7 +48,11 @@ func (p *S3Provider) EndpointHost() string {
 }
 
 func isLocalS3Host(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
+	// The production Compose network uses the exact private service DNS name
+	// object-storage for its MinIO endpoint. Permit HTTP only for this
+	// allowlisted internal service and loopback development endpoints; never
+	// permit arbitrary remote HTTP object stores.
+	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" || host == "object-storage"
 }
 
 func NewS3Provider(cfg S3Config) (*S3Provider, error) {
