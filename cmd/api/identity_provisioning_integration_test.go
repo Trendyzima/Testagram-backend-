@@ -50,6 +50,15 @@ func nativeStaffReviewerFixture(t *testing.T, ctx context.Context, db *pgxpool.P
 	if err != nil {
 		t.Fatal(err)
 	}
+	claims, status, err := verifyNativeAccessToken(ctx, db, session.AccessToken)
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("verify native reviewer session status=%d err=%v", status, err)
+	}
+	claims.MFAAuthenticatedAt = time.Now().UTC().Unix()
+	session.AccessToken, err = authSignJWTClaims(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return reviewerID, reviewerEmail, session.AccessToken
 }
 

@@ -36,15 +36,16 @@ type authInput struct {
 }
 
 type authClaims struct {
-	Subject      string `json:"sub"`
-	Email        string `json:"email"`
-	Role         string `json:"role"`
-	Issuer       string `json:"iss"`
-	Audience     string `json:"aud"`
-	IssuedAt     int64  `json:"iat"`
-	ExpiresAt    int64  `json:"exp"`
-	TokenVersion int64  `json:"ver"`
-	SessionID    string `json:"sid"`
+	Subject            string `json:"sub"`
+	Email              string `json:"email"`
+	Role               string `json:"role"`
+	Issuer             string `json:"iss"`
+	Audience           string `json:"aud"`
+	IssuedAt           int64  `json:"iat"`
+	ExpiresAt          int64  `json:"exp"`
+	TokenVersion       int64  `json:"ver"`
+	SessionID          string `json:"sid"`
+	MFAAuthenticatedAt int64  `json:"mfa_at,omitempty"`
 }
 
 var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}$`)
@@ -163,14 +164,35 @@ func authPBKDF2(password, salt []byte, iterations, keyLen int) []byte {
 }
 
 func authSignJWT(userID, email string, version int64, sessionID string) (string, error) {
+	now := time.Now().UTC()
+	return authSignJWTClaims(authClaims{
+		Subject: userID, Email: email, Role: "authenticated",
+		Issuer: "testagram-auth", Audience: "testagram-api",
+		IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(),
+		TokenVersion: version, SessionID: sessionID,
+	})
+}
+
+func authSignJWTClaims(claims authClaims) (string, error) {
 	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
 	if len(secret) < 32 {
 		return "", errors.New("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters")
 	}
-	now := time.Now().UTC()
-	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
-	claims, _ := json.Marshal(authClaims{Subject: userID, Email: email, Role: "authenticated", Issuer: "testagram-auth", Audience: "testagram-api", IssuedAt: now.Unix(), ExpiresAt: now.Add(15 * time.Minute).Unix(), TokenVersion: version, SessionID: sessionID})
-	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
+	if claims.MFAAuthenticatedAt > 0 {
+		now := time.Now().UTC().Unix()
+		if claims.MFAAuthenticatedAt > now+60 || now-claims.MFAAuthenticatedAt > int64((5*time.Minute)/time.Second) {
+			return "", errors.New("MFA proof timestamp must be fresh and within the five-minute step-up window")
+		}
+	}
+	header, err := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(unsigned))
 	return unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
