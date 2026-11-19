@@ -19,11 +19,6 @@ on:
         required: true
         type: boolean
         default: false
-      confirm_identity_registration:
-        description: "Separately authorize public identity registration only after the private Data Centre B2/R2 evidence lifecycle and two-reviewer acceptance are complete"
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -333,7 +328,6 @@ jobs:
           # The legacy Backend multi-bucket replicator is not the canonical media path.
           # Data Centre media owns the B2/R2 bytes and MinIO/R2 metadata sidecars.
           MEDIA_REPLICATION_ENABLED: 'false'
-          TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED == 'true' && vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true' && inputs.confirm_identity_registration == true && 'true' || 'false' }}
           CONFIRM_NATIVE_IDENTITY_MIGRATIONS: ${{ (github.event_name == 'push' || inputs.confirm_native_identity_migrations == true) && 'APPLY-NATIVE-IDENTITY-MIGRATIONS' || '' }}
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION }}

@@ -83,12 +83,17 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("MEDIA_REPLICATION_ENABLED: 'false'", self.workflow)
         self.assertIn("The legacy Backend multi-bucket replicator is not the canonical media path.", self.workflow)
 
-    def test_identity_registration_requires_the_private_data_centre_evidence_profile(self):
-        self.assertIn("vars.DATA_CENTRE_MEDIA_ENABLED == 'true'", self.workflow)
-        self.assertIn("vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)
-        self.assertIn("inputs.confirm_identity_registration == true", self.workflow)
-        self.assertNotIn("vars.MEDIA_REPLICATION_ENABLED == 'true' && inputs.confirm_identity_registration", self.workflow)
+    def test_identity_registration_is_readiness_gated_without_a_legacy_kill_switch(self):
+        self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
+        self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
+        self.assertNotIn("confirm_identity_registration", self.workflow)
+        self.assertNotIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", self.workflow)
+        self.assertNotIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", self.deployer)
+        self.assertIn('normalize_boolean FRESH_MEDIA_ENABLED false', self.deployer)
+        self.assertIn('normalize_boolean DATA_CENTRE_MEDIA_ENABLED false', self.deployer)
         self.assertIn("Identity registration requires the private Data Centre media profile", self.deployer)
+        self.assertIn("Identity registration requires TESTAGRAM_TERMS_VERSION", self.deployer)
+        self.assertIn("Identity registration requires TESTAGRAM_PRIVACY_VERSION", self.deployer)
         self.assertIn('ensure_random_secret IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN', self.deployer)
         self.assertIn('write_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"', self.deployer)
         self.assertIn('write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN"', self.deployer)

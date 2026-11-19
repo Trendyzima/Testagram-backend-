@@ -278,12 +278,12 @@ func TestNativeIdentityApplicationStatusUsesVerificationSessions(t *testing.T) {
 	}
 }
 
-func TestIdentityApplicationCreateFailsClosedWhenRegistrationIsDisabled(t *testing.T) {
+func TestIdentityApplicationCreateIgnoresLegacyRegistrationKillSwitch(t *testing.T) {
 	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "false")
 
-	// The disabled gate must run before CORS, database, storage, policy or
-	// evidence dependencies are consulted. This protects a paused rollout even
-	// when the public endpoint is reachable.
+	// The legacy environment switch is no longer an authorization boundary.
+	// Registration must proceed to its real readiness checks; with no database
+	// or private evidence store, it must fail closed for that concrete reason.
 	body := strings.NewReader(`{"email":"applicant@example.test","username":"applicant_01","display_name":"Test Applicant","adult_confirmed":true,"terms_accepted":true,"privacy_accepted":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/identity/applications", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -293,14 +293,14 @@ func TestIdentityApplicationCreateFailsClosedWhenRegistrationIsDisabled(t *testi
 	(&service{}).identityApplicationCreate(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled registration status=%d body=%s; want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+		t.Fatalf("unready identity service status=%d body=%s; want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
 	}
 	var response map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("disabled registration returned invalid JSON: %v", err)
+		t.Fatalf("identity readiness response returned invalid JSON: %v", err)
 	}
 	errorBody, ok := response["error"].(map[string]any)
-	if !ok || errorBody["code"] != "REGISTRATION_DISABLED" {
-		t.Fatalf("disabled registration error=%v; want REGISTRATION_DISABLED", response["error"])
+	if !ok || errorBody["code"] != "IDENTITY_SERVICE_UNAVAILABLE" {
+		t.Fatalf("identity readiness error=%v; want IDENTITY_SERVICE_UNAVAILABLE (legacy kill switch must not block first)", response["error"])
 	}
 }
