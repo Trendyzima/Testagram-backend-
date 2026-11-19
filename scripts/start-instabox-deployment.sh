@@ -616,8 +616,8 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
     -e R2_ENDPOINT="$CLOUDFLARE_R2_ENDPOINT" -e R2_REGION="$CLOUDFLARE_R2_REGION" -e R2_BUCKET="$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" \
     -e R2_ACCESS="$CLOUDFLARE_R2_ACCESS_KEY_ID" -e R2_SECRET="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
     ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
-      mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS" "$B2_SECRET" --api S3v4 --path auto --region "$B2_REGION" >/dev/null
-      mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+      mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS" "$B2_SECRET" --api S3v4 --path auto >/dev/null
+      mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto >/dev/null
       mc mb --ignore-existing "b2/$B2_BUCKET"
       mc mb --ignore-existing "r2/$R2_BUCKET"
       mc anonymous set none "b2/$B2_BUCKET"
