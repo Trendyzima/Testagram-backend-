@@ -398,7 +398,7 @@ class WatchdogTests(unittest.TestCase):
         self.assertNotIn("INSTABOX_READONLY_API_KEY", workflow)
         self.assertIn("secrets.INSTABOX_MACHINE_ID", workflow)
         self.assertIn("vars.INSTABOX_MACHINE_NAME || 'testagramdb'", workflow)
-        self.assertIn("https://api.testagram.site/health", workflow)
+        self.assertIn("https://api.testagram.site/healthz", workflow)
         self.assertIn("provider reports VPS running but public API liveness failed three consecutive probes", Path("scripts/instabox_watchdog.py").read_text())
         self.assertIn("idle-suspended", Path("scripts/instabox_watchdog.py").read_text())
         self.assertNotIn("WATCHDOG_FAILURES_REQUIRED", workflow)
