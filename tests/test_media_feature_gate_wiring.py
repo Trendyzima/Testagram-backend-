@@ -21,6 +21,32 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}"', self.workflow)
         self.assertIn('normalize_flag "${FRESH_MEDIA_ENABLED:-false}"', self.workflow)
 
+
+    def test_workflow_flag_normalizer_preserves_true_and_false(self):
+        match = re.search(r"normalize_flag\(\) \{.*?\}", self.workflow)
+        self.assertIsNotNone(match)
+        helper = match.group(0)
+        script = helper + "\n" + "\n".join([
+            "printf '%s\\n' \"$(normalize_flag true)\"",
+            "printf '%s\\n' \"$(normalize_flag false)\"",
+        ]) + "\n"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["true", "false"])
+
+    def test_production_evidence_bucket_names_are_dedicated_and_provisioned_private(self):
+        for token in (
+            "testagram-identity-evidence-production-b2",
+            "testagram-identity-evidence-production-r2",
+            'mc anonymous set none "b2/$B2_BUCKET"',
+            'mc anonymous set none "r2/$R2_IDENTITY_BUCKET"',
+            'ensure_bucket "$R2_IDENTITY_BUCKET"',
+            "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
+            "CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
     def test_workflow_keeps_legacy_replicator_off_and_preserves_data_centre_gates(self):
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
