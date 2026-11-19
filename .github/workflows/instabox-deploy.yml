@@ -289,7 +289,8 @@ jobs:
           normalize_flag() { printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]'; }
           B2_ACCESS_KEY_ID="$(printf '%s' "$B2_ACCESS_KEY_ID" | tr -d '\r\n[:space:]')"
           B2_SECRET_ACCESS_KEY="$(printf '%s' "$B2_SECRET_ACCESS_KEY" | tr -d '\r\n[:space:]')"
-          echo "B2 S3 access key ID length after whitespace normalization: ${#B2_ACCESS_KEY_ID}"          if [[ ${#B2_ACCESS_KEY_ID} -ne 25 ]]; then
+          echo "B2 S3 access key ID length after whitespace normalization: ${#B2_ACCESS_KEY_ID}"
+          if [[ ${#B2_ACCESS_KEY_ID} -ne 25 ]]; then
             echo "::error::The Backblaze B2 application key ID must be 25 characters. Do not use a Cloudflare R2 access key ID for B2."
             exit 1
           fi
