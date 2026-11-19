@@ -42,6 +42,7 @@ jobs:
           python3 tests/test_instabox_postgres_readiness.py -v
           python3 tests/test_instabox_runtime_healthcheck_paths.py -v
           python3 tests/test_instabox_datacentre_metadata_bucket.py -v
+          python3 tests/test_instabox_registration_policy_versions.py -v
           python3 tests/test_media_feature_gate_wiring.py -v
           python3 tests/test_native_identity_migration_manifest.py -v
           python3 tests/test_instabox_b2_credentials.py -v
