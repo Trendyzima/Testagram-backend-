@@ -43,8 +43,9 @@ type authClaims struct {
 	Audience     string `json:"aud"`
 	IssuedAt     int64  `json:"iat"`
 	ExpiresAt    int64  `json:"exp"`
-	TokenVersion int64  `json:"ver"`
-	SessionID    string `json:"sid"`
+	TokenVersion     int64  `json:"ver"`
+	SessionID        string `json:"sid"`
+	MFAAuthenticated bool   `json:"mfa,omitempty"`
 }
 
 var authUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,30}$`)
