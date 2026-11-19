@@ -34,6 +34,12 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), ["true", "false"])
 
+    def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
+        self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
+        self.assertIn("Verified R2 identity-evidence bucket has r2.dev disabled", self.workflow)
+        self.assertIn("B2 identity-evidence bucket ACL is private", self.workflow)
+        self.assertIn("provider-native privacy was verified by the deployment workflow", self.deployer)
+
     def test_pinned_minio_client_alias_commands_use_supported_flags(self):
         for source in (self.workflow, self.deployer):
             alias_lines = [line for line in source.splitlines() if "mc alias set " in line]
@@ -47,9 +53,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         for token in (
             "testagram-identity-evidence-production-b2",
             "testagram-identity-evidence-production-r2",
-            'mc anonymous set none "b2/$B2_BUCKET"',
-            'mc anonymous set none "r2/$R2_IDENTITY_BUCKET"',
-            'ensure_bucket "$R2_IDENTITY_BUCKET"',
+            'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
+            'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
+            '/domains/managed',
+            "--data '{\"enabled\":false}'",
+            '/domains/custom',
+            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "r2/$R2_IDENTITY_BUCKET"',
             "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
             "CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
         ):
@@ -181,8 +191,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
             'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
-            'mc anonymous set none "b2/$B2_BUCKET"',
-            'mc anonymous set none "r2/$R2_BUCKET"',
+            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "r2/$R2_BUCKET"',
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'internal/v1/identity-evidence/readyz',

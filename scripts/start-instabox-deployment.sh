@@ -620,12 +620,10 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
       mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto >/dev/null
       mc mb --ignore-existing "b2/$B2_BUCKET"
       mc mb --ignore-existing "r2/$R2_BUCKET"
-      mc anonymous set none "b2/$B2_BUCKET"
-      mc anonymous set none "r2/$R2_BUCKET"
       mc stat "b2/$B2_BUCKET" >/dev/null
       mc stat "r2/$R2_BUCKET" >/dev/null
     '
-  echo "Provisioned dedicated private identity evidence buckets in B2 and R2."
+  echo "Verified access to the provider-prepared dedicated identity evidence buckets in B2 and R2; provider-native privacy was verified by the deployment workflow."
   ensure_random_secret FRESH_DATA_CENTRE_INTERNAL_TOKEN
   ensure_random_secret IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN
   if [[ "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN" == "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" ]]; then

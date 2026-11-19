@@ -245,9 +245,30 @@ jobs:
               mc mb --ignore-existing "r2/$R2_MEDIA_BUCKET"
               mc mb --ignore-existing "r2/$R2_METADATA_BUCKET"
               mc mb --ignore-existing "r2/$R2_IDENTITY_BUCKET"
-              mc anonymous set none "r2/$R2_IDENTITY_BUCKET"
               mc stat "r2/$R2_IDENTITY_BUCKET" >/dev/null
             '
+          # R2 does not implement S3 GetBucketPolicy. Use Cloudflare's native
+          # public-access controls and verify both public access surfaces.
+          r2_managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/managed"
+          managed_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-managed-disable.json" -w '%{http_code}' -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data '{"enabled":false}' "$r2_managed_url")"
+          if [[ "$managed_status" != "200" ]] || ! jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed-disable.json" >/dev/null; then
+            echo "::error::Could not disable R2 r2.dev public access for the identity-evidence bucket."
+            jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-managed-disable.json" || true
+            exit 1
+          fi
+          managed_check_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-managed-check.json" -w '%{http_code}' "$r2_managed_url" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")"
+          if [[ "$managed_check_status" != "200" ]] || ! jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed-check.json" >/dev/null; then
+            echo "::error::R2 r2.dev public access is not verified disabled."
+            jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-managed-check.json" || true
+            exit 1
+          fi
+          custom_domains_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-custom-domains.json" -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/custom" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")"
+          if [[ "$custom_domains_status" != "200" ]] || ! jq -e '.success == true and ([.result.domains[]? | select(.enabled == true)] | length == 0)' "$RUNNER_TEMP/r2-custom-domains.json" >/dev/null; then
+            echo "::error::R2 identity-evidence bucket has an enabled public custom domain or its domain state cannot be verified."
+            jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-custom-domains.json" || true
+            exit 1
+          fi
+          echo "Verified R2 identity-evidence bucket has r2.dev disabled and no enabled public custom domains."
           echo "media_bucket=$R2_MEDIA_BUCKET" >> "$GITHUB_OUTPUT"
           echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
 
@@ -272,9 +293,16 @@ jobs:
             ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
               mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS_KEY_ID" "$B2_SECRET_ACCESS_KEY" --api S3v4 --path auto >/dev/null
               mc mb --ignore-existing "b2/$B2_BUCKET"
-              mc anonymous set none "b2/$B2_BUCKET"
               mc stat "b2/$B2_BUCKET" >/dev/null
             '
+          # Backblaze B2 exposes bucket privacy through S3 ACLs, not the
+          # bucket-policy API used by MinIO's anonymous-policy command.
+          command -v aws >/dev/null 2>&1 || { echo "::error::AWS CLI is required to set and verify the B2 private bucket ACL."; exit 1; }
+          export AWS_ACCESS_KEY_ID="$B2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$B2_SECRET_ACCESS_KEY" AWS_DEFAULT_REGION="$B2_REGION" AWS_EC2_METADATA_DISABLED=true
+          aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private --endpoint-url "$B2_ENDPOINT" --region "$B2_REGION"
+          aws s3api get-bucket-acl --bucket "$B2_BUCKET" --endpoint-url "$B2_ENDPOINT" --region "$B2_REGION" > "$RUNNER_TEMP/b2-identity-evidence-acl.json"
+          jq -e '(.Grants | length == 1) and .Grants[0].Permission == "FULL_CONTROL" and .Grants[0].Grantee.Type == "CanonicalUser"' "$RUNNER_TEMP/b2-identity-evidence-acl.json" >/dev/null || { echo "::error::B2 identity-evidence bucket ACL is not private."; jq -c '{Owner,Grants}' "$RUNNER_TEMP/b2-identity-evidence-acl.json" || true; exit 1; }
+          echo "Verified B2 identity-evidence bucket ACL is private."
 
       - name: Start deployment on the machine
         id: remote
