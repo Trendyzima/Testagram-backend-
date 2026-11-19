@@ -48,6 +48,7 @@ jobs:
           python3 tests/test_media_feature_gate_wiring.py -v
           python3 tests/test_native_identity_migration_manifest.py -v
           python3 tests/test_instabox_b2_credentials.py -v
+          python3 tests/test_instabox_image_digest_verification.py -v
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests
