@@ -47,17 +47,19 @@ func (p *S3Provider) EndpointHost() string {
 	return strings.ToLower(p.endpoint.Host)
 }
 
-func isLocalS3Host(host string) bool {
-	// The production Compose network uses the exact private service DNS name
-	// object-storage for its MinIO endpoint. Permit HTTP only for this
-	// allowlisted internal service and loopback development endpoints; never
-	// permit arbitrary remote HTTP object stores.
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" || host == "object-storage"
+func isLoopbackS3Host(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
+}
+
+func isPrivateComposeMinIOEndpoint(u *url.URL) bool {
+	// The production Compose network exposes MinIO only as object-storage:9000
+	// on its private Docker networks; do not permit arbitrary HTTP ports.
+	return u != nil && u.Hostname() == "object-storage" && u.Port() == "9000"
 }
 
 func NewS3Provider(cfg S3Config) (*S3Provider, error) {
 	u, err := url.Parse(strings.TrimSpace(cfg.Endpoint))
-	if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLocalS3Host(u.Hostname()))) ||
+	if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && (isLoopbackS3Host(u.Hostname()) || isPrivateComposeMinIOEndpoint(u)))) ||
 		u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
 		return nil, errors.New("S3 endpoint must be an absolute HTTP(S) origin without credentials, path, query, or fragment")
 	}
