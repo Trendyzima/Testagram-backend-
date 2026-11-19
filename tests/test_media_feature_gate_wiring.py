@@ -208,11 +208,15 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
 
     def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("image: testagram-self-hosted-api:latest", compose)
         self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
-        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
+        self.assertIn("config --format json | jq -r '.services.api.image // empty'", self.deployer)
+        self.assertIn('docker image inspect --format \'{{.Id}}\' "$api_image_ref"', self.deployer)
         self.assertIn('docker inspect --format \'{{.Image}}\' "$api_container"', self.deployer)
         self.assertIn('"$api_actual_image_id" != "$api_expected_image_id"', self.deployer)
-        self.assertIn('Verified Backend running immutable image ID', self.deployer)
+        self.assertIn("Verified running Backend immutable image ID", self.deployer)
+        self.assertNotIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
 
     def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
         deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
