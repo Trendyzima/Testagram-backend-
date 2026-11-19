@@ -5,6 +5,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/cloudflare-domain-routing-audit.yml"
+      - ".github/workflows/instabox-deploy.yml"
+      - "deploy/self-hosted/Caddyfile"
+      - "deploy/self-hosted/docker-compose.yml"
 
 permissions: {}
 
