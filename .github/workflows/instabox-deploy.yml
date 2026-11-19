@@ -286,6 +286,9 @@ jobs:
         run: |
           set -euo pipefail
           normalize_flag() { printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]'; }
+          B2_ACCESS_KEY_ID="$(printf '%s' "$B2_ACCESS_KEY_ID" | tr -d '\r\n[:space:]')"
+          B2_SECRET_ACCESS_KEY="$(printf '%s' "$B2_SECRET_ACCESS_KEY" | tr -d '\r\n[:space:]')"
+          echo "B2 S3 access key ID length after whitespace normalization: ${#B2_ACCESS_KEY_ID}"
           if [[ "$(normalize_flag "$DATA_CENTRE_MEDIA_ENABLED")" != "true" || "$(normalize_flag "$FRESH_MEDIA_ENABLED")" != "true" ]]; then
             echo "Skipping B2 identity-evidence provisioning because both private-media gates are not enabled."
             exit 0
