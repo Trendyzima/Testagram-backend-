@@ -147,6 +147,7 @@ services:
     networks: [data]
 
   api:
+    image: testagram-self-hosted-api:latest
     build:
       context: ../..
       dockerfile: Dockerfile
