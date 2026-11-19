@@ -497,7 +497,8 @@ FEDERATION_DATABASE_URL=""
 # Pin the exact immutable GHCR manifest digests produced by the latest
 # successful main-branch image workflows in their owning repositories.
 TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8"
-TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation@sha256:ea7cb61c38bc971be55c1f164133e8781e11f5fc324ea8997b3e00322d06e88c"
+# Federation NodeInfo 2.1 release built from merged source 78e83a411afc8b9f46c687875b3cfd6db6d071b6.
+TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e"
 if [[ ! -f "$DC_ENV" ]]; then
   cat > "$DC_ENV" <<EOF
 DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
