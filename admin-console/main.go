@@ -52,6 +52,7 @@ type session struct {
 	AccessExpiresAt  int64  `json:"access_expires_at"`
 	RefreshExpiresAt int64  `json:"refresh_expires_at"`
 	StepUpUntil      int64  `json:"step_up_until,omitempty"`
+	StepUpMFA        bool   `json:"step_up_mfa,omitempty"`
 }
 
 type authUser struct {
@@ -402,6 +403,12 @@ func (a *app) handleSession(w http.ResponseWriter, r *http.Request) {
 func (a *app) identityProxy(w http.ResponseWriter, r *http.Request, backendPath string, evidenceStream bool) {
 	staffSession, _, ok := a.requireStaff(w, r)
 	if !ok {
+		return
+	}
+	// Identity queue contents, evidence retrieval and review decisions are
+	// privileged operations. Never treat an enrollment timestamp or password
+	// reauthentication as a live phishing-resistant MFA challenge.
+	if !a.requireRecentStepUp(w, staffSession) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
