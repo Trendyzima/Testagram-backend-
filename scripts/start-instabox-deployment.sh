@@ -201,6 +201,8 @@ DC_B2_S3_BUCKET="${B2_S3_BUCKET:-}"
 DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"
 DC_B2_S3_ACCESS_KEY_ID="${B2_S3_ACCESS_KEY_ID:-}"
 DC_B2_S3_SECRET_ACCESS_KEY="${B2_S3_SECRET_ACCESS_KEY:-}"
+DC_B2_S3_ACCESS_KEY_ID="$(printf '%s' "$DC_B2_S3_ACCESS_KEY_ID" | tr -d '\r\n[:space:]')"
+DC_B2_S3_SECRET_ACCESS_KEY="$(printf '%s' "$DC_B2_S3_SECRET_ACCESS_KEY" | tr -d '\r\n[:space:]')"
 DC_R2_ENDPOINT="${CLOUDFLARE_R2_ENDPOINT:-}"
 DC_R2_REGION="${CLOUDFLARE_R2_REGION:-auto}"
 DC_R2_BUCKET="${CLOUDFLARE_R2_BUCKET:-}"
@@ -388,12 +390,31 @@ sudo env \
   bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
 # Build the Backend once, capture its immutable local image ID, and deploy that exact image.
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api
-api_expected_image_id="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api | head -n 1)"
-if [[ ! "$api_expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-  echo "::error::Backend build did not produce a verifiable immutable image ID."
+api_image_ref="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config --format json | jq -r '.services.api.image // empty')"
+if [[ -z "$api_image_ref" ]]; then
+  echo "::error::Backend Compose service has no explicit image reference; refusing an unverifiable deployment."
   exit 1
 fi
+api_expected_image_id="$(sudo docker image inspect --format '{{.Id}}' "$api_image_ref" 2>/dev/null || true)"
+if [[ ! "$api_expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+  echo "::error::Backend build did not produce a verifiable immutable image ID for $api_image_ref."
+  exit 1
+fi
+echo "Built Backend image $api_image_ref with immutable ID $api_expected_image_id."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate object-storage object-init api flutter-web caddy
+api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+if [[ -z "$api_container" ]]; then
+  echo "::error::Backend API container was not created after deployment."
+  exit 1
+fi
+api_actual_image_id="$(sudo docker inspect --format '{{.Image}}' "$api_container")"
+if [[ "$api_actual_image_id" != "$api_expected_image_id" ]]; then
+  echo "::error::Running Backend container does not match the image built for this release."
+  echo "Expected image ID: $api_expected_image_id"
+  echo "Running image ID: $api_actual_image_id"
+  exit 1
+fi
+echo "Verified running Backend immutable image ID: $api_actual_image_id."
 
 echo "Verifying the self-hosted Flutter web origin..."
 web_ready=false
@@ -616,16 +637,14 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
     -e R2_ENDPOINT="$CLOUDFLARE_R2_ENDPOINT" -e R2_REGION="$CLOUDFLARE_R2_REGION" -e R2_BUCKET="$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" \
     -e R2_ACCESS="$CLOUDFLARE_R2_ACCESS_KEY_ID" -e R2_SECRET="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
     ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
-      mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS" "$B2_SECRET" --api S3v4 --path auto --region "$B2_REGION" >/dev/null
-      mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+      mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS" "$B2_SECRET" --api S3v4 --path auto >/dev/null
+      mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto >/dev/null
       mc mb --ignore-existing "b2/$B2_BUCKET"
       mc mb --ignore-existing "r2/$R2_BUCKET"
-      mc anonymous set none "b2/$B2_BUCKET"
-      mc anonymous set none "r2/$R2_BUCKET"
       mc stat "b2/$B2_BUCKET" >/dev/null
       mc stat "r2/$R2_BUCKET" >/dev/null
     '
-  echo "Provisioned dedicated private identity evidence buckets in B2 and R2."
+  echo "Verified access to the provider-prepared dedicated identity evidence buckets in B2 and R2; provider-native privacy was verified by the deployment workflow."
   ensure_random_secret FRESH_DATA_CENTRE_INTERNAL_TOKEN
   ensure_random_secret IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN
   if [[ "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN" == "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" ]]; then

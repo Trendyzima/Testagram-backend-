@@ -21,6 +21,62 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}"', self.workflow)
         self.assertIn('normalize_flag "${FRESH_MEDIA_ENABLED:-false}"', self.workflow)
 
+
+    def test_workflow_flag_normalizer_preserves_true_and_false(self):
+        match = re.search(r"normalize_flag\(\) \{.*?\}", self.workflow)
+        self.assertIsNotNone(match)
+        helper = match.group(0)
+        script = helper + "\n" + "\n".join([
+            "printf '%s\\n' \"$(normalize_flag true)\"",
+            "printf '%s\\n' \"$(normalize_flag false)\"",
+        ]) + "\n"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["true", "false"])
+
+    def test_b2_identity_bucket_gate_uses_same_normalized_private_media_flags(self):
+        start = self.workflow.index("Provision dedicated private B2 identity-evidence bucket")
+        end = self.workflow.index("Start deployment on the machine", start)
+        step = self.workflow[start:end]
+        self.assertNotIn("if: ${{ vars.DATA_CENTRE_MEDIA_ENABLED", step)
+        self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", step)
+        self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", step)
+        self.assertIn("normalize_flag", step)
+        self.assertIn('normalize_flag "$DATA_CENTRE_MEDIA_ENABLED"', step)
+        self.assertIn('normalize_flag "$FRESH_MEDIA_ENABLED"', step)
+
+    def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
+        self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
+        self.assertIn("Verified R2 identity-evidence bucket has r2.dev disabled", self.workflow)
+        self.assertIn("B2 identity-evidence bucket ACL is private", self.workflow)
+        self.assertIn("provider-native privacy was verified by the deployment workflow", self.deployer)
+
+    def test_pinned_minio_client_alias_commands_use_supported_flags(self):
+        for source in (self.workflow, self.deployer):
+            alias_lines = [line for line in source.splitlines() if "mc alias set " in line]
+            self.assertTrue(alias_lines)
+            for line in alias_lines:
+                self.assertNotIn("--region", line)
+                self.assertIn("--api S3v4", line)
+                self.assertIn("--path auto", line)
+
+    def test_production_evidence_bucket_names_are_dedicated_and_provisioned_private(self):
+        for token in (
+            "testagram-identity-evidence-production-b2",
+            "testagram-identity-evidence-production-r2",
+            'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
+            'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
+            '/domains/managed',
+            "--data '{\"enabled\":false}'",
+            '/domains/custom',
+            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "r2/$R2_IDENTITY_BUCKET"',
+            "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
+            "CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow)
+
     def test_workflow_keeps_legacy_replicator_off_and_preserves_data_centre_gates(self):
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
@@ -146,8 +202,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
             'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
-            'mc anonymous set none "b2/$B2_BUCKET"',
-            'mc anonymous set none "r2/$R2_BUCKET"',
+            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "r2/$R2_BUCKET"',
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'internal/v1/identity-evidence/readyz',
@@ -162,12 +218,21 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push'", self.workflow)
         self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
 
+    def test_b2_s3_credentials_are_trimmed_before_provider_calls(self):
+        self.assertIn("B2 S3 access key ID length after whitespace normalization", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.deployer)
+
     def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("image: testagram-self-hosted-api:latest", compose)
         self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
-        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
+        self.assertIn("config --format json | jq -r '.services.api.image // empty'", self.deployer)
+        self.assertIn('docker image inspect --format \'{{.Id}}\' "$api_image_ref"', self.deployer)
         self.assertIn('docker inspect --format \'{{.Image}}\' "$api_container"', self.deployer)
         self.assertIn('"$api_actual_image_id" != "$api_expected_image_id"', self.deployer)
-        self.assertIn('Verified Backend running immutable image ID', self.deployer)
+        self.assertIn("Verified running Backend immutable image ID", self.deployer)
+        self.assertNotIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
 
     def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
         deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]

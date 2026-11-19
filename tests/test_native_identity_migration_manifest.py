@@ -29,6 +29,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "055_native_identity_approval_ledger.sql",
             "056_native_verification_decider.sql",
             "057_testagram_mail_outbox.sql",
+            "058_testagram_mail_outbox_runtime_role.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
@@ -37,6 +38,13 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             with self.subTest(migration=name):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
+
+    def test_corrective_mail_role_migration_is_mounted_and_applied(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        migration = "20261123_testagram_mail_outbox_runtime_role.sql"
+        self.assertIn(migration + ":/docker-entrypoint-initdb.d/058_testagram_mail_outbox_runtime_role.sql:ro", compose)
+        self.assertIn("CREATE ROLE testagram_app NOLOGIN", (ROOT / "migrations" / migration).read_text(encoding="utf-8"))
+        self.assertIn("DROP ROLE testagram_app", (ROOT / "scripts/test-identity-registration-migration.sh").read_text(encoding="utf-8"))
 
     def test_schema_preflight_checks_optional_intake_fingerprint(self):
         self.assertIn("column_name='\\''evidence_fingerprint_sha256'\\''", SOURCE)

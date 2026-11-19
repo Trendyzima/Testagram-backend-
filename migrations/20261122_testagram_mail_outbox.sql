@@ -34,13 +34,23 @@ CREATE INDEX IF NOT EXISTS testagram_mail_outbox_ready_idx
 REVOKE ALL ON SCHEMA testagram_mail FROM PUBLIC;
 REVOKE ALL ON TABLE testagram_mail.outbox FROM PUBLIC;
 
+-- Existing production databases may predate the dedicated application
+-- group role. Create it as NOLOGIN before granting the narrowly scoped
+-- outbox permissions; do not silently skip grants when the role is absent.
+DO $role$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+    EXECUTE 'CREATE ROLE testagram_app NOLOGIN';
+  END IF;
+END;
+$role$;
+
 DO $grants$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
-    GRANT USAGE ON SCHEMA testagram_mail TO testagram_app;
-    GRANT SELECT,INSERT,UPDATE ON testagram_mail.outbox TO testagram_app;
-    GRANT USAGE,SELECT ON SEQUENCE testagram_mail.outbox_id_seq TO testagram_app;
-  END IF;
+  GRANT USAGE ON SCHEMA testagram_mail TO testagram_app;
+  GRANT SELECT,INSERT,UPDATE ON testagram_mail.outbox TO testagram_app;
+  GRANT USAGE,SELECT ON SEQUENCE testagram_mail.outbox_id_seq TO testagram_app;
+
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     GRANT USAGE ON SCHEMA testagram_mail TO service_role;
     GRANT SELECT,INSERT,UPDATE ON testagram_mail.outbox TO service_role;
