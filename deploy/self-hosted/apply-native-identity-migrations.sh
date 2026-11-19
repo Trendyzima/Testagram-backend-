@@ -242,6 +242,7 @@ for file in \
   055_native_identity_approval_ledger.sql \
   056_native_verification_decider.sql \
   057_testagram_mail_outbox.sql \
+  058_testagram_mail_outbox_runtime_role.sql \
   20261121_native_identity_intake_optional_fingerprint.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
@@ -270,6 +271,7 @@ apply_migration 054_native_admin_console.sql
 apply_migration 055_native_identity_approval_ledger.sql
 apply_migration 056_native_verification_decider.sql
 apply_migration 057_testagram_mail_outbox.sql
+apply_migration 058_testagram_mail_outbox_runtime_role.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then

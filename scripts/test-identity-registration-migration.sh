@@ -536,4 +536,32 @@ if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tam
   exit 1
 fi
 
+# Reproduce the production ordering defect: remove the NOLOGIN application
+# group role after all other identity tests, then prove the corrective migration
+# recreates it and restores the exact outbox grants on an existing database.
+psql_ci <<'SQL'
+REASSIGN OWNED BY testagram_app TO postgres;
+DROP OWNED BY testagram_app;
+DROP ROLE testagram_app;
+SQL
+psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
+psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
+psql_ci <<'SQL'
+DO $mail_role_repair$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+    RAISE EXCEPTION 'corrective migration did not recreate testagram_app';
+  END IF;
+  IF NOT has_schema_privilege('testagram_app','testagram_mail','USAGE')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.outbox','UPDATE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','USAGE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','SELECT') THEN
+    RAISE EXCEPTION 'corrective migration did not restore the exact mail outbox grants';
+  END IF;
+END;
+$mail_role_repair$;
+SQL
+
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
