@@ -12,6 +12,7 @@ SOURCE = SCRIPT.read_text(encoding="utf-8")
 class NativeIdentityMigrationManifestTests(unittest.TestCase):
     def test_every_required_migration_is_preflighted_and_applied(self):
         required = [
+            "029_federation_actor_consent.sql",
             "034_admin_security_controls.sql",
             "035_identity_registration_pipeline.sql",
             "039_identity_registration_hardening.sql",
@@ -45,6 +46,12 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn(migration + ":/docker-entrypoint-initdb.d/058_testagram_mail_outbox_runtime_role.sql:ro", compose)
         self.assertIn("CREATE ROLE testagram_app NOLOGIN", (ROOT / "migrations" / migration).read_text(encoding="utf-8"))
         self.assertIn("DROP ROLE testagram_app", (ROOT / "scripts/test-identity-registration-migration.sh").read_text(encoding="utf-8"))
+
+    def test_federation_actor_consent_is_preflighted_and_fail_closed(self):
+        self.assertIn("Federation actor consent column", SOURCE)
+        self.assertIn("column_name='\\''federation_enabled'\\''", SOURCE)
+        migration = (ROOT / "migrations" / "20261107_federation_actor_consent.sql").read_text(encoding="utf-8")
+        self.assertIn("ADD COLUMN IF NOT EXISTS federation_enabled BOOLEAN NOT NULL DEFAULT FALSE", migration)
 
     def test_schema_preflight_checks_optional_intake_fingerprint(self):
         self.assertIn("column_name='\\''evidence_fingerprint_sha256'\\''", SOURCE)
