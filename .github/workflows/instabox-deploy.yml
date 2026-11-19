@@ -251,11 +251,23 @@ jobs:
           # public-access controls and verify both public access surfaces.
           r2_managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/managed"
           managed_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-managed-disable.json" -w '%{http_code}' -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data '{"enabled":false}' "$r2_managed_url")"
-          [[ "$managed_status" == "200" ]] && jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed-disable.json" >/dev/null || { echo "::error::Could not disable R2 r2.dev public access for the identity-evidence bucket."; jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-managed-disable.json" || true; exit 1; }
+          if [[ "$managed_status" != "200" ]] || ! jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed-disable.json" >/dev/null; then
+            echo "::error::Could not disable R2 r2.dev public access for the identity-evidence bucket."
+            jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-managed-disable.json" || true
+            exit 1
+          fi
           managed_check_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-managed-check.json" -w '%{http_code}' "$r2_managed_url" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")"
-          [[ "$managed_check_status" == "200" ]] && jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed-check.json" >/dev/null || { echo "::error::R2 r2.dev public access is not verified disabled."; jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-managed-check.json" || true; exit 1; }
+          if [[ "$managed_check_status" != "200" ]] || ! jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed-check.json" >/dev/null; then
+            echo "::error::R2 r2.dev public access is not verified disabled."
+            jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-managed-check.json" || true
+            exit 1
+          fi
           custom_domains_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-custom-domains.json" -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/custom" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")"
-          [[ "$custom_domains_status" == "200" ]] && jq -e '.success == true and ([.result.domains[]? | select(.enabled == true)] | length == 0)' "$RUNNER_TEMP/r2-custom-domains.json" >/dev/null || { echo "::error::R2 identity-evidence bucket has an enabled public custom domain or its domain state cannot be verified."; jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-custom-domains.json" || true; exit 1; }
+          if [[ "$custom_domains_status" != "200" ]] || ! jq -e '.success == true and ([.result.domains[]? | select(.enabled == true)] | length == 0)' "$RUNNER_TEMP/r2-custom-domains.json" >/dev/null; then
+            echo "::error::R2 identity-evidence bucket has an enabled public custom domain or its domain state cannot be verified."
+            jq -c '{success,errors,result}' "$RUNNER_TEMP/r2-custom-domains.json" || true
+            exit 1
+          fi
           echo "Verified R2 identity-evidence bucket has r2.dev disabled and no enabled public custom domains."
           echo "media_bucket=$R2_MEDIA_BUCKET" >> "$GITHUB_OUTPUT"
           echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
