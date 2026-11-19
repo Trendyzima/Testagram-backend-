@@ -218,6 +218,11 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push'", self.workflow)
         self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
 
+    def test_b2_s3_credentials_are_trimmed_before_provider_calls(self):
+        self.assertIn("B2 S3 access key ID length after whitespace normalization", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.deployer)
+
     def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
         self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
         self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
