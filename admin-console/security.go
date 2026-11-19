@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type stepUpInput struct { Password string `json:"password"` }
 
 func (a *app) consumeAdminRateLimit(ctx context.Context, actorID, operation string, limit int, window time.Duration) (bool, error) {
 	ctx,cancel:=context.WithTimeout(ctx,2*time.Second); defer cancel()
@@ -84,32 +83,24 @@ func (a *app) requirePermission(w http.ResponseWriter, r *http.Request, permissi
 	return s, user, true
 }
 func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
-	if s.StepUpUntil <= time.Now().Unix() {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error":"Re-authentication required. Confirm your password again before continuing."})
+	if !s.StepUpMFA || s.StepUpUntil <= time.Now().Unix() {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "A live phishing-resistant MFA challenge is required before sensitive staff operations."})
 		return false
 	}
 	return true
 }
+
 func (a *app) handleStepUp(w http.ResponseWriter, r *http.Request) {
-	s, user, ok := a.requireStaff(w, r); if !ok { return }
-	var input stepUpInput; if !decodeBody(w,r,&input) { return }
-	if len(input.Password)<12 || len(input.Password)>128 { writeJSON(w,400,map[string]string{"error":"Enter your current password"}); return }
-	ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second); defer cancel()
-	allowed,rateErr:=a.consumeAdminRateLimit(ctx,user.ID,"step-up",5,15*time.Minute)
-	if rateErr!=nil { writeJSON(w,503,map[string]string{"error":"Security rate-limit service is unavailable"}); return }
-	if !allowed { writeJSON(w,429,map[string]string{"error":"Too many re-authentication attempts. Try again later."}); return }
-	var envelope nativeAuthEnvelope
-	_,err:=a.backendRequest(ctx,http.MethodPost,"/api/auth/login","",map[string]string{"email":user.Email,"password":input.Password},&envelope)
-	if err!=nil || !envelope.OK || envelope.Data.User.ID!=user.ID || envelope.Data.AccessToken=="" {
-		writeJSON(w,401,map[string]string{"error":"Re-authentication failed"}); return
+	if _, _, ok := a.requireStaff(w, r); !ok {
+		return
 	}
-	// Revoke the short-lived verification session immediately; only the existing
-	// encrypted staff cookie receives the five-minute step-up marker.
-	_,revokeErr:=a.backendRequest(ctx,http.MethodPost,"/api/auth/logout",envelope.Data.AccessToken,map[string]any{},nil)
-	if revokeErr!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely complete re-authentication"}); return }
-	s.StepUpUntil=time.Now().Add(5*time.Minute).Unix()
-	if err:=a.setSession(w,s); err!=nil { writeJSON(w,500,map[string]string{"error":"Could not refresh secure session"}); return }
-	writeJSON(w,200,map[string]any{"ok":true,"step_up_expires_at":s.StepUpUntil})
+	// Password-only reauthentication is not MFA. Until a verified WebAuthn
+	// challenge is implemented, do not issue a step-up marker or allow staff
+	// review, evidence access or sensitive approvals to proceed.
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"error": "Phishing-resistant MFA step-up is not configured. Sensitive staff operations remain disabled.",
+	})
 }
 
 func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request) {
