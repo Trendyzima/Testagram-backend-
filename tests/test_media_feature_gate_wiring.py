@@ -56,7 +56,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
             '/domains/managed',
-            '--data '{"enabled":false}'',
+            "--data '{\"enabled\":false}'",
             '/domains/custom',
             'mc stat "b2/$B2_BUCKET"',
             'mc stat "r2/$R2_IDENTITY_BUCKET"',
