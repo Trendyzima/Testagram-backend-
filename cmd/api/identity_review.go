@@ -44,8 +44,13 @@ type nativeIdentityReviewer struct {
 // issued only after a real phishing-resistant challenge. An enrollment
 // timestamp is not a live challenge and is never sufficient by itself.
 func requireLiveIdentityReviewMFA(claims authClaims) error {
-	if !claims.MFAAuthenticated {
-		return errors.New("live phishing-resistant MFA proof is not present; identity review remains disabled")
+	now := time.Now().Unix()
+	const maxAgeSeconds = int64(5 * 60)
+	const allowedFutureClockSkewSeconds = int64(60)
+	if claims.MFAAuthenticatedAt <= 0 ||
+		claims.MFAAuthenticatedAt > now+allowedFutureClockSkewSeconds ||
+		now-claims.MFAAuthenticatedAt > maxAgeSeconds {
+		return errors.New("fresh phishing-resistant MFA proof is not present; identity review remains disabled")
 	}
 	return nil
 }
