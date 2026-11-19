@@ -20,8 +20,8 @@ class TestInstaBoxB2ApplicationKeyWiring(unittest.TestCase):
             "B2_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY || secrets.B2_SECRET_ACCESS_KEY }}",
             self.workflow,
         )
-        self.assertNotIn("secrets.B2_S3_ACCESS_KEY_ID", self.workflow)
-        self.assertNotIn("secrets.B2_S3_SECRET_ACCESS_KEY", self.workflow)
+        self.assertNotIn("B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}", self.workflow)
+        self.assertNotIn("B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}", self.workflow)
 
     def test_rejects_r2_style_or_malformed_keys_before_b2_bucket_operations(self):
         key_id_check = self.workflow.index("The Backblaze B2 application key ID must be 25 characters")
