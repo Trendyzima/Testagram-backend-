@@ -432,7 +432,8 @@ if [[ "$web_ready" != "true" ]]; then
 fi
 web_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q flutter-web)"
 web_actual_ref="$(sudo docker inspect --format '{{.Config.Image}}' "$web_container")"
-web_actual_digests="$(sudo docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$web_container")"
+web_actual_image_id="$(sudo docker inspect --format '{{.Image}}' "$web_container")"
+web_actual_digests="$(sudo docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$web_actual_image_id")"
 if [[ "$web_actual_ref" != "$TESTAGRAM_WEB_IMAGE" ]] || ! grep -Fqx -- "$TESTAGRAM_WEB_IMAGE" <<<"$web_actual_digests"; then
   echo "::error::Flutter web container is not running the exact reviewed image digest."
   echo "Configured reference: $web_actual_ref"
@@ -773,14 +774,15 @@ fi
 echo "Verified authenticated Federation runtime status: outbound delivery, Backend outbox poller, signed inbox processor and inbound acceptance are active."
 
 verify_running_image() {
-  local service="$1" expected="$2" container actual_ref actual_digests
+  local service="$1" expected="$2" container actual_ref actual_image_id actual_digests
   container="$(sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q "$service")"
   if [[ -z "$container" ]]; then
     echo "::error::Data Centre service $service has no running container"
     return 1
   fi
   actual_ref="$(sudo docker inspect --format '{{.Config.Image}}' "$container")"
-  actual_digests="$(sudo docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$container")"
+  actual_image_id="$(sudo docker inspect --format '{{.Image}}' "$container")"
+  actual_digests="$(sudo docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$actual_image_id")"
   if [[ "$actual_ref" != "$expected" ]] || ! grep -Fqx -- "$expected" <<<"$actual_digests"; then
     echo "::error::Data Centre service $service does not run the exact approved image digest."
     echo "Configured reference: $actual_ref"
@@ -792,7 +794,8 @@ verify_running_image() {
 cdn_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q media-cache)"
 if [[ -z "$cdn_container" ]]; then echo "::error::Go CDN container is not running"; exit 1; fi
 cdn_image="$(sudo docker inspect --format '{{.Config.Image}}' "$cdn_container")"
-cdn_digests="$(sudo docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$cdn_container")"
+cdn_image_id="$(sudo docker inspect --format '{{.Image}}' "$cdn_container")"
+cdn_digests="$(sudo docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$cdn_image_id")"
 if [[ "$cdn_image" != "$TESTAGRAM_CDN_IMAGE" ]] || ! grep -Fqx -- "$TESTAGRAM_CDN_IMAGE" <<<"$cdn_digests"; then
   echo "::error::Go CDN is not running the exact approved immutable image digest."
   echo "Configured reference: $cdn_image"
