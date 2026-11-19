@@ -616,7 +616,7 @@ jobs:
           assert "github.event_name == 'pull_request' ||" not in deploy, "pull requests must never deploy to production"
           assert "github.ref == 'refs/heads/main'" in deploy and "environment: production" in deploy, "production deployment must be restricted to main and the production environment"
           assert "confirm_native_identity_migrations" in trigger and "default: false" in trigger and "CONFIRM_NATIVE_IDENTITY_MIGRATIONS" in deploy, "native identity migrations must remain explicitly disabled by default"
-          assert "confirm_identity_registration" in trigger and "default: false" in trigger, "public identity registration must require a separate manual confirmation"
+          assert "confirm_identity_registration" not in trigger and "confirm_identity_registration" not in deploy, "public registration must not depend on a separate manual confirmation"
           deploy_workflow = deploy
           deploy_script = Path("scripts/start-instabox-deployment.sh").read_text()
           # Deployment implementation lives in the extracted script; validate
@@ -635,8 +635,9 @@ jobs:
           assert 'write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"' in deploy and 'write_env_value FRESH_MEDIA_ENABLED "$media_enabled"' not in deploy and "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" in compose and "FRESH_MEDIA_ENABLED:$fresh_media_enabled" in deploy, "the explicit Fresh Media approval must reach the Backend runtime feature gate without being inferred from the Data Centre flag"
           assert 'if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]' in deploy and "refusing an ambiguous media profile" in deploy, "Fresh Media and Data Centre media approvals must match explicitly"
           assert 'write_env_value VIRTUAL_STORAGE_ENABLED true' in deploy and "VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-true}" in compose, "private evidence storage must be enabled on the VPS"
-          identity_flag_expression = "$" + "{{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED == 'true' && vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true' && inputs.confirm_identity_registration == true && 'true' || 'false' }}"
-          assert f"TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: {identity_flag_expression}" in deploy and "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}" in deploy and 'write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"' in deploy, "identity registration must remain disabled unless the private Data Centre media profile and separate manual confirmation are both enabled"
+          assert "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" not in deploy, "legacy registration kill switch must be absent from workflow and deployer"
+          assert '[[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" && "$FRESH_MEDIA_ENABLED" == "true" ]]' in deploy_script, "public registration must require the private Data Centre evidence profile"
+          assert "Identity registration requires TESTAGRAM_TERMS_VERSION" in deploy_script and "Identity registration requires TESTAGRAM_PRIVACY_VERSION" in deploy_script, "public registration must have explicit policy versions"
           assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in compose and "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in minio_init and 'mc anonymous set none "local/$identity_bucket"' in minio_init, "identity evidence must use a dedicated private MinIO bucket"
           assert "CLOUDFLARE_R2_SECRET_ACCESS_KEY" in compose and "B2_S3_SECRET_ACCESS_KEY" in compose, "three-provider replication credentials must reach Backend only through environment mapping"
           deploy = deploy_workflow + "\n" + deploy_script
