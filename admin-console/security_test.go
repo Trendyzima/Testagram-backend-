@@ -43,25 +43,27 @@ func TestUnknownSensitiveActionIsRejected(t *testing.T) {
 	}
 }
 
-func TestRecentStepUpRequiresUnexpiredWindow(t *testing.T) {
+func TestRecentStepUpRequiresLivePhishingResistantMFA(t *testing.T) {
 	a := testApp(t)
 	for _, tc := range []struct {
 		name string
 		until int64
+		mfaVerified bool
 		want bool
 	}{
-		{"expired", time.Now().Add(-time.Second).Unix(), false},
-		{"missing", 0, false},
-		{"valid", time.Now().Add(time.Minute).Unix(), true},
+		{"expired MFA proof", time.Now().Add(-time.Second).Unix(), true, false},
+		{"missing proof", 0, false, false},
+		{"password-only step-up", time.Now().Add(time.Minute).Unix(), false, false},
+		{"fresh verified MFA proof", time.Now().Add(time.Minute).Unix(), true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			got := a.requireRecentStepUp(w, session{StepUpUntil: tc.until})
+			got := a.requireRecentStepUp(w, session{StepUpUntil: tc.until, StepUpMFA: tc.mfaVerified})
 			if got != tc.want {
 				t.Fatalf("requireRecentStepUp() = %v, want %v", got, tc.want)
 			}
 			if !tc.want && w.Code != http.StatusUnauthorized {
-				t.Fatalf("expired step-up returned HTTP %d, want 401", w.Code)
+				t.Fatalf("missing/expired MFA proof returned HTTP %d, want 401", w.Code)
 			}
 		})
 	}
