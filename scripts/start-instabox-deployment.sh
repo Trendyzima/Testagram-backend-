@@ -388,12 +388,31 @@ sudo env \
   bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
 # Build the Backend once, capture its immutable local image ID, and deploy that exact image.
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api
-api_expected_image_id="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api | head -n 1)"
-if [[ ! "$api_expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-  echo "::error::Backend build did not produce a verifiable immutable image ID."
+api_image_ref="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config --format json | jq -r '.services.api.image // empty')"
+if [[ -z "$api_image_ref" ]]; then
+  echo "::error::Backend Compose service has no explicit image reference; refusing an unverifiable deployment."
   exit 1
 fi
+api_expected_image_id="$(sudo docker image inspect --format '{{.Id}}' "$api_image_ref" 2>/dev/null || true)"
+if [[ ! "$api_expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+  echo "::error::Backend build did not produce a verifiable immutable image ID for $api_image_ref."
+  exit 1
+fi
+echo "Built Backend image $api_image_ref with immutable ID $api_expected_image_id."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate object-storage object-init api flutter-web caddy
+api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+if [[ -z "$api_container" ]]; then
+  echo "::error::Backend API container was not created after deployment."
+  exit 1
+fi
+api_actual_image_id="$(sudo docker inspect --format '{{.Image}}' "$api_container")"
+if [[ "$api_actual_image_id" != "$api_expected_image_id" ]]; then
+  echo "::error::Running Backend container does not match the image built for this release."
+  echo "Expected image ID: $api_expected_image_id"
+  echo "Running image ID: $api_actual_image_id"
+  exit 1
+fi
+echo "Verified running Backend immutable image ID: $api_actual_image_id."
 
 echo "Verifying the self-hosted Flutter web origin..."
 web_ready=false
