@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "deploy" / "self-hosted" / "docker-compose.yml"
 DEPLOY = ROOT / "scripts" / "start-instabox-deployment.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "instabox-deploy.yml"
+STACK_WORKFLOW = ROOT / ".github" / "workflows" / "self-hosted-stack.yml"
 
 
 class TestInstaBoxRuntimeHealthcheckPaths(unittest.TestCase):
@@ -17,10 +18,13 @@ class TestInstaBoxRuntimeHealthcheckPaths(unittest.TestCase):
     def test_deployment_and_post_deploy_checks_use_the_same_binary_path(self):
         deploy = DEPLOY.read_text(encoding="utf-8")
         workflow = WORKFLOW.read_text(encoding="utf-8")
+        stack_workflow = STACK_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('/healthcheck', deploy)
         self.assertIn('/healthcheck', workflow)
         self.assertNotIn("/app/healthcheck", deploy)
         self.assertNotIn("/app/healthcheck", workflow)
+        self.assertIn('if "/healthcheck" not in health:', stack_workflow)
+        self.assertNotIn('if "/app/healthcheck" not in health:', stack_workflow)
 
 
 if __name__ == "__main__":
