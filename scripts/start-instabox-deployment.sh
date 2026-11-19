@@ -2,6 +2,18 @@ set -euo pipefail
 API="https://api.instabox.sh"
 MACHINE_ID="${MACHINE_ID:?machine output is required}"
 AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
+normalize_policy_version() {
+  local name="$1" fallback="$2" value
+  value="$(printf '%s' "${!name:-}" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [[ -n "$value" ]] || value="$fallback"
+  [[ "$value" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || {
+    echo "::error::$name must be a 1-64 character policy version token."
+    exit 1
+  }
+  printf -v "$name" '%s' "$value"
+}
+normalize_policy_version TESTAGRAM_TERMS_VERSION 2026-11-11
+normalize_policy_version TESTAGRAM_PRIVACY_VERSION 2026-11-11
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
