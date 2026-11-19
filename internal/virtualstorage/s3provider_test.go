@@ -206,6 +206,18 @@ func TestCopyFromStreamsAndVerifiesBothCloudCopies(t *testing.T) {
 	}
 }
 
+func TestS3ProviderAllowsPrivateComposeMinIOService(t *testing.T) {
+	if _, err := NewS3Provider(S3Config{Endpoint: "http://object-storage:9000", AccessKey: "key", SecretKey: "secret", Region: "us-east-1"}); err != nil {
+		t.Fatalf("private Compose MinIO service endpoint should be supported: %v", err)
+	}
+}
+
+func TestS3ProviderRejectsNonMinIOPrivateHTTPPorts(t *testing.T) {
+	if _, err := NewS3Provider(S3Config{Endpoint: "http://object-storage:9001", AccessKey: "key", SecretKey: "secret", Region: "us-east-1"}); err == nil {
+		t.Fatal("non-MinIO private service port must be rejected for HTTP")
+	}
+}
+
 func TestS3ProviderRejectsInsecureRemoteEndpoints(t *testing.T) {
 	if _, err := NewS3Provider(S3Config{Endpoint: "http://storage.example.com", AccessKey: "key", SecretKey: "secret", Region: "us-east-1"}); err == nil {
 		t.Fatal("remote HTTP S3 endpoint must be rejected")
