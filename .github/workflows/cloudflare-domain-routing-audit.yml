@@ -134,7 +134,21 @@ jobs:
                 if cf_get "/accounts/$account_id/workers/scripts/$worker/deployments?per_page=1" "$tmp/worker-deployments.json"; then
                   deployments="$(jq -c '.result.deployments // [] | map({created_on, source})' "$tmp/worker-deployments.json")"
                 fi
-                printf '%s\n' "- Worker runtime inventory: $worker; cron=$schedules; bindings=$bindings; latest_deployments=$deployments" >> "$GITHUB_STEP_SUMMARY"
+                workers_dev="$(jq -r --arg worker "$worker" '.result[]? | select(.id == $worker) | .workers_dev // "unknown"' "$tmp/workers.json" | head -n 1)"
+                tail_consumers="unavailable"
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/script-settings" "$tmp/worker-script-settings.json"; then
+                  tail_consumers="$(jq -c '.result.tail_consumers // [] | map({service, environment, namespace})' "$tmp/worker-script-settings.json")"
+                fi
+                source_scan="unavailable"
+                if curl --silent --show-error --fail --connect-timeout 10 --max-time 45 \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                  "$API/accounts/$account_id/workers/scripts/$worker/content/v2" -o "$tmp/worker-source"; then
+                  has_supabase="no"; has_xclone="no"
+                  grep -Eiq 'supabase|sb-project-ref' "$tmp/worker-source" && has_supabase="yes" || true
+                  grep -Eiq 'xclone' "$tmp/worker-source" && has_xclone="yes" || true
+                  source_scan="supabase_refs=$has_supabase,xclone_refs=$has_xclone"
+                fi
+                printf '%s\n' "- Worker runtime inventory: $worker; workers_dev=$workers_dev; cron=$schedules; bindings=$bindings; tail_consumers=$tail_consumers; latest_deployments=$deployments; source_scan=$source_scan" >> "$GITHUB_STEP_SUMMARY"
               done < <(jq -r '.result[]?.id // empty' "$tmp/workers.json")
             else
               echo "- Workers scripts: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
