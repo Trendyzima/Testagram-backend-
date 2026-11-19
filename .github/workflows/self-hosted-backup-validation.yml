@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "scripts/self-hosted-backup.sh"
+      - "scripts/self_hosted_media_backup.py"
+      - "tests/test_self_hosted_media_backup.py"
       - "tests/test_self_hosted_backup_guards.py"
       - "scripts/self-hosted-restore-drill.sh"
       - "scripts/instabox-production-backup.sh"
@@ -39,6 +41,8 @@ jobs:
           ruby -e 'require "yaml"; YAML.load_file(".github/workflows/instabox-production-backup.yml"); puts "InstaBox backup workflow YAML is valid."'
       - name: Test effective local MinIO origin guard
         run: python3 tests/test_self_hosted_backup_guards.py -v
+      - name: Test external media inventory and checksum validation
+        run: python3 tests/test_self_hosted_media_backup.py -v
       - name: Test embedded Federation database safety guard
         run: |
           python3 - <<'PY'
