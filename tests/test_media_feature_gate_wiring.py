@@ -34,6 +34,17 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), ["true", "false"])
 
+    def test_b2_identity_bucket_gate_uses_same_normalized_private_media_flags(self):
+        start = self.workflow.index("Provision dedicated private B2 identity-evidence bucket")
+        end = self.workflow.index("Start deployment on the machine", start)
+        step = self.workflow[start:end]
+        self.assertNotIn("if: ${{ vars.DATA_CENTRE_MEDIA_ENABLED", step)
+        self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", step)
+        self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", step)
+        self.assertIn("normalize_flag", step)
+        self.assertIn('normalize_flag "$DATA_CENTRE_MEDIA_ENABLED"', step)
+        self.assertIn('normalize_flag "$FRESH_MEDIA_ENABLED"', step)
+
     def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
         self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
         self.assertIn("Verified R2 identity-evidence bucket has r2.dev disabled", self.workflow)
