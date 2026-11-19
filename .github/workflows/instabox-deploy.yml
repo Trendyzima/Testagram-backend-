@@ -219,7 +219,6 @@ jobs:
                 echo "media_bucket=$R2_MEDIA_BUCKET" >> "$GITHUB_OUTPUT"
                 echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
                 echo "identity_evidence_bucket=$R2_IDENTITY_BUCKET" >> "$GITHUB_OUTPUT"
-                exit 0
               fi
             else
               echo "Cloudflare R2 bucket listing returned HTTP $status; trying bucket creation permission before S3 fallback."
