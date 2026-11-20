@@ -417,7 +417,8 @@ func (a *app) identityProxy(w http.ResponseWriter, r *http.Request, backendPath 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	jwt := staffSession.AccessToken
+	jwt := staffSession.ElevatedToken
+	if jwt == "" { writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Backend-issued MFA elevation is unavailable"});return }
 	if jwt == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Native reviewer session is unavailable"})
 		return
