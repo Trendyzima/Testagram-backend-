@@ -106,7 +106,7 @@ func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
 	if claims.Issuer!="testagram-auth"||claims.Audience!="testagram-api"||claims.Role!="authenticated"||
 		claims.Subject==""||claims.Subject!=native.Subject||claims.SessionID==""||claims.SessionID!=native.SessionID||
 		claims.TokenVersion<1||claims.TokenVersion!=native.TokenVersion||
-		claims.IssuedAt<=0||claims.IssuedAt>now+60||claims.ExpiresAt<=now||
+		claims.IssuedAt<=0||claims.IssuedAt>now+60||claims.ExpiresAt<=now||claims.ExpiresAt<=claims.IssuedAt||
 		claims.ExpiresAt-claims.IssuedAt>300||claims.MFAAuthenticatedAt<=0||
 		claims.MFAAuthenticatedAt>now+60||now-claims.MFAAuthenticatedAt>300 {
 		writeJSON(w,401,map[string]string{"error":"Expired or invalid native MFA elevation"});return false
