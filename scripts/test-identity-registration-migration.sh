@@ -57,7 +57,8 @@ for migration in \
   migrations/20261119_native_identity_approval_ledger.sql \
   migrations/20261120_native_identity_approval_circuit.sql \
   migrations/20261120_native_verification_decider.sql \
-  migrations/20261121_native_identity_intake_optional_fingerprint.sql; do
+  migrations/20261121_native_identity_intake_optional_fingerprint.sql \
+  migrations/20261121_native_staff_webauthn.sql; do
   psql_ci < "$migration"
 done
 
@@ -89,6 +90,7 @@ psql_ci < migrations/20261120_native_identity_approval_circuit.sql
 psql_ci < migrations/20261120_native_identity_approval_circuit.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
+psql_ci < migrations/20261121_native_staff_webauthn.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
