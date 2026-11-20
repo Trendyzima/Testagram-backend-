@@ -2,7 +2,7 @@
 
 **Status: mandatory architecture decision. Render is retired and prohibited.**
 
-The Instabox VPS, operated through the Testagram Data Centre deployment/control plane, is the sole authoritative self-hosted deployment target for the Backend and the seven-repository Testagram runtime.
+The Instabox VPS, operated through the Testagram Data Centre deployment/control plane, is the sole authoritative self-hosted deployment target for all six Testagram runtime repositories. The separate API contract repository is build-time only, not a runtime service.
 
 ## Non-negotiable rules
 
@@ -11,18 +11,17 @@ The Instabox VPS, operated through the Testagram Data Centre deployment/control 
 3. Do not use Render as a fallback, preview, staging, failover, or secondary hosting provider.
 4. Backend runtime changes must be deployed through the reviewed Instabox VPS Compose/control-plane path. Health/readiness, secrets, migrations, image digests, rollback and watchdog behavior must be verified there.
 5. CI must run `python3 scripts/guard-no-render.py`. A violation fails the build.
-6. Any future hosting change requires an explicit architecture decision recorded in the shared Testagram API contract and reviewed across all seven repositories. No PR may silently reintroduce a retired host.
+6. Any future hosting change requires an explicit architecture decision recorded in the shared Testagram API contract and reviewed across all runtime repositories. No PR may silently reintroduce a retired host.
 
 ## Runtime authority
 
 - Instabox VPS / Data Centre: deployment, runtime operations, monitoring, backup and recovery.
-- Backend `cmd/api`: public product API runtime.
-- PostgreSQL: canonical product relational state.
-- Appwrite: authentication/session provider and identity provisioning.
+- Backend `cmd/api`: public product API, native account identity, sessions and product authorization.
+- PostgreSQL: canonical identity, session and product relational state.
 - Data Centre media service: private media lifecycle and provider orchestration, gated until staging acceptance.
-- CDN: media delivery only.
-- Flutter: public Backend API client.
-- Algorithm and Federation: private authenticated services.
+- CDN: media delivery only; no product authorization.
+- Flutter: public Backend API client using native Testagram sessions.
+- Algorithm and Federation: private authenticated services that cannot override Backend authorization.
 
 ## Enforcement scope
 
