@@ -498,11 +498,8 @@ END;
 $native_auth_schema$;
 SQL
 
-# Exercise the complete PostgreSQL provisioning transaction with an Appwrite Account endpoint stub.
+# Exercise the complete PostgreSQL native identity provisioning transaction.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestMailOutboxPersistsEncryptedPayload|TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestIdentityApprovalRejectsExpiredSensitiveActionRequest|TestIdentityReviewerHonorsRevocationAndPermissionOverrides|TestIdentityApprovalRejectsReviewerOutsideApplicationReviewPair|TestIdentityApprovalSerializesConcurrentReviewersAndDuplicateApprovals)$' -count=1
-
-# Exercise the actual Appwrite session -> current-consent -> canonical account path.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAppwriteTokenRejectedInNativeOnlyModeEvenWithConsent$' -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
