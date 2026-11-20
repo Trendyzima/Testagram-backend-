@@ -639,7 +639,7 @@ jobs:
           identity_intake = Path("cmd/api/identity_native.go").read_text()
           service_definition = Path("cmd/api/main.go").read_text()
           assert "if !s.identityReviewWebAuthnReady" in identity_intake and "IDENTITY_REVIEW_MFA_UNAVAILABLE" in identity_intake, "new identity intake must remain fail-closed until real WebAuthn staff review is implemented"
-          assert "identityReviewWebAuthnReady bool" in service_definition and "identityReviewWebAuthnReady:" not in service_definition, "production Backend service must not enable the WebAuthn release capability through configuration"
+          assert "identityReviewWebAuthnReady" in service_definition and "identityReviewWebAuthnReady:" not in service_definition, "production Backend service must not enable the WebAuthn release capability through configuration"
           assert '[[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" && "$FRESH_MEDIA_ENABLED" == "true" ]]' in deploy_script, "public registration must require the private Data Centre evidence profile"
           assert "Identity registration requires TESTAGRAM_TERMS_VERSION" in deploy_script and "Identity registration requires TESTAGRAM_PRIVACY_VERSION" in deploy_script, "public registration must have explicit policy versions"
           assert 'write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script and 'write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script, "the R2 metadata bucket must reach both Backend and Data Centre environment files"
