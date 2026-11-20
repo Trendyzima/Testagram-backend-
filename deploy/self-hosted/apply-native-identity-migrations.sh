@@ -32,7 +32,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('identity_application_reviews.review_stage', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
   ('verification_reviews.reviewer_user_id', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='reviewer_user_id')),
   ('identity_approval_tokens table', to_regclass('testagram_identity.identity_approval_tokens') IS NOT NULL),
-  ('registration_provisioning table', to_regclass('testagram_identity.registration_provisioning') IS NOT NULL),
+  ('historical external provisioning evidence table', to_regclass('testagram_identity.historical_external_registration_provisioning') IS NOT NULL),
   ('verification_sessions table', to_regclass('testagram_identity.verification_sessions') IS NOT NULL),
   ('verification_events table', to_regclass('testagram_identity.verification_events') IS NOT NULL),
   ('verification_reviews table', to_regclass('testagram_identity.verification_reviews') IS NOT NULL),
@@ -112,7 +112,7 @@ schema_ready() {
             AND column_name='\''reviewer_user_id'\''
         )
         AND to_regclass('\''testagram_identity.identity_approval_tokens'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.registration_provisioning'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.historical_external_registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_events'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_reviews'\'') IS NOT NULL
