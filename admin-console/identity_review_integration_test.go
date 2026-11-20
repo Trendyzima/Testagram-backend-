@@ -6,11 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
@@ -56,6 +60,57 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 			VALUES($1::uuid,$2,$1::uuid)`, person.id, person.role); err != nil {
 			t.Fatalf("grant native staff role: %v", err)
 		}
+
+		if _, err := conn.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
+			VALUES('ops.example.test',$1::uuid,decode(md5($1),'hex'))
+		`, person.id); err != nil {
+			t.Fatalf("insert staff WebAuthn user: %v", err)
+		}
+		if _, err := conn.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_webauthn_credentials
+			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
+			VALUES('ops.example.test',$1::uuid,decode(md5($1),'hex'),decode(md5($1||'credential'),'hex'),TRUE,FALSE)
+		`, person.id); err != nil {
+			t.Fatalf("insert verified staff WebAuthn credential: %v", err)
+		}
+	}
+
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "ops.example.test")
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://ops.example.test")
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-admin-webauthn-readiness-key-", 2))
+	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", strings.Repeat("testagram-admin-readiness-token-", 2))
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer health.Close()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open Admin Console readiness pool: %v", err)
+	}
+	defer pool.Close()
+	admin := testApp(t)
+	admin.database = pool
+	admin.apiHealthURL = health.URL
+	admin.client = health.Client()
+	readiness := admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
+		t.Fatalf("Admin Console rejected complete PostgreSQL WebAuthn readiness: %#v", readiness)
+	}
+	readinessRequest := httptest.NewRequest(http.MethodGet, "/internal/webauthn/readiness", nil)
+	readinessRequest.Header.Set("Authorization", "Bearer "+os.Getenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN"))
+	readinessResponse := httptest.NewRecorder()
+	admin.handleInternalWebAuthnReadiness(readinessResponse, readinessRequest)
+	if readinessResponse.Code != http.StatusOK || !strings.Contains(readinessResponse.Body.String(), `"identity_review_ready":true`) {
+		t.Fatalf("Admin Console did not attest ready state: status=%d body=%s", readinessResponse.Code, readinessResponse.Body.String())
+	}
+	if _, err := conn.Exec(ctx, "UPDATE testagram_auth.staff_webauthn_credentials SET revoked_at=now() WHERE user_id=$1::uuid", approverTwo); err != nil {
+		t.Fatal(err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); ready {
+		t.Fatalf("Admin Console remained ready after an approver credential was revoked: %#v", readiness)
 	}
 
 	var applicationID, requestID string
