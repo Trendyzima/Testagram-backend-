@@ -30,7 +30,7 @@ BEGIN
      OR NOT has_table_privilege('service_role','testagram_local.scheduled_posts','INSERT') THEN
     RAISE EXCEPTION 'Backend runtime grants are incomplete';
   END IF;
-  IF has_table_privilege('public','testagram_local.stories','SELECT') THEN
+  IF EXISTS (SELECT 1 FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE c.oid='testagram_local.stories'::regclass AND a.grantee=0 AND a.privilege_type='SELECT') THEN
     RAISE EXCEPTION 'PUBLIC unexpectedly has access to story records';
   END IF;
   IF NOT EXISTS (
