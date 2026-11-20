@@ -81,7 +81,7 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn("@edge_health path /_testagram/edge-health", apex)
         self.assertIn('respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200', apex)
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
-        self.assertIn('Host: testagram.site', workflow)
+        self.assertNotIn('Host: testagram.site', workflow)
 
     def test_go_cdn_origin_port_is_bound_for_instabox_publication(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
@@ -96,6 +96,15 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn('"media-cache": ("8081", 8081)', stack)
         self.assertIn('{"3000", "8080", "8081", "9000"}', stack)
         self.assertNotIn('if "ports" in cdn:', stack)
+
+    def test_caddy_reload_precedes_public_apex_health_probe(self):
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        remote_health = workflow.split("REMOTE_HEALTH_CHECK", 1)[1].split("REMOTE_HEALTH_CHECK", 1)[0]
+        self.assertIn("caddy validate --config /etc/caddy/Caddyfile", remote_health)
+        self.assertIn("caddy reload --config /etc/caddy/Caddyfile", remote_health)
+        apex = workflow.split("Publish the apex federation edge over HTTPS", 1)[1].split("Configure public CDN URL", 1)[0]
+        self.assertNotIn('Host: testagram.site', apex)
+        self.assertIn('/_testagram/edge-health', apex)
 
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)

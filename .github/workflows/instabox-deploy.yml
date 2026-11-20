@@ -408,6 +408,8 @@ jobs:
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
           cmd="$(cat <<'REMOTE_HEALTH_CHECK'
           set -euo pipefail
+          sudo docker exec testagram-self-hosted-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+          sudo docker exec testagram-self-hosted-caddy-1 caddy reload --config /etc/caddy/Caddyfile
           containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-control-plane-1 testagram-self-hosted-api-1 testagram-self-hosted-admin-console-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-self-hosted-caddy-1 testagram-self-hosted-prometheus-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
           if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
             containers+=(testagram-data-centre-media-1)
@@ -515,11 +517,11 @@ jobs:
           published="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H "Content-Type: application/json" -d "$body" "$API/v1/machines/$MACHINE_ID/ports")"
           url="$(jq -r '.url // empty' <<<"$published")"
           if [[ -z "$url" || "$url" != https://* ]]; then echo "::error::InstaBox did not return a valid HTTPS URL for the apex federation edge."; jq -c '.error // .' <<<"$published"; exit 1; fi
-          health="$(curl -sS --connect-timeout 5 --max-time 20 -H "Host: testagram.site" -o /tmp/apex-health.json -w '%{http_code}' "$url/_testagram/edge-health" || true)"
+          health="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/apex-health.json -w '%{http_code}' "$url/_testagram/edge-health" || true)"
           if [[ "$health" != "200" ]] || ! jq -e '.ok == true and .service == "testagram-apex-edge"' /tmp/apex-health.json >/dev/null; then echo "::error::Apex Caddy ingress health check failed (HTTP $health)."; cat /tmp/apex-health.json 2>/dev/null || true; exit 1; fi
-          root_status="$(curl -sS --connect-timeout 5 --max-time 20 -H "Host: testagram.site" -D /tmp/apex-root.headers -o /dev/null -w '%{http_code}' "$url/" || true)"
+          root_status="$(curl -sS --connect-timeout 5 --max-time 20 -D /tmp/apex-root.headers -o /dev/null -w '%{http_code}' "$url/" || true)"
           if [[ "$root_status" != "308" ]] || ! grep -Fqi 'https://www.testagram.site' /tmp/apex-root.headers; then echo "::error::Apex root did not redirect to www (HTTP $root_status)."; cat /tmp/apex-root.headers; exit 1; fi
-          webfinger_status="$(curl -sS --connect-timeout 5 --max-time 20 -H "Host: testagram.site" -o /tmp/apex-webfinger.json -w '%{http_code}' "$url/.well-known/webfinger?resource=acct:nonexistent-probe@invalid.testagram.site" || true)"
+          webfinger_status="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/apex-webfinger.json -w '%{http_code}' "$url/.well-known/webfinger?resource=acct:nonexistent-probe@invalid.testagram.site" || true)"
           case "$webfinger_status" in 200|400|404) ;; *) echo "::error::Apex WebFinger did not reach Federation safely (HTTP $webfinger_status)."; cat /tmp/apex-webfinger.json 2>/dev/null || true; exit 1 ;; esac
           echo "apex_url=$url" >> "$GITHUB_OUTPUT"
           echo "Apex Caddy ingress passed health, www redirect and WebFinger checks: $url"
