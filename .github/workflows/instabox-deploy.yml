@@ -178,12 +178,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          normalize_flag() { printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+          normalize_flag() { printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]'; }
           dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
-          fresh_media_enabled="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
-          if [[ "$dc_media_enabled" != true || "$fresh_media_enabled" != true ]]; then
-            echo "Skipping Data Centre R2 bucket provisioning because the private media profile is disabled."
-            exit 0
+          fresh_gate_enabled="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
+          if [[ "$dc_media_enabled" != true || "$fresh_gate_enabled" != true ]]; then
+            echo "::error::Private media provisioning is blocked: DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must both be true GitHub Environment variables (production). Received DATA_CENTRE_MEDIA_ENABLED=$dc_media_enabled, FRESH_MEDIA_ENABLED=$fresh_gate_enabled."
+            exit 1
           fi
           [[ -n "$R2_ENDPOINT" && -n "$R2_ACCESS_KEY_ID" && -n "$R2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing R2 S3 endpoint and key pair are required."; exit 1; }
           [[ "$R2_MEDIA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 media bucket name."; exit 1; }
@@ -296,9 +296,11 @@ jobs:
             echo "::error::The Backblaze B2 application key is too short; verify the B2_APPLICATION_KEY secret."
             exit 1
           fi
-          if [[ "$(normalize_flag "$DATA_CENTRE_MEDIA_ENABLED")" != "true" || "$(normalize_flag "$FRESH_MEDIA_ENABLED")" != "true" ]]; then
-            echo "Skipping B2 identity-evidence provisioning because both private-media gates are not enabled."
-            exit 0
+          dc_media_enabled="$(normalize_flag "$DATA_CENTRE_MEDIA_ENABLED")"
+          fresh_gate_enabled="$(normalize_flag "$FRESH_MEDIA_ENABLED")"
+          if [[ "$dc_media_enabled" != "true" || "$fresh_gate_enabled" != "true" ]]; then
+            echo "::error::B2 identity-evidence provisioning is blocked: DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must both be true GitHub Environment variables (production). Received DATA_CENTRE_MEDIA_ENABLED=$dc_media_enabled, FRESH_MEDIA_ENABLED=$fresh_gate_enabled."
+            exit 1
           fi
           [[ -n "$B2_ENDPOINT" && -n "$B2_REGION" && -n "$B2_ACCESS_KEY_ID" && -n "$B2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing B2 endpoint, region and access key pair are required for the private identity-evidence bucket."; exit 1; }
           [[ "$B2_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid B2 identity-evidence bucket name."; exit 1; }
