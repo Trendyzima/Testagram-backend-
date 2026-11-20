@@ -69,8 +69,9 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		`, person.id); err != nil {
 			t.Fatalf("insert staff WebAuthn user: %v", err)
 		}
+		credentialID := []byte("credential-" + person.id)
 		encryptedCredential, err := admin.encryptStaffCredential(&webauthn.Credential{
-			ID: []byte("credential-" + person.id),
+			ID: credentialID,
 			PublicKey: []byte("test-public-key"),
 		})
 		if err != nil {
@@ -79,8 +80,8 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		if _, err := conn.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_credentials
 			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
-			VALUES('ops.example.test',$1::uuid,decode(md5($1),'hex'),$2,TRUE,FALSE)
-		`, person.id, encryptedCredential); err != nil {
+			VALUES('ops.example.test',$1::uuid,$2,$3,TRUE,FALSE)
+		`, person.id, credentialID, encryptedCredential); err != nil {
 			t.Fatalf("insert verified staff WebAuthn credential: %v", err)
 		}
 	}
