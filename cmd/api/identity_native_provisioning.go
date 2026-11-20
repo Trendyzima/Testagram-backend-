@@ -165,8 +165,31 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		          AND ar.reviewer_user_id IN ($2::uuid,$3::uuid))
 		FROM testagram_auth.native_sensitive_action_requests sar
 		WHERE sar.id=$1::uuid
+		  AND sar.requested_by_user_id IS NULL
+		  AND sar.requested_by_service='identity_pipeline'
+		  AND sar.payload->>'application_id'=$4
+		  AND sar.payload->>'email'=$5
+		  AND sar.payload->>'username'=$6
+		  AND sar.payload->>'display_name'=$7
+		  AND sar.payload->>'evidence_fingerprint_sha256'=$8
+		  AND sar.payload->>'terms_version'=$9
+		  AND sar.payload->>'privacy_version'=$10
+		  AND (
+		    SELECT count(DISTINCT ar.reviewer_user_id)
+		    FROM testagram_identity.identity_application_reviews ar
+		    WHERE ar.application_id=$4::uuid AND ar.decision='approved'
+		      AND ar.review_stage='evidence_review'
+		      AND ar.evidence_audit_reference=sar.payload->>'evidence_audit_reference'
+		  )=2
+		  AND NOT EXISTS (
+		    SELECT 1 FROM testagram_identity.identity_application_reviews ar
+		    WHERE ar.application_id=$4::uuid AND ar.decision='approved'
+		      AND ar.review_stage='evidence_review'
+		      AND ar.reviewer_user_id IN ($2::uuid,$3::uuid)
+		  )
 		FOR UPDATE
-	`, approvalRequestID, firstApprover, secondApprover, applicationID).Scan(
+	`, approvalRequestID, firstApprover, secondApprover, applicationID,
+		email,username,displayName,hex.EncodeToString(evidenceFingerprint),termsVersion,privacyVersion).Scan(
 		&actionType, &actionStatus, &targetReference, &requiredApprovals, &requestExpires,
 		&approvalCount, &distinctApprovers, &matchingApprovers, &matchingReviewers)
 	if err != nil || actionType != "identity.approve" || actionStatus != "approved" ||
