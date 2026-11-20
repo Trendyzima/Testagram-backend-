@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -292,7 +293,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 			VALUES ($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
 		`, tokenDigest[:], jtiDigest[:], applicationID, approvers[0], approvers[1])
 		if err != nil {
-			return "", errors.New("provisioning authorization could not be initialized")
+			return "", fmt.Errorf("provisioning authorization could not be initialized: %w", err)
 		}
 	}
 
