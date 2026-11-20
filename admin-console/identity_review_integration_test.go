@@ -41,8 +41,8 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		id   string
 		role string
 	}{
-		{evidenceReviewerOne, "administrator"},
-		{evidenceReviewerTwo, "administrator"},
+		{evidenceReviewerOne, "identity_reviewer"},
+		{evidenceReviewerTwo, "identity_reviewer"},
 		{approverOne, "administrator"},
 		{approverTwo, "administrator"},
 	}
