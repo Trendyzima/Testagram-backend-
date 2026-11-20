@@ -339,7 +339,7 @@ func (a *app) currentUser(w http.ResponseWriter, r *http.Request) (session, auth
 		FROM testagram_auth.staff_principals sp
 		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
 		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
-		  AND rg.role IN ('owner','administrator','engineer','operations','support','moderator')
+		  AND rg.role IN ('owner','administrator','identity_reviewer','engineer','operations','support','moderator')
 		ORDER BY CASE rg.role WHEN 'owner' THEN 0 WHEN 'administrator' THEN 1 ELSE 2 END
 		LIMIT 1
 	`, user.ID).Scan(&user.StaffRole)
@@ -385,7 +385,7 @@ func (a *app) verifyNativeSession(ctx context.Context, token string) (nativeJWTC
 
 func staffRole(user authUser) string {
 	switch user.StaffRole {
-	case "owner", "administrator", "engineer", "operations", "support", "moderator":
+	case "owner", "administrator", "identity_reviewer", "engineer", "operations", "support", "moderator":
 		return user.StaffRole
 	default:
 		return ""

@@ -71,6 +71,7 @@ func TestStaffRoleUsesOnlyPostgreSQLAssignedRole(t *testing.T) {
 	cases := []struct{name string; user authUser; want string}{
 		{"owner",authUser{StaffRole:"owner"},"owner"},
 		{"approved engineer",authUser{StaffRole:"engineer"},"engineer"},
+		{"identity reviewer",authUser{StaffRole:"identity_reviewer"},"identity_reviewer"},
 		{"unassigned user",authUser{StaffRole:""},""},
 		{"unknown role denied",authUser{StaffRole:"superuser"},""},
 	}
