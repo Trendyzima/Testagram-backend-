@@ -142,4 +142,21 @@ BEGIN
 END;
 $function$;
 
+DO $triggers$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid='testagram_identity.identity_approval_tokens'::regclass
+      AND tgname='identity_approval_token_requires_two_person_approval'
+      AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER identity_approval_token_requires_two_person_approval
+      BEFORE INSERT OR UPDATE OF application_id,first_approver_user_id,second_approver_user_id
+      ON testagram_identity.identity_approval_tokens
+      FOR EACH ROW
+      EXECUTE FUNCTION testagram_identity.assert_two_person_identity_approval();
+  END IF;
+END;
+$triggers$;
+
 COMMIT;
