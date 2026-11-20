@@ -2,9 +2,9 @@
 
 ## Canonical application database
 
-The production canonical Testagram PostgreSQL database is hosted on the Instabox VPS under the Backend deployment. It owns user/profile records, identity links, social graph, posts, privacy/moderation state, media metadata, quotas, analytics events and transactional outboxes.
+The production canonical Testagram PostgreSQL database is hosted on the Instabox VPS under the Backend deployment. It owns native user accounts, password credentials, email-verification state, sessions, profiles, identity-review records, social graph, posts, privacy/moderation state, media metadata, quotas, analytics events and transactional outboxes.
 
-Appwrite remains the authentication provider only: it owns credentials, verification, sessions and recovery. Backend validates Appwrite sessions and resolves the explicit canonical Testagram UUID in VPS PostgreSQL. Never treat Appwrite user IDs as public Testagram identity and never auto-link accounts by matching email.
+Testagram Backend owns signup, login, password recovery, email verification, access/refresh credential issuance and revocation. Backend resolves and authorizes only canonical Testagram UUIDs from PostgreSQL. No external identity-provider session, project identifier or API key is part of the production authentication path. Never auto-link accounts by matching email.
 
 PostgreSQL must not be publicly exposed. Backend and authorized Data Centre services use private network access with TLS where traffic crosses a host boundary. Keep encrypted off-host backups, WAL/PITR or equivalent recovery, monitored disk capacity and tested restore. Cloudflare DNS, R2 and analytics do not replace this database.
 
@@ -32,16 +32,16 @@ Cloudflare DNS/Web Analytics provide aggregated domain and web-performance telem
 
 ## Existing implementation versus target
 
-The self-hosted Backend stack already provides PostgreSQL and a local S3-compatible MinIO service. The Data Centre overlay shares the Backend-owned PostgreSQL and private networks. This is the appropriate base for Instabox-hosted canonical data.
+The self-hosted Backend stack provides PostgreSQL and a local S3-compatible MinIO service. The Data Centre overlay shares the Backend-owned PostgreSQL and private networks. This is the base for Instabox-hosted canonical data.
 
-The separate fresh deployment preview currently describes a Neon + B2/R2 path. That is not the target for this Instabox-hosted deployment and must not be promoted or merged as a production cutover without reconciling it to VPS PostgreSQL and the three-copy policy.
+The current media implementation includes native upload, PostgreSQL media metadata, replication outbox and lifecycle workers. A configured three-provider target is not proof of a verified third replica: the exact provider write/read-back/checksum/repair/delete behavior and CDN failover must pass end-to-end tests before the three-copy policy is declared complete.
 
-The current Backend .env.example has a single generic MEDIA_S3 provider configuration; it does not yet prove simultaneous three-provider replication. The current Data Centre media architecture documents B2 + R2, but does not yet prove Instabox VPS as a verified third replica. The custom CDN's S3-origin authentication/failover across all three providers also requires implementation and tests.
+The custom CDN's S3-origin authentication/failover across all three providers also requires implementation and tests.
 
 ## Release gates
 
+- Native signup, email verification, login, refresh rotation, logout and staff WebAuthn/MFA tests against the canonical VPS PostgreSQL database.
 - VPS PostgreSQL TLS/private networking, backups, WAL/PITR and isolated restore.
-- Appwrite session to canonical VPS identity mapping and account-link integrity.
 - Three-provider media write/read-back/checksum/repair/delete tests with isolated buckets.
 - Backend replica ledger and degraded-state policy.
 - CDN origin adapters and failover for Instabox, R2 and B2, including private-media cache isolation.
