@@ -222,30 +222,82 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"ok":true,"elevated":true,"expires_at":exp})
 }
-func (a *app) handleWebAuthnReadiness(w http.ResponseWriter,r *http.Request){
- ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel()
- _,current,staff:=a.currentUser(w,r);if !staff||current.StaffRole==""{writeJSON(w,401,map[string]string{"error":"Staff authentication required"});return}
- wa,rpid,err:=a.staffWebAuthn();dbOK:=a.database!=nil&&a.database.Ping(ctx)==nil
+func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
+ wa,rpid,configErr:=a.staffWebAuthn()
+ dbOK:=a.database!=nil&&a.database.Ping(ctx)==nil
  schemaOK:=false
- if dbOK{_ = a.database.QueryRow(ctx,"SELECT to_regclass('testagram_auth.staff_webauthn_users') IS NOT NULL AND to_regclass('testagram_auth.staff_webauthn_credentials') IS NOT NULL AND to_regclass('testagram_auth.staff_webauthn_challenges') IS NOT NULL AND to_regclass('testagram_auth.staff_webauthn_enrollment_authorizations') IS NOT NULL").Scan(&schemaOK)}
+ if dbOK {
+  _=a.database.QueryRow(ctx,`SELECT
+   to_regclass('testagram_auth.staff_principals') IS NOT NULL
+   AND to_regclass('testagram_auth.staff_role_grants') IS NOT NULL
+   AND to_regclass('testagram_auth.identities') IS NOT NULL
+   AND to_regclass('testagram_auth.admin_rate_limits') IS NOT NULL
+   AND to_regclass('testagram_auth.admin_permissions') IS NOT NULL
+   AND to_regclass('testagram_auth.staff_role_permissions') IS NOT NULL
+   AND to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL
+   AND to_regclass('testagram_auth.staff_webauthn_users') IS NOT NULL
+   AND to_regclass('testagram_auth.staff_webauthn_credentials') IS NOT NULL
+   AND to_regclass('testagram_auth.staff_webauthn_challenges') IS NOT NULL
+   AND to_regclass('testagram_auth.staff_webauthn_enrollment_authorizations') IS NOT NULL`).Scan(&schemaOK)
+ }
  privilegesOK:=false
- if dbOK&&schemaOK{_ = a.database.QueryRow(ctx,`SELECT
-  has_schema_privilege(current_user,'testagram_auth','USAGE')
-  AND has_table_privilege(current_user,'testagram_auth.staff_principals','SELECT')
-  AND has_column_privilege(current_user,'testagram_auth.staff_principals','mfa_enrolled_at','UPDATE')
-  AND has_table_privilege(current_user,'testagram_auth.identities','SELECT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_users','SELECT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_users','INSERT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_users','UPDATE')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_credentials','SELECT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_credentials','INSERT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_credentials','UPDATE')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_challenges','SELECT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_challenges','INSERT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_challenges','DELETE')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','SELECT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','INSERT')
-  AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','UPDATE')`).Scan(&privilegesOK)}
- ready:=err==nil&&wa!=nil&&dbOK&&schemaOK&&privilegesOK&&len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32&&a.aead!=nil&&strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")
- writeJSON(w,200,map[string]any{"ready":ready,"rpid_configured":rpid!="","origins_configured":err==nil,"database":dbOK,"schema":schemaOK,"privileges":privilegesOK,"signing_key":len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32,"credential_encryption":a.aead!=nil,"enrollment_enabled":strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")})
+ if dbOK&&schemaOK {
+  _=a.database.QueryRow(ctx,`SELECT
+   has_schema_privilege(current_user,'testagram_auth','USAGE')
+   AND has_table_privilege(current_user,'testagram_auth.staff_principals','SELECT')
+   AND has_column_privilege(current_user,'testagram_auth.staff_principals','mfa_enrolled_at','UPDATE')
+   AND has_table_privilege(current_user,'testagram_auth.staff_role_grants','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.identities','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.admin_rate_limits','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.admin_rate_limits','INSERT')
+   AND has_table_privilege(current_user,'testagram_auth.admin_rate_limits','UPDATE')
+   AND has_table_privilege(current_user,'testagram_auth.admin_permissions','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_role_permissions','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.native_staff_permission_overrides','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_users','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_users','INSERT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_users','UPDATE')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_credentials','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_credentials','INSERT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_credentials','UPDATE')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_challenges','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_challenges','INSERT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_challenges','DELETE')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','SELECT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','INSERT')
+   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','UPDATE')`).Scan(&privilegesOK)
+ }
+ signingKeyOK:=len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32
+ encryptionOK:=a.aead!=nil
+ enrollmentEnabled:=strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")
+ backendAPIReady:=false
+ if a.apiHealthURL!=""&&a.client!=nil {
+  req,err:=http.NewRequestWithContext(ctx,http.MethodGet,a.apiHealthURL,nil)
+  if err==nil {
+   client:=*a.client;client.Timeout=2*time.Second
+   client.CheckRedirect=func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}
+   if resp,e:=client.Do(req);e==nil {
+    backendAPIReady=resp.StatusCode==http.StatusOK
+    _,_=io.Copy(io.Discard,resp.Body);_ = resp.Body.Close()
+   }
+  }
+ }
+ originsOK:=configErr==nil&&wa!=nil&&rpid!=""
+ ceremoniesReady:=originsOK&&dbOK&&schemaOK&&privilegesOK&&signingKeyOK&&encryptionOK&&backendAPIReady
+ return map[string]any{
+  "ready":ceremoniesReady&&enrollmentEnabled,
+  "ceremonies_ready":ceremoniesReady,
+  "rpid_configured":rpid!="",
+  "origins_configured":originsOK,
+  "database":dbOK,"schema":schemaOK,"privileges":privilegesOK,
+  "signing_key":signingKeyOK,"credential_encryption":encryptionOK,
+  "backend_api":backendAPIReady,"enrollment_enabled":enrollmentEnabled,
+ }
+}
+
+func (a *app) handleWebAuthnReadiness(w http.ResponseWriter,r *http.Request){
+ ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second);defer cancel()
+ _,current,staff:=a.currentUser(w,r);if !staff||current.StaffRole==""{writeJSON(w,401,map[string]string{"error":"Staff authentication required"});return}
+ w.Header().Set("Cache-Control","no-store")
+ writeJSON(w,200,a.staffWebAuthnReadiness(ctx))
 }
