@@ -91,6 +91,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("RENAME COLUMN sensitive_action_request_id TO historical_external_sensitive_action_request_id", migration)
         self.assertIn("identity_applications_historical_external_sensitive_action_request_fk", migration)
         self.assertIn("historical_external_identity_applications_sensitive_request_idx", migration)
+        self.assertIn("historical_source_verification_reviews_reviewer_idx", migration)
         self.assertIn("first_approver_user_id", migration)
         self.assertIn("second_approver_user_id", migration)
         self.assertNotIn("DROP COLUMN", migration)
