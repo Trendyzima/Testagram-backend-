@@ -66,6 +66,7 @@ REVOKE ALL ON testagram_auth.staff_webauthn_users,
 DO $grants$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+    GRANT UPDATE (mfa_enrolled_at) ON testagram_auth.staff_principals TO testagram_app;
     GRANT SELECT,INSERT,UPDATE,DELETE ON
       testagram_auth.staff_webauthn_users,
       testagram_auth.staff_webauthn_credentials,
@@ -75,6 +76,7 @@ BEGIN
     GRANT USAGE,SELECT ON SEQUENCE testagram_auth.staff_webauthn_credentials_id_seq TO testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+    GRANT UPDATE (mfa_enrolled_at) ON testagram_auth.staff_principals TO service_role;
     GRANT SELECT,INSERT,UPDATE,DELETE ON
       testagram_auth.staff_webauthn_users,
       testagram_auth.staff_webauthn_credentials,
