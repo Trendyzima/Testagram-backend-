@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"fmt"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"net/http/httptest"
 	"testing"
