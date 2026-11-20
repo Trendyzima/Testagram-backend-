@@ -53,7 +53,6 @@ services:
       - ../../migrations/20261115_identity_evidence_access_audit.sql:/docker-entrypoint-initdb.d/044_identity_evidence_access_audit.sql:ro
       - ../../migrations/20261115_native_identity_status_access.sql:/docker-entrypoint-initdb.d/045_native_identity_status_access.sql:ro
       - ../../migrations/20261114_media_replication_publication_gate.sql:/docker-entrypoint-initdb.d/046_media_replication_publication_gate.sql:ro
-      - ../../migrations/20261114_appwrite_registration_consent.sql:/docker-entrypoint-initdb.d/047_appwrite_registration_consent.sql:ro
       - ../../migrations/20261115_vps_storage_pool_40_gib.sql:/docker-entrypoint-initdb.d/048_vps_storage_pool_40_gib.sql:ro
       - ../../migrations/20261115_testagram_native_auth_cutover_foundation.sql:/docker-entrypoint-initdb.d/049_native_auth_cutover_foundation.sql:ro
       - ../../migrations/20261116_native_approved_identity_provisioning.sql:/docker-entrypoint-initdb.d/050_native_approved_identity_provisioning.sql:ro
