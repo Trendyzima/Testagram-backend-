@@ -45,6 +45,9 @@ BEGIN
   IF to_regclass('testagram_auth.staff_roles_role_idx') IS NOT NULL THEN
     ALTER INDEX testagram_auth.staff_roles_role_idx RENAME TO historical_external_staff_roles_role_idx;
   END IF;
+  IF to_regclass('testagram_auth.staff_roles_active_role_idx') IS NOT NULL THEN
+    ALTER INDEX testagram_auth.staff_roles_active_role_idx RENAME TO historical_external_staff_roles_active_role_idx;
+  END IF;
   IF to_regclass('testagram_auth.staff_role_audit_target_created_idx') IS NOT NULL THEN
     ALTER INDEX testagram_auth.staff_role_audit_target_created_idx RENAME TO historical_external_staff_role_audit_target_created_idx;
   END IF;
