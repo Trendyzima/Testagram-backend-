@@ -30,8 +30,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "056_native_verification_decider.sql",
             "057_testagram_mail_outbox.sql",
             "058_testagram_mail_outbox_runtime_role.sql",
-            "058a_native_identity_reviewer_uuid_bridge.sql",
-            "058b_native_identity_historical_account_archive.sql",
+            "058a_native_identity_historical_account_archive.sql",
             "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
@@ -42,15 +41,6 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             with self.subTest(migration=name):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
-
-    def test_native_reviewer_uuid_bridge_preserves_historical_ids(self):
-        migration = (ROOT / "migrations" / "20261120_native_identity_reviewer_uuid_bridge.sql").read_text(encoding="utf-8")
-        self.assertIn("ADD COLUMN IF NOT EXISTS reviewer_user_id UUID", migration)
-        self.assertIn("REFERENCES testagram_auth.staff_principals(user_id)", migration)
-        self.assertIn("ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL", migration)
-        self.assertIn("identity_application_reviews_native_reviewer_uidx", migration)
-        self.assertIn("reviewer_appwrite_user_id IS NOT NULL OR reviewer_user_id IS NOT NULL", migration)
-        self.assertNotIn("UPDATE testagram_identity.identity_application_reviews", migration)
 
     def test_historical_external_identity_data_is_renamed_and_runtime_locked(self):
         migration = (ROOT / "migrations" / "20261120_native_identity_historical_account_archive.sql").read_text(encoding="utf-8")
