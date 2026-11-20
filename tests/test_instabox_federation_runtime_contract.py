@@ -97,6 +97,15 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn('{"3000", "8080", "8081", "9000"}', stack)
         self.assertNotIn('if "ports" in cdn:', stack)
 
+    def test_caddy_reload_precedes_public_apex_health_probe(self):
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        remote_health = workflow.split("REMOTE_HEALTH_CHECK", 1)[1].split("REMOTE_HEALTH_CHECK", 1)[0]
+        self.assertIn("caddy validate --config /etc/caddy/Caddyfile", remote_health)
+        self.assertIn("caddy reload --config /etc/caddy/Caddyfile", remote_health)
+        apex = workflow.split("Publish the apex federation edge over HTTPS", 1)[1].split("Configure public CDN URL", 1)[0]
+        self.assertNotIn('Host: testagram.site', apex)
+        self.assertIn('/_testagram/edge-health', apex)
+
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
         self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e', self.script)
