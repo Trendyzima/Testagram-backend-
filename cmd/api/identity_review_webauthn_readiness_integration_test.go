@@ -104,8 +104,8 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.staff_role_grants
 		SET role='administrator'
-		WHERE user_id=ANY($1::uuid[])
-	`, users[:2]); err != nil {
+		WHERE user_id IN ($1::uuid,$2::uuid)
+	`, users[0], users[1]); err != nil {
 		t.Fatal(err)
 	}
 	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
@@ -114,8 +114,8 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.staff_role_grants
 		SET role='identity_reviewer'
-		WHERE user_id=ANY($1::uuid[])
-	`, users[:2]); err != nil {
+		WHERE user_id IN ($1::uuid,$2::uuid)
+	`, users[0], users[1]); err != nil {
 		t.Fatal(err)
 	}
 	adminReady = false
