@@ -154,55 +154,58 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		return
 	}
 
-	var actionType, actionStatus, targetReference string
-	var requiredApprovals, approvalCount, distinctApprovers, matchingApprovers, matchingReviewers int
-	var requestExpires time.Time
+	var approvalCircuitValid bool
 	err = tx.QueryRow(ctx, `
-		SELECT sar.action_type,sar.status,sar.target_reference,sar.required_approvals,sar.expires_at,
-		       (SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals sa
-		        WHERE sa.request_id=sar.id AND sa.decision='approved'),
-		       (SELECT count(DISTINCT sa.approver_user_id) FROM testagram_auth.native_sensitive_action_approvals sa
-		        WHERE sa.request_id=sar.id AND sa.decision='approved' AND sa.approver_user_id IS NOT NULL),
-		       (SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals sa
-		        WHERE sa.request_id=sar.id AND sa.decision='approved'
-		          AND sa.approver_user_id IN ($2::uuid,$3::uuid)),
-		       (SELECT count(DISTINCT ar.reviewer_user_id) FROM testagram_identity.identity_application_reviews ar
-		        WHERE ar.application_id=$4::uuid AND ar.decision='approved' AND ar.review_stage='account_approval'
-		          AND ar.reviewer_user_id IN ($2::uuid,$3::uuid))
-		FROM testagram_auth.native_sensitive_action_requests sar
-		WHERE sar.id=$1::uuid
-		  AND sar.requested_by_user_id IS NULL
-		  AND sar.requested_by_service='identity_pipeline'
-		  AND sar.payload->>'application_id'=$4
-		  AND sar.payload->>'email'=$5
-		  AND sar.payload->>'username'=$6
-		  AND sar.payload->>'display_name'=$7
-		  AND sar.payload->>'evidence_fingerprint_sha256'=$8
-		  AND sar.payload->>'terms_version'=$9
-		  AND sar.payload->>'privacy_version'=$10
-		  AND (
-		    SELECT count(DISTINCT ar.reviewer_user_id)
-		    FROM testagram_identity.identity_application_reviews ar
-		    WHERE ar.application_id=$4::uuid AND ar.decision='approved'
-		      AND ar.review_stage='evidence_review'
-		      AND ar.evidence_audit_reference=sar.payload->>'evidence_audit_reference'
-		  )=2
-		  AND NOT EXISTS (
-		    SELECT 1 FROM testagram_identity.identity_application_reviews ar
-		    WHERE ar.application_id=$4::uuid AND ar.decision='approved'
-		      AND ar.review_stage='evidence_review'
-		      AND ar.reviewer_user_id IN ($2::uuid,$3::uuid)
-		  )
-		FOR UPDATE
-	`, approvalRequestID, firstApprover, secondApprover, applicationID,
-		email,username,displayName,hex.EncodeToString(evidenceFingerprint),termsVersion,privacyVersion).Scan(
-		&actionType, &actionStatus, &targetReference, &requiredApprovals, &requestExpires,
-		&approvalCount, &distinctApprovers, &matchingApprovers, &matchingReviewers)
-	if err != nil || actionType != "identity.approve" || actionStatus != "approved" ||
-		targetReference != applicationID || requiredApprovals != 2 ||
-		approvalCount != 2 || distinctApprovers != 2 ||
-		matchingApprovers != 2 || matchingReviewers != 2 || !requestExpires.After(time.Now()) {
-		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_LEDGER_INVALID", "Two independent identity reviewers and two independent account approvers are required", requestID(r)))
+		SELECT EXISTS (
+		  SELECT 1
+		  FROM testagram_auth.native_sensitive_action_requests sar
+		  WHERE sar.id=$1::uuid AND sar.action_type='identity.approve'
+		    AND sar.status='approved' AND sar.required_approvals=2
+		    AND sar.target_reference=$2 AND sar.requested_by_user_id IS NULL
+		    AND sar.requested_by_service='identity_pipeline' AND sar.expires_at>now()
+		    AND sar.payload->>'application_id'=$2
+		    AND sar.payload->>'email'=$3
+		    AND sar.payload->>'username'=$4
+		    AND sar.payload->>'display_name'=$5
+		    AND sar.payload->>'evidence_fingerprint_sha256'=$6
+		    AND sar.payload->>'terms_version'=$7
+		    AND sar.payload->>'privacy_version'=$8
+		    AND (
+		      SELECT count(DISTINCT approver_user_id)
+		      FROM testagram_auth.native_sensitive_action_approvals
+		      WHERE request_id=sar.id AND decision='approved'
+		    )=2
+		    AND (
+		      SELECT count(DISTINCT approver_user_id)
+		      FROM testagram_auth.native_sensitive_action_approvals
+		      WHERE request_id=sar.id AND decision='approved'
+		        AND approver_user_id IN ($9::uuid,$10::uuid)
+		    )=2
+		    AND (
+		      SELECT count(DISTINCT reviewer_user_id)
+		      FROM testagram_identity.identity_application_reviews
+		      WHERE application_id=$2::uuid AND review_stage='evidence_review'
+		        AND decision='approved'
+		        AND evidence_audit_reference=sar.payload->>'evidence_audit_reference'
+		    )=2
+		    AND (
+		      SELECT count(DISTINCT reviewer_user_id)
+		      FROM testagram_identity.identity_application_reviews
+		      WHERE application_id=$2::uuid AND review_stage='account_approval'
+		        AND decision='approved'
+		        AND reviewer_user_id IN ($9::uuid,$10::uuid)
+		    )=2
+		    AND NOT EXISTS (
+		      SELECT 1 FROM testagram_identity.identity_application_reviews
+		      WHERE application_id=$2::uuid AND review_stage='evidence_review'
+		        AND decision='approved'
+		        AND reviewer_user_id IN ($9::uuid,$10::uuid)
+		    )
+		)
+	`, approvalRequestID,applicationID,email,username,displayName,
+		hex.EncodeToString(evidenceFingerprint),termsVersion,privacyVersion,
+		firstApprover,secondApprover).Scan(&approvalCircuitValid)
+	if err != nil || !approvalCircuitValid {
 		return
 	}
 
