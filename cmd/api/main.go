@@ -1290,7 +1290,18 @@ func main() {
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
-	log.Printf("Native identity application intake remains disabled until staff WebAuthn step-up is implemented and verified")
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED")), "true") {
+		readinessCtx, readinessCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		svc.identityReviewWebAuthnReady = identityReviewWebAuthnPrerequisitesReady(readinessCtx, db)
+		readinessCancel()
+		if svc.identityReviewWebAuthnReady {
+			log.Printf("Native identity review WebAuthn readiness verified against PostgreSQL; registration policy gate may be evaluated")
+		} else {
+			log.Printf("Native identity application intake remains disabled: PostgreSQL WebAuthn reviewer/approver readiness failed")
+		}
+	} else {
+		log.Printf("Native identity application intake remains disabled by TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED policy gate")
+	}
 	internalAddr := env("INTERNAL_LISTEN_ADDR", ":8082")
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
