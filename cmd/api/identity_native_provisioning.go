@@ -161,9 +161,9 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		  FROM testagram_auth.native_sensitive_action_requests sar
 		  WHERE sar.id=$1::uuid AND sar.action_type='identity.approve'
 		    AND sar.status='approved' AND sar.required_approvals=2
-		    AND sar.target_reference=$2 AND sar.requested_by_user_id IS NULL
+		    AND sar.target_reference=$2::text AND sar.requested_by_user_id IS NULL
 		    AND sar.requested_by_service='identity_pipeline' AND sar.expires_at>now()
-		    AND sar.payload->>'application_id'=$2
+		    AND sar.payload->>'application_id'=$2::text
 		    AND sar.payload->>'email'=$3
 		    AND sar.payload->>'username'=$4
 		    AND sar.payload->>'display_name'=$5
@@ -202,9 +202,9 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		        AND reviewer_user_id IN ($9::uuid,$10::uuid)
 		    )
 		)
-	`, approvalRequestID,applicationID,email,username,displayName,
-		hex.EncodeToString(evidenceFingerprint),termsVersion,privacyVersion,
-		firstApprover,secondApprover).Scan(&approvalCircuitValid)
+	`, approvalRequestID, applicationID, email, username, displayName,
+		hex.EncodeToString(evidenceFingerprint), termsVersion, privacyVersion,
+		firstApprover, secondApprover).Scan(&approvalCircuitValid)
 	if err != nil || !approvalCircuitValid {
 		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_LEDGER_INVALID", "Two independent evidence reviewers and two independent account approvers are required", requestID(r)))
 		return
