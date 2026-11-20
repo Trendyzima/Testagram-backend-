@@ -48,6 +48,14 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn(".workers.inbox_worker == true", self.script)
         self.assertIn(".workers.inbox_accept == true", self.script)
 
+    def test_algorithm_deployment_probe_sends_the_required_timestamp_and_feed_mode(self):
+        probe = self.script.split("algorithm_response=", 1)[1].split("\n", 1)[0]
+        self.assertIn("2026-11-20T00:00:00Z", probe)
+        self.assertIn("feedMode", probe)
+        self.assertIn("candidates", probe)
+        self.assertIn("X-Testagram-API-Version: 1", probe)
+        self.assertIn("X-Request-ID: testagram-deploy-acceptance", probe)
+
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
         self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e', self.script)
