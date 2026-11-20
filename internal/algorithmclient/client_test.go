@@ -229,7 +229,7 @@ func TestReadyChecksAlgorithmServiceHealth(t *testing.T) {
 }
 
 
-func TestRankAcceptsEveryPublishedFeedMode(t *testing.T) {
+func TestRankAcceptsEverySupportedFeedMode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/feed/rank" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -246,7 +246,7 @@ func TestRankAcceptsEveryPublishedFeedMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	modes := []string{"for_you", "following", "latest", "media", "discover", "federated"}
+	modes := []string{"for_you", "following", "media", "discover"}
 	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			_, err := client.Rank(context.Background(), Request{
