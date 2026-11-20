@@ -118,7 +118,6 @@ func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Req
 }
 func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Request){
  s,user,ok:=a.requireStaff(w,r);if !ok{return}
- if !a.requireStaffWebAuthnRuntime(w,r,false){return}
  var input struct{Challenge string `json:"challenge"`;Response json.RawMessage `json:"response"`}
  if !decodeBody(w,r,&input){return}
  if input.Challenge==""||len(input.Response)==0||len(input.Response)>1<<20{writeJSON(w,400,map[string]string{"error":"Invalid registration response"});return}
@@ -153,6 +152,7 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
 }
 func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Request){
  _,user,ok:=a.requireStaff(w,r);if !ok{return}
+ if !a.requireStaffWebAuthnRuntime(w,r,false){return}
  if allowed,err:=a.consumeAdminRateLimit(r.Context(),user.ID,"webauthn-assertion-begin",12,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn rate-limit service unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"WebAuthn assertion rate limit exceeded"});return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)==0{writeJSON(w,403,map[string]string{"error":"No registered authenticator exists"});return}
@@ -195,6 +195,7 @@ func (a *app) mintStaffElevation(user authUser, accessToken string)(string,int64
 }
 func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Request){
  s,user,ok:=a.requireStaff(w,r);if !ok{return}
+ if !a.requireStaffWebAuthnRuntime(w,r,false){return}
  var input struct{Challenge string `json:"challenge"`;Response json.RawMessage `json:"response"`}
  if !decodeBody(w,r,&input){return}
  if input.Challenge==""||len(input.Response)==0||len(input.Response)>1<<20{writeJSON(w,400,map[string]string{"error":"Invalid assertion response"});return}
