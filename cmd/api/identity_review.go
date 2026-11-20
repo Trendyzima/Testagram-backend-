@@ -380,7 +380,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 			SET status='failed',
 			    verified_age_over_threshold=CASE WHEN purpose='age_assurance' THEN FALSE ELSE NULL END,
 			    assurance_level='none',
-			    decided_at=now(),decided_by_user_id=$2::uuid,decided_by_appwrite_user_id=NULL,
+			    decided_at=now(),decided_by_user_id=$2::uuid,
 			    decision_reason_code=$3,updated_at=now()
 			WHERE id=$1::uuid
 		`, sessionID, reviewer.ID, input.ReasonCode)
@@ -478,7 +478,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 			SET status='verified',
 			    verified_age_over_threshold=CASE WHEN purpose='age_assurance' THEN TRUE ELSE NULL END,
 			    assurance_level='reviewed',
-			    decided_at=now(),decided_by_user_id=$2::uuid,decided_by_appwrite_user_id=NULL,
+			    decided_at=now(),decided_by_user_id=$2::uuid,
 			    decision_reason_code=$3,updated_at=now()
 			WHERE id=$1::uuid
 		`, sessionID, reviewer.ID, input.ReasonCode)
