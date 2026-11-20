@@ -45,8 +45,7 @@ docker compose --env-file .env -f docker-compose.yml ps
 
 8. Clone the Data Centre repository on the same host. Copy
    `backend/.env.example` to `backend/.env`; set `DATABASE_URL` to the same
-   PostgreSQL user/password/database as this stack, use the same Appwrite
-   endpoint/project ID, and generate independent platform/notification/video
+   PostgreSQL user/password/database as this stack, use the Testagram-native service identity, and generate independent platform/notification/video
    secrets.
 9. Start the Data Centre overlay. Its migration runner applies the
    Data Centre-owned schemas to the Backend-owned PostgreSQL database before
