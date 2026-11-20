@@ -87,6 +87,20 @@ func (a *app) requirePermission(w http.ResponseWriter, r *http.Request, permissi
 	if !allowed { writeJSON(w, http.StatusForbidden, map[string]string{"error":"Your staff account does not have permission for this action"}); return session{}, authUser{}, false }
 	return s, user, true
 }
+type nativeElevationClaims struct {
+	Subject            string `json:"sub"`
+	Email              string `json:"email"`
+	Role               string `json:"role"`
+	Issuer             string `json:"iss"`
+	Audience           string `json:"aud"`
+	IssuedAt            int64  `json:"iat"`
+	ExpiresAt           int64  `json:"exp"`
+	TokenVersion        int64  `json:"ver"`
+	SessionID           string `json:"sid"`
+	MFAAuthenticatedAt  int64  `json:"mfa_at,omitempty"`
+	JWTID               string `json:"jti,omitempty"`
+}
+
 func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
 	parts:=strings.Split(s.ElevatedToken,".")
 	if len(parts)!=3 { writeJSON(w,401,map[string]string{"error":"A verified WebAuthn elevation is required"});return false }
