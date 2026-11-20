@@ -46,6 +46,10 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		{approverOne, "administrator"},
 		{approverTwo, "administrator"},
 	}
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "ops.example.test")
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://ops.example.test")
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-admin-webauthn-readiness-key-", 2))
+	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", strings.Repeat("testagram-admin-readiness-token-", 2))
 	admin := testApp(t)
 	for i, person := range staff {
 		email := fmt.Sprintf("identity-review-staff-%d-%s@example.test", i, person.id[:8])
@@ -86,10 +90,6 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		}
 	}
 
-	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "ops.example.test")
-	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://ops.example.test")
-	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-admin-webauthn-readiness-key-", 2))
-	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", strings.Repeat("testagram-admin-readiness-token-", 2))
 	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
