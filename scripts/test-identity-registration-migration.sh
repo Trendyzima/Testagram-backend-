@@ -24,6 +24,10 @@ psql_ci() {
   docker exec -i "$container" psql -U postgres -v ON_ERROR_STOP=1 "$@"
 }
 
+psql_clean() {
+  docker exec -i "$container" psql -U postgres -d native_clean_archive_test -v ON_ERROR_STOP=1 "$@"
+}
+
 psql_ci <<'SQL'
 CREATE ROLE testagram_app NOLOGIN;
 CREATE ROLE service_role NOLOGIN;
