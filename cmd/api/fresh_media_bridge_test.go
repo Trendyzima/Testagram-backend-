@@ -17,7 +17,7 @@ func TestFreshMediaBridgeRejectsOwnerAndMetadataMismatch(t *testing.T) {
 		SizeBytes:50_000,
 		SHA256:strings.Repeat("a",64),
 	}
-	if !validFreshMediaBridgeRequest(valid) { t.Fatal("valid Appwrite media metadata rejected") }
+	if !validFreshMediaBridgeRequest(valid) { t.Fatal("valid canonical Testagram media metadata rejected") }
 	cases:=[]freshMediaBridgeRequest{}
 	candidate:=valid; candidate.OwnerID="other"; cases=append(cases,candidate)
 	candidate=valid; candidate.Key="users/user_123.test/not-a-digest"; cases=append(cases,candidate)
