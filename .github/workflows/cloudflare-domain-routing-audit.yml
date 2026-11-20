@@ -91,7 +91,7 @@ jobs:
                 if [[ "$zone_name" == "testagram.site" ]]; then
                   origin_record="$(jq -r '.result[]? | select(.name == "api.testagram.site" and (.type == "A" or .type == "AAAA")) | [.type,.content] | @tsv' "$tmp/dns.json" | head -n 1)"
                   if [[ -n "$origin_record" ]]; then
-                    IFS=
+                    IFS=$'\t' read -r origin_type origin_address <<< "$origin_record"
                     if [[ "$origin_type" == "AAAA" ]]; then
                       resolve_entry="api.testagram.site:443:[$origin_address]"
                     else
