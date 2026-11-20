@@ -58,6 +58,13 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&grantor); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
+		VALUES($1::uuid,$2,$3,'ci-only-invalid-password-hash',now())
+	`, grantor, fmt.Sprintf("webauthn-grantor-%s@example.test", suffix),
+		"wgrantor_"+suffix[len(suffix)-12:]); err != nil {
+		t.Fatal(err)
+	}
 	for i, userID := range users {
 		email := fmt.Sprintf("webauthn-readiness-%d-%s@example.test", i+1, suffix)
 		username := fmt.Sprintf("wr%d_%s", i+1, suffix[len(suffix)-12:])
