@@ -2,7 +2,7 @@
 
 The native Go application API and PostgreSQL data plane for Testagram.
 
-For the retired Appwrite runtime files and their Testagram-native replacement owners, see [`docs/architecture/native-replacement-ownership.md`](docs/architecture/native-replacement-ownership.md).
+For the retired external-provider runtime files and their Testagram-native replacement owners, see [`docs/architecture/native-replacement-ownership.md`](docs/architecture/native-replacement-ownership.md).
 
 ## Six-runtime-repository ownership + API contract control plane
 
