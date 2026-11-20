@@ -152,32 +152,7 @@ func testMediaSigner(t *testing.T) *media.Signer {
 	return signer
 }
 
-func testAppwriteAuthServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/account" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Header.Get("X-Appwrite-Project") != "test-project" {
-			http.Error(w, "bad project", http.StatusUnauthorized)
-			return
-		}
-		if r.Header.Get("X-Appwrite-JWT") != "valid-session-token" {
-			http.Error(w, "bad session", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"$id":"appwrite-user-123","email":"person@example.com","emailVerification":true,"status":true}`))
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("APPWRITE_ENDPOINT", server.URL)
-	t.Setenv("APPWRITE_PROJECT_ID", "test-project")
-	return server
-}
-
 func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
-	testAppwriteAuthServer(t)
 	s := &service{media: testMediaSigner(t)}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":100}"))
 	r.Header.Set("Content-Type", "application/json")
@@ -189,11 +164,10 @@ func TestMediaUploadIntentRequiresAuthenticatedUser(t *testing.T) {
 }
 
 func TestMediaUploadIntentFailsClosedWithoutIdentityDatabase(t *testing.T) {
-	upstream := testAppwriteAuthServer(t)
-	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
+	s := &service{media: testMediaSigner(t)}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/upload-intent", strings.NewReader("{\"content_type\":\"image/png\",\"visibility\":\"private\",\"size_bytes\":1024}"))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer valid-session-token")
+	r.Header.Set("Authorization", "Bearer external-provider-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable {
@@ -205,11 +179,10 @@ func TestMediaUploadIntentFailsClosedWithoutIdentityDatabase(t *testing.T) {
 }
 
 func TestPrivateMediaDownloadURLFailsClosedWithoutIdentityDatabase(t *testing.T) {
-	upstream := testAppwriteAuthServer(t)
-	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
+	s := &service{media: testMediaSigner(t)}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef"}`))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer valid-session-token")
+	r.Header.Set("Authorization", "Bearer external-provider-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable {

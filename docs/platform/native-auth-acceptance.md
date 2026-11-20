@@ -4,7 +4,7 @@
 
 The Flutter client authenticates directly with the Testagram Backend. The Backend owns password verification, canonical account state, short-lived access JWTs, PostgreSQL-backed sessions, rotating refresh credentials, and server-side revocation. Flutter stores only the refresh credential in platform secure storage; access JWTs remain in memory and are refreshed through the shared session manager.
 
-New account intake is separate from sign-in. Public registration remains fail-closed until the identity application, private evidence storage, manual review, independent two-person approval, provisioning, and email verification have completed. The legacy direct-signup endpoint remains disabled.
+New account intake is separate from sign-in. Public registration remains fail-closed until the identity application, private evidence storage, manual review, independent two-person approval, provisioning, and email verification have completed. The legacy direct-signup endpoint remains disabled. No external identity-provider runtime or fallback is permitted.
 
 ## Automated checks
 

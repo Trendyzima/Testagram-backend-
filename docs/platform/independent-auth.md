@@ -34,9 +34,9 @@ A failed server-side logout is not treated as a successful logout: the client pr
 
 Registration is a separate Testagram-owned identity application, evidence, independent review and two-person approval process. Provisioning creates the native identity only after both approval boundaries. Email verification then activates the native provisioning record. The public registration gate remains fail-closed until storage, email, policy, reviewer and provisioning acceptance is complete.
 
-## Legacy Appwrite account reconciliation
+## External identity-provider retirement
 
-`scripts/migrate-appwrite-identities.sql` is a controlled data-reconciliation script, not a runtime auth bridge. Appwrite passwords cannot be exported; imported canonical identities receive a reset-required placeholder credential. Users must complete native password reset before native login. The script preserves explicit Appwrite-ID-to-canonical-UUID mappings, checks for ambiguous email/username collisions, and does not disable Appwrite. Never auto-link accounts by email equality alone.
+The supported Backend runtime has no external identity-provider integration. Do not configure, call, import credentials from, or fall back to any hosted identity provider. Existing Testagram accounts authenticate only through canonical PostgreSQL identities and native password/session flows. Any historical provider identifier retained in an audit record is inert metadata and cannot establish identity or authorize account linking. Account recovery and identity reconciliation must use Testagram's own verified recovery and review procedures; never auto-link accounts by email equality alone.
 
 ## Staff console boundary
 
