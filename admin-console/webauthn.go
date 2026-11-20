@@ -220,7 +220,7 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  s.ElevatedToken=token
  if err=a.setSession(w,s);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not persist elevated session"});return}
  w.Header().Set("Cache-Control","no-store")
- writeJSON(w,200,map[string]any{"ok":true,"elevated_token":token,"expires_at":exp})
+ writeJSON(w,200,map[string]any{"ok":true,"elevated":true,"expires_at":exp})
 }
 func (a *app) handleWebAuthnReadiness(w http.ResponseWriter,r *http.Request){
  ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel()
