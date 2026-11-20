@@ -83,7 +83,7 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	var storedApplicationToken []byte
 	err = tx.QueryRow(ctx, `
 		SELECT email,username,display_name,status,
-		       COALESCE(sensitive_action_request_id::text,''),
+		       COALESCE(native_sensitive_action_request_id::text,''),
 		       status_access_token_sha256
 		FROM testagram_identity.identity_applications
 		WHERE id=$1::uuid AND status_access_token_expires_at>now()
@@ -153,17 +153,17 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	var requestExpires time.Time
 	err = tx.QueryRow(ctx, `
 		SELECT sar.action_type,sar.status,sar.target_reference,sar.required_approvals,sar.expires_at,
-		       (SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa
+		       (SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved'),
-		       (SELECT count(DISTINCT sa.approver_user_id) FROM testagram_auth.sensitive_action_approvals sa
+		       (SELECT count(DISTINCT sa.approver_user_id) FROM testagram_auth.native_sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved' AND sa.approver_user_id IS NOT NULL),
-		       (SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa
+		       (SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals sa
 		        WHERE sa.request_id=sar.id AND sa.decision='approved'
 		          AND sa.approver_user_id IN ($2::uuid,$3::uuid)),
 		       (SELECT count(DISTINCT ar.reviewer_user_id) FROM testagram_identity.identity_application_reviews ar
-		        WHERE ar.application_id=$4::uuid AND ar.decision='approved'
+		        WHERE ar.application_id=$4::uuid AND ar.decision='approved' AND ar.review_stage='account_approval'
 		          AND ar.reviewer_user_id IN ($2::uuid,$3::uuid))
-		FROM testagram_auth.sensitive_action_requests sar
+		FROM testagram_auth.native_sensitive_action_requests sar
 		WHERE sar.id=$1::uuid
 		FOR UPDATE
 	`, approvalRequestID, firstApprover, secondApprover, applicationID).Scan(
