@@ -101,6 +101,27 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if !identityReviewWebAuthnPrerequisitesReady(ctx, db) {
 		t.Fatal("readiness rejected two independent verified reviewers and two independent verified approvers")
 	}
+	// A staff member holding both roles must not count toward both independent
+	// credential groups. Four credentialed people still exist, but only one
+	// reviewer is exclusive when users[0] is dual-roled.
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by)
+		VALUES($1::uuid,'administrator',$2::uuid)
+	`, users[0], grantor); err != nil {
+		t.Fatal(err)
+	}
+	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("readiness counted a dual-role staff member in both independent credential groups")
+	}
+	if _, err := db.Exec(ctx, `
+		DELETE FROM testagram_auth.staff_role_grants
+		WHERE user_id=$1::uuid AND role='administrator'
+	`, users[0]); err != nil {
+		t.Fatal(err)
+	}
+	if !identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("readiness did not recover after removing the overlapping role")
+	}
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.staff_role_grants
 		SET role='administrator'
