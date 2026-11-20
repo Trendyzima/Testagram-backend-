@@ -73,6 +73,27 @@ func (a *app) saveStaffChallenge(ctx context.Context,userID,kind string,sd *weba
  _,err=a.database.Exec(ctx,"INSERT INTO testagram_auth.staff_webauthn_challenges(challenge_hash,user_id,ceremony,session_data,expires_at) VALUES($1,$2::uuid,$3,$4::jsonb,LEAST($5::timestamptz,now()+interval '2 minutes'))",sum[:],userID,kind,raw,sd.Expires)
  return err
 }
+
+func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter,r *http.Request) {
+ s,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+ if !a.requireRecentStepUp(w,s){return}
+ target:=strings.TrimSpace(r.PathValue("id"))
+ if target==""||target==actor.ID{writeJSON(w,400,map[string]string{"error":"A different canonical staff identity is required"});return}
+ var input struct{Reason string `json:"reason"`}
+ if !decodeBody(w,r,&input){return}
+ input.Reason=strings.TrimSpace(input.Reason)
+ if len(input.Reason)<8||len(input.Reason)>500{writeJSON(w,400,map[string]string{"error":"Provide an enrollment authorization reason of 8 to 500 characters"});return}
+ if allowed,err:=a.consumeAdminRateLimit(r.Context(),actor.ID,"webauthn-enrollment",5,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"Enrollment authorization rate-limit unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"Enrollment authorization rate limit exceeded"});return}
+ tag,err:=a.database.Exec(r.Context(),`INSERT INTO testagram_auth.staff_webauthn_enrollment_authorizations(user_id,authorized_by,authorization_method,reason,expires_at)
+ SELECT sp.user_id,$2::uuid,'dual_control',$3,now()+interval '30 minutes'
+ FROM testagram_auth.staff_principals sp
+ JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+ WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
+ AND rg.role IN ('owner','administrator','identity_reviewer','engineer','operations','support','moderator')`,target,actor.ID,input.Reason)
+ if err!=nil||tag.RowsAffected()!=1{writeJSON(w,404,map[string]string{"error":"Target is not an enabled, independently provisioned Testagram staff identity"});return}
+ writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"expires_in_seconds":1800})
+}
+
 func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Request){
  _,user,ok:=a.requireStaff(w,r);if !ok{return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
@@ -92,6 +113,7 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
  var input struct{Challenge string `json:"challenge"`;Response json.RawMessage `json:"response"`}
  if !decodeBody(w,r,&input){return}
  if input.Challenge==""||len(input.Response)==0||len(input.Response)>1<<20{writeJSON(w,400,map[string]string{"error":"Invalid registration response"});return}
+ if !strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true"){writeJSON(w,503,map[string]string{"error":"Staff WebAuthn enrollment is closed by production policy."});return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  tx,err:=a.database.Begin(r.Context());if err!=nil{writeJSON(w,503,map[string]string{"error":"Credential store unavailable"});return};defer tx.Rollback(r.Context())
  sum:=sha256.Sum256([]byte(input.Challenge))
@@ -165,7 +187,7 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
 }
 func (a *app) handleWebAuthnReadiness(w http.ResponseWriter,r *http.Request){
  ctx,cancel:=context.WithTimeout(r.Context(),2*time.Second);defer cancel()
- _,_,staff:=a.currentUser(w,r);if !staff{writeJSON(w,401,map[string]string{"error":"Staff authentication required"});return}
+ _,current,staff:=a.currentUser(w,r);if !staff||current.StaffRole==""{writeJSON(w,401,map[string]string{"error":"Staff authentication required"});return}
  wa,rpid,err:=a.staffWebAuthn();dbOK:=a.database!=nil&&a.database.Ping(ctx)==nil
  schemaOK:=false;if dbOK{_ = a.database.QueryRow(ctx,"SELECT to_regclass('testagram_auth.staff_webauthn_users') IS NOT NULL AND to_regclass('testagram_auth.staff_webauthn_credentials') IS NOT NULL AND to_regclass('testagram_auth.staff_webauthn_challenges') IS NOT NULL").Scan(&schemaOK)}
  ready:=err==nil&&wa!=nil&&dbOK&&schemaOK&&len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32&&a.aead!=nil
