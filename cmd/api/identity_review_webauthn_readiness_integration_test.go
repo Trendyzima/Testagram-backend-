@@ -144,6 +144,13 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 		t.Fatal("Backend accepted an Admin Console readiness attestation that was not ready")
 	}
 	adminReady = true
+	// The shared readiness bearer must never be forwarded to an arbitrary
+	// configured host, even if that host returns a syntactically valid attestation.
+	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", "https://attacker.example/internal/webauthn/readiness")
+	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("readiness forwarded its shared bearer token to an untrusted external host")
+	}
+	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", admin.URL)
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.staff_webauthn_credentials
 		SET revoked_at=now()
