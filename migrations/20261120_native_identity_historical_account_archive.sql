@@ -141,9 +141,15 @@ BEGIN
   SET status='source_provider_created'
   WHERE status='appwrite_created';
 
-  ALTER TABLE testagram_identity.historical_external_registration_provisioning
-    ADD CONSTRAINT historical_external_registration_provisioning_status_check
-    CHECK (status IN ('pending','source_provider_created','linked','verification_sent','completed','compensation_required','failed'));
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.historical_external_registration_provisioning'::regclass
+      AND conname='historical_external_registration_provisioning_status_check'
+  ) THEN
+    ALTER TABLE testagram_identity.historical_external_registration_provisioning
+      ADD CONSTRAINT historical_external_registration_provisioning_status_check
+      CHECK (status IN ('pending','source_provider_created','linked','verification_sent','completed','compensation_required','failed'));
+  END IF;
 END;
 $neutralize_historical_status$;
 
