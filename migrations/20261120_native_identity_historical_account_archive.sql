@@ -30,6 +30,15 @@ BEGIN
      AND to_regclass('testagram_identity.historical_external_registration_consents') IS NOT NULL THEN
     RAISE EXCEPTION 'both historical and legacy consent tables exist; reconcile explicitly';
   END IF;
+
+  IF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL
+     AND to_regclass('testagram_identity.historical_external_registration_provisioning') IS NULL THEN
+    ALTER TABLE testagram_identity.registration_provisioning
+      RENAME TO historical_external_registration_provisioning;
+  ELSIF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL
+     AND to_regclass('testagram_identity.historical_external_registration_provisioning') IS NOT NULL THEN
+    RAISE EXCEPTION 'both historical and legacy provisioning tables exist; reconcile explicitly';
+  END IF;
 END;
 $rename_tables$;
 
@@ -43,6 +52,9 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_consents' AND column_name='appwrite_user_id') THEN
     ALTER TABLE testagram_identity.historical_external_registration_consents RENAME COLUMN appwrite_user_id TO source_account_id;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning' AND column_name='appwrite_user_id') THEN
+    ALTER TABLE testagram_identity.historical_external_registration_provisioning RENAME COLUMN appwrite_user_id TO source_account_id;
   END IF;
 END;
 $rename_columns$;
@@ -81,7 +93,8 @@ ALTER TABLE testagram_auth.legacy_account_reconciliation
 REVOKE ALL ON TABLE
   testagram_identity.historical_external_identity_accounts,
   testagram_identity.historical_external_identity_link_audit,
-  testagram_identity.historical_external_registration_consents
+  testagram_identity.historical_external_registration_consents,
+  testagram_identity.historical_external_registration_provisioning
 FROM PUBLIC;
 
 DO $revoke_runtime$
@@ -90,14 +103,16 @@ BEGIN
     REVOKE ALL ON TABLE
       testagram_identity.historical_external_identity_accounts,
       testagram_identity.historical_external_identity_link_audit,
-      testagram_identity.historical_external_registration_consents
+      testagram_identity.historical_external_registration_consents,
+      testagram_identity.historical_external_registration_provisioning
     FROM testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     REVOKE ALL ON TABLE
       testagram_identity.historical_external_identity_accounts,
       testagram_identity.historical_external_identity_link_audit,
-      testagram_identity.historical_external_registration_consents
+      testagram_identity.historical_external_registration_consents,
+      testagram_identity.historical_external_registration_provisioning
     FROM service_role;
   END IF;
 END;
@@ -109,5 +124,7 @@ COMMENT ON TABLE testagram_identity.historical_external_identity_link_audit IS
   'Read-restricted historical identity-link audit evidence. Not used for runtime authentication.';
 COMMENT ON TABLE testagram_identity.historical_external_registration_consents IS
   'Read-restricted historical registration-consent evidence. Not used as native registration consent or account proof.';
+COMMENT ON TABLE testagram_identity.historical_external_registration_provisioning IS
+  'Read-restricted historical external-provider provisioning state. Native account provisioning uses native_registration_provisioning.';
 
 COMMIT;
