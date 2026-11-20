@@ -7,7 +7,7 @@ import (
 
 func TestIssueAndVerifyConversationTicket(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	token, err := Issue("0123456789abcdef0123456789abcdef", "appwrite-user-1", "conversation-1", now, time.Minute)
+	token, err := Issue("0123456789abcdef0123456789abcdef", "testagram-user-1", "conversation-1", now, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -15,7 +15,7 @@ func TestIssueAndVerifyConversationTicket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.Subject != "appwrite-user-1" || claims.ConversationID != "conversation-1" {
+	if claims.Subject != "testagram-user-1" || claims.ConversationID != "conversation-1" {
 		t.Fatalf("unexpected claims: %+v", claims)
 	}
 }
@@ -71,11 +71,11 @@ func TestSignPublishRequiresSecretAndBoundsBody(t *testing.T) {
 func TestIssueScopedMediaSignalTicket(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	secret := "0123456789abcdef0123456789abcdef"
-	token, err := IssueScoped(secret, "appwrite-user-2", "call-room-1", "media:signal", now, 2*time.Minute)
+	token, err := IssueScoped(secret, "testagram-user-2", "call-room-1", "media:signal", now, 2*time.Minute)
 	if err != nil { t.Fatal(err) }
 	claims, err := Verify(secret, token, "call-room-1", now.Add(time.Second))
 	if err != nil { t.Fatal(err) }
-	if claims.Scope != "media:signal" || claims.Subject != "appwrite-user-2" {
+	if claims.Scope != "media:signal" || claims.Subject != "testagram-user-2" {
 		t.Fatalf("unexpected media ticket claims: %+v", claims)
 	}
 }
