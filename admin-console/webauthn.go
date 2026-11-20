@@ -73,6 +73,8 @@ func (a *app) saveStaffChallenge(ctx context.Context,userID,kind string,sd *weba
  aad:=[]byte("testagram-staff-webauthn-session-v1:"+userID+":"+kind+":"+base64.RawURLEncoding.EncodeToString(sum[:]))
  nonce:=make([]byte,a.aead.NonceSize());if _,err=rand.Read(nonce);err!=nil{return err}
  encrypted:=append(nonce,a.aead.Seal(nil,nonce,plain,aad)...)
+ _,err=a.database.Exec(ctx,"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE expires_at<=now()")
+ if err!=nil{return err}
  _,err=a.database.Exec(ctx,"INSERT INTO testagram_auth.staff_webauthn_challenges(challenge_hash,user_id,ceremony,session_data,expires_at) VALUES($1,$2::uuid,$3,$4,LEAST($5::timestamptz,now()+interval '2 minutes'))",sum[:],userID,kind,encrypted,sd.Expires)
  return err
 }
@@ -99,6 +101,7 @@ func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter,r *http.Request
 
 func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Request){
  _,user,ok:=a.requireStaff(w,r);if !ok{return}
+ if allowed,err:=a.consumeAdminRateLimit(r.Context(),user.ID,"webauthn-registration-begin",8,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn rate-limit service unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"WebAuthn registration rate limit exceeded"});return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil{writeJSON(w,503,map[string]string{"error":"Canonical staff identity or credential store unavailable"});return}
  if len(u.credentials)>0{writeJSON(w,409,map[string]string{"error":"An authenticator is already enrolled; authenticate before adding another."});return}
@@ -133,7 +136,7 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)>0{writeJSON(w,403,map[string]string{"error":"Staff enrollment is not authorized"});return}
  req:=r.Clone(r.Context());req.Body=io.NopCloser(bytes.NewReader(input.Response));req.ContentLength=int64(len(input.Response))
  credential,err:=wa.FinishRegistration(u,sd,req)
- if err!=nil{writeJSON(w,401,map[string]string{"error":"Cryptographic registration verification failed"});return}
+ if err!=nil{_,_=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);_ = tx.Commit(r.Context());writeJSON(w,401,map[string]string{"error":"Cryptographic registration verification failed"});return}
  encrypted,err:=a.encryptStaffCredential(credential);if err!=nil{writeJSON(w,503,map[string]string{"error":"Credential encryption failed"});return}
  _,err=tx.Exec(r.Context(),"INSERT INTO testagram_auth.staff_webauthn_credentials(rpid,user_id,credential_id,credential,sign_count,user_verified,backup_eligible,backup_state) VALUES($1,$2::uuid,$3,$4,$5,$6,$7,$8)",rpid,user.ID,credential.ID,encrypted,credential.Authenticator.SignCount,credential.Flags.UserVerified,credential.Flags.BackupEligible,credential.Flags.BackupState)
  if err!=nil{writeJSON(w,409,map[string]string{"error":"Credential already exists or could not be stored"});return}
@@ -146,6 +149,7 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
 }
 func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Request){
  _,user,ok:=a.requireStaff(w,r);if !ok{return}
+ if allowed,err:=a.consumeAdminRateLimit(r.Context(),user.ID,"webauthn-assertion-begin",12,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn rate-limit service unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"WebAuthn assertion rate limit exceeded"});return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)==0{writeJSON(w,403,map[string]string{"error":"No registered authenticator exists"});return}
  options,sd,err:=wa.BeginLogin(u,webauthn.WithUserVerification(protocol.VerificationRequired),webauthn.WithLoginOrigin(a.publicOrigin))
@@ -183,10 +187,11 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)==0{writeJSON(w,403,map[string]string{"error":"No registered authenticator exists"});return}
  req:=r.Clone(r.Context());req.Body=io.NopCloser(bytes.NewReader(input.Response));req.ContentLength=int64(len(input.Response))
  credential,err:=wa.FinishLogin(u,sd,req)
- if err!=nil||credential.Authenticator.CloneWarning||!credential.Flags.UserVerified{writeJSON(w,401,map[string]string{"error":"WebAuthn assertion signature, origin, RP ID, user verification or counter validation failed"});return}
+ if err!=nil||credential.Authenticator.CloneWarning||!credential.Flags.UserVerified{_,_=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);_ = tx.Commit(r.Context());writeJSON(w,401,map[string]string{"error":"WebAuthn assertion signature, origin, RP ID, user verification or counter validation failed"});return}
  encrypted,err:=a.encryptStaffCredential(credential);if err!=nil{writeJSON(w,503,map[string]string{"error":"Credential update encryption failed"});return}
  tag,err:=tx.Exec(r.Context(),"UPDATE testagram_auth.staff_webauthn_credentials SET credential=$1,sign_count=$2,clone_warning=$3,user_verified=$4,backup_eligible=$5,backup_state=$6,last_used_at=now() WHERE rpid=$7 AND user_id=$8::uuid AND credential_id=$9 AND revoked_at IS NULL AND sign_count<=$2",encrypted,credential.Authenticator.SignCount,credential.Authenticator.CloneWarning,credential.Flags.UserVerified,credential.Flags.BackupEligible,credential.Flags.BackupState,rpid,user.ID,credential.ID)
- if err!=nil||tag.RowsAffected()!=1{writeJSON(w,401,map[string]string{"error":"Credential counter changed or credential was revoked"});return}
+ if err!=nil{writeJSON(w,503,map[string]string{"error":"Credential counter update failed"});return}
+ if tag.RowsAffected()!=1{_,_=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);_ = tx.Commit(r.Context());writeJSON(w,401,map[string]string{"error":"Credential counter changed or credential was revoked"});return}
  if _,err=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not consume assertion challenge"});return}
  if err=tx.Commit(r.Context());err!=nil{writeJSON(w,503,map[string]string{"error":"Could not commit assertion"});return}
  token,exp,err:=a.mintStaffElevation(user);if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not issue backend MFA elevation"});return}
