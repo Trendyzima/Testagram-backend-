@@ -36,6 +36,8 @@ The only supported public API runtime is the Testagram Go service assembled by c
 
 Previously applied migration files and the archived one-time import tool may retain old provider identifiers as historical source metadata. They are not imported by the production binary, startup, CI deployment or authentication path. Keep them isolated for audit/data lineage until a database inventory proves their data can be safely retired.
 
+The forward-only archive migrations move the old account mapping, link audit, registration consent and provisioning tables into `testagram_identity.historical_external_*`, and move the old provider-keyed staff role tables into `testagram_auth.historical_external_staff_*`. Their source identifiers are renamed to neutral source-account/staff identifiers and runtime-role privileges are revoked. Existing review and approval foreign keys remain attached to the historical staff table so audit lineage is not broken. New authorization reads only `testagram_auth.staff_principals` and `staff_role_grants`; new registration provisioning reads only `testagram_identity.native_registration_provisioning`.
+
 Never rewrite or delete an applied migration. Any database cleanup must be a new forward-only migration after checking live rows, foreign keys, triggers, indexes, stored procedures, grants and backup/restore behavior.
 
 ## Acceptance checks
