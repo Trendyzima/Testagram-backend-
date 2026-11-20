@@ -160,7 +160,7 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
 		t.Fatal("readiness forwarded its shared bearer token to an untrusted external host")
 	}
-	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", admin.URL)
+	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", admin.URL+"/internal/webauthn/readiness")
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.staff_webauthn_credentials
 		SET revoked_at=now()
