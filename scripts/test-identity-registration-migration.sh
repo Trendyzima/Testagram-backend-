@@ -740,6 +740,79 @@ END;
 $retirement_acceptance$;
 SQL
 
+# Fresh-install fixture: the production Compose manifest intentionally does
+# not mount the retired account-link/audit/consent migrations. The archive must
+# therefore succeed when those optional historical tables never existed.
+psql_ci -c "CREATE DATABASE native_clean_archive_test;"
+psql_clean <<'SQL'
+CREATE SCHEMA testagram_identity;
+CREATE SCHEMA testagram_auth;
+CREATE TABLE testagram_identity.registration_provisioning (
+  id BIGINT PRIMARY KEY,
+  appwrite_user_id TEXT,
+  canonical_user_id UUID,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','appwrite_created','linked','verification_sent','completed','compensation_required','failed')),
+  CHECK ((status IN ('linked','verification_sent','completed')) =
+    (appwrite_user_id IS NOT NULL AND canonical_user_id IS NOT NULL))
+);
+INSERT INTO testagram_identity.registration_provisioning(id,status)
+VALUES (1,'appwrite_created');
+CREATE TABLE testagram_auth.legacy_account_reconciliation (
+  source_provider TEXT NOT NULL
+    CONSTRAINT legacy_account_reconciliation_source_provider_check
+    CHECK (source_provider='appwrite')
+);
+INSERT INTO testagram_auth.legacy_account_reconciliation(source_provider)
+VALUES ('appwrite');
+SQL
+psql_clean < migrations/20261120_native_identity_historical_account_archive.sql
+psql_clean < migrations/20261120_native_identity_historical_account_archive.sql
+psql_clean <<'SQL'
+DO $clean_install_archive$
+BEGIN
+  IF to_regclass('testagram_identity.appwrite_accounts') IS NOT NULL
+     OR to_regclass('testagram_identity.link_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.appwrite_registration_consents') IS NOT NULL THEN
+    RAISE EXCEPTION 'clean install unexpectedly created optional historical provider tables';
+  END IF;
+  IF to_regclass('testagram_identity.historical_external_identity_accounts') IS NOT NULL
+     OR to_regclass('testagram_identity.historical_external_identity_link_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.historical_external_registration_consents') IS NOT NULL THEN
+    RAISE EXCEPTION 'clean install created historical tables without source data';
+  END IF;
+  IF to_regclass('testagram_identity.historical_external_registration_provisioning') IS NULL THEN
+    RAISE EXCEPTION 'clean install did not archive the legacy provisioning ledger';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='historical_external_registration_provisioning'
+      AND column_name='appwrite_user_id'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='historical_external_registration_provisioning'
+      AND column_name='source_account_id'
+  ) THEN
+    RAISE EXCEPTION 'clean-install historical provisioning column was not neutralized';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
+    WHERE status='source_provider_created'
+  ) THEN
+    RAISE EXCEPTION 'clean-install provisioning state was not preserved';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_auth.legacy_account_reconciliation
+    WHERE source_provider='historical_external_provider'
+  ) THEN
+    RAISE EXCEPTION 'clean-install reconciliation provenance was not normalized';
+  END IF;
+END;
+$clean_install_archive$;
+SQL
+
 echo "Legacy-provider retirement, native replacement, historical retention and runtime privilege checks passed."
 
 # Reproduce the production ordering defect: remove the NOLOGIN application
