@@ -96,8 +96,10 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 	refresh := func(token string) *httptest.ResponseRecorder {
 		return request(http.MethodPost, "/api/auth/refresh", map[string]string{"refresh_token": token}, "")
 	}
-	profile := func(access string) *httptest.ResponseRecorder {
-		return request(http.MethodGet, "/api/me/profile", nil, access)
+	accessIdentity := func(access string) (string, int, error) {
+		req := httptest.NewRequest(http.MethodGet, "/api/me/profile", nil)
+		req.Header.Set("Authorization", "Bearer "+access)
+		return (&service{db: db}).authenticatedMediaUser(req)
 	}
 
 	// Rotation invalidates the old access token. Reusing the old refresh token
@@ -118,11 +120,11 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 		rotatedEnvelope.Data.RefreshToken == first.RefreshToken {
 		t.Fatalf("refresh token was not rotated: %#v", rotatedEnvelope)
 	}
-	if rec := profile(first.AccessToken); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("old access token survived rotation: status=%d body=%s", rec.Code, rec.Body.String())
+	if _, status, err := accessIdentity(first.AccessToken); err == nil || status != http.StatusUnauthorized {
+		t.Fatalf("old access token survived rotation: status=%d err=%v", status, err)
 	}
-	if rec := profile(rotatedEnvelope.Data.AccessToken); rec.Code != http.StatusOK {
-		t.Fatalf("rotated access token failed profile read: status=%d body=%s", rec.Code, rec.Body.String())
+	if id, status, err := accessIdentity(rotatedEnvelope.Data.AccessToken); err != nil || status != http.StatusOK || id != userID {
+		t.Fatalf("rotated access token failed native identity verification: id=%s status=%d err=%v", id, status, err)
 	}
 	if rec := refresh(first.RefreshToken); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("replayed refresh token was accepted: status=%d body=%s", rec.Code, rec.Body.String())
@@ -141,8 +143,8 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 	if rec := refresh(logoutSession.RefreshToken); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("logged-out refresh token was accepted: status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if rec := profile(otherSession.AccessToken); rec.Code != http.StatusOK {
-		t.Fatalf("single-session logout revoked another session: status=%d body=%s", rec.Code, rec.Body.String())
+	if id, status, err := accessIdentity(otherSession.AccessToken); err != nil || status != http.StatusOK || id != userID {
+		t.Fatalf("single-session logout revoked another session: id=%s status=%d err=%v", id, status, err)
 	}
 
 	// Logout-all increments token_version and revokes every active session.
@@ -161,7 +163,7 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 			t.Fatalf("%s survived logout-all: status=%d body=%s", label, rec.Code, rec.Body.String())
 		}
 	}
-	if rec := profile(allSessionTwo.AccessToken); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("logout-all left another access token active: status=%d body=%s", rec.Code, rec.Body.String())
+	if _, status, err := accessIdentity(allSessionTwo.AccessToken); err == nil || status != http.StatusUnauthorized {
+		t.Fatalf("logout-all left another access token active: status=%d err=%v", status, err)
 	}
 }
