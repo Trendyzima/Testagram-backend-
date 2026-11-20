@@ -679,6 +679,50 @@ BEGIN
     RAISE EXCEPTION 'provider-keyed reviewer/approver columns remain on live identity tables';
   END IF;
 
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid IN (
+      'testagram_identity.historical_external_identity_accounts'::regclass,
+      'testagram_identity.historical_external_identity_link_audit'::regclass,
+      'testagram_identity.historical_external_registration_consents'::regclass,
+      'testagram_identity.historical_external_registration_provisioning'::regclass,
+      'testagram_auth.historical_external_staff_roles'::regclass,
+      'testagram_auth.historical_external_staff_role_audit'::regclass,
+      'testagram_auth.historical_external_staff_permission_overrides'::regclass,
+      'testagram_auth.historical_external_sensitive_action_requests'::regclass,
+      'testagram_auth.historical_external_sensitive_action_approvals'::regclass,
+      'testagram_auth.historical_external_admin_security_audit'::regclass
+    ) AND conname ILIKE '%appwrite%'
+  ) THEN
+    RAISE EXCEPTION 'provider-branded constraints remain on archived relations';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid
+    WHERE i.indrelid IN (
+      'testagram_identity.historical_external_identity_accounts'::regclass,
+      'testagram_identity.historical_external_identity_link_audit'::regclass,
+      'testagram_identity.historical_external_registration_consents'::regclass,
+      'testagram_identity.historical_external_registration_provisioning'::regclass,
+      'testagram_auth.historical_external_staff_roles'::regclass,
+      'testagram_auth.historical_external_staff_role_audit'::regclass,
+      'testagram_auth.historical_external_staff_permission_overrides'::regclass,
+      'testagram_auth.historical_external_sensitive_action_requests'::regclass,
+      'testagram_auth.historical_external_sensitive_action_approvals'::regclass,
+      'testagram_auth.historical_external_admin_security_audit'::regclass
+    ) AND idx.relname ILIKE '%appwrite%'
+  ) THEN
+    RAISE EXCEPTION 'provider-branded indexes remain on archived relations';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
+    WHERE status='appwrite_created'
+  ) THEN
+    RAISE EXCEPTION 'provider-specific provisioning status remains in historical ledger';
+  END IF;
+
   IF NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','SELECT')
      OR NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','INSERT')
      OR NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','UPDATE')
