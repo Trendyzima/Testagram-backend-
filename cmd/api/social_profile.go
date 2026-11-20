@@ -25,8 +25,7 @@ func (s *service) socialProfileRead(w http.ResponseWriter, r *http.Request) {
 }
 
 // socialMyProfileRead resolves the caller's canonical Testagram UUID from the
-// verified Appwrite session. Clients must not use the Appwrite user ID as a
-// profile ID: the two identifiers are intentionally distinct.
+// verified native Testagram session. Clients must use the canonical profile ID.
 func (s *service) socialMyProfileRead(w http.ResponseWriter, r *http.Request) {
 	viewerID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
@@ -66,13 +65,12 @@ WHERE a.user_id=$2 AND a.account_status='active'
 	switch avatarProvider {
 	case "instabox-vps":
 		avatarURL = profileAvatarURL(id)
-	case "appwrite":
-		// Legacy Appwrite avatars are not exposed through provider URLs.
-		avatarURL = ""
 	case "", "legacy-media":
 		avatarProvider = "legacy-media"
 	default:
+		// Unknown and retired storage providers never produce a public URL.
 		avatarURL = ""
+		avatarProvider = "legacy-media"
 	}
 	socialLinks := map[string]string{}
 	_ = json.Unmarshal(socialLinksJSON, &socialLinks)
