@@ -20,8 +20,8 @@ import (
 
 // identityReviewWebAuthnPrerequisitesReady is the Backend-side half of the
 // Admin Console readiness contract. It requires real, active, user-verified
-// credentials for at least two independent reviewers and two independent
-// approvers. A stored enrollment timestamp alone is not sufficient.
+// credentials for at least four eligible staff, allowing two reviewers and two
+// approvers to be selected as disjoint pairs. Enrollment timestamps alone are insufficient.
 func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }) bool {
