@@ -90,7 +90,7 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		WHERE id=$1::uuid AND status_access_token_expires_at>now()
 		FOR UPDATE
 	`, applicationID).Scan(&email, &username, &displayName, &applicationStatus, &approvalRequestID,
-		&evidenceFingerprint,&termsVersion,&privacyVersion,&storedApplicationToken)
+		&evidenceFingerprint, &termsVersion, &privacyVersion, &storedApplicationToken)
 	if err != nil || subtle.ConstantTimeCompare(storedApplicationToken, authTokenHash(applicationToken)) != 1 {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
 		return
