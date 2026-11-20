@@ -15,7 +15,7 @@ This document is a target architecture and phased engineering plan, not a claim 
 
 2. **Stateless application cells**
    - Deploy multiple independent regional cells. Each cell contains API instances, background workers, bounded PostgreSQL outbox workers, and access to the appropriate data partitions.
-   - Keep API instances stateless; validate Appwrite sessions and keep durable state in PostgreSQL with defined failure semantics.
+   - Keep API instances stateless; validate Testagram-native access tokens against live PostgreSQL account/session state and keep durable state in PostgreSQL with defined failure semantics.
    - Use cell isolation so one bad deploy, tenant, region, or queue backlog does not exhaust all regions. Start with one region and a tested standby, then add regions based on measured demand.
    - Avoid synchronous cross-region calls in ordinary request paths. Define data residency, ownership, and failover rules per data domain.
 
