@@ -86,7 +86,8 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 	// only the private Docker service, while loopback is allowed for tests.
 	hostname := strings.ToLower(strings.TrimSuffix(parsedURL.Hostname(), "."))
 	privateAdminService := hostname == "admin-console" && parsedURL.Port() == "8090"
-	loopbackTest := (hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1") && parsedURL.Port() != ""
+	loopbackTest := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL")) != "" &&
+		(hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1") && parsedURL.Port() != ""
 	if !privateAdminService && !loopbackTest {
 		return false
 	}
