@@ -83,14 +83,16 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("MEDIA_REPLICATION_ENABLED: 'false'", self.workflow)
         self.assertIn("The legacy Backend multi-bucket replicator is not the canonical media path.", self.workflow)
 
-    def test_identity_registration_is_readiness_gated_without_a_legacy_kill_switch(self):
+    def test_identity_registration_requires_explicit_backend_gate_and_readiness(self):
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
+        self.assertIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REGISTRATION_ENABLED || 'false' }}", self.workflow)
         self.assertNotIn("confirm_identity_registration", self.workflow)
-        self.assertNotIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", self.workflow)
-        self.assertNotIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", self.deployer)
         self.assertIn('normalize_boolean FRESH_MEDIA_ENABLED false', self.deployer)
         self.assertIn('normalize_boolean DATA_CENTRE_MEDIA_ENABLED false', self.deployer)
+        self.assertIn('normalize_boolean TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false', self.deployer)
+        self.assertIn('write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"', self.deployer)
+        self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"', self.deployer)
         self.assertIn("Identity registration requires the private Data Centre media profile", self.deployer)
         self.assertIn("Identity registration requires TESTAGRAM_TERMS_VERSION", self.deployer)
         self.assertIn("Identity registration requires TESTAGRAM_PRIVACY_VERSION", self.deployer)
