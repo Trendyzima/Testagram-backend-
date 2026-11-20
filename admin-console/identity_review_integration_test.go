@@ -239,4 +239,38 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		t.Fatalf("final application=%q request=%q evidence_reviews=%d account_reviews=%d approvals=%d tokens=%d; want approved/approved/2/2/2/1",
 			finalStatus, requestStatus, evidenceReviewCount, accountReviewCount, approvalCountFinal, tokenCount)
 	}
+
+	// Expiry must be checked inside the locked decision transaction, not only
+	// by the HTTP preflight. This closes the race where a request expires after
+	// the console has loaded it but before the reviewer submits the decision.
+	var expiredRequestID string
+	if err := conn.QueryRow(ctx, `
+		INSERT INTO testagram_auth.native_sensitive_action_requests
+		  (action_type,requested_by_user_id,requested_by_service,target_reference,
+		   reason,payload,payload_sha256,required_approvals,expires_at)
+		VALUES ('identity.approve',NULL,'identity_pipeline',$1,
+		        'Expired approval integration fixture','{}'::jsonb,repeat('d',64),2,now()-interval '1 second')
+		RETURNING id::text
+	`, applicationID).Scan(&expiredRequestID); err != nil {
+		t.Fatalf("insert expired approval request: %v", err)
+	}
+	tx, err = conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin expired approval transaction: %v", err)
+	}
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, expiredRequestID, "identity.approve", "", approverOne, "approved", "Expired approval must be rejected"); err == nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal("expired identity approval request was accepted")
+	}
+	_ = tx.Rollback(ctx)
+	var expiredApprovalCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid
+	`, expiredRequestID).Scan(&expiredApprovalCount); err != nil {
+		t.Fatalf("read expired approval ledger: %v", err)
+	}
+	if expiredApprovalCount != 0 {
+		t.Fatalf("expired request recorded %d approval decisions; want 0", expiredApprovalCount)
+	}
 }
