@@ -13,6 +13,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         cls.deployer = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        cls.compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        cls.env_example = (ROOT / "deploy/self-hosted/.env.example").read_text()
 
     def test_r2_bucket_provisioning_uses_the_same_normalized_media_gates_as_remote_deploy(self):
         self.assertNotIn("if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)
@@ -93,6 +95,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('normalize_boolean TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false', self.deployer)
         self.assertIn('write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"', self.deployer)
         self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"', self.deployer)
+        self.assertIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}", self.compose)
+        self.assertIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=false", self.env_example)
         self.assertIn("Identity registration requires the private Data Centre media profile", self.deployer)
         self.assertIn("Identity registration requires TESTAGRAM_TERMS_VERSION", self.deployer)
         self.assertIn("Identity registration requires TESTAGRAM_PRIVACY_VERSION", self.deployer)
