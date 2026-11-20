@@ -2,7 +2,7 @@
 
 ## Active owner
 
-The production media authority is the native API assembled by cmd/api/main.go, backed by PostgreSQL and the Testagram media schema. The old Fresh/Appwrite storage worker suite is not part of the supported runtime and is retired in favor of these native owners.
+The production media authority is the native API assembled by cmd/api/main.go, backed by PostgreSQL and the Testagram media schema. The former alternate storage worker suite is not part of the supported runtime and has been retired in favor of these native owners.
 
 - Upload intent, bounded upload gateway, completion and download authorization: cmd/api/media.go.
 - PostgreSQL asset metadata, upload intents, storage quotas and deletion jobs: testagram_media and testagram_storage.
@@ -25,7 +25,7 @@ The production media authority is the native API assembled by cmd/api/main.go, b
 
 ## Explicit scope boundary
 
-The retired Appwrite-backed freshstorage implementation also described separate story-expiry, cold-archive and purge workers. Those workers are not silently represented as implemented by the native upload/deletion pipeline. Any future story expiry or cold-archive feature must be designed against native PostgreSQL ledgers, have independent retention/legal-hold policy, and pass restore, checksum and destructive-operation tests before activation. Do not run the archived worker commands or point production at the former external-provider collections.
+The retired alternate `freshstorage` implementation also described separate story-expiry, cold-archive and purge workers. Those workers are not silently represented as implemented by the native upload/deletion pipeline. Any future story expiry or cold-archive feature must be designed against native PostgreSQL ledgers, have independent retention/legal-hold policy, and pass restore, checksum and destructive-operation tests before activation. Do not run the archived worker commands or point production at the former external-provider collections.
 
 ## Deployment
 
