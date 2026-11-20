@@ -70,6 +70,45 @@ BEGIN
 END;
 $rename_columns$;
 
+DO $rename_historical_staff_foreign_keys$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.identity_application_reviews'::regclass AND conname='identity_application_reviews_reviewer_staff_fk')
+     AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.identity_application_reviews'::regclass AND conname='identity_application_reviews_historical_source_reviewer_fk') THEN
+    ALTER TABLE testagram_identity.identity_application_reviews
+      RENAME CONSTRAINT identity_application_reviews_reviewer_staff_fk
+      TO identity_application_reviews_historical_source_reviewer_fk;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.verification_reviews'::regclass AND conname='verification_reviews_reviewer_staff_fk')
+     AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.verification_reviews'::regclass AND conname='verification_reviews_historical_source_reviewer_fk') THEN
+    ALTER TABLE testagram_identity.verification_reviews
+      RENAME CONSTRAINT verification_reviews_reviewer_staff_fk
+      TO verification_reviews_historical_source_reviewer_fk;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.verification_sessions'::regclass AND conname='verification_sessions_decider_staff_fk')
+     AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.verification_sessions'::regclass AND conname='verification_sessions_historical_source_decider_fk') THEN
+    ALTER TABLE testagram_identity.verification_sessions
+      RENAME CONSTRAINT verification_sessions_decider_staff_fk
+      TO verification_sessions_historical_source_decider_fk;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.identity_approval_tokens'::regclass AND conname='identity_approval_tokens_first_approver_staff_fk')
+     AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.identity_approval_tokens'::regclass AND conname='identity_approval_tokens_historical_first_approver_fk') THEN
+    ALTER TABLE testagram_identity.identity_approval_tokens
+      RENAME CONSTRAINT identity_approval_tokens_first_approver_staff_fk
+      TO identity_approval_tokens_historical_first_approver_fk;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.identity_approval_tokens'::regclass AND conname='identity_approval_tokens_second_approver_staff_fk')
+     AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='testagram_identity.identity_approval_tokens'::regclass AND conname='identity_approval_tokens_historical_second_approver_fk') THEN
+    ALTER TABLE testagram_identity.identity_approval_tokens
+      RENAME CONSTRAINT identity_approval_tokens_second_approver_staff_fk
+      TO identity_approval_tokens_historical_second_approver_fk;
+  END IF;
+END;
+$rename_historical_staff_foreign_keys$;
+
 DO $rename_historical_reviewer_indexes$
 BEGIN
   IF to_regclass('testagram_identity.verification_reviews_reviewer_idx') IS NOT NULL THEN
