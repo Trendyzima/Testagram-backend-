@@ -553,6 +553,27 @@ if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tam
   exit 1
 fi
 
+# Seed one legacy saga state so the archive migration must transform the
+# provider-specific status value, not merely prove the empty-table case.
+psql_ci <<'SQL'
+DO $seed_historical_status$
+DECLARE
+  affected BIGINT;
+BEGIN
+  UPDATE testagram_identity.registration_provisioning
+  SET status='appwrite_created'
+  WHERE application_id=(
+    SELECT id FROM testagram_identity.identity_applications
+    WHERE email='first@example.test'
+  );
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected <> 1 THEN
+    RAISE EXCEPTION 'expected exactly one historical provisioning fixture, got %', affected;
+  END IF;
+END;
+$seed_historical_status$;
+SQL
+
 # Apply the forward-only retirement migrations after all legacy compatibility
 # fixtures have been exercised. This proves the live schema no longer exposes
 # provider-keyed tables/columns while preserving restricted historical evidence.
@@ -654,6 +675,12 @@ BEGIN
     WHERE status='appwrite_created'
   ) THEN
     RAISE EXCEPTION 'provider-specific provisioning status remains in historical ledger';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
+    WHERE status='source_provider_created'
+  ) THEN
+    RAISE EXCEPTION 'historical provider-created provisioning event was not preserved under a neutral status';
   END IF;
 
   IF NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','SELECT')
