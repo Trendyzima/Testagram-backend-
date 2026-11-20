@@ -31,9 +31,11 @@ Dispatch only with `confirm_staging_only=true` after verifying the origin and ac
 
 Do not use a production user or production credentials for this test.
 
-## Staff authentication limitation
+## Staff authentication and identity-intake gate
 
-Staff review routes currently require a native Backend session, an enabled staff principal, a role grant, and a non-null MFA-enrolment timestamp. The Admin Console step-up currently reauthenticates the password; it does not perform a live TOTP or passkey challenge. The timestamp alone is not proof of a second factor. Therefore staff-review production activation remains gated until a real second-factor enrollment and challenge flow is implemented and verified end to end.
+Staff review routes require a native Backend session, an enabled staff principal, the appropriate role grant, an enrolled authenticator and a fresh signed MFA claim. The Admin Console implements native WebAuthn registration/assertion with RP ID/origin validation, user verification, encrypted credential/challenge storage, single-use challenge consumption, counter/clone checks and a short-lived Backend-signed elevation token. Enrollment is independently authorized and gated by `TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED=true`.
+
+The Backend identity-review service still leaves `identityReviewWebAuthnReady` false in `cmd/api/main.go`. New identity applications therefore remain closed with `IDENTITY_REVIEW_MFA_UNAVAILABLE` until the Admin Console-to-Backend elevation handoff, browser ceremony, recovery and replay behavior pass end-to-end staging acceptance. A non-null MFA-enrolment timestamp alone is not proof of a fresh assertion.
 
 ## Production boundary
 
