@@ -708,11 +708,11 @@ BEGIN
     SELECT count(*) FROM pg_constraint
     WHERE confrelid='testagram_auth.historical_external_staff_roles'::regclass
       AND conname IN (
-        'identity_application_reviews_reviewer_staff_fk',
-        'identity_approval_tokens_first_approver_staff_fk',
-        'identity_approval_tokens_second_approver_staff_fk',
-        'verification_reviews_reviewer_staff_fk',
-        'verification_sessions_decider_staff_fk'
+        'identity_application_reviews_historical_source_reviewer_fk',
+        'identity_approval_tokens_historical_first_approver_fk',
+        'identity_approval_tokens_historical_second_approver_fk',
+        'verification_reviews_historical_source_reviewer_fk',
+        'verification_sessions_historical_source_decider_fk'
       )
   ) <> 5 THEN
     RAISE EXCEPTION 'historical staff foreign-key audit lineage was not preserved';
