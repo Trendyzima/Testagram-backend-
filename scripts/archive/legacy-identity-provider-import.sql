@@ -2,7 +2,7 @@
 -- Use only for an approved, evidence-backed reconciliation of historical provider accounts.
 -- This script must never be called by the API, CI deployment or normal startup.
 --
--- This script DOES NOT export/import Appwrite passwords (they are not
+-- This script DOES NOT export/import source-provider passwords (they are not
 -- recoverable). It uses only the explicit source_account_id -> canonical UUID
 -- mapping already recorded in testagram_identity.historical_external_identity_accounts.
 --
@@ -11,7 +11,7 @@
 --   psql -v ON_ERROR_STOP=1 \
 --     -v reconciled_by='operator-id' \
 --     -v evidence_reference='change-ticket-or-signed-export-reference' \
---     -f scripts/migrate-appwrite-identities.sql
+--     -f scripts/archive/legacy-identity-provider-import.sql
 --
 -- Every imported account receives a non-verifiable sentinel password hash and
 -- password_reset_required=true. Verified users must complete the native
@@ -108,7 +108,7 @@ SELECT
   a.canonical_user_id,
   a.email,
   u.username,
-  '!appwrite-password-reset-required!',
+  '!testagram-password-reset-required!',
   CASE WHEN a.email_verified THEN now() ELSE NULL END,
   TRUE,
   CASE WHEN u.account_status='active' THEN NULL ELSE now() END
