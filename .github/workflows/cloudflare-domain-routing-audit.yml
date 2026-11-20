@@ -91,7 +91,140 @@ jobs:
                 if [[ "$zone_name" == "testagram.site" ]]; then
                   origin_record="$(jq -r '.result[]? | select(.name == "api.testagram.site" and (.type == "A" or .type == "AAAA")) | [.type,.content] | @tsv' "$tmp/dns.json" | head -n 1)"
                   if [[ -n "$origin_record" ]]; then
-                    IFS=\\t' read -r origin_type origin_address <<< "$origin_record"
+                    IFS=
+                    if [[ "$origin_type" == "AAAA" ]]; then
+                      resolve_entry="api.testagram.site:443:[$origin_address]"
+                    else
+                      resolve_entry="api.testagram.site:443:$origin_address"
+                    fi
+                    origin_status="$(curl --silent --show-error --output "$tmp/api-origin-health.json" --write-out '%{http_code}' \
+                      --connect-timeout 8 --max-time 20 --resolve "$resolve_entry" \
+                      "https://api.testagram.site/healthz" 2>"$tmp/api-origin-health.err" || true)"
+                    if [[ "$origin_status" == "200" ]]; then
+                      echo "- Direct native API origin health (Cloudflare Worker bypassed): HTTP 200" >> "$GITHUB_STEP_SUMMARY"
+                    else
+                      echo "- Direct native API origin health (Cloudflare Worker bypassed): HTTP $origin_status; direct-origin reachability is not yet proven" >> "$GITHUB_STEP_SUMMARY"
+                      echo "::warning::Direct native API origin health returned HTTP $origin_status; check Caddy/API origin reachability before Worker cutover."
+                    fi
+                  else
+                    echo "- Direct native API origin health: no A/AAAA origin record found" >> "$GITHUB_STEP_SUMMARY"
+                  fi
+                fi
+              fi
+              if cf_get "/zones/$zone_id/workers/routes" "$tmp/routes.json"; then
+                {
+                  echo ""
+                  echo "#### Worker routes: $zone_name"
+                  echo "| Pattern | Script |"
+                  echo "|---|---|"
+                  jq -r '.result[]? | "| " + (.pattern // "") + " | " + (.script // "(service binding/none)") + " |"' "$tmp/routes.json"
+                } >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+                echo "#### Worker routes: $zone_name" >> "$GITHUB_STEP_SUMMARY"
+                echo "Unavailable with this token's current permissions." >> "$GITHUB_STEP_SUMMARY"
+              fi
+              printf '| %s | %s | %s |\n' "$zone_name" "$zone_status" "$dns_count" >> "$GITHUB_STEP_SUMMARY"
+            done < "$tmp/zones.tsv"
+          else
+            echo "No zones were returned for this token." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          legacy_api_worker_domain_found="no"
+
+          sort -u "$tmp/accounts.txt" -o "$tmp/accounts.txt"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Account services" >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r account_id; do
+            [[ -z "$account_id" ]] && continue
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "#### Account $account_id" >> "$GITHUB_STEP_SUMMARY"
+
+            if cf_get "/accounts/$account_id/workers/domains?per_page=100" "$tmp/worker-domains.json"; then
+              {
+                echo ""
+                echo "#### Worker custom domains"
+                echo "| Hostname | Worker service | Environment | Zone |"
+                echo "|---|---|---|---|"
+                jq -r '.result[]? | "| " + (.hostname // "") + " | " + (.service // "") + " | " + (.environment // "") + " | " + (.zone_name // "") + " |"' "$tmp/worker-domains.json"
+              } >> "$GITHUB_STEP_SUMMARY"
+              api_worker_service="$(jq -r '.result[]? | select(.hostname == "api.testagram.site") | .service // empty' "$tmp/worker-domains.json" | head -n 1)"
+              if [[ -n "$api_worker_service" ]]; then
+                legacy_api_worker_domain_found="yes"
+                echo "::warning::api.testagram.site is still attached to Cloudflare Worker service '$api_worker_service'; native API origin cutover is not complete."
+              fi
+            else
+              echo "- Worker custom-domain inventory unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            if cf_get "/accounts/$account_id/workers/scripts" "$tmp/workers.json"; then
+              echo "- Workers scripts: $(jq -r '.result | length' "$tmp/workers.json")" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.result[]? | "- Worker: " + (.id // .name // "unnamed")' "$tmp/workers.json" >> "$GITHUB_STEP_SUMMARY"
+              while IFS= read -r worker; do
+                [[ -z "$worker" ]] && continue
+                schedules="unavailable"
+                bindings="unavailable"
+                deployments="unavailable"
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/schedules" "$tmp/worker-schedules.json"; then
+                  schedules="$(jq -c '.result.schedules // [] | map(.cron)' "$tmp/worker-schedules.json")"
+                fi
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/settings" "$tmp/worker-settings.json"; then
+                  # Emit binding names/types only; never print secret or plain-text binding values.
+                  bindings="$(jq -c '.result.bindings // [] | map({name, type, service, namespace})' "$tmp/worker-settings.json")"
+                fi
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/deployments?per_page=1" "$tmp/worker-deployments.json"; then
+                  deployments="$(jq -c '.result.deployments // [] | map({created_on, source})' "$tmp/worker-deployments.json")"
+                fi
+                workers_dev="$(jq -r --arg worker "$worker" '.result[]? | select(.id == $worker) | .workers_dev // "unknown"' "$tmp/workers.json" | head -n 1)"
+                tail_consumers="unavailable"
+                if cf_get "/accounts/$account_id/workers/scripts/$worker/script-settings" "$tmp/worker-script-settings.json"; then
+                  tail_consumers="$(jq -c '.result.tail_consumers // [] | map({service, environment, namespace})' "$tmp/worker-script-settings.json")"
+                fi
+                source_scan="unavailable"
+                if curl --silent --show-error --fail --connect-timeout 10 --max-time 45 \
+                  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                  "$API/accounts/$account_id/workers/scripts/$worker/content/v2" -o "$tmp/worker-source"; then
+                  has_supabase="no"; has_xclone="no"
+                  grep -Eiq 'supabase|sb-project-ref' "$tmp/worker-source" && has_supabase="yes" || true
+                  grep -Eiq 'xclone' "$tmp/worker-source" && has_xclone="yes" || true
+                  source_scan="supabase_refs=$has_supabase,xclone_refs=$has_xclone"
+                fi
+                printf '%s\n' "- Worker runtime inventory: $worker; workers_dev=$workers_dev; cron=$schedules; bindings=$bindings; tail_consumers=$tail_consumers; latest_deployments=$deployments; source_scan=$source_scan" >> "$GITHUB_STEP_SUMMARY"
+              done < <(jq -r '.result[]?.id // empty' "$tmp/workers.json")
+            else
+              echo "- Workers scripts: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            if cf_get "/accounts/$account_id/pages/projects" "$tmp/pages.json"; then
+              echo "- Pages projects: $(jq -r '.result | length' "$tmp/pages.json")" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.result[]? | "- Pages project: " + (.name // "unnamed")' "$tmp/pages.json" >> "$GITHUB_STEP_SUMMARY"
+              while IFS= read -r project; do
+                [[ -z "$project" ]] && continue
+                if cf_get "/accounts/$account_id/pages/projects/$project/domains" "$tmp/pages-domains.json"; then
+                  {
+                    echo ""
+                    echo "##### Pages domains: $project"
+                    echo "| Hostname | Status | Validation | Verification |"
+                    echo "|---|---|---|---|"
+                    jq -r '.result[]? | "| " + (.name // "") + " | " + (.status // "unknown") + " | " + (.validation_data.status // "unknown") + " | " + (.verification_data.status // "unknown") + " |"' "$tmp/pages-domains.json"
+                  } >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo "- Pages domain inventory unavailable for $project with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+                fi
+              done < <(jq -r '.result[]?.name // empty' "$tmp/pages.json")
+            else
+              echo "- Pages projects: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < "$tmp/accounts.txt"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Audit completed. DNS record values/content and all credentials were intentionally excluded from the summary." >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+          if [[ "$legacy_api_worker_domain_found" == "yes" ]]; then
+            echo "::error::Production acceptance blocked: api.testagram.site must be transferred from the legacy Worker custom domain to the verified native API origin before merge."
+            exit 1
+          fi
+\t' read -r origin_type origin_address <<< "$origin_record"
                     if [[ "$origin_type" == "AAAA" ]]; then
                       resolve_entry="api.testagram.site:443:[$origin_address]"
                     else
