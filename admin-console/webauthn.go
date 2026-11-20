@@ -217,6 +217,36 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"ok":true,"elevated":true,"expires_at":exp})
 }
+func (a *app) staffWebAuthnCredentialsDecryptable(ctx context.Context, rpid string) bool {
+	if a.database == nil || a.aead == nil || rpid == "" {
+		return false
+	}
+	rows, err := a.database.Query(ctx, `
+		SELECT credential FROM testagram_auth.staff_webauthn_credentials
+		WHERE rpid=$1 AND revoked_at IS NULL
+		ORDER BY user_id,id
+	`, rpid)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var encrypted []byte
+		if err := rows.Scan(&encrypted); err != nil || len(encrypted) < a.aead.NonceSize() {
+			return false
+		}
+		plain, err := a.aead.Open(nil, encrypted[:a.aead.NonceSize()], encrypted[a.aead.NonceSize():], []byte("testagram-staff-webauthn-credential-v1"))
+		if err != nil {
+			return false
+		}
+		var credential webauthn.Credential
+		if err := json.Unmarshal(plain, &credential); err != nil || len(credential.ID) == 0 || len(credential.PublicKey) == 0 {
+			return false
+		}
+	}
+	return rows.Err() == nil
+}
+
 func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
  wa,rpid,configErr:=a.staffWebAuthn()
  dbOK:=a.database!=nil&&a.database.Ping(ctx)==nil
@@ -279,7 +309,7 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
   `,rpid).Scan(&credentialedReviewers,&credentialedApprovers)
  }
  signingKeyOK:=len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32
- encryptionOK:=a.aead!=nil
+ encryptionOK:=a.aead!=nil&&a.staffWebAuthnCredentialsDecryptable(ctx,rpid)
  enrollmentEnabled:=strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")
  backendAPIReady:=false
  if a.apiHealthURL!=""&&a.client!=nil {
