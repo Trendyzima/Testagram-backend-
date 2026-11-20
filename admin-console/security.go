@@ -167,7 +167,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	if linkedRequestID != requestID {
 		return "", errors.New("identity application is not linked to this approval request")
 	}
-	if applicationStatus != "verified" && applicationStatus != "pending" && applicationStatus != "under_review" {
+	if applicationStatus != "verified" && applicationStatus != "under_review" {
 		return "", errors.New("identity application is no longer reviewable")
 	}
 	var actionType, requestStatus, targetReference, requesterID, requesterService string
@@ -192,7 +192,10 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	if decision == "rejected" && requestStatus != "rejected" {
 		return "", errors.New("rejected identity decision is not reflected in the approval ledger")
 	}
-	if decision == "approved" && approvalCount >= 2 && requestStatus != "approved" {
+	if decision == "approved" && approvalCount > 2 {
+		return "", errors.New("identity approval has more than two approvers")
+	}
+	if decision == "approved" && approvalCount == 2 && requestStatus != "approved" {
 		return "", errors.New("completed two-person approval is not reflected in the approval ledger")
 	}
 	if decision == "approved" && approvalCount < 2 && requestStatus != "pending" {
