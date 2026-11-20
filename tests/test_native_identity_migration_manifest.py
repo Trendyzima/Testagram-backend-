@@ -30,6 +30,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "056_native_verification_decider.sql",
             "057_testagram_mail_outbox.sql",
             "058_testagram_mail_outbox_runtime_role.sql",
+            "058a_native_identity_reviewer_uuid_bridge.sql",
             "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
