@@ -75,6 +75,28 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         ):
             self.assertNotIn(optional, health_gate)
 
+    def test_apex_health_probe_is_available_on_the_canonical_host(self):
+        caddy = (ROOT / "deploy/self-hosted/Caddyfile").read_text()
+        apex = caddy.split("testagram.site {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("@edge_health path /_testagram/edge-health", apex)
+        self.assertIn('respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200', apex)
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        self.assertIn('Host: testagram.site', workflow)
+
+    def test_go_cdn_origin_port_is_bound_for_instabox_publication(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        media_cache = compose.split("  media-cache:", 1)[1].split("\n  caddy:", 1)[0]
+        self.assertIn('127.0.0.1:8081:8081', media_cache)
+        self.assertIn('LISTEN_ADDR: ":8081"', media_cache)
+        self.assertNotIn('0.0.0.0:8081', media_cache)
+
+    def test_self_hosted_stack_allows_only_loopback_go_cdn_public_port(self):
+        stack = (ROOT / ".github/workflows/self-hosted-stack.yml").read_text()
+        self.assertIn('cdn_ports != ["127.0.0.1:8081:8081"]', stack)
+        self.assertIn('"media-cache": ("8081", 8081)', stack)
+        self.assertIn('{"3000", "8080", "8081", "9000"}', stack)
+        self.assertNotIn('if "ports" in cdn:', stack)
+
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
         self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e', self.script)

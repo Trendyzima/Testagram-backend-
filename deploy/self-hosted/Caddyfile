@@ -48,6 +48,8 @@
 # protocol resources are routed to the private Federation service.
 testagram.site {
   encode zstd gzip
+  @edge_health path /_testagram/edge-health
+  respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Content-Type-Options nosniff
