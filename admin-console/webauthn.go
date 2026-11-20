@@ -102,6 +102,7 @@ func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter,r *http.Request
 
 func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Request){
  s,user,ok:=a.requireStaff(w,r);if !ok{return}
+ if !a.requireStaffWebAuthnRuntime(w,r,true){return}
  if allowed,err:=a.consumeAdminRateLimit(r.Context(),user.ID,"webauthn-registration-begin",8,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn rate-limit service unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"WebAuthn registration rate limit exceeded"});return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil{writeJSON(w,503,map[string]string{"error":"Canonical staff identity or credential store unavailable"});return}
@@ -117,10 +118,11 @@ func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Req
 }
 func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Request){
  s,user,ok:=a.requireStaff(w,r);if !ok{return}
+ if !a.requireStaffWebAuthnRuntime(w,r,false){return}
  var input struct{Challenge string `json:"challenge"`;Response json.RawMessage `json:"response"`}
  if !decodeBody(w,r,&input){return}
  if input.Challenge==""||len(input.Response)==0||len(input.Response)>1<<20{writeJSON(w,400,map[string]string{"error":"Invalid registration response"});return}
- if !strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true"){writeJSON(w,503,map[string]string{"error":"Staff WebAuthn enrollment is closed by production policy."});return}
+ if !a.requireStaffWebAuthnRuntime(w,r,true){return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  tx,err:=a.database.Begin(r.Context());if err!=nil{writeJSON(w,503,map[string]string{"error":"Credential store unavailable"});return};defer tx.Rollback(r.Context())
  sum:=sha256.Sum256([]byte(input.Challenge))
@@ -293,6 +295,17 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
   "signing_key":signingKeyOK,"credential_encryption":encryptionOK,
   "backend_api":backendAPIReady,"enrollment_enabled":enrollmentEnabled,
  }
+}
+
+func (a *app) requireStaffWebAuthnRuntime(w http.ResponseWriter,r *http.Request,registration bool) bool {
+ ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second);defer cancel()
+ state:=a.staffWebAuthnReadiness(ctx)
+ key:="ceremonies_ready";if registration{key="ready"}
+ if ready,_:=state[key].(bool);!ready{
+  writeJSON(w,503,map[string]string{"error":"WebAuthn is fail-closed because one or more runtime prerequisites are unavailable."})
+  return false
+ }
+ return true
 }
 
 func (a *app) handleWebAuthnReadiness(w http.ResponseWriter,r *http.Request){
