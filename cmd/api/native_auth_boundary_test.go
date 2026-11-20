@@ -43,8 +43,8 @@ func TestNativeAuthFailureUsesProviderNeutralCodes(t *testing.T) {
 			if !strings.Contains(response.Body.String(), test.wantCode) {
 				t.Fatalf("body=%s; expected code %s", response.Body.String(), test.wantCode)
 			}
-			if strings.Contains(strings.ToLower(response.Body.String()), "appwrite") {
-				t.Fatalf("provider-specific error leaked into native response: %s", response.Body.String())
+			if strings.Contains(strings.ToLower(response.Body.String()), "external identity provider") {
+				t.Fatalf("non-native identity error leaked into native response: %s", response.Body.String())
 			}
 		})
 	}
