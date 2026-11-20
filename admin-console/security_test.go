@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"fmt"
+	"encoding/base64"
 	"strings"
 	"net/http/httptest"
 	"testing"
@@ -43,30 +44,21 @@ func TestUnknownSensitiveActionIsRejected(t *testing.T) {
 	}
 }
 
-func TestRecentStepUpRequiresLivePhishingResistantMFA(t *testing.T) {
-	a := testApp(t)
-	for _, tc := range []struct {
-		name string
-		until int64
-		mfaVerified bool
-		want bool
-	}{
-		{"expired MFA proof", time.Now().Add(-time.Second).Unix(), true, false},
-		{"missing proof", 0, false, false},
-		{"password-only step-up", time.Now().Add(time.Minute).Unix(), false, false},
-		{"fresh verified MFA proof", time.Now().Add(time.Minute).Unix(), true, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			got := a.requireRecentStepUp(w, session{StepUpUntil: tc.until, StepUpMFA: tc.mfaVerified})
-			if got != tc.want {
-				t.Fatalf("requireRecentStepUp() = %v, want %v", got, tc.want)
-			}
-			if !tc.want && w.Code != http.StatusUnauthorized {
-				t.Fatalf("missing/expired MFA proof returned HTTP %d, want 401", w.Code)
-			}
-		})
-	}
+func TestRecentStepUpRequiresBackendSignedWebAuthnElevation(t *testing.T) {
+ a:=testApp(t)
+ t.Setenv("TESTAGRAM_AUTH_JWT_SECRET",strings.Repeat("s",48))
+ user:=authUser{ID:"11111111-1111-4111-8111-111111111111",StaffRole:"owner"}
+ token,_,err:=a.mintStaffElevation(user);if err!=nil{t.Fatal(err)}
+ accessPayload:=base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"11111111-1111-4111-8111-111111111111"}`))
+ validSession:=session{AccessToken:"header."+accessPayload+".signature",ElevatedToken:token}
+ for _,tc:=range []struct{name string;s session;want bool}{
+  {"valid backend-signed proof",validSession,true},
+  {"missing proof",session{AccessToken:validSession.AccessToken},false},
+  {"tampered proof",session{AccessToken:validSession.AccessToken,ElevatedToken:token+"x"},false},
+  {"proof bound to another identity",session{AccessToken:"header."+base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"22222222-2222-4222-8222-222222222222"}`))+".signature",ElevatedToken:token},false},
+ }{
+  t.Run(tc.name,func(t *testing.T){w:=httptest.NewRecorder();got:=a.requireRecentStepUp(w,tc.s);if got!=tc.want{t.Fatalf("requireRecentStepUp()=%v want %v; status=%d",got,tc.want,w.Code)}})
+ }
 }
 
 func TestNormalizeSensitiveDecision(t *testing.T) {
