@@ -26,7 +26,7 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
-	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
+	"github.com/Trendyzima/Testagram-backend-/internal/contentmoderation"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
@@ -55,7 +55,7 @@ type upstreamMetric struct {
 type service struct {
 	db                        *pgxpool.Pool
 	authEmailSender           func(context.Context, string, string, string) error
-	moderation                freshapi.ContentModeration
+	moderation                contentmoderation.ContentModeration
 	metricsMu                 sync.Mutex
 	routeMetrics              map[string]*requestMetric
 	capabilityMetrics         map[string]*requestMetric
@@ -1265,11 +1265,11 @@ func main() {
 	if federationBackendToken != "" && len(federationBackendToken) < 32 {
 		log.Fatal("FEDERATION_BACKEND_INTERNAL_TOKEN must contain at least 32 characters")
 	}
-	moderation := freshapi.ContentModeration(nil)
+	moderation := contentmoderation.ContentModeration(nil)
 	moderationKey := strings.TrimSpace(os.Getenv("ONSPACE_AI_API_KEY"))
 	if moderationKey != "" {
 		moderationBase := env("ONSPACE_AI_BASE_URL", "https://ai.onspace.ai/v1")
-		configured, moderationErr := freshapi.NewHTTPModerationService(moderationBase, moderationKey, nil)
+		configured, moderationErr := contentmoderation.NewHTTPModerationService(moderationBase, moderationKey, nil)
 		if moderationErr != nil {
 			log.Fatalf("configure social post moderation: %v", moderationErr)
 		}
