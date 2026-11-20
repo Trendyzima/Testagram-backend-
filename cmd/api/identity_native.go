@@ -80,6 +80,10 @@ func identityApplicationNeedsVerificationSessionRenewal(status string, provision
 	return status == "pending" || status == "verification_pending"
 }
 
+// Native identity intake stays closed until the Admin Console implements and verifies
+// phishing-resistant WebAuthn enrollment, challenge verification, recovery and replay protection.
+const identityReviewWebAuthnReady = false
+
 func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Request) {
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
@@ -87,6 +91,10 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	}
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
+		return
+	}
+	if !identityReviewWebAuthnReady {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed until staff WebAuthn step-up is implemented and verified", requestID(r)))
 		return
 	}
 	if s.db == nil || !s.identityEvidenceStorageConfigured() {
