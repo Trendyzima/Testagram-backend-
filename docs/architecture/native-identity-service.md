@@ -28,9 +28,9 @@ The Backend is the sole authority for Testagram-native credentials, account stat
 
 The Admin Console authenticates through Backend native login and stores its session in an encrypted `testagram-staff` cookie. Staff authorization checks PostgreSQL staff principal and role grants plus a recorded MFA-enrollment marker. Password re-authentication is used for step-up; the current console does not yet verify TOTP/passkey challenges. Staff invitation and role-grant activation remain closed until dual-control onboarding and second-factor verification are complete.
 
-## Legacy account reconciliation
+## External identity-provider exclusion
 
-Appwrite IDs may be mapped to canonical Testagram UUIDs through the explicit reconciliation ledger. Appwrite password hashes are not imported; reconciled users must reset their password before native login. Appwrite bearer JWTs are not a native API compatibility mode, and email equality is not an account-linking rule.
+The supported product runtime has no external identity-provider integration, token exchange, SDK, hosted auth endpoint, database or fallback. Native Testagram identity records are authoritative. Historical external identifiers, if present in audit data, are inert metadata only; they cannot authenticate, provision, recover or link an account. Account recovery uses only Testagram's native verified recovery and review procedures. Email equality is never sufficient proof of account ownership.
 
 ## Release boundary
 
