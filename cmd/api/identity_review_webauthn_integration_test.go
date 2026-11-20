@@ -45,12 +45,13 @@ func TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer(t *testing.T
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text").Scan(&userID, &grantorID); err != nil {
 		t.Fatal(err)
 	}
+	grantorEmail := "staff-grantor-" + suffix + "@example.test"
+	grantorUsername := "sg_" + suffix[len(suffix)-16:]
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
 		VALUES($1::uuid,$2,$3,$4,now()),
 		      ($5::uuid,$6,$7,'ci-only-invalid-password-hash',now())
-	`, userID, email, username, passwordHash, grantorID,
-		"staff-grantor-"+suffix+"@example.test", "sg_"+suffix[len(suffix)-16:]); err != nil {
+	`, userID, email, username, passwordHash, grantorID, grantorEmail, grantorUsername); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
@@ -110,6 +111,33 @@ func TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer(t *testing.T
 	reviewer, status, err := (&service{db: db}).identityReviewer(reviewerReq)
 	if err != nil || status != http.StatusOK || reviewer.ID != userID {
 		t.Fatalf("Backend rejected Admin Console elevation token: reviewer=%#v status=%d err=%v", reviewer, status, err)
+	}
+
+	// An approver-only administrator must not use the evidence-review API.
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by)
+		VALUES($1::uuid,TRUE,now(),now(),$2::uuid)
+	`, grantorID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by)
+		VALUES($1::uuid,'administrator',$2::uuid)
+	`, grantorID, userID); err != nil {
+		t.Fatal(err)
+	}
+	approverSession, err := issueNativeSession(ctx, db, grantorID, grantorEmail, 1, "ci-admin-console", "192.0.2.221")
+	if err != nil {
+		t.Fatalf("create native approver-only session: %v", err)
+	}
+	approverElevation, _, err := nativeauth.MintStaffElevationToken(approverSession.AccessToken, grantorID, []byte(secret), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("mint approver-only MFA elevation: %v", err)
+	}
+	approverReq := httptest.NewRequest(http.MethodGet, "/api/admin/identity/review-queue", nil)
+	approverReq.Header.Set("Authorization", "Bearer "+approverElevation)
+	if _, status, err := (&service{db: db}).identityReviewer(approverReq); err == nil || status != http.StatusForbidden {
+		t.Fatalf("approver-only administrator was allowed into evidence-review API: status=%d err=%v", status, err)
 	}
 
 	logout := request(http.MethodPost, "/api/auth/logout", map[string]string{}, envelope.Data.AccessToken)
