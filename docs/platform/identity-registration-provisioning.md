@@ -38,7 +38,7 @@ The Admin Console now contains native WebAuthn registration and assertion ceremo
 
 The Backend identity-review handlers require a fresh signed MFA claim, an enabled native staff principal, the required role grant and an enrolled authenticator. The enrollment flow remains fail-closed unless its runtime readiness checks pass and `TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED=true`.
 
-Important: the Admin Console ceremony code and PostgreSQL integration tests do not by themselves prove the full production review path is enabled. `cmd/api/main.go` still leaves `identityReviewWebAuthnReady` false, and `cmd/api/identity_native.go` therefore returns `IDENTITY_REVIEW_MFA_UNAVAILABLE` for new applications. Keep public identity intake closed until the Backend readiness wiring, Admin Console-to-Backend elevation handoff, real browser ceremony, recovery and replay behavior pass end-to-end staging acceptance. Two-person approval does not substitute for MFA.
+Important: the Backend now wires readiness to PostgreSQL credential state and requires an explicit `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED=true` policy gate at startup. It fails closed unless at least two distinct active, verified WebAuthn reviewers and two distinct active, verified WebAuthn owner/administrator approvers exist for the configured RP ID. The shared elevation signer is used by the Admin Console and has a PostgreSQL integration test proving that the Backend accepts its token and rejects it after native session revocation. Keep the policy gate unset until real browser ceremony, recovery and replay behavior pass end-to-end staging acceptance. Two-person approval does not substitute for MFA.
 
 ## Historical identity records
 
