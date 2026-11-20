@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -317,6 +318,18 @@ func (a *app) requireStaffWebAuthnRuntime(w http.ResponseWriter,r *http.Request,
   return false
  }
  return true
+}
+
+func (a *app) handleInternalWebAuthnReadiness(w http.ResponseWriter, r *http.Request) {
+	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN"))
+	if len(secret) < 32 || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+secret)) != 1 {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Internal WebAuthn readiness authentication required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, a.staffWebAuthnReadiness(ctx))
 }
 
 func (a *app) handleWebAuthnReadiness(w http.ResponseWriter,r *http.Request){
