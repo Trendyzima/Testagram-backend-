@@ -100,7 +100,7 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 
 	// This is an explicit test-only policy approval. Production remains closed
 	// unless TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED=true is set by operators.
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{}, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{}, identityReviewWebAuthnReady: true}
 	router := svc.routes()
 	idempotencyKey, err := authRandomToken()
 	if err != nil {
