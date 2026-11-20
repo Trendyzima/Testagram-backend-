@@ -1163,6 +1163,9 @@ jobs:
           docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto'
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_dual_backend_replication.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_social_core.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261112_instabox_avatar_storage.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261112_profile_presentation_fields.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
