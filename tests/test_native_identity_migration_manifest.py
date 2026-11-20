@@ -89,7 +89,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("RENAME COLUMN decided_by_appwrite_user_id TO historical_source_decider_id", migration)
         self.assertIn("RENAME COLUMN consumed_by_appwrite_user_id TO historical_consumed_by_source_id", migration)
         self.assertIn("RENAME COLUMN sensitive_action_request_id TO historical_external_sensitive_action_request_id", migration)
-        self.assertIn("identity_applications_historical_external_sensitive_action_request_fk", migration)
+        self.assertIn("identity_applications_historical_request_fk", migration)
         self.assertIn("historical_external_identity_applications_sensitive_request_idx", migration)
         self.assertIn("historical_source_verification_reviews_reviewer_idx", migration)
         self.assertIn("identity_application_reviews_historical_source_reviewer_fk", migration)
