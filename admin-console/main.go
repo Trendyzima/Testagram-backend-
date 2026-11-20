@@ -189,7 +189,6 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/identity/review-queue", a.handleIdentityReviewQueue)
 	mux.HandleFunc("GET /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", a.handleIdentityReviewEvidence)
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", a.handleIdentityReviewDecision)
-	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", a.handleIdentityApplicationApprove)
 	mux.HandleFunc("POST /internal/admin/authorize", a.handleInternalAuthorize)
 	mux.HandleFunc("POST /api/admin/sensitive-actions/{id}/decision", a.handleSensitiveActionDecision)
 	return a.securityHeaders(mux)
@@ -503,15 +502,6 @@ func (a *app) handleIdentityReviewDecision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	backendPath := "/api/admin/identity/sessions/" + url.PathEscape(r.PathValue("session_id")) + "/decision"
-	a.identityProxy(w, r, backendPath, false)
-}
-
-func (a *app) handleIdentityApplicationApprove(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
-		return
-	}
-	backendPath := "/api/admin/identity/applications/" + url.PathEscape(r.PathValue("application_id")) + "/approve"
 	a.identityProxy(w, r, backendPath, false)
 }
 
