@@ -27,6 +27,9 @@ INSERT INTO testagram_auth.staff_webauthn_enrollment_authorizations
          'Second staff identity independently authorized',now()+interval '30 minutes');
 DO $verify$
 BEGIN
+ IF NOT has_column_privilege('testagram_app','testagram_auth.staff_principals','mfa_enrolled_at','UPDATE') THEN
+   RAISE EXCEPTION 'application role cannot mark a verified staff MFA enrollment';
+ END IF;
  IF NOT has_table_privilege('testagram_app','testagram_auth.staff_webauthn_credentials','INSERT')
     OR NOT has_table_privilege('testagram_app','testagram_auth.staff_webauthn_challenges','DELETE') THEN
    RAISE EXCEPTION 'application role is missing WebAuthn storage privileges';
@@ -35,7 +38,8 @@ BEGIN
    RAISE EXCEPTION 'expected two independent enrollment authorization rows';
  END IF;
  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_auth' AND indexname='staff_webauthn_credentials_user_idx')
-    OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_auth' AND indexname='staff_webauthn_challenges_expiry_idx') THEN
+    OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_auth' AND indexname='staff_webauthn_challenges_expiry_idx')
+    OR NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='testagram_auth' AND indexname='staff_webauthn_enrollment_one_pending_idx') THEN
    RAISE EXCEPTION 'WebAuthn lookup/expiry indexes are missing';
  END IF;
 END;
@@ -61,6 +65,9 @@ UPDATE testagram_auth.staff_webauthn_challenges SET expires_at=now()-interval '1
  WHERE challenge_hash=decode(repeat('ab',32),'hex');
 DO $verify$
 BEGIN
+ IF (SELECT data_type FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='staff_webauthn_challenges' AND column_name='session_data') <> 'bytea' THEN
+   RAISE EXCEPTION 'WebAuthn session data is not encrypted bytea storage';
+ END IF;
  IF EXISTS (SELECT 1 FROM testagram_auth.staff_webauthn_challenges
             WHERE challenge_hash=decode(repeat('ab',32),'hex') AND expires_at>now()) THEN
    RAISE EXCEPTION 'expired challenge was considered live';
