@@ -4,6 +4,8 @@
 -- these records transactionally before the feature flag can be enabled.
 BEGIN;
 
+CREATE SCHEMA IF NOT EXISTS testagram_identity;
+
 CREATE TABLE IF NOT EXISTS testagram_identity.identity_applications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT NOT NULL CHECK (length(email) BETWEEN 3 AND 254 AND email = lower(btrim(email))),
