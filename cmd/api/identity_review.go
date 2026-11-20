@@ -79,7 +79,7 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 	}
 	req.Header.Set("Authorization", "Bearer "+readinessToken)
 	client := &http.Client{
-		Timeout: 2 * time.Second,
+		Timeout:       2 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	resp, requestErr := client.Do(req)
