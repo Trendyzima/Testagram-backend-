@@ -37,6 +37,8 @@ jobs:
         run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh tests/test-native-staff-webauthn-migration.sh
       - name: Verify native identity migration manifest
         run: python3 tests/test_native_identity_migration_manifest.py
+      - name: Enforce retired identity provider absence from runtime and deployment
+        run: python3 tests/test_native_auth_runtime_boundary.py
       - name: Verify external media backup inventories and checksums
         run: python3 tests/test_self_hosted_media_backup.py
       - name: Verify Federation and media database deployment contracts
