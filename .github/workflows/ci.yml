@@ -1316,3 +1316,27 @@ jobs:
       - name: Stop isolated MinIO services
         if: always()
         run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
+
+  social-platform-product-schema-integration:
+    name: Social platform product schema PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Verify lists, drafts, scheduling, stories and moderation schema
+        env:
+          DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: bash tests/test-social-platform-product-foundation.sh
