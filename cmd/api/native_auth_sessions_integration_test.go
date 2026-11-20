@@ -153,8 +153,8 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 		t.Fatalf("logout-all status=%d body=%s", logoutAll.Code, logoutAll.Body.String())
 	}
 	for label, token := range map[string]string{
-		"logout-all caller": allSessionOne.RefreshToken,
-		"other active session": allSessionTwo.RefreshToken,
+		"logout-all caller":          allSessionOne.RefreshToken,
+		"other active session":       allSessionTwo.RefreshToken,
 		"pre-existing other session": otherSession.RefreshToken,
 	} {
 		if rec := refresh(token); rec.Code != http.StatusUnauthorized {
