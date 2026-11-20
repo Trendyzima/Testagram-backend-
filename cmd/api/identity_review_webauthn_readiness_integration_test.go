@@ -39,8 +39,8 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"identity_review_ready": adminReady,
-			"credentialed_staff": 4,
+			"identity_review_ready":  adminReady,
+			"credentialed_staff":     4,
 			"credentialed_reviewers": 2,
 			"credentialed_approvers": 2,
 		})
