@@ -89,6 +89,23 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertNotIn("DROP COLUMN", migration)
         self.assertNotIn("UPDATE testagram_identity", migration)
 
+    def test_identity_integration_executes_legacy_retirement_and_native_acceptance(self):
+        script = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+        for migration in (
+            "20261106_appwrite_identity_bridge.sql",
+            "20261106_appwrite_identity_link_audit.sql",
+            "20261114_appwrite_registration_consent.sql",
+            "20261120_native_identity_historical_account_archive.sql",
+            "20261120_native_identity_historical_staff_archive.sql",
+            "20261120_native_identity_historical_admin_archive.sql",
+            "20261120_native_identity_historical_attribution_archive.sql",
+        ):
+            with self.subTest(migration=migration):
+                self.assertIn(migration, script)
+        self.assertIn("provider-keyed identity or staff tables remain in the live schema", script)
+        self.assertIn("runtime role can still read archived historical identity or staff data", script)
+        self.assertIn("runtime role lost required native identity or approval access", script)
+
     def test_corrective_mail_role_migration_is_mounted_and_applied(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
         migration = "20261123_testagram_mail_outbox_runtime_role.sql"
