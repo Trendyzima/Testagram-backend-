@@ -28,8 +28,8 @@ type elevationClaims struct {
 // MintStaffElevationToken adds a short-lived, signed phishing-resistant MFA
 // assertion to an already-authenticated native Testagram session. Callers
 // must first verify the base session and complete the WebAuthn ceremony.
-func MintStaffElevationToken(accessToken string, secret []byte, now time.Time) (string, int64, error) {
-	if len(secret) < 32 {
+func MintStaffElevationToken(accessToken, expectedSubject string, secret []byte, now time.Time) (string, int64, error) {
+	if len(secret) < 32 || strings.TrimSpace(expectedSubject) == "" {
 		return "", 0, errors.New("native MFA signing key unavailable")
 	}
 	parts := strings.Split(accessToken, ".")
@@ -62,7 +62,7 @@ func MintStaffElevationToken(accessToken string, secret []byte, now time.Time) (
 	}
 	var claims elevationClaims
 	if json.Unmarshal(payload, &claims) != nil ||
-		claims.Subject == "" || claims.Issuer != "testagram-auth" ||
+		claims.Subject != expectedSubject || claims.Issuer != "testagram-auth" ||
 		claims.Audience != "testagram-api" || claims.Role != "authenticated" ||
 		claims.TokenVersion < 1 || claims.SessionID == "" {
 		return "", 0, errors.New("native access token cannot be elevated")
