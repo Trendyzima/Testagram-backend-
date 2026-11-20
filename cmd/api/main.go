@@ -74,6 +74,8 @@ type service struct {
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
 	identityEvidenceMedia     identityEvidenceMediaClient
+	// Set true only after real staff WebAuthn enrollment, verification, recovery and replay protection are implemented.
+	identityReviewWebAuthnReady bool
 	freshMediaEnabled         bool
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
@@ -1290,7 +1292,7 @@ func main() {
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
-	log.Printf("Testagram-native manual identity verification is available when private evidence storage and registration policy are configured")
+	log.Printf("Native identity application intake remains disabled until staff WebAuthn step-up is implemented and verified")
 	internalAddr := env("INTERNAL_LISTEN_ADDR", ":8082")
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),
