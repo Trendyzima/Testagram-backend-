@@ -229,7 +229,7 @@ func TestReadyChecksAlgorithmServiceHealth(t *testing.T) {
 }
 
 
-func TestRankAcceptsEveryPublishedFeedMode(t *testing.T) {
+func TestRankAcceptsEverySupportedFeedMode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/feed/rank" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -246,7 +246,7 @@ func TestRankAcceptsEveryPublishedFeedMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	modes := []string{"for_you", "following", "latest", "media", "discover", "federated"}
+	modes := []string{"for_you", "following", "media", "discover"}
 	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			_, err := client.Rank(context.Background(), Request{
@@ -265,5 +265,24 @@ func TestRankAcceptsEveryPublishedFeedMode(t *testing.T) {
 		Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Source: "native", Visible: true, CreatedAt: time.Now().UTC()}},
 	}); err == nil {
 		t.Fatal("unknown feed mode must be rejected")
+	}
+}
+
+func TestRankRejectsBackendOnlyAndUnsupportedFeedModesBeforeNetwork(t *testing.T) {
+	client, err := New("http://algorithm:8092", strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"latest", "federated", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			_, err := client.Rank(context.Background(), Request{
+				FeedMode: mode,
+				Limit: 1,
+				Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Source: "native", Visible: true}},
+			})
+			if err == nil {
+				t.Fatalf("expected unsupported feed mode %q to be rejected before network access", mode)
+			}
+		})
 	}
 }
