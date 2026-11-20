@@ -109,6 +109,8 @@ jobs:
           fi
 
           legacy_api_worker_domain_found="no"
+          legacy_supabase_worker_found="no"
+          legacy_xclone_worker_found="no"
           sort -u "$tmp/accounts.txt" -o "$tmp/accounts.txt"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Account services" >> "$GITHUB_STEP_SUMMARY"
@@ -139,6 +141,7 @@ jobs:
               jq -r '.result[]? | "- Worker: " + (.id // .name // "unnamed")' "$tmp/workers.json" >> "$GITHUB_STEP_SUMMARY"
               while IFS= read -r worker; do
                 [[ -z "$worker" ]] && continue
+                if [[ "$worker" == xclone-* ]]; then legacy_xclone_worker_found="yes"; fi
                 schedules="unavailable"
                 bindings="unavailable"
                 deployments="unavailable"
@@ -148,6 +151,7 @@ jobs:
                 if cf_get "/accounts/$account_id/workers/scripts/$worker/settings" "$tmp/worker-settings.json"; then
                   # Emit binding names/types only; never print secret or plain-text binding values.
                   bindings="$(jq -c '.result.bindings // [] | map({name, type, service, namespace})' "$tmp/worker-settings.json")"
+                  if jq -e '.result.bindings // [] | any(.name | test("SUPABASE"; "i"))' "$tmp/worker-settings.json" >/dev/null; then legacy_supabase_worker_found="yes"; fi
                 fi
                 if cf_get "/accounts/$account_id/workers/scripts/$worker/deployments?per_page=1" "$tmp/worker-deployments.json"; then
                   deployments="$(jq -c '.result.deployments // [] | map({created_on, source})' "$tmp/worker-deployments.json")"
@@ -165,6 +169,8 @@ jobs:
                   grep -Eiq 'supabase|sb-project-ref' "$tmp/worker-source" && has_supabase="yes" || true
                   grep -Eiq 'xclone' "$tmp/worker-source" && has_xclone="yes" || true
                   source_scan="supabase_refs=$has_supabase,xclone_refs=$has_xclone"
+                  if [[ "$has_supabase" == "yes" ]]; then legacy_supabase_worker_found="yes"; fi
+                  if [[ "$has_xclone" == "yes" ]]; then legacy_xclone_worker_found="yes"; fi
                 fi
                 printf '%s\n' "- Worker runtime inventory: $worker; workers_dev=$workers_dev; cron=$schedules; bindings=$bindings; tail_consumers=$tail_consumers; latest_deployments=$deployments; source_scan=$source_scan" >> "$GITHUB_STEP_SUMMARY"
               done < <(jq -r '.result[]?.id // empty' "$tmp/workers.json")
@@ -197,7 +203,9 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Audit completed. DNS record values/content and all credentials were intentionally excluded from the summary." >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"
-          if [[ "$legacy_api_worker_domain_found" == "yes" ]]; then
-            echo "::error::Production acceptance blocked: transfer api.testagram.site from its legacy Worker custom domain only after native origin health and API route smoke tests pass."
+          if [[ "$legacy_api_worker_domain_found" == "yes" || "$legacy_supabase_worker_found" == "yes" || "$legacy_xclone_worker_found" == "yes" ]]; then
+            [[ "$legacy_api_worker_domain_found" == "no" ]] || echo "::error::Production acceptance blocked: transfer api.testagram.site from its legacy Worker custom domain only after native origin health and API route smoke tests pass."
+            [[ "$legacy_supabase_worker_found" == "no" ]] || echo "::error::Production acceptance blocked: Supabase-bound Worker configuration/source remains in the Testagram Cloudflare account."
+            [[ "$legacy_xclone_worker_found" == "no" ]] || echo "::error::Production acceptance blocked: legacy Xclone Worker artifacts remain in the Testagram Cloudflare account."
             exit 1
           fi
