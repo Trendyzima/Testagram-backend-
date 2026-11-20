@@ -32,6 +32,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "058_testagram_mail_outbox_runtime_role.sql",
             "058a_native_identity_historical_account_archive.sql",
             "058b_native_identity_historical_staff_archive.sql",
+            "058c_native_identity_historical_admin_archive.sql",
             "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
@@ -63,6 +64,16 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("RENAME COLUMN appwrite_user_id TO source_staff_id", migration)
         self.assertIn("REVOKE ALL ON TABLE", migration)
         self.assertIn("never authorize native Testagram staff access", migration)
+        self.assertNotIn("DROP TABLE", migration)
+
+    def test_legacy_admin_ledgers_are_archived_outside_native_console(self):
+        migration = (ROOT / "migrations" / "20261120_native_identity_historical_admin_archive.sql").read_text(encoding="utf-8")
+        self.assertIn("RENAME TO historical_external_sensitive_action_requests", migration)
+        self.assertIn("RENAME TO historical_external_sensitive_action_approvals", migration)
+        self.assertIn("RENAME TO historical_external_admin_security_audit", migration)
+        self.assertIn("RENAME TO historical_external_staff_permission_overrides", migration)
+        self.assertIn("RENAME COLUMN requested_by_appwrite_user_id TO source_requester_staff_id", migration)
+        self.assertIn("REVOKE ALL ON TABLE", migration)
         self.assertNotIn("DROP TABLE", migration)
 
     def test_corrective_mail_role_migration_is_mounted_and_applied(self):
