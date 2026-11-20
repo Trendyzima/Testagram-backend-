@@ -26,7 +26,7 @@ The Backend is the sole authority for Testagram-native credentials, account stat
 
 ## Staff review authority
 
-The Admin Console authenticates through Backend native login and stores its session in an encrypted `testagram-staff` cookie. Staff authorization checks PostgreSQL staff principal and role grants plus a recorded MFA-enrollment marker. Password re-authentication is used for step-up; the current console does not yet verify TOTP/passkey challenges. Staff invitation and role-grant activation remain closed until dual-control onboarding and second-factor verification are complete.
+The Admin Console authenticates through Backend native login and stores its session in an encrypted `testagram-staff` cookie. Staff authorization checks enabled PostgreSQL staff principals and role grants. Staff WebAuthn enrollment is independently authorized, challenges are one-time and persisted with expiry, registration and assertion responses are cryptographically verified by the backend, authenticator counters and replay conditions are enforced, and successful assertion produces backend-issued short-lived MFA elevation. Enrollment and production staff activation remain fail-closed until the configured RP ID/origins, dual-control onboarding and live PostgreSQL acceptance tests pass.
 
 ## External identity-provider exclusion
 
