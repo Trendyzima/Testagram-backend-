@@ -254,7 +254,7 @@ async function loadWebAuthnReadiness() {
   const node=byId("webauthn-readiness"); if(!node)return;
   try {
     const d=await api("/api/admin/webauthn/readiness");
-    node.textContent=d.ready?"All configured WebAuthn runtime prerequisites are available.": "Fail-closed prerequisites — RP ID: "+!!d.rpid_configured+", origins: "+!!d.origins_configured+", DB: "+!!d.database+", schema: "+!!d.schema+", signing key: "+!!d.signing_key+", credential encryption: "+!!d.credential_encryption+", enrollment gate: "+!!d.enrollment_enabled+".;
+    node.textContent=d.ready?"All configured WebAuthn runtime prerequisites are available.": "Fail-closed prerequisites — RP ID: "+!!d.rpid_configured+", origins: "+!!d.origins_configured+", DB: "+!!d.database+", schema: "+!!d.schema+", signing key: "+!!d.signing_key+", credential encryption: "+!!d.credential_encryption+", enrollment gate: "+!!d.enrollment_enabled+".";
   } catch(e){node.textContent="WebAuthn readiness unavailable: "+e.message;}
 }
 async function enrollStaffAuthenticator() {
