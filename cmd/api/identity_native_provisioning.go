@@ -206,6 +206,7 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		hex.EncodeToString(evidenceFingerprint),termsVersion,privacyVersion,
 		firstApprover,secondApprover).Scan(&approvalCircuitValid)
 	if err != nil || !approvalCircuitValid {
+		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_LEDGER_INVALID", "Two independent evidence reviewers and two independent account approvers are required", requestID(r)))
 		return
 	}
 
