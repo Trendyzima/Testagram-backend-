@@ -20,6 +20,20 @@ import (
  nativeauth "github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
 )
 
+type nativeElevationClaims struct {
+ Subject string `json:"sub"`
+ Email string `json:"email"`
+ Role string `json:"role"`
+ Issuer string `json:"iss"`
+ Audience string `json:"aud"`
+ IssuedAt int64 `json:"iat"`
+ ExpiresAt int64 `json:"exp"`
+ TokenVersion int64 `json:"ver"`
+ SessionID string `json:"sid"`
+ MFAAuthenticatedAt int64 `json:"mfa_at,omitempty"`
+ JWTID string `json:"jti,omitempty"`
+}
+
 type staffWebAuthnUser struct {
  id string
  name string
