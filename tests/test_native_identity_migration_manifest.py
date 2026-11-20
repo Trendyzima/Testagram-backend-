@@ -42,6 +42,15 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
 
+    def test_native_reviewer_uuid_bridge_preserves_historical_ids(self):
+        migration = (ROOT / "migrations" / "20261120_native_identity_reviewer_uuid_bridge.sql").read_text(encoding="utf-8")
+        self.assertIn("ADD COLUMN IF NOT EXISTS reviewer_user_id UUID", migration)
+        self.assertIn("REFERENCES testagram_auth.staff_principals(user_id)", migration)
+        self.assertIn("ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL", migration)
+        self.assertIn("identity_application_reviews_native_reviewer_uidx", migration)
+        self.assertIn("reviewer_appwrite_user_id IS NOT NULL OR reviewer_user_id IS NOT NULL", migration)
+        self.assertNotIn("UPDATE testagram_identity.identity_application_reviews", migration)
+
     def test_corrective_mail_role_migration_is_mounted_and_applied(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
         migration = "20261123_testagram_mail_outbox_runtime_role.sql"
