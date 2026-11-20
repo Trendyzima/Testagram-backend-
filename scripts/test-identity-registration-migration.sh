@@ -499,7 +499,7 @@ $native_auth_schema$;
 SQL
 
 # Exercise the complete PostgreSQL native identity provisioning transaction.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestMailOutboxPersistsEncryptedPayload|TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestIdentityReviewerHonorsNativeRoleRevocationAndMFA|TestIdentityReviewerHonorsRevocationAndPermissionOverrides)
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestMailOutboxPersistsEncryptedPayload|TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestIdentityReviewerHonorsNativeRoleRevocationAndMFA)$' -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
