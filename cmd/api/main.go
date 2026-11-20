@@ -1,6 +1,7 @@
 package main
 
 import (
+
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -8,6 +9,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/contentmoderation"
+	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
+	"github.com/Trendyzima/Testagram-backend-/internal/media"
+	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
+	"github.com/Trendyzima/Testagram-backend-/internal/replication"
+	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"io"
 	"log"
 	"net/http"
@@ -21,18 +33,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
-	"github.com/Trendyzima/Testagram-backend-/internal/contentmoderation"
-	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
-	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
-	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
-	"github.com/Trendyzima/Testagram-backend-/internal/media"
-	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
-	"github.com/Trendyzima/Testagram-backend-/internal/replication"
-	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const maxCapabilityBody = 64 << 10
