@@ -78,8 +78,11 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
     def test_apex_health_probe_is_available_on_the_canonical_host(self):
         caddy = (ROOT / "deploy/self-hosted/Caddyfile").read_text()
         apex = caddy.split("testagram.site {", 1)[1].split("\n}", 1)[0]
-        self.assertIn("@edge_health path /_testagram/edge-health", apex)
-        self.assertIn('respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200', apex)
+        self.assertIn("handle /_testagram/edge-health {", apex)
+        self.assertIn('respond `{"ok":true,"service":"testagram-apex-edge"}` 200', apex)
+        edge = caddy.split(":8443 {", 1)[1].split("\n}", 1)[0]
+        self.assertIn("handle /_testagram/edge-health {", edge)
+        self.assertIn('respond `{"ok":true,"service":"testagram-apex-edge"}` 200', edge)
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         self.assertNotIn('Host: testagram.site', workflow)
 
