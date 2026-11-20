@@ -5,7 +5,6 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 CREATE ROLE testagram_app NOLOGIN;
 CREATE ROLE service_role NOLOGIN;
 CREATE SCHEMA testagram_auth;
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE testagram_auth.staff_principals (
   user_id uuid PRIMARY KEY,
   enabled boolean NOT NULL DEFAULT true,
@@ -57,7 +56,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO testagram_auth.staff_webauthn_challenges
  (challenge_hash,user_id,ceremony,session_data,expires_at)
  VALUES (decode(repeat('ab',32),'hex'),'11111111-1111-4111-8111-111111111111',
-         'assertion','{}'::jsonb,now()+interval '2 minutes');
+         'assertion',decode('00','hex'),now()+interval '2 minutes');
 UPDATE testagram_auth.staff_webauthn_challenges SET expires_at=now()-interval '1 second'
  WHERE challenge_hash=decode(repeat('ab',32),'hex');
 DO $verify$
