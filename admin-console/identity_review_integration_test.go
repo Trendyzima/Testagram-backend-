@@ -107,6 +107,28 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
 		t.Fatalf("Admin Console rejected complete PostgreSQL WebAuthn readiness: %#v", readiness)
 	}
+	// Dual-role staff must not satisfy both independent reviewer and approver
+	// groups, even when four credentialed staff accounts exist.
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by)
+		VALUES($1::uuid,'administrator',$2::uuid)
+	`, evidenceReviewerOne, approverOne); err != nil {
+		t.Fatalf("add overlapping staff role fixture: %v", err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); ready {
+		t.Fatalf("Admin Console counted a dual-role staff member in both independent groups: %#v", readiness)
+	}
+	if _, err := conn.Exec(ctx, `
+		DELETE FROM testagram_auth.staff_role_grants
+		WHERE user_id=$1::uuid AND role='administrator'
+	`, evidenceReviewerOne); err != nil {
+		t.Fatalf("remove overlapping staff role fixture: %v", err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
+		t.Fatalf("Admin Console did not recover after removing overlapping role: %#v", readiness)
+	}
 	readinessRequest := httptest.NewRequest(http.MethodGet, "/internal/webauthn/readiness", nil)
 	readinessRequest.Header.Set("Authorization", "Bearer "+os.Getenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN"))
 	readinessResponse := httptest.NewRecorder()
