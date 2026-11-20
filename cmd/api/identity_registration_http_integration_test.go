@@ -85,14 +85,14 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 		}
 		if _, err := db.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
-			VALUES($1,$2::uuid,decode(md5($2),'hex'))
+			VALUES($1,$2::uuid,decode(md5($2::text),'hex'))
 		`, "admin.testagram.example", staffID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_credentials
 			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
-			VALUES($1,$2::uuid,decode(md5($2),'hex'),decode(md5($2||'credential'),'hex'),TRUE,FALSE)
+			VALUES($1,$2::uuid,decode(md5($2::text),'hex'),decode(md5($2::text||'credential'),'hex'),TRUE,FALSE)
 		`, "admin.testagram.example", staffID); err != nil {
 			t.Fatal(err)
 		}
