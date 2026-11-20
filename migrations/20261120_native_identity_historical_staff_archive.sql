@@ -54,6 +54,42 @@ BEGIN
 END;
 $indexes$;
 
+DO $rename_historical_identifiers$
+DECLARE
+  item RECORD;
+  replacement_name TEXT;
+BEGIN
+  FOR item IN
+    SELECT conrelid::regclass AS relation_name, conname
+    FROM pg_constraint
+    WHERE conrelid IN (
+      'testagram_auth.historical_external_staff_roles'::regclass,
+      'testagram_auth.historical_external_staff_role_audit'::regclass
+    )
+      AND conname ILIKE '%appwrite%'
+  LOOP
+    replacement_name := replace(item.conname,'appwrite','source');
+    EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
+      item.relation_name,item.conname,replacement_name);
+  END LOOP;
+
+  FOR item IN
+    SELECT i.indexrelid::regclass AS index_name, c.relname
+    FROM pg_index i
+    JOIN pg_class c ON c.oid=i.indexrelid
+    WHERE i.indrelid IN (
+      'testagram_auth.historical_external_staff_roles'::regclass,
+      'testagram_auth.historical_external_staff_role_audit'::regclass
+    )
+      AND c.relname ILIKE '%appwrite%'
+      AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=i.indexrelid)
+  LOOP
+    replacement_name := replace(item.relname,'appwrite','source');
+    EXECUTE format('ALTER INDEX %s RENAME TO %I',item.index_name,replacement_name);
+  END LOOP;
+END;
+$rename_historical_identifiers$;
+
 REVOKE ALL ON TABLE
   testagram_auth.historical_external_staff_roles,
   testagram_auth.historical_external_staff_role_audit
