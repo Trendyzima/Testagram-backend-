@@ -470,8 +470,6 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.identityReviewEvidence)
 	mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/decision", s.mediaPreflight)
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", s.identityReviewDecision)
-	mux.HandleFunc("OPTIONS /api/admin/identity/applications/{application_id}/approve", s.mediaPreflight)
-	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", s.identityApplicationApproveSafe)
 	// Independent authentication routes use Testagram-owned PostgreSQL; external caches are not part of this request path.
 	for _, action := range []string{"signup", "resend-verification", "verify-email", "login", "refresh", "logout", "logout-all", "forgot-password", "reset-password"} {
 		action := action
