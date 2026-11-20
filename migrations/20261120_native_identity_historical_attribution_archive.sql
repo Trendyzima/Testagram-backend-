@@ -5,6 +5,15 @@ BEGIN;
 
 DO $rename_columns$
 BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_applications' AND column_name='sensitive_action_request_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_applications' AND column_name='historical_external_sensitive_action_request_id') THEN
+    ALTER TABLE testagram_identity.identity_applications
+      RENAME COLUMN sensitive_action_request_id TO historical_external_sensitive_action_request_id;
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_applications' AND column_name='sensitive_action_request_id')
+     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_applications' AND column_name='historical_external_sensitive_action_request_id') THEN
+    RAISE EXCEPTION 'both historical and legacy identity approval request columns exist';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='reviewer_appwrite_user_id')
      AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='historical_source_reviewer_id') THEN
     ALTER TABLE testagram_identity.identity_application_reviews
@@ -60,6 +69,29 @@ BEGIN
   END IF;
 END;
 $rename_columns$;
+
+DO $rename_legacy_request_link$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.identity_applications'::regclass
+      AND conname='identity_applications_sensitive_action_request_fk'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.identity_applications'::regclass
+      AND conname='identity_applications_historical_external_sensitive_action_request_fk'
+  ) THEN
+    ALTER TABLE testagram_identity.identity_applications
+      RENAME CONSTRAINT identity_applications_sensitive_action_request_fk
+      TO identity_applications_historical_external_sensitive_action_request_fk;
+  END IF;
+
+  IF to_regclass('testagram_identity.identity_applications_sensitive_action_request_idx') IS NOT NULL THEN
+    ALTER INDEX testagram_identity.identity_applications_sensitive_action_request_idx
+      RENAME TO historical_external_identity_applications_sensitive_request_idx;
+  END IF;
+END;
+$rename_legacy_request_link$;
 
 -- Column renames update FK and CHECK expressions automatically. Rename any
 -- remaining provider-branded constraint identifiers without changing data.
