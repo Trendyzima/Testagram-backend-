@@ -51,8 +51,7 @@ type session struct {
 	RefreshToken     string `json:"refresh_token"`
 	AccessExpiresAt  int64  `json:"access_expires_at"`
 	RefreshExpiresAt int64  `json:"refresh_expires_at"`
-	StepUpUntil      int64  `json:"step_up_until,omitempty"`
-	StepUpMFA        bool   `json:"step_up_mfa,omitempty"`
+	ElevatedToken string `json:"elevated_token,omitempty"`
 }
 
 type authUser struct {
