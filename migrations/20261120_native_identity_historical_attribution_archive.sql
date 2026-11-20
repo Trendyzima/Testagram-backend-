@@ -79,7 +79,7 @@ BEGIN
     )
       AND conname ILIKE '%appwrite%'
   LOOP
-    replacement_name := replace(item.conname,'appwrite','historical_source');
+    replacement_name := replace(item.conname,'appwrite','source');
     EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
       item.relation_name,item.conname,replacement_name);
   END LOOP;
