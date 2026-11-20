@@ -1,51 +1,15 @@
-> **Superseded:** This is a historical five-repository design note. The authoritative current scope and service-to-service contract is [`docs/six-repository-runtime-integration-contract.md`](six-repository-runtime-integration-contract.md), which covers all six retained repositories. Do not use this historical document to infer current deployment wiring.
+# Historical five-repository integration note
 
-# Five-repository integration contract
+This file is retained only as a historical pointer. Its earlier identity, repository-count and service-flow assumptions have been superseded. Do not use it to infer current deployment wiring or client authentication behavior.
 
-## Repositories and ownership
+## Current authoritative contracts
 
-| Repository | Owns | Must not own |
-|---|---|---|
-| [Flutter client](https://github.com/Trendyzima/testagram-flutter-client-) | Native UI, navigation, local interaction state, Appwrite session acquisition | PostgreSQL, object storage credentials, ranking or federation internals |
-| [Testagram Backend](https://github.com/Trendyzima/Testagram-backend-) | Appwrite JWT validation, authorization, canonical PostgreSQL, public API, media lifecycle | Supabase/PostgREST runtime, Redis/Upstash cache or generic queue |
-| [Data Centre](https://github.com/Trendyzima/Testagram-data-centre-) | Storage nodes, media processing, notifications, platform infrastructure | Client-facing product authorization or separate identity authority |
-| [The Algorithm](https://github.com/Trendyzima/the-algorithm) | Feed ranking over authorized candidates | User authorization, database writes or cursor ownership |
-| [Federated Content](https://github.com/Trendyzima/federated-content) | Signed inbox/outbox, remote policy and delivery | Local product account authority or Flutter UI |
+- [Six-repository runtime integration contract](six-repository-runtime-integration-contract.md) defines current repository ownership and service-to-service boundaries.
+- [Testagram-native replacement ownership](architecture/native-replacement-ownership.md) defines the production Backend runtime and subsystem owners.
+- [Native authentication acceptance](platform/native-auth-acceptance.md) defines the user and staff authentication gates.
 
-## Authentication and data flow
+## Current identity and service boundaries
 
-1. Flutter signs in with Appwrite and obtains a session JWT.
-2. Flutter sends that JWT as a Bearer token to the Backend.
-3. The Backend validates the JWT against Appwrite's Account endpoint.
-4. The Backend resolves the Appwrite user ID to the canonical Testagram UUID
-   through `testagram_identity.appwrite_accounts`.
-5. Every product query is authorized in the Backend against PostgreSQL policy
-   and privacy state.
-6. Specialized calls to Algorithm, Data Centre and Federated Content use
-   private service-to-service credentials and bounded request contracts.
+The Flutter client uses the Testagram Backend's native authentication API. The Backend owns account creation, email verification, password login, refresh rotation, logout, canonical Testagram UUIDs, authorization and PostgreSQL identity state. Data Centre, Algorithm and Federated Content receive only scoped service-to-service contracts; they do not become alternate user identity authorities.
 
-## Cross-service contracts
-
-- Backend → Algorithm: authorized candidate IDs, stable cursor context and
-  bounded ranking request; returned IDs must be a subset of the candidate set.
-- Backend → Data Centre: signed storage lifecycle and private platform API;
-  no client-facing credentials or direct Flutter access.
-- Backend ↔ Federated Content: signed inbox/outbox acceptance, consent checks,
-  idempotent delivery and durable retry state.
-- Data Centre video/notification services validate Appwrite sessions and
-  resolve canonical account IDs using the shared PostgreSQL identity bridge.
-
-## Dependency boundary
-
-The retained architecture contains no Supabase Auth, PostgREST, Storage,
-Realtime or Edge Function runtime, and no Redis/Valkey/Upstash dependency.
-Rate limiting uses PostgreSQL counters. Durable asynchronous work uses
-service-owned PostgreSQL outboxes. Public media may use HTTP/CDN caching, but
-no application cache wrapper is an authority for user or product state.
-
-## Acceptance
-
-A feature is complete only when its native screen, authenticated API method,
-Backend authorization, PostgreSQL behavior, service contracts, tests and
-migration ledger are all complete. Navigation links and placeholders do not
-count as migrated functionality.
+Use the production router and current OpenAPI contract for route decisions. Do not restore routes, credentials or migration behavior from the superseded five-repository design.
