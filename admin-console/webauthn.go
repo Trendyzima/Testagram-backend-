@@ -46,7 +46,7 @@ func (a *app) staffWebAuthn() (*webauthn.WebAuthn,string,error) {
 
 func (a *app) loadStaffWebAuthnUser(ctx context.Context,id,rpid string)(*staffWebAuthnUser,error){
  u:=&staffWebAuthnUser{id:id}
- if err:=a.database.QueryRow(ctx,"SELECT COALESCE(email,user_id::text) FROM testagram_auth.staff_principals WHERE user_id=$1::uuid AND enabled=TRUE",id).Scan(&u.name);err!=nil{return nil,err}
+ if err:=a.database.QueryRow(ctx,"SELECT i.email_normalized FROM testagram_auth.staff_principals sp JOIN testagram_auth.identities i ON i.user_id=sp.user_id WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE",id).Scan(&u.name);err!=nil{return nil,err}
  if err:=a.database.QueryRow(ctx,"INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES($1,$2::uuid,gen_random_bytes(32)) ON CONFLICT(rpid,user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING user_handle",rpid,id).Scan(&u.handle);err!=nil{return nil,err}
  rows,err:=a.database.Query(ctx,"SELECT credential FROM testagram_auth.staff_webauthn_credentials WHERE rpid=$1 AND user_id=$2::uuid AND revoked_at IS NULL ORDER BY id",rpid,id)
  if err!=nil{return nil,err};defer rows.Close()
@@ -122,9 +122,10 @@ func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Reques
 }
 func (a *app) mintStaffElevation(user authUser)(string,int64,error){
  secret:=[]byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")));if len(secret)<32{return "",0,errors.New("elevation signing key unavailable")}
+ nonce:=make([]byte,16);if _,err:=rand.Read(nonce);err!=nil{return "",0,err}
  now:=time.Now().Unix();exp:=now+5*60
  header,_:=json.Marshal(map[string]string{"alg":"HS256","typ":"JWT"})
- claims,_:=json.Marshal(map[string]any{"iss":"testagram-admin-console","aud":"testagram-admin-sensitive","sub":user.ID,"staff_role":user.StaffRole,"iat":now,"exp":exp,"mfa_at":now,"jti":base64.RawURLEncoding.EncodeToString(make([]byte,16))})
+ claims,_:=json.Marshal(map[string]any{"iss":"testagram-admin-console","aud":"testagram-admin-sensitive","sub":user.ID,"staff_role":user.StaffRole,"iat":now,"exp":exp,"mfa_at":now,"jti":base64.RawURLEncoding.EncodeToString(nonce)})
  enc:=base64.RawURLEncoding
  unsigned:=enc.EncodeToString(header)+"."+enc.EncodeToString(claims)
  mac:=hmac.New(sha256.New,secret);_,_=mac.Write([]byte(unsigned))
