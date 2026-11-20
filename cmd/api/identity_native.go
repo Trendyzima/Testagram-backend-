@@ -224,7 +224,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	if existing {
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS(
-				SELECT 1 FROM testagram_identity.registration_provisioning
+				SELECT 1 FROM testagram_identity.native_registration_provisioning
 				WHERE application_id=$1::uuid
 			)
 		`, applicationID).Scan(&provisioningExists); err != nil {
