@@ -7,6 +7,8 @@ import (
  "crypto/sha256"
  "encoding/base64"
  "encoding/json"
+ "crypto/hmac"
+ "io"
  "errors"
  "net/http"
  "os"
