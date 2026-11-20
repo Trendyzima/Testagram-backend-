@@ -65,6 +65,7 @@ services:
       - ../../migrations/20261122_testagram_mail_outbox.sql:/docker-entrypoint-initdb.d/057_testagram_mail_outbox.sql:ro
       - ../../migrations/20261123_testagram_mail_outbox_runtime_role.sql:/docker-entrypoint-initdb.d/058_testagram_mail_outbox_runtime_role.sql:ro
       - ../../migrations/20261120_native_identity_reviewer_uuid_bridge.sql:/docker-entrypoint-initdb.d/058a_native_identity_reviewer_uuid_bridge.sql:ro
+      - ../../migrations/20261120_native_identity_historical_account_archive.sql:/docker-entrypoint-initdb.d/058b_native_identity_historical_account_archive.sql:ro
       - ../../migrations/20261120_native_identity_approval_circuit.sql:/docker-entrypoint-initdb.d/059_native_identity_approval_circuit.sql:ro
       - ../../migrations/20261121_native_identity_intake_optional_fingerprint.sql:/docker-entrypoint-initdb.d/20261121_native_identity_intake_optional_fingerprint.sql:ro
       - ../../migrations/20261121_native_staff_webauthn.sql:/docker-entrypoint-initdb.d/060_native_staff_webauthn.sql:ro
