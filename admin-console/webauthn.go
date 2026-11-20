@@ -292,10 +292,12 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','INSERT')
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','UPDATE')`).Scan(&privilegesOK)
  }
+ credentialedStaff:=0
  credentialedReviewers:=0
  credentialedApprovers:=0
  if dbOK&&schemaOK&&privilegesOK&&rpid!="" {
   _=a.database.QueryRow(ctx,`SELECT
+   count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
    count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
    count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator'))
    FROM testagram_auth.staff_principals sp
@@ -306,7 +308,7 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
       AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
    WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
      AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
-  `,rpid).Scan(&credentialedReviewers,&credentialedApprovers)
+  `,rpid).Scan(&credentialedStaff,&credentialedReviewers,&credentialedApprovers)
  }
  signingKeyOK:=len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32
  encryptionOK:=a.aead!=nil&&a.staffWebAuthnCredentialsDecryptable(ctx,rpid)
@@ -333,9 +335,10 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
   "database":dbOK,"schema":schemaOK,"privileges":privilegesOK,
   "signing_key":signingKeyOK,"credential_encryption":encryptionOK,
   "backend_api":backendAPIReady,"enrollment_enabled":enrollmentEnabled,
-  "credentialed_reviewers":credentialedReviewers,
+  "credentialed_staff":credentialedStaff,
+   "credentialed_reviewers":credentialedReviewers,
   "credentialed_approvers":credentialedApprovers,
-  "identity_review_ready":ceremoniesReady&&credentialedReviewers>=2&&credentialedApprovers>=2,
+  "identity_review_ready":ceremoniesReady&&credentialedStaff>=4&&credentialedReviewers>=2&&credentialedApprovers>=2,
  }
 }
 
