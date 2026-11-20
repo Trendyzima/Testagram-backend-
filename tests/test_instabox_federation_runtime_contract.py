@@ -75,6 +75,13 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         ):
             self.assertNotIn(optional, health_gate)
 
+    def test_go_cdn_origin_port_is_bound_for_instabox_publication(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        media_cache = compose.split("  media-cache:", 1)[1].split("\n  caddy:", 1)[0]
+        self.assertIn('127.0.0.1:8081:8081', media_cache)
+        self.assertIn('LISTEN_ADDR: ":8081"', media_cache)
+        self.assertNotIn('0.0.0.0:8081', media_cache)
+
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
         self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e', self.script)
