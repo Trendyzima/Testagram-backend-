@@ -4,8 +4,8 @@ The native Go application API and PostgreSQL data plane for Testagram.
 
 ## Six-runtime-repository ownership + API contract control plane
 
-- [Flutter client](https://github.com/Trendyzima/testagram-flutter-client-): native Android/web UI; Appwrite session acquisition; all product data through this API.
-- **Testagram Backend (this repository):** Appwrite JWT verification, authorization, canonical PostgreSQL data, social APIs, media lifecycle and service orchestration.
+- [Flutter client](https://github.com/Trendyzima/testagram-flutter-client-): native Android/web UI; Testagram-native login/session acquisition; all product data through this API.
+- **Testagram Backend (this repository):** Testagram-native access-token issuance and live session/account validation, authorization, canonical PostgreSQL data, social APIs, media lifecycle and service orchestration.
 - [Data Centre](https://github.com/Trendyzima/Testagram-data-centre-): storage nodes, video processing, notifications, platform infrastructure and operations.
 - [Testagram CDN](https://github.com/Trendyzima/cdn-): media delivery, edge caching and range/HLS transport; it does not authorize media access.
 - [The Algorithm](https://github.com/Trendyzima/the-algorithm): feed ranking over Backend-authorized candidate sets.
@@ -14,7 +14,7 @@ The native Go application API and PostgreSQL data plane for Testagram.
 
 ## Runtime boundaries
 
-- Appwrite is the only client identity provider. The Backend validates Appwrite session JWTs against the Appwrite Account API and resolves the Appwrite ID through the PostgreSQL identity bridge.
+- Testagram-native authentication is authoritative for end-user sessions. Protected requests validate short-lived Testagram access tokens against live PostgreSQL session/account state; rotating opaque refresh tokens are accepted only by the refresh route. Appwrite JWTs are not accepted as native user or staff bearer credentials. Historical Appwrite account IDs are reconciliation inputs only.
 - PostgreSQL is the canonical product database. The API does not proxy product reads/writes to Supabase or PostgREST.
 - Media metadata and post references are native PostgreSQL records. `posts.media_ids` stores ordered `testagram_media.assets.object_key` values; no external media UUID bridge is used.
 - Object bytes are stored through the virtual-storage/S3-compatible boundary. The Backend owns authorization, quotas, checksums, signed upload/download and durable deletion jobs.
@@ -33,9 +33,9 @@ The native Go application API and PostgreSQL data plane for Testagram.
 
 ## Local development
 
-Requirements: Go version declared by `go.mod`, PostgreSQL 17+, and Appwrite project credentials.
+Requirements: Go version declared by `go.mod` and PostgreSQL 17+. Use the variable names and safe defaults in `deploy/self-hosted/.env.example`; do not configure legacy Appwrite JWT credentials as native session credentials.
 
-1. Copy `.env.example` to `.env` and configure `DATABASE_URL`, `APPWRITE_ENDPOINT` and `APPWRITE_PROJECT_ID`.
+1. Copy `deploy/self-hosted/.env.example` to the deployment environment and configure the native identity, database and service settings required by the selected local/staging profile.
 2. Apply migrations in order. The self-hosted Compose stack mounts the complete ordered migration set.
 3. Run `go test ./...` from the repository root and `go test ./...` from `services/platform`.
 4. Start the API with `go run ./cmd/api`.
