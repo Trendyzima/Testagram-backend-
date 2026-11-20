@@ -632,7 +632,7 @@ func (a *app) currentUserFromSession(ctx context.Context, s session) (authUser, 
 	user:=authUser{ID:claims.Subject,Email:claims.Email}
 	err=a.database.QueryRow(ctx,`SELECT rg.role FROM testagram_auth.staff_principals sp
 		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
 		ORDER BY CASE rg.role WHEN 'owner' THEN 0 WHEN 'administrator' THEN 1 ELSE 2 END LIMIT 1`,user.ID).Scan(&user.StaffRole)
 	if errors.Is(err,pgx.ErrNoRows){return user,false,nil}
 	if err!=nil{return authUser{},false,err}
