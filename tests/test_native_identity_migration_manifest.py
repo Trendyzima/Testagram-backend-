@@ -45,6 +45,23 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
 
+    def test_archive_migrations_are_mounted_and_applied_in_order(self):
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        apply_script = SOURCE
+        migrations = (
+            ("20261120_native_identity_historical_account_archive.sql", "058a_native_identity_historical_account_archive.sql"),
+            ("20261120_native_identity_historical_staff_archive.sql", "058b_native_identity_historical_staff_archive.sql"),
+            ("20261120_native_identity_historical_admin_archive.sql", "058c_native_identity_historical_admin_archive.sql"),
+            ("20261120_native_identity_historical_attribution_archive.sql", "058d_native_identity_historical_attribution_archive.sql"),
+        )
+        positions = []
+        for source, mounted_name in migrations:
+            with self.subTest(migration=source):
+                self.assertIn(f"../../migrations/{source}:/docker-entrypoint-initdb.d/{mounted_name}:ro", compose)
+                self.assertIn(f"apply_migration {mounted_name}", apply_script)
+                positions.append(apply_script.index(f"apply_migration {mounted_name}"))
+        self.assertEqual(positions, sorted(positions))
+
     def test_historical_external_identity_data_is_renamed_and_runtime_locked(self):
         migration = (ROOT / "migrations" / "20261120_native_identity_historical_account_archive.sql").read_text(encoding="utf-8")
         self.assertIn("RENAME TO historical_external_identity_accounts", migration)
