@@ -278,12 +278,11 @@ func TestNativeIdentityApplicationStatusUsesVerificationSessions(t *testing.T) {
 	}
 }
 
-func TestIdentityApplicationCreateIgnoresLegacyRegistrationKillSwitch(t *testing.T) {
-	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "false")
+func TestIdentityApplicationCreateDoesNotBypassMissingStaffWebAuthn(t *testing.T) {
+	// Even a stale/true deployment variable cannot open intake while staff
+	// WebAuthn enrollment, verification, recovery and replay protection are absent.
+	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "true")
 
-	// The legacy environment switch is no longer an authorization boundary.
-	// Registration must proceed to its real readiness checks; with no database
-	// or private evidence store, it must fail closed for that concrete reason.
 	body := strings.NewReader(`{"email":"applicant@example.test","username":"applicant_01","display_name":"Test Applicant","adult_confirmed":true,"terms_accepted":true,"privacy_accepted":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/identity/applications", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -293,14 +292,14 @@ func TestIdentityApplicationCreateIgnoresLegacyRegistrationKillSwitch(t *testing
 	(&service{}).identityApplicationCreate(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("unready identity service status=%d body=%s; want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+		t.Fatalf("identity intake without staff WebAuthn status=%d body=%s; want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
 	}
 	var response map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("identity readiness response returned invalid JSON: %v", err)
 	}
-	errorBody, ok := response["error"].(map[string]any)
-	if !ok || errorBody["code"] != "IDENTITY_SERVICE_UNAVAILABLE" {
-		t.Fatalf("identity readiness error=%v; want IDENTITY_SERVICE_UNAVAILABLE (legacy kill switch must not block first)", response["error"])
+	apiError, ok := response["error"].(map[string]any)
+	if !ok || apiError["code"] != "IDENTITY_REVIEW_MFA_UNAVAILABLE" {
+		t.Fatalf("identity readiness error=%v; want IDENTITY_REVIEW_MFA_UNAVAILABLE", response["error"])
 	}
 }
