@@ -3,11 +3,11 @@ package main
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"fmt"
 	"encoding/base64"
 	"encoding/json"
-	"strings"
+	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
