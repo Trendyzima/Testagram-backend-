@@ -160,14 +160,34 @@ func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Reques
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"publicKey":options.Response,"challenge":sd.Challenge})
 }
-func (a *app) mintStaffElevation(user authUser)(string,int64,error){
- secret:=[]byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")));if len(secret)<32{return "",0,errors.New("elevation signing key unavailable")}
+type nativeElevationClaims struct {
+ Subject string `json:"sub"`
+ Email string `json:"email"`
+ Role string `json:"role"`
+ Issuer string `json:"iss"`
+ Audience string `json:"aud"`
+ IssuedAt int64 `json:"iat"`
+ ExpiresAt int64 `json:"exp"`
+ TokenVersion int64 `json:"ver"`
+ SessionID string `json:"sid"`
+ MFAAuthenticatedAt int64 `json:"mfa_at,omitempty"`
+ JWTID string `json:"jti,omitempty"`
+}
+func (a *app) mintStaffElevation(user authUser, accessToken string)(string,int64,error){
+ secret:=[]byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")));if len(secret)<32{return "",0,errors.New("native MFA signing key unavailable")}
+ parts:=strings.Split(accessToken,".");if len(parts)!=3{return "",0,errors.New("native access token is invalid")}
+ payload,err:=base64.RawURLEncoding.DecodeString(parts[1]);if err!=nil{return "",0,errors.New("native access token claims are invalid")}
+ var claims nativeElevationClaims
+ if err=json.Unmarshal(payload,&claims);err!=nil||claims.Subject!=user.ID||claims.Issuer!="testagram-auth"||claims.Audience!="testagram-api"||claims.Role!="authenticated"||claims.TokenVersion<1||claims.SessionID==""{
+  return "",0,errors.New("native access token cannot be elevated")
+ }
  nonce:=make([]byte,16);if _,err:=rand.Read(nonce);err!=nil{return "",0,err}
- now:=time.Now().Unix();exp:=now+5*60
+ now:=time.Now().UTC().Unix();exp:=now+5*60
+ claims.IssuedAt=now;claims.ExpiresAt=exp;claims.MFAAuthenticatedAt=now;claims.JWTID=base64.RawURLEncoding.EncodeToString(nonce)
  header,_:=json.Marshal(map[string]string{"alg":"HS256","typ":"JWT"})
- claims,_:=json.Marshal(map[string]any{"iss":"testagram-admin-console","aud":"testagram-admin-sensitive","sub":user.ID,"staff_role":user.StaffRole,"iat":now,"exp":exp,"mfa_at":now,"jti":base64.RawURLEncoding.EncodeToString(nonce)})
+ payload,err=json.Marshal(claims);if err!=nil{return "",0,err}
  enc:=base64.RawURLEncoding
- unsigned:=enc.EncodeToString(header)+"."+enc.EncodeToString(claims)
+ unsigned:=enc.EncodeToString(header)+"."+enc.EncodeToString(payload)
  mac:=hmac.New(sha256.New,secret);_,_=mac.Write([]byte(unsigned))
  return unsigned+"."+enc.EncodeToString(mac.Sum(nil)),exp,nil
 }
@@ -196,7 +216,7 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  if tag.RowsAffected()!=1{_,_=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);_ = tx.Commit(r.Context());writeJSON(w,401,map[string]string{"error":"Credential counter changed or credential was revoked"});return}
  if _,err=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not consume assertion challenge"});return}
  if err=tx.Commit(r.Context());err!=nil{writeJSON(w,503,map[string]string{"error":"Could not commit assertion"});return}
- token,exp,err:=a.mintStaffElevation(user);if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not issue backend MFA elevation"});return}
+ token,exp,err:=a.mintStaffElevation(user,s.AccessToken);if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not issue backend MFA elevation"});return}
  s.ElevatedToken=token
  if err=a.setSession(w,s);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not persist elevated session"});return}
  w.Header().Set("Cache-Control","no-store")
