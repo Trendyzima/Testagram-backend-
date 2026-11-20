@@ -154,10 +154,10 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         for name in archive_names:
             migration = (ROOT / "migrations" / name).read_text(encoding="utf-8")
             with self.subTest(migration=name):
-                self.assertNotRegex(migration, r"(?i)\\bREVOKE\\s+ALL\\s+ON\\s+SCHEMA\\b")
-                self.assertNotRegex(migration, r"(?i)\\bREVOKE\\s+ALL\\s+ON\\s+ALL\\s+TABLES\\s+IN\\s+SCHEMA\\b")
-                self.assertNotRegex(migration, r"(?i)\\bDROP\\s+SCHEMA\\b")
-                self.assertNotRegex(migration, r"(?i)\\bDROP\\s+TABLE\\b")
+                self.assertNotRegex(migration, r"(?i)\bREVOKE\s+ALL\s+ON\s+SCHEMA\b")
+                self.assertNotRegex(migration, r"(?i)\bREVOKE\s+ALL\s+ON\s+ALL\s+TABLES\s+IN\s+SCHEMA\b")
+                self.assertNotRegex(migration, r"(?i)\bDROP\s+SCHEMA\b")
+                self.assertNotRegex(migration, r"(?i)\bDROP\s+TABLE\b")
                 self.assertIn("REVOKE ALL ON TABLE", migration)
 
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
