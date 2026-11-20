@@ -127,11 +127,11 @@ BEGIN
   ) AND NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid='testagram_identity.identity_applications'::regclass
-      AND conname='identity_applications_historical_external_sensitive_action_request_fk'
+      AND conname='identity_applications_historical_request_fk'
   ) THEN
     ALTER TABLE testagram_identity.identity_applications
       RENAME CONSTRAINT identity_applications_sensitive_action_request_fk
-      TO identity_applications_historical_external_sensitive_action_request_fk;
+      TO identity_applications_historical_request_fk;
   ELSIF EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid='testagram_identity.identity_applications'::regclass
@@ -139,7 +139,7 @@ BEGIN
   ) AND EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid='testagram_identity.identity_applications'::regclass
-      AND conname='identity_applications_historical_external_sensitive_action_request_fk'
+      AND conname='identity_applications_historical_request_fk'
   ) THEN
     RAISE EXCEPTION 'both legacy and historical identity approval request constraints exist';
   END IF;
