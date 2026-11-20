@@ -191,7 +191,7 @@ func (s *service) identityReviewer(r *http.Request) (nativeIdentityReviewer, int
 			WHERE sp.user_id=$1::uuid
 			  AND sp.enabled=TRUE
 			  AND sp.mfa_enrolled_at IS NOT NULL
-			  AND rg.role IN ('owner','administrator','identity_reviewer')
+			  AND rg.role = 'identity_reviewer'
 		)
 	`, claims.Subject).Scan(&allowed)
 	if err != nil {
