@@ -114,6 +114,8 @@ DECLARE
   session_id uuid := gen_random_uuid();
   provisioning_id uuid;
   premature_token_rejected boolean := FALSE;
+  mismatched_evidence_update_rejected boolean := FALSE;
+  approver_mutation_rejected boolean := FALSE;
 BEGIN
   INSERT INTO testagram_auth.native_sensitive_action_requests
     (id,action_type,requested_by_user_id,requested_by_service,target_reference,reason,payload,payload_sha256)
@@ -193,6 +195,47 @@ BEGIN
     (decode(repeat('3',64),'hex'),decode(repeat('4',64),'hex'),app_id,
      '123e4567-e89b-42d3-a456-426614174104',
      '123e4567-e89b-42d3-a456-426614174105',now()+interval '10 minutes');
+
+  -- The token trigger must fire on UPDATE, not just INSERT. First make
+  -- one evidence-review record point at a different audit reference and prove
+  -- that even a no-op signer update revalidates the full evidence quorum.
+  UPDATE testagram_identity.identity_application_reviews
+  SET evidence_audit_reference='mismatched-evidence-audit-reference'
+  WHERE application_id=app_id AND reviewer_user_id='123e4567-e89b-42d3-a456-426614174102'
+    AND review_stage='evidence_review';
+
+  BEGIN
+    UPDATE testagram_identity.identity_approval_tokens
+    SET second_approver_user_id=second_approver_user_id
+    WHERE application_id=app_id;
+    RAISE EXCEPTION 'approval token update accepted mismatched evidence audit reference';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM='approval token update accepted mismatched evidence audit reference' THEN RAISE; END IF;
+    mismatched_evidence_update_rejected := TRUE;
+  END;
+  IF NOT mismatched_evidence_update_rejected THEN
+    RAISE EXCEPTION 'approval token update did not enforce matching evidence references';
+  END IF;
+
+  UPDATE testagram_identity.identity_application_reviews
+  SET evidence_audit_reference='ci-evidence-audit-reference'
+  WHERE application_id=app_id AND reviewer_user_id='123e4567-e89b-42d3-a456-426614174102'
+    AND review_stage='evidence_review';
+
+  -- An evidence reviewer must not be substituted into the account-approver
+  -- pair after token creation.
+  BEGIN
+    UPDATE testagram_identity.identity_approval_tokens
+    SET second_approver_user_id='123e4567-e89b-42d3-a456-426614174102'
+    WHERE application_id=app_id;
+    RAISE EXCEPTION 'approval token signer mutation accepted an evidence reviewer';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM='approval token signer mutation accepted an evidence reviewer' THEN RAISE; END IF;
+    approver_mutation_rejected := TRUE;
+  END;
+  IF NOT approver_mutation_rejected THEN
+    RAISE EXCEPTION 'approval token signer mutation did not enforce reviewer/approver separation';
+  END IF;
 
   INSERT INTO testagram_identity.registration_provisioning
     (application_id,idempotency_key_sha256)
