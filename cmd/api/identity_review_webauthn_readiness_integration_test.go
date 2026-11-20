@@ -171,7 +171,17 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
 		t.Fatal("readiness remained true after an approver credential was revoked")
 	}
-	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "http://admin.testagram.example")
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_credentials
+		SET revoked_at=NULL
+		WHERE user_id=$1::uuid
+	`, users[3]); err != nil {
+		t.Fatal(err)
+	}
+	if !identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("readiness did not recover after restoring the approver credential")
+	}
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "http://"+rpid)
 	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
 		t.Fatal("readiness accepted a non-HTTPS production WebAuthn origin")
 	}
