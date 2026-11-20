@@ -84,6 +84,16 @@ BEGIN
     ALTER TABLE testagram_identity.identity_applications
       RENAME CONSTRAINT identity_applications_sensitive_action_request_fk
       TO identity_applications_historical_external_sensitive_action_request_fk;
+  ELSIF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.identity_applications'::regclass
+      AND conname='identity_applications_sensitive_action_request_fk'
+  ) AND EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.identity_applications'::regclass
+      AND conname='identity_applications_historical_external_sensitive_action_request_fk'
+  ) THEN
+    RAISE EXCEPTION 'both legacy and historical identity approval request constraints exist';
   END IF;
 
   IF to_regclass('testagram_identity.identity_applications_sensitive_action_request_idx') IS NOT NULL THEN
@@ -118,6 +128,10 @@ BEGIN
 END;
 $rename_constraints$;
 
+COMMENT ON COLUMN testagram_identity.identity_applications.native_sensitive_action_request_id IS
+  'Testagram-native dual-control approval request for identity account activation.';
+COMMENT ON COLUMN testagram_identity.identity_applications.historical_external_sensitive_action_request_id IS
+  'Historical external approval request reference retained for audit only; new identity activation uses native_sensitive_action_request_id.';
 COMMENT ON COLUMN testagram_identity.identity_application_reviews.reviewer_user_id IS
   'Canonical Testagram staff UUID for new identity-application reviews. Historical source attribution is retained separately.';
 COMMENT ON COLUMN testagram_identity.verification_reviews.reviewer_user_id IS
