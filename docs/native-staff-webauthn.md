@@ -49,14 +49,15 @@ WHERE sp.user_id = '<canonical-owner-uuid>'::uuid
 After an owner has enrolled, further staff enrollment authorizations are
 created by an enrolled owner through
 `POST /api/admin/staff/{id}/webauthn/enrollment-authorize`. That endpoint
-requires a fresh WebAuthn elevation and refuses self-authorization. Each grant
-expires after 30 minutes and is consumed in the same PostgreSQL transaction
-that stores the first credential.
+requires a fresh WebAuthn elevation and refuses self-authorization. Each grant expires after 30 minutes and is consumed in the same PostgreSQL transaction
+that stores a new credential. Adding a second credential also requires a fresh assertion
+from the target staff member and a separate independent authorization.
 
 ## Ceremony and elevation behavior
 
-- Registration and assertion ceremony state is server-side JSONB, challenge-hash
-  indexed, expires after at most two minutes, and is locked/consumed exactly once.
+- Registration and assertion ceremony state is server-side AEAD-encrypted bytea, challenge-hash
+  indexed, bound to user/ceremony by associated data, expires after at most two minutes,
+  and is locked/consumed exactly once.
 - The WebAuthn library validates client data, origin, RP ID hash, authenticator
   data, user presence/verification, attestation and assertion signatures.
 - Credential JSON is AEAD-encrypted before it is written to PostgreSQL.
