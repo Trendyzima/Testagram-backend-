@@ -158,7 +158,9 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
                 self.assertNotRegex(migration, r"(?i)\bREVOKE\s+ALL\s+ON\s+ALL\s+TABLES\s+IN\s+SCHEMA\b")
                 self.assertNotRegex(migration, r"(?i)\bDROP\s+SCHEMA\b")
                 self.assertNotRegex(migration, r"(?i)\bDROP\s+TABLE\b")
-                self.assertIn("REVOKE ALL ON TABLE", migration)
+                revocations = re.findall(r"(?is)\\bREVOKE\\b.*?;", migration)
+                for statement in revocations:
+                    self.assertRegex(statement, r"(?is)\\bREVOKE\\s+ALL\\s+ON\\s+TABLE\\b")
 
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         ordered = (
