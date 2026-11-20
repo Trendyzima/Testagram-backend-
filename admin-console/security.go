@@ -474,7 +474,8 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 }
 
 func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) {
-	_,user,ok:=a.requireStaff(w,r); if !ok { return }
+	s,user,ok:=a.requireStaff(w,r); if !ok { return }
+	if !a.requireRecentStepUp(w,s) { return }
 	canAudit,err:=a.hasPermission(user,"audit.read")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
 	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve"}
@@ -602,18 +603,21 @@ func (a *app) handleStaffList(w http.ResponseWriter,r *http.Request) {
 }
 
 func (a *app) handleStaffRoleChange(w http.ResponseWriter,r *http.Request) {
-	if _,_,ok:=a.requireStaff(w,r,"owner");!ok{return}
+	s,_,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+	if !a.requireRecentStepUp(w,s){return}
 	writeJSON(w,http.StatusNotImplemented,map[string]string{"error":"Staff role changes require the two-person native staff approval workflow. No direct role mutation is permitted."})
 }
 
 func (a *app) handleStaffRevoke(w http.ResponseWriter,r *http.Request) {
-	if _,_,ok:=a.requireStaff(w,r,"owner");!ok{return}
+	s,_,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+	if !a.requireRecentStepUp(w,s){return}
 	writeJSON(w,http.StatusNotImplemented,map[string]string{"error":"Staff revocation requires the two-person native staff approval workflow. No direct role mutation is permitted."})
 }
 
 
 func (a *app) handleAdminAudit(w http.ResponseWriter,r *http.Request) {
-	if _,_,ok:=a.requirePermission(w,r,"audit.read"); !ok { return }
+	s,_,ok:=a.requirePermission(w,r,"audit.read");if !ok{return}
+	if !a.requireRecentStepUp(w,s){return}
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
 	rows,err:=a.database.Query(ctx,`SELECT id,actor_user_id,action,target_reference,request_id::text,metadata,created_at
 		FROM testagram_auth.native_admin_security_audit ORDER BY created_at DESC LIMIT 200`)
