@@ -82,6 +82,11 @@ const authArgon2Iterations uint32 = 3
 const authArgon2Parallelism uint8 = 2
 const authArgon2KeyLength uint32 = 32
 
+// authDummyPasswordHash uses the same Argon2id profile as real credentials.
+// Verifying it for unknown email addresses prevents a cheap timing oracle
+// that distinguishes nonexistent accounts from incorrect passwords.
+const authDummyPasswordHash = "argon2id$v=19$m=65536,t=3,p=2$ek8bLJ2Ob1BxQqO0xdbn-A$S4uEMZNvr8VVRXHYwFrEDQ-1MEaTaBFXL8kbVPsuD3Y"
+
 func authPasswordHash(password string) (string, error) {
 	if len(password) < 12 || len(password) > 128 {
 		return "", errors.New("password must be between 12 and 128 bytes")
@@ -433,7 +438,16 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			           WHERE p.user_id=i.user_id AND p.status<>'active')
 			FROM testagram_auth.identities i WHERE i.email_normalized=$1`, email).Scan(
 			&userID, &hash, &verified, &version, &disabled, &resetRequired, &provisioningReady)
-		if err != nil || !authPasswordVerify(hash, in.Password) || disabled {
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = authPasswordVerify(authDummyPasswordHash, in.Password)
+			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect.", requestID(r)))
+			return true
+		}
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Authentication store is unavailable", requestID(r)))
+			return true
+		}
+		if !authPasswordVerify(hash, in.Password) || disabled {
 			writeJSON(w, http.StatusUnauthorized, errorBody("INVALID_CREDENTIALS", "Email or password is incorrect.", requestID(r)))
 			return true
 		}
