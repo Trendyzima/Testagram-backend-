@@ -298,7 +298,7 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
  if dbOK&&schemaOK&&privilegesOK&&rpid!="" {
   _=a.database.QueryRow(ctx,`SELECT
    count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
-   count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
+   count(DISTINCT sp.user_id) FILTER (WHERE rg.role = 'identity_reviewer'),
    count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator'))
    FROM testagram_auth.staff_principals sp
    JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
