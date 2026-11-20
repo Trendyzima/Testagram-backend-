@@ -46,7 +46,8 @@ func (a *app) staffWebAuthn() (*webauthn.WebAuthn,string,error) {
 func (a *app) loadStaffWebAuthnUser(ctx context.Context,id,rpid string)(*staffWebAuthnUser,error){
  u:=&staffWebAuthnUser{id:id}
  if err:=a.database.QueryRow(ctx,"SELECT i.email_normalized FROM testagram_auth.staff_principals sp JOIN testagram_auth.identities i ON i.user_id=sp.user_id WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE",id).Scan(&u.name);err!=nil{return nil,err}
- if err:=a.database.QueryRow(ctx,"INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES($1,$2::uuid,gen_random_bytes(32)) ON CONFLICT(rpid,user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING user_handle",rpid,id).Scan(&u.handle);err!=nil{return nil,err}
+ handle:=make([]byte,32);if _,err:=rand.Read(handle);err!=nil{return nil,err}
+ if err:=a.database.QueryRow(ctx,"INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES($1,$2::uuid,$3) ON CONFLICT(rpid,user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING user_handle",rpid,id,handle).Scan(&u.handle);err!=nil{return nil,err}
  rows,err:=a.database.Query(ctx,"SELECT credential FROM testagram_auth.staff_webauthn_credentials WHERE rpid=$1 AND user_id=$2::uuid AND revoked_at IS NULL ORDER BY id",rpid,id)
  if err!=nil{return nil,err};defer rows.Close()
  for rows.Next(){
@@ -67,9 +68,12 @@ func (a *app) encryptStaffCredential(c *webauthn.Credential)([]byte,error){
  return append(nonce,a.aead.Seal(nil,nonce,plain,[]byte("testagram-staff-webauthn-credential-v1"))...),nil
 }
 func (a *app) saveStaffChallenge(ctx context.Context,userID,kind string,sd *webauthn.SessionData)error{
- raw,err:=json.Marshal(sd);if err!=nil{return err}
+ plain,err:=json.Marshal(sd);if err!=nil{return err}
  sum:=sha256.Sum256([]byte(sd.Challenge))
- _,err=a.database.Exec(ctx,"INSERT INTO testagram_auth.staff_webauthn_challenges(challenge_hash,user_id,ceremony,session_data,expires_at) VALUES($1,$2::uuid,$3,$4::jsonb,LEAST($5::timestamptz,now()+interval '2 minutes'))",sum[:],userID,kind,raw,sd.Expires)
+ aad:=[]byte("testagram-staff-webauthn-session-v1:"+userID+":"+kind+":"+base64.RawURLEncoding.EncodeToString(sum[:]))
+ nonce:=make([]byte,a.aead.NonceSize());if _,err=rand.Read(nonce);err!=nil{return err}
+ encrypted:=append(nonce,a.aead.Seal(nil,nonce,plain,aad)...)
+ _,err=a.database.Exec(ctx,"INSERT INTO testagram_auth.staff_webauthn_challenges(challenge_hash,user_id,ceremony,session_data,expires_at) VALUES($1,$2::uuid,$3,$4,LEAST($5::timestamptz,now()+interval '2 minutes'))",sum[:],userID,kind,encrypted,sd.Expires)
  return err
 }
 
@@ -120,7 +124,10 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
  err=tx.QueryRow(r.Context(),"SELECT session_data FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1 AND user_id=$2::uuid AND ceremony='registration' AND expires_at>now() FOR UPDATE",sum[:],user.ID).Scan(&raw)
  if err!=nil{writeJSON(w,401,map[string]string{"error":"Registration challenge expired, invalid or already used"});return}
  var sd webauthn.SessionData
- if err=json.Unmarshal(raw,&sd);err!=nil{writeJSON(w,503,map[string]string{"error":"Stored registration state is invalid"});return}
+ aad:=[]byte("testagram-staff-webauthn-session-v1:"+user.ID+":registration:"+base64.RawURLEncoding.EncodeToString(sum[:]))
+ if len(raw)<a.aead.NonceSize(){writeJSON(w,503,map[string]string{"error":"Stored registration state is invalid"});return}
+ plain,e:=a.aead.Open(nil,raw[:a.aead.NonceSize()],raw[a.aead.NonceSize():],aad)
+ if e!=nil||json.Unmarshal(plain,&sd)!=nil{writeJSON(w,503,map[string]string{"error":"Stored registration state failed integrity verification"});return}
  var authorizationID int64
  if err=tx.QueryRow(r.Context(),"SELECT id FROM testagram_auth.staff_webauthn_enrollment_authorizations WHERE user_id=$1::uuid AND consumed_at IS NULL AND expires_at>now() ORDER BY created_at LIMIT 1 FOR UPDATE",user.ID).Scan(&authorizationID);err!=nil{writeJSON(w,403,map[string]string{"error":"Enrollment authorization is missing, expired or already consumed"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)>0{writeJSON(w,403,map[string]string{"error":"Staff enrollment is not authorized"});return}
@@ -168,7 +175,11 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  sum:=sha256.Sum256([]byte(input.Challenge));var raw []byte
  err=tx.QueryRow(r.Context(),"SELECT session_data FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1 AND user_id=$2::uuid AND ceremony='assertion' AND expires_at>now() FOR UPDATE",sum[:],user.ID).Scan(&raw)
  if err!=nil{writeJSON(w,401,map[string]string{"error":"Assertion challenge expired, invalid or already used"});return}
- var sd webauthn.SessionData;if err=json.Unmarshal(raw,&sd);err!=nil{writeJSON(w,503,map[string]string{"error":"Stored assertion state is invalid"});return}
+ var sd webauthn.SessionData
+ aad:=[]byte("testagram-staff-webauthn-session-v1:"+user.ID+":assertion:"+base64.RawURLEncoding.EncodeToString(sum[:]))
+ if len(raw)<a.aead.NonceSize(){writeJSON(w,503,map[string]string{"error":"Stored assertion state is invalid"});return}
+ plain,e:=a.aead.Open(nil,raw[:a.aead.NonceSize()],raw[a.aead.NonceSize():],aad)
+ if e!=nil||json.Unmarshal(plain,&sd)!=nil{writeJSON(w,503,map[string]string{"error":"Stored assertion state failed integrity verification"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)==0{writeJSON(w,403,map[string]string{"error":"No registered authenticator exists"});return}
  req:=r.Clone(r.Context());req.Body=io.NopCloser(bytes.NewReader(input.Response));req.ContentLength=int64(len(input.Response))
  credential,err:=wa.FinishLogin(u,sd,req)
