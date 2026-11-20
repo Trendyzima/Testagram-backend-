@@ -267,3 +267,22 @@ func TestRankAcceptsEveryPublishedFeedMode(t *testing.T) {
 		t.Fatal("unknown feed mode must be rejected")
 	}
 }
+
+func TestRankRejectsBackendOnlyAndUnsupportedFeedModesBeforeNetwork(t *testing.T) {
+	client, err := New("http://algorithm:8092", strings.Repeat("s", 32), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"latest", "federated", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			_, err := client.Rank(context.Background(), Request{
+				FeedMode: mode,
+				Limit: 1,
+				Candidates: []Candidate{{ID: "post-1", AuthorID: "user-1", Source: "native", Visible: true}},
+			})
+			if err == nil {
+				t.Fatalf("expected unsupported feed mode %q to be rejected before network access", mode)
+			}
+		})
+	}
+}
