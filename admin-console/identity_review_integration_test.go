@@ -247,9 +247,10 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err := conn.QueryRow(ctx, `
 		INSERT INTO testagram_auth.native_sensitive_action_requests
 		  (action_type,requested_by_user_id,requested_by_service,target_reference,
-		   reason,payload,payload_sha256,required_approvals,expires_at)
+		   reason,payload,payload_sha256,required_approvals,created_at,expires_at)
 		VALUES ('identity.approve',NULL,'identity_pipeline',$1,
-		        'Expired approval integration fixture','{}'::jsonb,repeat('d',64),2,now()-interval '1 second')
+		        'Expired approval integration fixture','{}'::jsonb,repeat('d',64),2,
+		        now()-interval '2 minutes',now()-interval '1 minute')
 		RETURNING id::text
 	`, applicationID).Scan(&expiredRequestID); err != nil {
 		t.Fatalf("insert expired approval request: %v", err)
