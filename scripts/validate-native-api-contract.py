@@ -5,7 +5,7 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_ROOTS = (ROOT / "cmd", ROOT / "internal", ROOT / "deploy" / "self-hosted", ROOT / ".github" / "workflows")
+RUNTIME_ROOTS = (ROOT / "cmd", ROOT / "internal", ROOT / "admin-console", ROOT / "control-plane", ROOT / "deploy" / "self-hosted", ROOT / ".github" / "workflows")
 ROOT_FILES = (ROOT / "docker-compose.yml", ROOT / "Dockerfile", ROOT / ".env.example")
 FORBIDDEN = re.compile(r"appwrite|APPWRITE_|X-Appwrite-|cloud\\.appwrite|appwrite\\.io", re.IGNORECASE)
 
@@ -16,7 +16,7 @@ for base in RUNTIME_ROOTS:
         continue
     for path in base.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in {
-            ".go", ".yml", ".yaml", ".json", ".sh", ".py", ".env", ".conf", ".toml"
+            ".go", ".yml", ".yaml", ".json", ".sh", ".py", ".js", ".ts", ".tsx", ".html", ".env", ".conf", ".toml"
         }:
             continue
         scanned += 1
