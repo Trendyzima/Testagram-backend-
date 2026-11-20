@@ -154,7 +154,7 @@ func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Reques
  if allowed,err:=a.consumeAdminRateLimit(r.Context(),user.ID,"webauthn-assertion-begin",12,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn rate-limit service unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"WebAuthn assertion rate limit exceeded"});return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)==0{writeJSON(w,403,map[string]string{"error":"No registered authenticator exists"});return}
- options,sd,err:=wa.BeginLogin(u,webauthn.WithUserVerification(protocol.VerificationRequired),webauthn.WithLoginOrigin(a.publicOrigin))
+ options,sd,err:=wa.BeginLogin(u,webauthn.WithUserVerification(protocol.VerificationRequired),webauthn.WithLoginAuthorizeUVInitialization(true),webauthn.WithLoginOrigin(a.publicOrigin))
  if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not create assertion ceremony"});return}
  if err=a.saveStaffChallenge(r.Context(),user.ID,"assertion",sd);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not persist assertion challenge"});return}
  w.Header().Set("Cache-Control","no-store")
