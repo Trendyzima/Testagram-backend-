@@ -144,6 +144,33 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertGreaterEqual(script.count("psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql"), 2)
         self.assertGreaterEqual(script.count("psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql"), 2)
 
+    def test_provider_archive_privilege_changes_are_table_scoped(self):
+        archive_names = (
+            "20261120_native_identity_historical_account_archive.sql",
+            "20261120_native_identity_historical_staff_archive.sql",
+            "20261120_native_identity_historical_admin_archive.sql",
+            "20261120_native_identity_historical_attribution_archive.sql",
+        )
+        for name in archive_names:
+            migration = (ROOT / "migrations" / name).read_text(encoding="utf-8")
+            with self.subTest(migration=name):
+                self.assertNotRegex(migration, r"(?i)\\bREVOKE\\s+ALL\\s+ON\\s+SCHEMA\\b")
+                self.assertNotRegex(migration, r"(?i)\\bREVOKE\\s+ALL\\s+ON\\s+ALL\\s+TABLES\\s+IN\\s+SCHEMA\\b")
+                self.assertNotRegex(migration, r"(?i)\\bDROP\\s+SCHEMA\\b")
+                self.assertNotRegex(migration, r"(?i)\\bDROP\\s+TABLE\\b")
+                self.assertIn("REVOKE ALL ON TABLE", migration)
+
+        manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
+        ordered = (
+            "058a_native_identity_historical_account_archive.sql",
+            "058b_native_identity_historical_staff_archive.sql",
+            "058c_native_identity_historical_admin_archive.sql",
+            "058d_native_identity_historical_attribution_archive.sql",
+            "059_native_identity_approval_circuit.sql",
+        )
+        positions = [manifest.index(name) for name in ordered]
+        self.assertEqual(positions, sorted(positions))
+
     def test_corrective_mail_role_migration_is_mounted_and_applied(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
         migration = "20261123_testagram_mail_outbox_runtime_role.sql"
