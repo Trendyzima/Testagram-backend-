@@ -164,6 +164,29 @@ func TestAuthTokenHashIsNotRawToken(t *testing.T) {
 	}
 }
 
+func TestAuthClientIPTrustsOnlyPrivateProxyRealIP(t *testing.T) {
+	proxyRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	proxyRequest.RemoteAddr = "172.20.0.4:443"
+	proxyRequest.Header.Set("X-Real-IP", "203.0.113.45")
+	if got := authClientIP(proxyRequest); got != "203.0.113.45" {
+		t.Fatalf("trusted Caddy client IP=%q, want 203.0.113.45", got)
+	}
+
+	publicRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	publicRequest.RemoteAddr = "203.0.113.10:443"
+	publicRequest.Header.Set("X-Real-IP", "198.51.100.77")
+	if got := authClientIP(publicRequest); got != "203.0.113.10" {
+		t.Fatalf("public peer spoofed X-Real-IP: got %q", got)
+	}
+
+	invalidHeaderRequest := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	invalidHeaderRequest.RemoteAddr = "172.20.0.4:443"
+	invalidHeaderRequest.Header.Set("X-Real-IP", "not-an-ip")
+	if got := authClientIP(invalidHeaderRequest); got != "172.20.0.4" {
+		t.Fatalf("invalid proxy client IP was accepted: got %q", got)
+	}
+}
+
 func TestAuthEmailAndUsernameValidation(t *testing.T) {
 	got, err := authEmail("User@example.com")
 	if err != nil || got != "user@example.com" {
