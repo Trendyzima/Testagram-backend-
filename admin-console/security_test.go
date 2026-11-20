@@ -48,14 +48,19 @@ func TestRecentStepUpRequiresBackendSignedWebAuthnElevation(t *testing.T) {
  a:=testApp(t)
  t.Setenv("TESTAGRAM_AUTH_JWT_SECRET",strings.Repeat("s",48))
  user:=authUser{ID:"11111111-1111-4111-8111-111111111111",StaffRole:"owner"}
- token,_,err:=a.mintStaffElevation(user);if err!=nil{t.Fatal(err)}
- accessPayload:=base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"11111111-1111-4111-8111-111111111111"}`))
- validSession:=session{AccessToken:"header."+accessPayload+".signature",ElevatedToken:token}
+ now:=time.Now().UTC().Unix()
+ accessClaims:=nativeElevationClaims{Subject:user.ID,Email:"owner@testagram.invalid",Role:"authenticated",Issuer:"testagram-auth",Audience:"testagram-api",IssuedAt:now-60,ExpiresAt:now+600,TokenVersion:3,SessionID:"33333333-3333-4333-8333-333333333333"}
+ accessPayload,_:=json.Marshal(accessClaims)
+ accessToken:="header."+base64.RawURLEncoding.EncodeToString(accessPayload)+".signature"
+ token,_,err:=a.mintStaffElevation(user,accessToken);if err!=nil{t.Fatal(err)}
+ validSession:=session{AccessToken:accessToken,ElevatedToken:token}
+ other:=accessClaims;other.Subject="22222222-2222-4222-8222-222222222222"
+ otherPayload,_:=json.Marshal(other)
  for _,tc:=range []struct{name string;s session;want bool}{
-  {"valid backend-signed proof",validSession,true},
-  {"missing proof",session{AccessToken:validSession.AccessToken},false},
-  {"tampered proof",session{AccessToken:validSession.AccessToken,ElevatedToken:token+"x"},false},
-  {"proof bound to another identity",session{AccessToken:"header."+base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"22222222-2222-4222-8222-222222222222"}`))+".signature",ElevatedToken:token},false},
+  {"valid native elevated proof",validSession,true},
+  {"missing proof",session{AccessToken:accessToken},false},
+  {"tampered proof",session{AccessToken:accessToken,ElevatedToken:token+"x"},false},
+  {"proof bound to another identity",session{AccessToken:"header."+base64.RawURLEncoding.EncodeToString(otherPayload)+".signature",ElevatedToken:token},false},
  }{
   t.Run(tc.name,func(t *testing.T){w:=httptest.NewRecorder();got:=a.requireRecentStepUp(w,tc.s);if got!=tc.want{t.Fatalf("requireRecentStepUp()=%v want %v; status=%d",got,tc.want,w.Code)}})
  }
