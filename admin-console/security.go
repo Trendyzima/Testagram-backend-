@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/hmac"
+	"encoding/base64"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -85,24 +87,23 @@ func (a *app) requirePermission(w http.ResponseWriter, r *http.Request, permissi
 	return s, user, true
 }
 func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
-	if !s.StepUpMFA || s.StepUpUntil <= time.Now().Unix() {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "A live phishing-resistant MFA challenge is required before sensitive staff operations."})
-		return false
+	parts := strings.Split(s.ElevatedToken, ".")
+	if len(parts) != 3 { writeJSON(w, http.StatusUnauthorized, map[string]string{"error":"A verified WebAuthn elevation is required"}); return false }
+	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	if len(secret) < 32 { writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error":"Elevation signing key unavailable"}); return false }
+	unsigned := parts[0]+"."+parts[1]
+	mac := hmac.New(sha256.New, secret); _, _ = mac.Write([]byte(unsigned))
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(sig,mac.Sum(nil)) { writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Invalid MFA elevation signature"}); return false }
+	payload,err:=base64.RawURLEncoding.DecodeString(parts[1]); if err!=nil { writeJSON(w,401,map[string]string{"error":"Invalid MFA elevation"}); return false }
+	var claims struct { Subject string `json:"sub"`; Issuer string `json:"iss"`; Audience string `json:"aud"`; Expires int64 `json:"exp"`; MFAAt int64 `json:"mfa_at"` }
+	if json.Unmarshal(payload,&claims)!=nil || claims.Issuer!="testagram-admin-console" || claims.Audience!="testagram-admin-sensitive" || claims.Subject=="" || claims.Expires<=time.Now().Unix() || claims.MFAAt<=0 || claims.Expires-claims.MFAAt>300 {
+		writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Expired or invalid MFA elevation"}); return false
 	}
+	// The elevation is additionally bound to the same native account in the encrypted HttpOnly Console session.
+	accessParts:=strings.Split(s.AccessToken,"."); if len(accessParts)!=3 { writeJSON(w,401,map[string]string{"error":"Native session binding unavailable"});return false }
+	accessPayload,e:=base64.RawURLEncoding.DecodeString(accessParts[1]); var native struct{Subject string `json:"sub"`}; if e!=nil || json.Unmarshal(accessPayload,&native)!=nil || native.Subject!=claims.Subject { writeJSON(w,401,map[string]string{"error":"MFA elevation belongs to another staff identity"});return false }
 	return true
-}
-
-func (a *app) handleStepUp(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.requireStaff(w, r); !ok {
-		return
-	}
-	// Password-only reauthentication is not MFA. Until a verified WebAuthn
-	// challenge is implemented, do not issue a step-up marker or allow staff
-	// review, evidence access or sensitive approvals to proceed.
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-		"error": "Phishing-resistant MFA step-up is not configured. Sensitive staff operations remain disabled.",
-	})
 }
 
 func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request) {
