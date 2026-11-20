@@ -53,6 +53,23 @@ requires a fresh WebAuthn elevation and refuses self-authorization. Each grant e
 that stores a new credential. Adding a second credential also requires a fresh assertion
 from the target staff member and a separate independent authorization.
 
+## Identity-review readiness quorum
+
+The Backend and Admin Console independently calculate the same PostgreSQL
+readiness quorum. It requires at least two active, email-verified,
+user-verified, non-cloned WebAuthn credential holders with the
+`identity_reviewer` role **and no active `owner`/`administrator` role,
+plus at least two different active credential holders with `owner` or
+`administrator` and no active `identity_reviewer` role. A person holding
+both sides is excluded from both quorum counts; four distinct credentialed
+accounts alone are not enough. Revoked, cloned, unverified, disabled or
+unverified-email credentials/accounts cannot satisfy readiness.
+
+The Admin Console's authenticated internal readiness attestation must also
+report this same disjoint quorum. Backend application intake remains closed
+unless the explicit production policy gate is enabled and the live Admin
+Console attestation and Backend PostgreSQL query both pass on each request.
+
 ## Ceremony and elevation behavior
 
 - Registration and assertion ceremony state is server-side AEAD-encrypted bytea, challenge-hash
