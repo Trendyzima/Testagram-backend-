@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/contentmoderation"
 	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
-	"github.com/Trendyzima/Testagram-backend-/internal/contentmoderation"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
