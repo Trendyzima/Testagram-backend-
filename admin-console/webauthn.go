@@ -168,7 +168,7 @@ func (a *app) mintStaffElevation(user authUser, accessToken string) (string, int
 		return "", 0, errors.New("native staff identity is unavailable")
 	}
 	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
-	return nativeauth.MintStaffElevationToken(accessToken, secret, time.Now().UTC())
+	return nativeauth.MintStaffElevationToken(accessToken, user.ID, secret, time.Now().UTC())
 }
 
 func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Request){
