@@ -561,6 +561,13 @@ psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql
 psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
 psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
 
+# The production migration runner reapplies its ordered manifest on every run.
+# Reapply the archive sequence to prove every rename/revoke is safe to repeat.
+psql_ci < migrations/20261120_native_identity_historical_account_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
+
 psql_ci <<'SQL'
 DO $retirement_acceptance$
 BEGIN
