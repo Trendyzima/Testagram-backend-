@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
