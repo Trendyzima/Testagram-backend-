@@ -699,7 +699,7 @@ BEGIN
   ) OR NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid='testagram_identity.identity_applications'::regclass
-      AND conname='identity_applications_historical_external_sensitive_action_request_fk'
+      AND conname='identity_applications_historical_request_fk'
   ) THEN
     RAISE EXCEPTION 'historical and native identity approval request links are not separated';
   END IF;
