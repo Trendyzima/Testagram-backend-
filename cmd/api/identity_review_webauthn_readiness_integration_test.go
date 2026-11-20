@@ -28,8 +28,6 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	defer db.Close()
 
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-webauthn-readiness-key-", 2))
-	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "admin.testagram.example")
-	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://admin.testagram.example")
 	readinessToken := strings.Repeat("testagram-webauthn-readiness-shared-", 2)
 	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", readinessToken)
 	adminReady := true
@@ -49,6 +47,11 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", admin.URL+"/internal/webauthn/readiness")
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+	// Scope this test's credentials to a unique RP ID so unrelated staff
+	// credentials from other PostgreSQL fixtures cannot affect independence counts.
+	rpid := "admin-" + suffix + ".testagram.example"
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", rpid)
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://"+rpid)
 	var users [4]string
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text").
 		Scan(&users[0], &users[1], &users[2], &users[3]); err != nil {
@@ -93,14 +96,14 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 		if _, err := db.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
 			VALUES($1,$2::uuid,decode(md5($2::text),'hex'))
-		`, "admin.testagram.example", userID); err != nil {
+		`, rpid, userID); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_credentials
 			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
 			VALUES($1,$2::uuid,decode(md5($2::text),'hex'),decode(md5($2::text||'credential'),'hex'),TRUE,FALSE)
-		`, "admin.testagram.example", userID); err != nil {
+		`, rpid, userID); err != nil {
 			t.Fatal(err)
 		}
 	}
