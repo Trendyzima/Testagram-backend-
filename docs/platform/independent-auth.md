@@ -1,6 +1,6 @@
 # Testagram-native authentication (current mainline)
 
-This document describes the current Backend and Flutter source implementation. It supersedes the earlier independent-auth prototype notes that described Appwrite as the public client session provider.
+This document describes the current Backend and Flutter source implementation. It supersedes earlier independent-auth prototype notes that assigned user-session authority outside Testagram Backend.
 
 ## Authority and runtime boundary
 
@@ -40,7 +40,9 @@ The supported Backend runtime has no external identity-provider integration. Do 
 
 ## Staff console boundary
 
-The Admin Console uses Backend-native login and an encrypted `testagram-staff` cookie. Staff requests check an enabled PostgreSQL principal, role grant and recorded `mfa_enrolled_at` marker. The current step-up rechecks the password only; it does not verify a TOTP/passkey challenge. Staff invitations and role-grant activation remain fail-closed until dual-control onboarding and actual second-factor verification are implemented.
+The Admin Console uses Backend-native login and an encrypted `testagram-staff` cookie. Staff requests check an enabled PostgreSQL principal and explicit role grants. Native WebAuthn registration/assertion is implemented in `admin-console/webauthn.go`: it requires an explicit RP ID/origin allowlist and user verification, stores credentials/challenges encrypted, consumes one-time challenges, checks authenticator counters/clone signals and issues a short-lived Backend-signed MFA elevation after a valid assertion. Enrollment requires independent authorization and `TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED=true`.
+
+The identity-review API also requires a fresh signed MFA claim. Its service readiness flag `identityReviewWebAuthnReady` remains false in `cmd/api/main.go`, so public identity intake remains closed until the Admin Console-to-Backend elevation handoff and the full browser/recovery/replay path pass end-to-end staging acceptance. A stored `mfa_enrolled_at` timestamp alone is not proof of a fresh assertion.
 
 ## Deployment requirements and limits
 
