@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"fmt"
 	"encoding/base64"
 	"encoding/json"
@@ -51,7 +53,10 @@ func TestRecentStepUpRequiresBackendSignedWebAuthnElevation(t *testing.T) {
  now:=time.Now().UTC().Unix()
  accessClaims:=nativeElevationClaims{Subject:user.ID,Email:"owner@testagram.invalid",Role:"authenticated",Issuer:"testagram-auth",Audience:"testagram-api",IssuedAt:now-60,ExpiresAt:now+600,TokenVersion:3,SessionID:"33333333-3333-4333-8333-333333333333"}
  accessPayload,_:=json.Marshal(accessClaims)
- accessToken:="header."+base64.RawURLEncoding.EncodeToString(accessPayload)+".signature"
+ header,_:=json.Marshal(map[string]string{"alg":"HS256","typ":"JWT"})
+ unsigned:=base64.RawURLEncoding.EncodeToString(header)+"."+base64.RawURLEncoding.EncodeToString(accessPayload)
+ mac:=hmac.New(sha256.New,[]byte(strings.Repeat("s",48)));_,_=mac.Write([]byte(unsigned))
+ accessToken:=unsigned+"."+base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
  token,_,err:=a.mintStaffElevation(user,accessToken);if err!=nil{t.Fatal(err)}
  validSession:=session{AccessToken:accessToken,ElevatedToken:token}
  other:=accessClaims;other.Subject="22222222-2222-4222-8222-222222222222"
