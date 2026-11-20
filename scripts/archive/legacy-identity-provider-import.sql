@@ -3,8 +3,8 @@
 -- This script must never be called by the API, CI deployment or normal startup.
 --
 -- This script DOES NOT export/import Appwrite passwords (they are not
--- recoverable). It uses only the explicit appwrite_user_id -> canonical UUID
--- mapping already recorded in testagram_identity.appwrite_accounts.
+-- recoverable). It uses only the explicit source_account_id -> canonical UUID
+-- mapping already recorded in testagram_identity.historical_external_identity_accounts.
 --
 -- Run only after a reviewed account reconciliation export and verified DB
 -- backup. Supply:
@@ -45,13 +45,13 @@ BEGIN
   END IF;
 
   SELECT count(*) INTO n
-  FROM testagram_identity.appwrite_accounts a
+  FROM testagram_identity.historical_external_identity_accounts a
   LEFT JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
   WHERE u.user_id IS NULL;
-  IF n > 0 THEN RAISE EXCEPTION '% Appwrite mappings have no canonical Testagram account; quarantine and reconcile first', n; END IF;
+  IF n > 0 THEN RAISE EXCEPTION '% historical source mappings have no canonical Testagram account; quarantine and reconcile first', n; END IF;
 
   SELECT count(*) INTO n FROM (
-    SELECT lower(btrim(a.email)) FROM testagram_identity.appwrite_accounts a
+    SELECT lower(btrim(a.email)) FROM testagram_identity.historical_external_identity_accounts a
     JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
     WHERE a.email IS NOT NULL
     GROUP BY lower(btrim(a.email)) HAVING count(*) > 1
@@ -59,21 +59,21 @@ BEGIN
   IF n > 0 THEN RAISE EXCEPTION '% duplicate source email groups found; do not auto-link by email', n; END IF;
 
   SELECT count(*) INTO n FROM (
-    SELECT lower(btrim(u.username)) FROM testagram_identity.appwrite_accounts a
+    SELECT lower(btrim(u.username)) FROM testagram_identity.historical_external_identity_accounts a
     JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
     GROUP BY lower(btrim(u.username)) HAVING count(*) > 1
   ) collisions;
   IF n > 0 THEN RAISE EXCEPTION '% duplicate canonical username groups found', n; END IF;
 
   SELECT count(*) INTO n
-  FROM testagram_identity.appwrite_accounts a
+  FROM testagram_identity.historical_external_identity_accounts a
   JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
   WHERE a.email IS NULL OR length(btrim(a.email)) < 3
      OR u.username !~ '^[A-Za-z0-9_]{3,30}$';
   IF n > 0 THEN RAISE EXCEPTION '% mapped accounts have invalid email or username; quarantine and resolve first', n; END IF;
 
   SELECT count(*) INTO n
-  FROM testagram_identity.appwrite_accounts a
+  FROM testagram_identity.historical_external_identity_accounts a
   JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
   JOIN testagram_auth.identities i
     ON i.user_id=a.canonical_user_id
@@ -82,14 +82,14 @@ BEGIN
   IF n > 0 THEN RAISE EXCEPTION '% canonical ID/email/username conflicts with existing native identity rows', n; END IF;
 
   SELECT count(*) INTO n
-  FROM testagram_identity.appwrite_accounts a
+  FROM testagram_identity.historical_external_identity_accounts a
   JOIN testagram_auth.legacy_account_reconciliation l
-    ON l.source_provider='appwrite'
-   AND (l.source_account_id=a.appwrite_user_id OR l.canonical_user_id=a.canonical_user_id);
+    ON l.source_provider='historical_external_provider'
+   AND (l.source_account_id=a.source_account_id OR l.canonical_user_id=a.canonical_user_id);
   IF n > 0 THEN RAISE EXCEPTION '% source or canonical accounts were already reconciled; inspect ledger instead of rerunning', n; END IF;
 
   IF EXISTS (
-    SELECT 1 FROM testagram_identity.appwrite_accounts a
+    SELECT 1 FROM testagram_identity.historical_external_identity_accounts a
     JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id
     WHERE a.email <> lower(btrim(a.email))
   ) THEN
@@ -99,8 +99,8 @@ END;
 $preflight$;
 
 -- Preserve canonical UUIDs exactly. No source email match is used to discover
--- the canonical user: the pre-existing Appwrite mapping is the authority.
--- Appwrite exposes only a verified boolean here, not the original verification
+-- the canonical user: the pre-existing historical source mapping is the authority.
+-- The historical source exposes only a verified boolean here, not the original verification
 -- timestamp; use migration time rather than misrepresenting last_seen_at.
 INSERT INTO testagram_auth.identities
   (user_id,email,username,password_hash,email_verified_at,password_reset_required,disabled_at)
@@ -112,18 +112,18 @@ SELECT
   CASE WHEN a.email_verified THEN now() ELSE NULL END,
   TRUE,
   CASE WHEN u.account_status='active' THEN NULL ELSE now() END
-FROM testagram_identity.appwrite_accounts a
+FROM testagram_identity.historical_external_identity_accounts a
 JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id;
 
 INSERT INTO testagram_auth.legacy_account_reconciliation
   (source_provider,source_account_id,canonical_user_id,source_email,
    source_email_verified,source_username,reconciled_by,evidence_reference)
 SELECT
-  'appwrite',a.appwrite_user_id,a.canonical_user_id,a.email,
+  'historical_external_provider',a.source_account_id,a.canonical_user_id,a.email,
   a.email_verified,u.username,
   current_setting('testagram.migration_operator'),
   current_setting('testagram.migration_evidence')
-FROM testagram_identity.appwrite_accounts a
+FROM testagram_identity.historical_external_identity_accounts a
 JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id;
 
 INSERT INTO testagram_auth.security_audit(subject_user_id,event_type,outcome,metadata)
@@ -132,12 +132,12 @@ SELECT
   'auth.legacy_imported',
   'success',
   jsonb_build_object(
-    'source_provider','appwrite',
-    'source_account_id',a.appwrite_user_id,
+    'source_provider','historical_external_provider',
+    'source_account_id',a.source_account_id,
     'credential_state','password_reset_required',
     'email_verified',a.email_verified
   )
-FROM testagram_identity.appwrite_accounts a
+FROM testagram_identity.historical_external_identity_accounts a
 JOIN testagram_local.accounts u ON u.user_id=a.canonical_user_id;
 
 COMMIT;
