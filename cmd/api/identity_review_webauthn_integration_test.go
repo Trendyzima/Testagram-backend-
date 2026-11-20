@@ -101,7 +101,7 @@ func TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer(t *testing.T
 		t.Fatalf("native staff login returned invalid session: err=%v body=%s", err, login.Body.String())
 	}
 
-	elevated, _, err := nativeauth.MintStaffElevationToken(envelope.Data.AccessToken, []byte(secret), time.Now().UTC())
+	elevated, _, err := nativeauth.MintStaffElevationToken(envelope.Data.AccessToken, userID, []byte(secret), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("Admin Console shared WebAuthn elevation signer rejected native session: %v", err)
 	}
