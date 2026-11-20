@@ -96,6 +96,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		"application_id": applicationID, "email": applicantEmail, "username": username,
 		"display_name": "Native Provisioning CI", "evidence_fingerprint_sha256": fingerprint,
 		"terms_version": "terms-v1", "privacy_version": "privacy-v1",
+		"evidence_audit_reference": "native-evidence-audit-reference",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -142,8 +143,8 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_application_reviews
 		  (application_id,reviewer_user_id,review_stage,decision,reason,evidence_audit_reference)
-		VALUES($1::uuid,$2::uuid,'evidence_review','approved','First independent evidence review','native-evidence-audit-01'),
-		      ($1::uuid,$3::uuid,'evidence_review','approved','Second independent evidence review','native-evidence-audit-02'),
+		VALUES($1::uuid,$2::uuid,'evidence_review','approved','First independent evidence review','native-evidence-audit-reference'),
+		      ($1::uuid,$3::uuid,'evidence_review','approved','Second independent evidence review','native-evidence-audit-reference'),
 		      ($1::uuid,$4::uuid,'account_approval','approved','First independent account approval','native-account-audit-01'),
 		      ($1::uuid,$5::uuid,'account_approval','approved','Second independent account approval','native-account-audit-02')
 	`, applicationID, reviewerOne, reviewerTwo, approverOne, approverTwo); err != nil {
