@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS testagram_auth.staff_webauthn_challenges (
   challenge_hash bytea PRIMARY KEY CHECK (octet_length(challenge_hash)=32),
   user_id uuid NOT NULL REFERENCES testagram_auth.staff_principals(user_id) ON DELETE CASCADE,
   ceremony text NOT NULL CHECK (ceremony IN ('registration','assertion')),
-  session_data jsonb NOT NULL,
+  session_data bytea NOT NULL,
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
