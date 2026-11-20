@@ -94,6 +94,17 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 		return envelope.Data
 	}
 	login := func() nativeSessionTokens { return loginWithPassword(password) }
+
+	unknownEmail := request(http.MethodPost, "/api/auth/login", map[string]string{
+		"email": "unknown-" + suffix + "@example.test", "password": password,
+	}, "")
+	wrongPassword := request(http.MethodPost, "/api/auth/login", map[string]string{
+		"email": email, "password": "WrongNativeSession-Password-2026!",
+	}, "")
+	if unknownEmail.Code != http.StatusUnauthorized || wrongPassword.Code != http.StatusUnauthorized {
+		t.Fatalf("unknown email/wrong password status=%d/%d; both must return generic unauthorized responses", unknownEmail.Code, wrongPassword.Code)
+	}
+
 	refresh := func(token string) *httptest.ResponseRecorder {
 		return request(http.MethodPost, "/api/auth/refresh", map[string]string{"refresh_token": token}, "")
 	}
