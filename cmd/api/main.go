@@ -75,7 +75,7 @@ type service struct {
 	dataCentreMedia           *datacentreclient.Client
 	identityEvidenceMedia     identityEvidenceMediaClient
 	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
-	identityReviewWebAuthnReady bool
+	identityReviewWebAuthnReady         bool
 	identityReviewWebAuthnPrerequisites func(context.Context) bool
 	freshMediaEnabled           bool
 	cdnMediaAssertions          *mediaassertion.Issuer
