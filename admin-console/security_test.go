@@ -1,7 +1,6 @@
 package main
 
 import (
-	"net/http"
 	"fmt"
 	"encoding/base64"
 	"encoding/json"
