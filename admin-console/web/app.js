@@ -162,6 +162,7 @@ byId("sign-in-form").addEventListener("submit", async (event) => {
   try {
     await api("/api/auth/sign-in", { email: byId("login-email").value, password: byId("login-password").value });
     await loadSession();
+loadWebAuthnReadiness();
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
 });
@@ -213,20 +214,76 @@ if (recoveryToken) {
 loadSession();
 
 
-byId("stepup-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget; busy(form, true);
+function b64urlToBytes(value) {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+}
+function bytesToB64url(value) {
+  const bytes = new Uint8Array(value); let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function decodePublicKeyOptions(source, creation) {
+  const options = structuredClone(source);
+  options.challenge = b64urlToBytes(options.challenge);
+  if (creation) {
+    options.user.id = b64urlToBytes(options.user.id);
+    for (const item of (options.excludeCredentials || [])) item.id = b64urlToBytes(item.id);
+  } else {
+    for (const item of (options.allowCredentials || [])) item.id = b64urlToBytes(item.id);
+  }
+  return options;
+}
+function credentialJSON(credential) {
+  if (typeof credential.toJSON === "function") return credential.toJSON();
+  const response = credential.response;
+  const result = {id:credential.id,rawId:bytesToB64url(credential.rawId),type:credential.type,
+    clientExtensionResults:credential.getClientExtensionResults(),response:{clientDataJSON:bytesToB64url(response.clientDataJSON)}};
+  if (response.attestationObject) {
+    result.response.attestationObject=bytesToB64url(response.attestationObject);
+    if (typeof response.getTransports==="function") result.response.transports=response.getTransports();
+  } else {
+    result.response.authenticatorData=bytesToB64url(response.authenticatorData);
+    result.response.signature=bytesToB64url(response.signature);
+    if (response.userHandle) result.response.userHandle=bytesToB64url(response.userHandle);
+  }
+  return result;
+}
+async function loadWebAuthnReadiness() {
+  const node=byId("webauthn-readiness"); if(!node)return;
   try {
-    const result = await api("/api/admin/step-up", { password: byId("stepup-password").value });
-    byId("stepup-password").value = "";
-    byId("stepup-state").textContent = "Re-authenticated. Sensitive actions are unlocked until " + new Date(result.step_up_expires_at * 1000).toLocaleTimeString() + ".";
-    if (currentUser && currentUser.role === "owner") loadStaffDirectory();
-    notice("Identity confirmed. The step-up window expires in five minutes.", "success");
-  } catch (error) {
-    byId("stepup-state").textContent = "Re-authentication was not completed.";
-    notice(error.message, "error");
-  } finally { busy(form, false); }
-});
+    const d=await api("/api/admin/webauthn/readiness");
+    node.textContent=d.ready?"All configured WebAuthn runtime prerequisites are available.": "Fail-closed prerequisites — RP ID: "+!!d.rpid_configured+", origins: "+!!d.origins_configured+", DB: "+!!d.database+", schema: "+!!d.schema+", signing key: "+!!d.signing_key+", credential encryption: "+!!d.credential_encryption+".";
+  } catch(e){node.textContent="WebAuthn readiness unavailable: "+e.message;}
+}
+async function enrollStaffAuthenticator() {
+  const button=byId("webauthn-enroll");button.disabled=true;
+  try {
+    if(!window.PublicKeyCredential||!navigator.credentials)throw new Error("This browser does not support WebAuthn.");
+    const begin=await api("/api/admin/webauthn/registration/begin",{});
+    const credential=await navigator.credentials.create({publicKey:decodePublicKeyOptions(begin.publicKey,true)});
+    if(!credential)throw new Error("Authenticator registration was cancelled.");
+    await api("/api/admin/webauthn/registration/finish",{challenge:begin.challenge,response:credentialJSON(credential)});
+    byId("stepup-state").textContent="Authenticator enrolled against your canonical Testagram staff identity.";
+    notice("Staff authenticator enrolled successfully.","success");await loadWebAuthnReadiness();
+  } catch(e){notice(e.message,"error");} finally{button.disabled=false;}
+}
+async function authenticateStaffAuthenticator() {
+  const form=byId("stepup-form");busy(form,true);
+  try {
+    if(!window.PublicKeyCredential||!navigator.credentials)throw new Error("This browser does not support WebAuthn.");
+    const begin=await api("/api/admin/webauthn/assertion/begin",{});
+    const credential=await navigator.credentials.get({publicKey:decodePublicKeyOptions(begin.publicKey,false)});
+    if(!credential)throw new Error("Authenticator verification was cancelled.");
+    const result=await api("/api/admin/webauthn/assertion/finish",{challenge:begin.challenge,response:credentialJSON(credential)});
+    byId("stepup-state").textContent="Backend-issued MFA elevation expires at "+new Date(result.expires_at*1000).toLocaleTimeString()+".";
+    notice("Phishing-resistant WebAuthn verification succeeded.","success");
+  } catch(e){notice(e.message,"error");} finally{busy(form,false);}
+}
+byId("webauthn-enroll").addEventListener("click",enrollStaffAuthenticator);
+byId("stepup-form").addEventListener("submit",async event=>{event.preventDefault();await authenticateStaffAuthenticator();});
+
 
 byId("permission-form").addEventListener("submit", async (event) => {
   event.preventDefault();
