@@ -76,6 +76,7 @@ type service struct {
 	identityEvidenceMedia     identityEvidenceMediaClient
 	// Set true only in code after real staff WebAuthn enrollment, verification, recovery and replay protection are implemented.
 	identityReviewWebAuthnReady bool
+	identityReviewWebAuthnPrerequisites func(context.Context) bool
 	freshMediaEnabled           bool
 	cdnMediaAssertions          *mediaassertion.Issuer
 	cdnMediaBaseURL             string
@@ -1290,15 +1291,9 @@ func main() {
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED")), "true") {
-		readinessCtx, readinessCancel := context.WithTimeout(context.Background(), 4*time.Second)
-		svc.identityReviewWebAuthnReady = identityReviewWebAuthnPrerequisitesReady(readinessCtx, db)
-		readinessCancel()
-		if svc.identityReviewWebAuthnReady {
-			log.Printf("Native identity review WebAuthn readiness verified against PostgreSQL; registration policy gate may be evaluated")
-		} else {
-			log.Printf("Native identity application intake remains disabled: PostgreSQL WebAuthn reviewer/approver readiness failed")
-		}
+	svc.identityReviewWebAuthnReady = strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED")), "true")
+	if svc.identityReviewWebAuthnReady {
+		log.Printf("Native identity review policy gate is enabled; each application request must pass live PostgreSQL and Admin Console WebAuthn readiness attestation")
 	} else {
 		log.Printf("Native identity application intake remains disabled by TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED policy gate")
 	}
