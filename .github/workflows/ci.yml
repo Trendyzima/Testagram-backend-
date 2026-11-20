@@ -34,7 +34,7 @@ jobs:
           go-version: "1.26.11"
           cache: true
       - name: Validate production deployment shell syntax
-        run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh
+        run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh tests/test-native-staff-webauthn-migration.sh
       - name: Verify external media backup inventories and checksums
         run: python3 tests/test_self_hosted_media_backup.py
       - name: Verify Federation and media database deployment contracts
@@ -117,6 +117,31 @@ jobs:
           cache: true
       - name: Run registration migration and invariant tests
         run: bash scripts/test-identity-registration-migration.sh
+
+
+  staff-webauthn-schema-integration:
+    name: Native staff WebAuthn PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Verify native staff WebAuthn schema and enrollment invariants
+        env:
+          DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: bash tests/test-native-staff-webauthn-migration.sh
 
   dependency-audit:
     name: Go vulnerability scan
