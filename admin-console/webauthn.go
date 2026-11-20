@@ -100,22 +100,22 @@ func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter,r *http.Request
 }
 
 func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Request){
- _,user,ok:=a.requireStaff(w,r);if !ok{return}
+ s,user,ok:=a.requireStaff(w,r);if !ok{return}
  if allowed,err:=a.consumeAdminRateLimit(r.Context(),user.ID,"webauthn-registration-begin",8,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn rate-limit service unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"WebAuthn registration rate limit exceeded"});return}
  wa,rpid,err:=a.staffWebAuthn();if err!=nil{writeJSON(w,503,map[string]string{"error":"WebAuthn RP configuration is incomplete"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil{writeJSON(w,503,map[string]string{"error":"Canonical staff identity or credential store unavailable"});return}
- if len(u.credentials)>0{writeJSON(w,409,map[string]string{"error":"An authenticator is already enrolled; authenticate before adding another."});return}
+ if len(u.credentials)>0&&!a.requireRecentStepUp(w,s){return}
  var enrollmentAuthorized bool
  if err:=a.database.QueryRow(r.Context(),"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_webauthn_enrollment_authorizations WHERE user_id=$1::uuid AND consumed_at IS NULL AND expires_at>now())",user.ID).Scan(&enrollmentAuthorized);err!=nil||!enrollmentAuthorized{writeJSON(w,403,map[string]string{"error":"Staff enrollment requires an unexpired independent authorization."});return}
  if strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")!=true{writeJSON(w,503,map[string]string{"error":"Staff WebAuthn enrollment is closed by production policy."});return}
- options,sd,err:=wa.BeginRegistration(u,webauthn.WithRegistrationOrigin(a.publicOrigin))
+ options,sd,err:=wa.BeginRegistration(u,webauthn.WithRegistrationOrigin(a.publicOrigin),webauthn.WithExclusions(webauthn.Credentials(u.credentials).CredentialDescriptors()))
  if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not create registration ceremony"});return}
  if err=a.saveStaffChallenge(r.Context(),user.ID,"registration",sd);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not persist registration challenge"});return}
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"publicKey":options.Response,"challenge":sd.Challenge})
 }
 func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Request){
- _,user,ok:=a.requireStaff(w,r);if !ok{return}
+ s,user,ok:=a.requireStaff(w,r);if !ok{return}
  var input struct{Challenge string `json:"challenge"`;Response json.RawMessage `json:"response"`}
  if !decodeBody(w,r,&input){return}
  if input.Challenge==""||len(input.Response)==0||len(input.Response)>1<<20{writeJSON(w,400,map[string]string{"error":"Invalid registration response"});return}
@@ -133,7 +133,8 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
  if e!=nil||json.Unmarshal(plain,&sd)!=nil{writeJSON(w,503,map[string]string{"error":"Stored registration state failed integrity verification"});return}
  var authorizationID int64
  if err=tx.QueryRow(r.Context(),"SELECT id FROM testagram_auth.staff_webauthn_enrollment_authorizations WHERE user_id=$1::uuid AND consumed_at IS NULL AND expires_at>now() ORDER BY created_at LIMIT 1 FOR UPDATE",user.ID).Scan(&authorizationID);err!=nil{writeJSON(w,403,map[string]string{"error":"Enrollment authorization is missing, expired or already consumed"});return}
- u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil||len(u.credentials)>0{writeJSON(w,403,map[string]string{"error":"Staff enrollment is not authorized"});return}
+ u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil{writeJSON(w,403,map[string]string{"error":"Staff enrollment is not authorized"});return}
+ if len(u.credentials)>0&&!a.requireRecentStepUp(w,s){return}
  req:=r.Clone(r.Context());req.Body=io.NopCloser(bytes.NewReader(input.Response));req.ContentLength=int64(len(input.Response))
  credential,err:=wa.FinishRegistration(u,sd,req)
  if err!=nil{_,_=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);_ = tx.Commit(r.Context());writeJSON(w,401,map[string]string{"error":"Cryptographic registration verification failed"});return}
