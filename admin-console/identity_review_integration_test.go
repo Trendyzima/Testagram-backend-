@@ -110,9 +110,9 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	_, err = conn.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_application_reviews
 		  (application_id,reviewer_user_id,review_stage,decision,reason,evidence_audit_reference)
-		VALUES ($1::uuid,$2::uuid,'evidence_review','approved','First evidence review','evidence-review-audit-01'),
-		       ($1::uuid,$3::uuid,'evidence_review','approved','Second evidence review','evidence-review-audit-02')
-	`, applicationID, evidenceReviewerOne, evidenceReviewerTwo)
+		VALUES ($1::uuid,$2::uuid,'evidence_review','approved','First evidence review',$4),
+		       ($1::uuid,$3::uuid,'evidence_review','approved','Second evidence review',$4)
+	`, applicationID, evidenceReviewerOne, evidenceReviewerTwo, payload.EvidenceAuditReference)
 	if err != nil {
 		t.Fatalf("insert independent evidence reviews: %v", err)
 	}
