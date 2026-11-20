@@ -70,6 +70,15 @@ BEGIN
 END;
 $rename_columns$;
 
+DO $rename_historical_reviewer_indexes$
+BEGIN
+  IF to_regclass('testagram_identity.verification_reviews_reviewer_idx') IS NOT NULL THEN
+    ALTER INDEX testagram_identity.verification_reviews_reviewer_idx
+      RENAME TO historical_source_verification_reviews_reviewer_idx;
+  END IF;
+END;
+$rename_historical_reviewer_indexes$;
+
 DO $rename_legacy_request_link$
 BEGIN
   IF EXISTS (
