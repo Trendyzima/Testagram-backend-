@@ -69,7 +69,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 
 		if _, err := conn.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
-			VALUES('ops.example.test',$1::uuid,decode(md5($1),'hex'))
+			VALUES('ops.example.test',$1::uuid,decode(md5($1::text),'hex'))
 		`, person.id); err != nil {
 			t.Fatalf("insert staff WebAuthn user: %v", err)
 		}
