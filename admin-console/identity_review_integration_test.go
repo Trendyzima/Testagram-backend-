@@ -125,6 +125,30 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert completed verified age-assurance session: %v", err)
 	}
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO testagram_identity.verification_reviews
+		  (session_id,reviewer_user_id,decision,reason_code,evidence_reference)
+		VALUES ($1::uuid,$2::uuid,'verified','manual_review_passed','opaque-evidence-reference-ci'),
+		       ($1::uuid,$3::uuid,'verified','manual_review_passed','opaque-evidence-reference-ci')
+	`, verificationSessionID, evidenceReviewerOne, evidenceReviewerTwo); err != nil {
+		t.Fatalf("insert independent age-assurance reviews: %v", err)
+	}
+	var matchingEvidenceSessions int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*)
+		FROM testagram_identity.verification_sessions v
+		JOIN testagram_identity.identity_applications a ON a.id=v.application_id
+		WHERE a.id=$1::uuid AND v.purpose='age_assurance' AND v.status='verified'
+		  AND v.verified_age_over_threshold IS TRUE
+		  AND v.assurance_level IN ('reviewed','substantial','high')
+		  AND v.evidence_reference=a.evidence_reference
+		  AND v.evidence_fingerprint_sha256=a.evidence_fingerprint_sha256
+	`, applicationID).Scan(&matchingEvidenceSessions); err != nil {
+		t.Fatalf("verify matching age-assurance evidence: %v", err)
+	}
+	if matchingEvidenceSessions != 1 {
+		t.Fatalf("matching verified age-assurance sessions=%d; want 1", matchingEvidenceSessions)
+	}
 
 	// The evidence-review pair and account-approval pair must be disjoint.
 	_, err = conn.Exec(ctx, `
