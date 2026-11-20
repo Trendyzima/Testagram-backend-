@@ -28,7 +28,6 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	}
 	defer db.Close()
 
-	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "true")
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "terms-ci-v1")
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "privacy-ci-v1")
 
