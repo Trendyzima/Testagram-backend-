@@ -31,6 +31,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "057_testagram_mail_outbox.sql",
             "058_testagram_mail_outbox_runtime_role.sql",
             "058a_native_identity_reviewer_uuid_bridge.sql",
+            "058b_native_identity_historical_account_archive.sql",
             "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
@@ -50,6 +51,16 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("identity_application_reviews_native_reviewer_uidx", migration)
         self.assertIn("reviewer_appwrite_user_id IS NOT NULL OR reviewer_user_id IS NOT NULL", migration)
         self.assertNotIn("UPDATE testagram_identity.identity_application_reviews", migration)
+
+    def test_historical_external_identity_data_is_renamed_and_runtime_locked(self):
+        migration = (ROOT / "migrations" / "20261120_native_identity_historical_account_archive.sql").read_text(encoding="utf-8")
+        self.assertIn("RENAME TO historical_external_identity_accounts", migration)
+        self.assertIn("RENAME TO historical_external_identity_link_audit", migration)
+        self.assertIn("RENAME TO historical_external_registration_consents", migration)
+        self.assertIn("RENAME COLUMN appwrite_user_id TO source_account_id", migration)
+        self.assertIn("REVOKE ALL ON TABLE", migration)
+        self.assertIn("historical_external_provider", migration)
+        self.assertNotIn("DROP TABLE", migration)
 
     def test_corrective_mail_role_migration_is_mounted_and_applied(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
