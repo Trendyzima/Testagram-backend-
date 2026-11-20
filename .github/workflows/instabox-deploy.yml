@@ -408,8 +408,24 @@ jobs:
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
           cmd="$(cat <<'REMOTE_HEALTH_CHECK'
           set -euo pipefail
+          # The production Caddyfile deliberately sets "admin off". Its admin
+          # API is therefore unavailable; validate the mounted file and restart
+          # the container so the new configuration is loaded deterministically.
           sudo docker exec testagram-self-hosted-caddy-1 caddy validate --config /etc/caddy/Caddyfile
-          sudo docker exec testagram-self-hosted-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+          sudo docker restart testagram-self-hosted-caddy-1 >/dev/null
+          caddy_running=false
+          for attempt in $(seq 1 24); do
+            if [[ "$(sudo docker inspect --format '{{.State.Running}}' testagram-self-hosted-caddy-1 2>/dev/null || true)" == true ]]; then
+              caddy_running=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$caddy_running" != true ]]; then
+            echo "Caddy did not restart after configuration validation." >&2
+            sudo docker logs --tail=100 testagram-self-hosted-caddy-1 2>&1 || true
+            exit 1
+          fi
           containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-control-plane-1 testagram-self-hosted-api-1 testagram-self-hosted-admin-console-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-self-hosted-caddy-1 testagram-self-hosted-prometheus-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
           if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
             containers+=(testagram-data-centre-media-1)
