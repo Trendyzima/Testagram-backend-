@@ -86,6 +86,19 @@ BEGIN
 END;
 $rename_constraints$;
 
+COMMENT ON COLUMN testagram_identity.identity_application_reviews.reviewer_user_id IS
+  'Canonical Testagram staff UUID for new identity-application reviews. Historical source attribution is retained separately.';
+COMMENT ON COLUMN testagram_identity.verification_reviews.reviewer_user_id IS
+  'Canonical Testagram staff UUID for new verification reviews. Historical source attribution is retained separately.';
+COMMENT ON COLUMN testagram_identity.verification_sessions.decided_by_user_id IS
+  'Canonical Testagram staff UUID for new verification decisions. Historical source attribution is retained separately.';
+COMMENT ON COLUMN testagram_identity.identity_approval_tokens.first_approver_user_id IS
+  'Canonical Testagram staff UUID for the first independent account approver.';
+COMMENT ON COLUMN testagram_identity.identity_approval_tokens.second_approver_user_id IS
+  'Canonical Testagram staff UUID for the second independent account approver.';
+COMMENT ON COLUMN testagram_identity.identity_approval_tokens.consumed_by_native_user_id IS
+  'Canonical Testagram UUID for the account that redeemed this single-use approval token.';
+
 COMMENT ON COLUMN testagram_identity.identity_application_reviews.historical_source_reviewer_id IS
   'Historical reviewer source identifier retained for audit only; native review authorization uses reviewer_user_id.';
 COMMENT ON COLUMN testagram_identity.verification_reviews.historical_source_reviewer_id IS
