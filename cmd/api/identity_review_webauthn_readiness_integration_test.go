@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -27,6 +30,22 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-webauthn-readiness-key-", 2))
 	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "admin.testagram.example")
 	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://admin.testagram.example")
+	readinessToken := strings.Repeat("testagram-webauthn-readiness-shared-", 2)
+	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", readinessToken)
+	adminReady := true
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+readinessToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"identity_review_ready": adminReady,
+			"credentialed_reviewers": 2,
+			"credentialed_approvers": 2,
+		})
+	}))
+	defer admin.Close()
+	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", admin.URL)
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	var users [4]string
@@ -81,6 +100,11 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if !identityReviewWebAuthnPrerequisitesReady(ctx, db) {
 		t.Fatal("readiness rejected two independent verified reviewers and two independent verified approvers")
 	}
+	adminReady = false
+	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("Backend accepted an Admin Console readiness attestation that was not ready")
+	}
+	adminReady = true
 	if _, err := db.Exec(ctx, `
 		UPDATE testagram_auth.staff_webauthn_credentials
 		SET revoked_at=now()
