@@ -313,6 +313,7 @@ for file in \
   043_native_identity_integrity.sql \
   044_identity_evidence_access_audit.sql \
   045_native_identity_status_access.sql \
+  047_appwrite_registration_consent.sql \
   049_native_auth_cutover_foundation.sql \
   050_native_approved_identity_provisioning.sql \
   051_native_auth_runtime_grants.sql \
@@ -343,6 +344,7 @@ apply_migration 042_native_identity_evidence.sql
 apply_migration 043_native_identity_integrity.sql
 apply_migration 044_identity_evidence_access_audit.sql
 apply_migration 045_native_identity_status_access.sql
+apply_migration 047_appwrite_registration_consent.sql
 apply_migration 049_native_auth_cutover_foundation.sql
 apply_migration 050_native_approved_identity_provisioning.sql
 apply_migration 051_native_auth_runtime_grants.sql
