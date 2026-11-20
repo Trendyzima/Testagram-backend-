@@ -49,3 +49,26 @@ The old `/v1/identity/register` and `/v1/me` legacy routes are not preserved as 
 - Confirm the deployed API serves the native route contract and does not route traffic to the retired server.
 
 A pull request is not accepted until required CI checks pass and the deployment smoke tests verify the live service.
+
+
+## Legacy route behavior parity audit
+
+The deleted server registered routes that must not be mistaken for live production routes. The production entrypoint is `cmd/api/main.go`; it does not construct the deleted `internal/freshapi.Server`. The route-by-route disposition is:
+
+| Retired route | Current native owner or disposition |
+|---|---|
+| `GET /healthz` | Production `GET /healthz` in `cmd/api/main.go` |
+| `GET /readyz`, `GET /readyz/platform` | Not registered by the production router under these exact paths; production health/readiness contract must be taken from current `cmd/api` and deployment probes, not the dead server |
+| `GET /v1/me`, `PUT /v1/me/profile` | Native `GET/PUT /api/me/profile`; clients must use the native route |
+| `POST /v1/identity/register` | Replaced by native `POST /api/identity/applications` and the review/provisioning pipeline; public account creation remains gated until its native approval prerequisites pass |
+| `GET/PUT /v1/me/legal` | No direct per-user legacy endpoint is registered in the production router. Native identity intake records terms, privacy and age-consent audit rows in `testagram_identity.legal_consent_audit`. Do not claim full endpoint parity; add a native profile/legal-consent contract only if a live client requires it |
+| `GET/PUT /v1/me/federation` | Native `GET/PUT /api/me/federation` |
+| `GET /v1/feed/home`, `GET /v1/feed/public` | Native `/api/feed/home` and `/api/feed/public`; the production router also retains the `/v1/feed/*` aliases |
+| `POST /v1/posts` | Native post creation is `POST /api/social/posts`; moderation is applied within the post-creation path |
+| `POST /v1/moderation/check` | No direct standalone native check route is registered. Moderation is invoked by native post creation; do not claim standalone endpoint parity |
+| `GET /internal/v1/federation/readyz` | Native internal federation readiness handler in `cmd/api/main.go` |
+| `GET /internal/v1/federation/outbox` | No equivalent Appwrite-document outbox endpoint is retained. Production federation publishing uses the PostgreSQL-backed `internal/federationoutbox` store and worker path |
+| `GET /internal/v1/federation/actors/{handle}`, `.../by-id/{userID}` | Native actor routes in `cmd/api/main.go` (native path parameter names use `handle` and `user_id`) |
+| `POST /v1/media/uploads/reservations`, `POST /v1/media/uploads/{reservationID}/complete`, `GET /v1/media/{objectID}/download`, `POST /v1/media/{objectID}/restore` | No direct legacy-path aliases are registered. Native media upload, signing, delivery, lifecycle and replication handlers live in `cmd/api/media.go`, `cmd/api/fresh_media_bridge.go` and the media/storage route registrations in `cmd/api/main.go`. Verify Flutter and service clients against the native contract before removing any client-side legacy URL. |
+
+This audit intentionally distinguishes implemented native functionality from exact HTTP route compatibility. The retired Appwrite server was not production-mounted, so restoring its old route names would create a second API surface rather than complete a live cutover. Any client still calling a retired path must be migrated and covered by an end-to-end contract test before deployment.
