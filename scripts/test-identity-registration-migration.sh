@@ -601,7 +601,8 @@ BEGIN
      OR to_regclass('testagram_auth.staff_permission_overrides') IS NOT NULL
      OR to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
      OR to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
-     OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL THEN
+     OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.identity_applications_sensitive_action_request_idx') IS NOT NULL THEN
     RAISE EXCEPTION 'provider-keyed identity or staff tables remain in the live schema';
   END IF;
 
@@ -616,7 +617,8 @@ BEGIN
      OR to_regclass('testagram_auth.historical_external_admin_security_audit') IS NULL
      OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL
      OR to_regclass('testagram_auth.native_sensitive_action_requests') IS NULL
-     OR to_regclass('testagram_auth.native_sensitive_action_approvals') IS NULL THEN
+     OR to_regclass('testagram_auth.native_sensitive_action_approvals') IS NULL
+     OR to_regclass('testagram_identity.historical_external_identity_applications_sensitive_request_idx') IS NULL THEN
     RAISE EXCEPTION 'historical evidence or native replacement tables are missing';
   END IF;
 
@@ -628,7 +630,8 @@ BEGIN
         OR (table_name='verification_sessions' AND column_name='decided_by_appwrite_user_id')
         OR (table_name='identity_approval_tokens' AND column_name IN (
           'first_approver_appwrite_user_id','second_approver_appwrite_user_id',
-          'consumed_by_appwrite_user_id')))
+          'consumed_by_appwrite_user_id'))
+        OR (table_name='identity_applications' AND column_name='sensitive_action_request_id'))
   ) THEN
     RAISE EXCEPTION 'provider-keyed reviewer/approver columns remain on live identity tables';
   END IF;
@@ -681,6 +684,22 @@ BEGIN
     WHERE status='source_provider_created'
   ) THEN
     RAISE EXCEPTION 'historical provider-created provisioning event was not preserved under a neutral status';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity' AND table_name='identity_applications'
+      AND column_name='historical_external_sensitive_action_request_id'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity' AND table_name='identity_applications'
+      AND column_name='native_sensitive_action_request_id'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.identity_applications'::regclass
+      AND conname='identity_applications_historical_external_sensitive_action_request_fk'
+  ) THEN
+    RAISE EXCEPTION 'historical and native identity approval request links are not separated';
   END IF;
 
   IF NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','SELECT')
