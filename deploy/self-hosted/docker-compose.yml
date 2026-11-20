@@ -67,6 +67,7 @@ services:
       - ../../migrations/20261120_native_identity_historical_account_archive.sql:/docker-entrypoint-initdb.d/058a_native_identity_historical_account_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_staff_archive.sql:/docker-entrypoint-initdb.d/058b_native_identity_historical_staff_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_admin_archive.sql:/docker-entrypoint-initdb.d/058c_native_identity_historical_admin_archive.sql:ro
+      - ../../migrations/20261120_native_identity_historical_attribution_archive.sql:/docker-entrypoint-initdb.d/058d_native_identity_historical_attribution_archive.sql:ro
       - ../../migrations/20261120_native_identity_approval_circuit.sql:/docker-entrypoint-initdb.d/059_native_identity_approval_circuit.sql:ro
       - ../../migrations/20261121_native_identity_intake_optional_fingerprint.sql:/docker-entrypoint-initdb.d/20261121_native_identity_intake_optional_fingerprint.sql:ro
       - ../../migrations/20261121_native_staff_webauthn.sql:/docker-entrypoint-initdb.d/060_native_staff_webauthn.sql:ro
