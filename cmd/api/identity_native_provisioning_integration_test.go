@@ -96,6 +96,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		"application_id": applicationID, "email": applicantEmail, "username": username,
 		"display_name": "Native Provisioning CI", "evidence_fingerprint_sha256": fingerprint,
 		"terms_version": "terms-v1", "privacy_version": "privacy-v1",
+		"evidence_audit_reference": "native-evidence-audit-01",
 		"evidence_audit_reference": "native-evidence-audit-reference",
 	})
 	if err != nil {
