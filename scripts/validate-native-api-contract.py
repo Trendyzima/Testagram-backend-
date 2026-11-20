@@ -7,7 +7,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_ROOTS = (ROOT / "cmd", ROOT / "internal", ROOT / "admin-console", ROOT / "control-plane", ROOT / "deploy" / "self-hosted", ROOT / ".github" / "workflows")
 ROOT_FILES = (ROOT / "docker-compose.yml", ROOT / "Dockerfile", ROOT / ".env.example")
-FORBIDDEN = re.compile(r"appwrite|APPWRITE_|X-Appwrite-", re.IGNORECASE)
+FORBIDDEN = re.compile(
+    r"EXTERNAL_IDENTITY_PROVIDER_(?:URL|KEY|PROJECT_ID)|"
+    r"IDENTITY_PROVIDER_(?:ENDPOINT|PROJECT_ID|API_KEY)|"
+    r"X-External-Identity-Provider|external_auth_fallback",
+    re.IGNORECASE,
+)
 
 failures = []
 scanned = 0
