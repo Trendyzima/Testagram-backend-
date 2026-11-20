@@ -80,7 +80,7 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         apex = caddy.split("testagram.site {", 1)[1].split("\n}", 1)[0]
         self.assertIn("handle /_testagram/edge-health {", apex)
         self.assertIn('respond `{"ok":true,"service":"testagram-apex-edge"}` 200', apex)
-        edge = caddy.split(":8443 {", 1)[1].split("\\n}", 1)[0]
+        edge = caddy.split(":8443 {", 1)[1].split("\n}", 1)[0]
         self.assertIn("handle /_testagram/edge-health {", edge)
         self.assertIn('respond `{"ok":true,"service":"testagram-apex-edge"}` 200', edge)
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
