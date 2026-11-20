@@ -31,6 +31,9 @@ SQL
 
 for migration in \
   migrations/20261019_testagram_independent_auth.sql \
+  migrations/20261106_appwrite_identity_bridge.sql \
+  migrations/20261106_appwrite_identity_link_audit.sql \
+  migrations/20261114_appwrite_registration_consent.sql \
   migrations/20261110_staff_roles.sql \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
@@ -623,3 +626,75 @@ $mail_role_repair$;
 SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
+
+# Apply the forward-only retirement migrations after all legacy compatibility
+# fixtures have been exercised. This proves the live schema no longer exposes
+# provider-keyed tables/columns while preserving restricted historical evidence.
+psql_ci < migrations/20261120_native_identity_historical_account_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
+
+psql_ci <<'SQL'
+DO $retirement_acceptance$
+BEGIN
+  IF to_regclass('testagram_identity.appwrite_accounts') IS NOT NULL
+     OR to_regclass('testagram_identity.link_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.appwrite_registration_consents') IS NOT NULL
+     OR to_regclass('testagram_identity.registration_provisioning') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_role_audit') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_permission_overrides') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
+     OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL THEN
+    RAISE EXCEPTION 'provider-keyed identity or staff tables remain in the live schema';
+  END IF;
+
+  IF to_regclass('testagram_identity.historical_external_identity_accounts') IS NULL
+     OR to_regclass('testagram_identity.historical_external_identity_link_audit') IS NULL
+     OR to_regclass('testagram_identity.historical_external_registration_consents') IS NULL
+     OR to_regclass('testagram_identity.historical_external_registration_provisioning') IS NULL
+     OR to_regclass('testagram_auth.historical_external_staff_roles') IS NULL
+     OR to_regclass('testagram_auth.historical_external_staff_role_audit') IS NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NULL
+     OR to_regclass('testagram_auth.historical_external_admin_security_audit') IS NULL
+     OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL
+     OR to_regclass('testagram_auth.native_sensitive_action_requests') IS NULL
+     OR to_regclass('testagram_auth.native_sensitive_action_approvals') IS NULL THEN
+    RAISE EXCEPTION 'historical evidence or native replacement tables are missing';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND ((table_name='identity_application_reviews' AND column_name='reviewer_appwrite_user_id')
+        OR (table_name='verification_reviews' AND column_name='reviewer_appwrite_user_id')
+        OR (table_name='verification_sessions' AND column_name='decided_by_appwrite_user_id')
+        OR (table_name='identity_approval_tokens' AND column_name IN (
+          'first_approver_appwrite_user_id','second_approver_appwrite_user_id',
+          'consumed_by_appwrite_user_id')))
+  ) THEN
+    RAISE EXCEPTION 'provider-keyed reviewer/approver columns remain on live identity tables';
+  END IF;
+
+  IF NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','UPDATE')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.native_sensitive_action_requests','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.native_sensitive_action_approvals','SELECT') THEN
+    RAISE EXCEPTION 'runtime role lost required native identity or approval access';
+  END IF;
+
+  IF has_table_privilege('testagram_app','testagram_identity.historical_external_identity_accounts','SELECT')
+     OR has_table_privilege('testagram_app','testagram_identity.historical_external_registration_provisioning','SELECT')
+     OR has_table_privilege('testagram_app','testagram_auth.historical_external_staff_roles','SELECT')
+     OR has_table_privilege('testagram_app','testagram_auth.historical_external_sensitive_action_requests','SELECT') THEN
+    RAISE EXCEPTION 'runtime role can still read archived historical identity or staff data';
+  END IF;
+END;
+$retirement_acceptance$;
+SQL
+
+echo "Legacy-provider retirement, native replacement, historical retention and runtime privilege checks passed."
