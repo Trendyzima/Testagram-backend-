@@ -89,6 +89,7 @@ function renderDashboard(user) {
   loadIdentityReviewQueue();
   loadAuditHistory();
   if (user.role === "owner") loadStaffDirectory();
+  loadWebAuthnReadiness();
 }
 async function loadSession() {
   try {
@@ -162,7 +163,6 @@ byId("sign-in-form").addEventListener("submit", async (event) => {
   try {
     await api("/api/auth/sign-in", { email: byId("login-email").value, password: byId("login-password").value });
     await loadSession();
-loadWebAuthnReadiness();
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
 });
