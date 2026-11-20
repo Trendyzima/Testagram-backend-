@@ -53,6 +53,8 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn("2026-11-20T00:00:00Z", probe)
         self.assertIn("feedMode", probe)
         self.assertIn("candidates", probe)
+        self.assertIn("X-Testagram-API-Version: 1", probe)
+        self.assertIn("X-Request-ID: testagram-deploy-acceptance", probe)
 
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
