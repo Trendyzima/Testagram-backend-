@@ -42,10 +42,10 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 		}
 	}
 	var credentialedStaff, reviewers, approvers int
-	err := db.QueryRow(ctx, `SELECT
-		count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
-		count(DISTINCT sp.user_id) FILTER (WHERE rg.role = 'identity_reviewer'),
-		count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator'))
+	err := db.QueryRow(ctx, `WITH eligible_staff AS (
+		SELECT sp.user_id,
+		       bool_or(rg.role='identity_reviewer') AS is_reviewer,
+		       bool_or(rg.role IN ('owner','administrator')) AS is_approver
 		FROM testagram_auth.staff_principals sp
 		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
 		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
@@ -53,7 +53,14 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 		  ON wc.user_id=sp.user_id AND wc.rpid=$1 AND wc.revoked_at IS NULL
 		   AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
 		WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
-		  AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL`, rpid).Scan(&credentialedStaff, &reviewers, &approvers)
+		  AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+		  AND rg.role IN ('owner','administrator','identity_reviewer')
+		GROUP BY sp.user_id
+	)
+	SELECT count(*) FILTER (WHERE is_reviewer OR is_approver),
+	       count(*) FILTER (WHERE is_reviewer AND NOT is_approver),
+	       count(*) FILTER (WHERE is_approver AND NOT is_reviewer)
+	FROM eligible_staff`, rpid).Scan(&credentialedStaff, &reviewers, &approvers)
 	if err != nil || credentialedStaff < 4 || reviewers < 2 || approvers < 2 {
 		return false
 	}
