@@ -46,7 +46,7 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 		})
 	}))
 	defer admin.Close()
-	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", admin.URL)
+	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", admin.URL+"/internal/webauthn/readiness")
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	var users [4]string
