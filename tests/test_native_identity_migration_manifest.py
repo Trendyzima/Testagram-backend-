@@ -109,6 +109,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("provider-keyed identity or staff tables remain in the live schema", script)
         self.assertIn("runtime role can still read archived historical identity or staff data", script)
         self.assertIn("runtime role lost required native identity or approval access", script)
+        self.assertIn("SET status='appwrite_created'", script)
+        self.assertIn("status='source_provider_created'", script)
         self.assertGreaterEqual(script.count("psql_ci < migrations/20261120_native_identity_historical_account_archive.sql"), 2)
         self.assertGreaterEqual(script.count("psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql"), 2)
         self.assertGreaterEqual(script.count("psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql"), 2)
