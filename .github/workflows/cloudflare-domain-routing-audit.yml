@@ -116,6 +116,18 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "#### Account $account_id" >> "$GITHUB_STEP_SUMMARY"
 
+            if cf_get "/accounts/$account_id/workers/domains?per_page=100" "$tmp/worker-domains.json"; then
+              {
+                echo ""
+                echo "#### Worker custom domains"
+                echo "| Hostname | Worker service | Environment | Zone |"
+                echo "|---|---|---|---|"
+                jq -r '.result[]? | "| " + (.hostname // "") + " | " + (.service // "") + " | " + (.environment // "") + " | " + (.zone_name // "") + " |"' "$tmp/worker-domains.json"
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- Worker custom-domain inventory unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
             if cf_get "/accounts/$account_id/workers/scripts" "$tmp/workers.json"; then
               echo "- Workers scripts: $(jq -r '.result | length' "$tmp/workers.json")" >> "$GITHUB_STEP_SUMMARY"
               jq -r '.result[]? | "- Worker: " + (.id // .name // "unnamed")' "$tmp/workers.json" >> "$GITHUB_STEP_SUMMARY"
