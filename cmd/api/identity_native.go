@@ -89,6 +89,10 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return
 	}
+	if !s.identityReviewWebAuthnReady {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed by production policy", requestID(r)))
+		return
+	}
 	readinessReady := false
 	if s.identityReviewWebAuthnPrerequisites != nil {
 		readinessReady = s.identityReviewWebAuthnPrerequisites(r.Context())
@@ -97,7 +101,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		readinessReady = identityReviewWebAuthnPrerequisitesReady(readinessCtx, s.db)
 		readinessCancel()
 	}
-	if !s.identityReviewWebAuthnReady || !readinessReady {
+	if !readinessReady {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed until PostgreSQL and live Admin Console WebAuthn readiness are verified", requestID(r)))
 		return
 	}
