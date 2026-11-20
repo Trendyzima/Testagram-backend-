@@ -17,7 +17,6 @@ import (
 
  "github.com/go-webauthn/webauthn/protocol"
  "github.com/go-webauthn/webauthn/webauthn"
- "github.com/jackc/pgx/v5"
 )
 
 type staffWebAuthnUser struct {
