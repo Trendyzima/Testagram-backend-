@@ -231,11 +231,11 @@ func TestPresignObjectPutSignsKnownOwnerScopedKey(t *testing.T) {
 	}
 }
 
-func TestUploadIntentAcceptsAppwriteOwnerIDCharacters(t *testing.T) {
+func TestUploadIntentAcceptsTestagramOwnerIDCharacters(t *testing.T) {
 	s := testSigner(t, "https://s3.example.invalid")
-	intent, err := s.CreateUploadIntent("appwrite.user_123", "image/webp", "private", 1024, time.Now())
-	if err != nil { t.Fatalf("Appwrite owner ID rejected: %v", err) }
-	if !strings.HasPrefix(intent.Key, "users/appwrite.user_123/") { t.Fatalf("owner binding incorrect: %s", intent.Key) }
+	intent, err := s.CreateUploadIntent("testagram.user_123", "image/webp", "private", 1024, time.Now())
+	if err != nil { t.Fatalf("Testagram owner ID rejected: %v", err) }
+	if !strings.HasPrefix(intent.Key, "users/testagram.user_123/") { t.Fatalf("owner binding incorrect: %s", intent.Key) }
 }
 
 func TestPresignObjectGetUsesVisibilityBucket(t *testing.T) {
