@@ -63,6 +63,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("RENAME TO historical_external_staff_roles", migration)
         self.assertIn("RENAME TO historical_external_staff_role_audit", migration)
         self.assertIn("RENAME COLUMN appwrite_user_id TO source_staff_id", migration)
+        self.assertIn("staff_roles_active_role_idx", migration)
+        self.assertIn("historical_external_staff_roles_active_role_idx", migration)
         self.assertIn("REVOKE ALL ON TABLE", migration)
         self.assertIn("never authorize native Testagram staff access", migration)
         self.assertNotIn("DROP TABLE", migration)
