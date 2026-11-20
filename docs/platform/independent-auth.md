@@ -8,7 +8,7 @@ This document describes the current Backend and Flutter source implementation. I
 - PostgreSQL `testagram_auth.identities` owns canonical user UUIDs, password hashes, email verification, disabled/reset-required state and token version.
 - PostgreSQL `testagram_auth.sessions` owns refresh-token hashes, session/family IDs, expiry, revocation and device fingerprints.
 - Every protected Backend request validates the native access JWT and rechecks the current database session/account state. A valid signature alone is insufficient.
-- Appwrite IDs remain historical reconciliation inputs only. The native API does not accept Appwrite user JWTs as a fallback.
+- External source IDs remain restricted historical reconciliation metadata only. The native API does not accept external identity-provider JWTs as a fallback.
 
 ## Credentials and session lifecycle
 
