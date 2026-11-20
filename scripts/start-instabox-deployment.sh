@@ -25,7 +25,6 @@ normalize_boolean() {
 normalize_boolean FRESH_MEDIA_ENABLED false
 normalize_boolean DATA_CENTRE_MEDIA_ENABLED false
 normalize_boolean MEDIA_REPLICATION_ENABLED false
-normalize_boolean TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false
 if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]; then
   echo "::error::FRESH_MEDIA_ENABLED and DATA_CENTRE_MEDIA_ENABLED must both be true or both be false; refusing an ambiguous media profile."
   exit 1
@@ -145,7 +144,6 @@ B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=
 B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
 TESTAGRAM_AUTH_JWT_SECRET=${TESTAGRAM_AUTH_JWT_SECRET:-}
-TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED
 AUTH_PUBLIC_BASE_URL=$AUTH_PUBLIC_BASE_URL
 CLOUDFLARE_EMAIL_ACCOUNT_ID=${CLOUDFLARE_EMAIL_ACCOUNT_ID:-}
 CLOUDFLARE_EMAIL_API_TOKEN=${CLOUDFLARE_EMAIL_API_TOKEN:-}
@@ -237,7 +235,6 @@ write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-pri
 write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
 write_env_value TESTAGRAM_TERMS_VERSION "$TESTAGRAM_TERMS_VERSION"
 write_env_value TESTAGRAM_PRIVACY_VERSION "$TESTAGRAM_PRIVACY_VERSION"
-write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
 if [[ -z "$(read_env_value MEDIA_REPLICATION_ENABLED)" ]]; then write_env_value MEDIA_REPLICATION_ENABLED false; fi
 # The Backend three-provider replicator has its own explicit activation
 # switch; credentials are copied only when that switch is true.
@@ -863,7 +860,6 @@ verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
-verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
@@ -996,7 +992,6 @@ payload="$(jq -nc \
   --arg identity_migration_confirmation "${CONFIRM_NATIVE_IDENTITY_MIGRATIONS:-}" \
   --arg terms_version "$TESTAGRAM_TERMS_VERSION" \
   --arg privacy_version "$TESTAGRAM_PRIVACY_VERSION" \
-  --arg identity_registration_enabled "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" \
   --arg moderation_token "${MEDIA_MODERATION_TOKEN:-}" \
   --arg mpesa_env "${MPESA_ENV:-}" --arg mpesa_shortcode "${MPESA_SHORTCODE:-}" \
   --arg mpesa_passkey "${MPESA_PASSKEY:-}" --arg mpesa_consumer_key "${MPESA_CONSUMER_KEY:-}" \
@@ -1009,7 +1004,6 @@ payload="$(jq -nc \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
   --arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}" \
-  '{cmd:$cmd,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,CLOUDFLARE_EMAIL_ACCOUNT_ID:$cloudflare_email_account_id,CLOUDFLARE_EMAIL_API_TOKEN:$cloudflare_email_api_token,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:$identity_registration_enabled,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \

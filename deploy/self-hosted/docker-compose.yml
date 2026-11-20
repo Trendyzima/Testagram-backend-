@@ -155,7 +155,6 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
       TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:-}
       # Canonical API gate; unset/empty remains closed even if a client build exposes the form.
-      TESTAGRAM_IDENTITY_REGISTRATION_ENABLED: ${TESTAGRAM_IDENTITY_REGISTRATION_ENABLED:-false}
       AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
       AUTH_FROM_EMAIL: ${AUTH_FROM_EMAIL:-no-reply@testagram.site}
       CLOUDFLARE_EMAIL_ACCOUNT_ID: ${CLOUDFLARE_EMAIL_ACCOUNT_ID:-}
