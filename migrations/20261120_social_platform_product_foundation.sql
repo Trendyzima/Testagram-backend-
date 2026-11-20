@@ -196,6 +196,8 @@ FROM PUBLIC;
 DO $grants$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+    GRANT USAGE ON SCHEMA testagram_local TO testagram_app;
+    GRANT USAGE ON SCHEMA testagram_auth TO testagram_app;
     GRANT SELECT,INSERT,UPDATE,DELETE ON
       testagram_local.social_lists,
       testagram_local.social_list_members,
@@ -211,6 +213,8 @@ BEGIN
     GRANT SELECT,INSERT,UPDATE ON testagram_local.social_moderation_appeals TO testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+    GRANT USAGE ON SCHEMA testagram_local TO service_role;
+    GRANT USAGE ON SCHEMA testagram_auth TO service_role;
     GRANT SELECT,INSERT,UPDATE,DELETE ON
       testagram_local.social_lists,
       testagram_local.social_list_members,
