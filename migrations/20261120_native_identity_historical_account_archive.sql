@@ -67,6 +67,17 @@ BEGIN
 END;
 $indexes$;
 
+-- Normalize the provenance label in the native reconciliation ledger while
+-- preserving the source account ID and all reconciliation evidence.
+ALTER TABLE testagram_auth.legacy_account_reconciliation
+  DROP CONSTRAINT IF EXISTS legacy_account_reconciliation_source_provider_check;
+UPDATE testagram_auth.legacy_account_reconciliation
+  SET source_provider='historical_external_provider'
+  WHERE source_provider='appwrite';
+ALTER TABLE testagram_auth.legacy_account_reconciliation
+  ADD CONSTRAINT legacy_account_reconciliation_source_provider_check
+  CHECK (source_provider='historical_external_provider');
+
 REVOKE ALL ON TABLE
   testagram_identity.historical_external_identity_accounts,
   testagram_identity.historical_external_identity_link_audit,
