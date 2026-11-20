@@ -45,6 +45,7 @@ jobs:
           python3 tests/test_native_identity_migration_manifest.py -v
           python3 tests/test_instabox_b2_credentials.py -v
           python3 tests/test_instabox_image_digest_verification.py -v
+          python3 tests/test_instabox_web_image_release_wiring.py -v
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests
@@ -323,6 +324,7 @@ jobs:
         id: remote
         env:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
+          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web:main
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
           # The legacy Backend multi-bucket replicator is not the canonical media path.
