@@ -222,7 +222,15 @@ func authClientIP(r *http.Request) string {
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	// Do not trust X-Forwarded-For unless deployment explicitly configures a trusted proxy.
+	// Caddy overwrites X-Real-IP with its observed client address. Trust that
+	// header only when the immediate peer is a private/loopback network hop;
+	// ignore caller-supplied forwarding headers on public connections.
+	remoteIP := net.ParseIP(host)
+	if remoteIP != nil && (remoteIP.IsPrivate() || remoteIP.IsLoopback()) {
+		if realIP := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); realIP != nil {
+			return realIP.String()
+		}
+	}
 	return host
 }
 
