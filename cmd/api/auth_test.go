@@ -31,6 +31,15 @@ func fmtHex(value []byte) string {
 	return string(out)
 }
 
+func TestAuthDummyPasswordHashUsesCurrentArgon2idProfile(t *testing.T) {
+	if !authPasswordVerify(authDummyPasswordHash, "testagram-dummy-login-credential-not-a-real-account") {
+		t.Fatal("dummy login hash does not verify with the configured Argon2id profile")
+	}
+	if authPasswordVerify(authDummyPasswordHash, "incorrect-dummy-password") {
+		t.Fatal("dummy login hash accepted an incorrect password")
+	}
+}
+
 func TestAuthPasswordHashAndVerify(t *testing.T) {
 	hash, err := authPasswordHash("correct horse battery staple")
 	if err != nil {
