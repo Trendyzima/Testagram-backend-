@@ -178,7 +178,12 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/sign-out", a.handleSignOut)
 	mux.HandleFunc("GET /api/overview", a.handleOverview)
 	mux.HandleFunc("POST /api/staff/invite", a.handleInvite)
-	mux.HandleFunc("POST /api/admin/step-up", a.handleStepUp)
+	mux.HandleFunc("POST /api/admin/step-up", a.handleStaffWebAuthnLoginBegin)
+	mux.HandleFunc("POST /api/admin/webauthn/registration/begin", a.handleStaffWebAuthnRegisterBegin)
+	mux.HandleFunc("POST /api/admin/webauthn/registration/finish", a.handleStaffWebAuthnRegisterFinish)
+	mux.HandleFunc("POST /api/admin/webauthn/assertion/begin", a.handleStaffWebAuthnLoginBegin)
+	mux.HandleFunc("POST /api/admin/webauthn/assertion/finish", a.handleStaffWebAuthnLoginFinish)
+	mux.HandleFunc("GET /api/admin/webauthn/readiness", a.handleWebAuthnReadiness)
 	mux.HandleFunc("GET /api/admin/staff", a.handleStaffList)
 	mux.HandleFunc("PUT /api/admin/staff/{id}/role", a.handleStaffRoleChange)
 	mux.HandleFunc("DELETE /api/admin/staff/{id}", a.handleStaffRevoke)
@@ -338,7 +343,7 @@ func (a *app) currentUser(w http.ResponseWriter, r *http.Request) (session, auth
 		SELECT rg.role
 		FROM testagram_auth.staff_principals sp
 		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
 		  AND rg.role IN ('owner','administrator','identity_reviewer','engineer','operations','support','moderator')
 		ORDER BY CASE rg.role WHEN 'owner' THEN 0 WHEN 'administrator' THEN 1 ELSE 2 END
 		LIMIT 1
