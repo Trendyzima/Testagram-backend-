@@ -17,6 +17,21 @@ Configure these values for the Admin Console process:
 Do not use an IP address as the RP ID. Do not add wildcard origins. Local HTTP
 origins are accepted only for localhost development.
 
+## Private Backend-to-Console readiness handshake
+
+The Backend and Admin Console must receive the same randomly generated
+`TESTAGRAM_WEBAUTHN_READINESS_TOKEN` (at least 32 bytes). The Backend calls
+`TESTAGRAM_ADMIN_CONSOLE_READINESS_URL`, which defaults to
+`http://admin-console:8090/internal/webauthn/readiness` in the self-hosted
+Compose network. The API and Console share the private `platform` network;
+the readiness endpoint is not a public browser endpoint.
+
+Do not point this URL at a public hostname or an untrusted service. The Backend
+accepts only the exact private service hostname/path, sends the shared bearer
+without following redirects, and fails closed if the attestation is missing,
+invalid or not ready. Keep `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED=false`
+until the API-side PostgreSQL quorum and the live Console attestation both pass.
+
 ## Migration
 
 Apply `migrations/20261121_native_staff_webauthn.sql` using the existing
