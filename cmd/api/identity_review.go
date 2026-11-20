@@ -76,8 +76,18 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 		readinessURL = "http://admin-console:8090/internal/webauthn/readiness"
 	}
 	parsedURL, parseErr := url.Parse(readinessURL)
-	if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") ||
-		parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+	if parseErr != nil || parsedURL.Scheme != "http" ||
+		parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" ||
+		parsedURL.EscapedPath() != "/internal/webauthn/readiness" {
+		return false
+	}
+	// The readiness bearer is a shared service secret. Never forward it to an
+	// arbitrary URL from environment configuration: production may address
+	// only the private Docker service, while loopback is allowed for tests.
+	hostname := strings.ToLower(strings.TrimSuffix(parsedURL.Hostname(), "."))
+	privateAdminService := hostname == "admin-console" && parsedURL.Port() == "8090"
+	loopbackTest := (hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1") && parsedURL.Port() != ""
+	if !privateAdminService && !loopbackTest {
 		return false
 	}
 	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
