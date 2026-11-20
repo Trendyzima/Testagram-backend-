@@ -81,7 +81,7 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn("@edge_health path /_testagram/edge-health", apex)
         self.assertIn('respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200', apex)
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
-        self.assertIn('Host: testagram.site', workflow)
+        self.assertNotIn('Host: testagram.site', workflow)
 
     def test_go_cdn_origin_port_is_bound_for_instabox_publication(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
