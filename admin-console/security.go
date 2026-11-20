@@ -98,7 +98,7 @@ func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
 	if err != nil || !hmac.Equal(sig,mac.Sum(nil)) { writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Invalid MFA elevation signature"}); return false }
 	payload,err:=base64.RawURLEncoding.DecodeString(parts[1]); if err!=nil { writeJSON(w,401,map[string]string{"error":"Invalid MFA elevation"}); return false }
 	var claims struct { Subject string `json:"sub"`; Issuer string `json:"iss"`; Audience string `json:"aud"`; Expires int64 `json:"exp"`; MFAAt int64 `json:"mfa_at"` }
-	if json.Unmarshal(payload,&claims)!=nil || claims.Issuer!="testagram-admin-console" || claims.Audience!="testagram-admin-sensitive" || claims.Subject=="" || claims.Expires<=time.Now().Unix() || claims.MFAAt<=0 || claims.Expires-claims.MFAAt>300 {
+	if json.Unmarshal(payload,&claims)!=nil || claims.Issuer!="testagram-admin-console" || claims.Audience!="testagram-admin-sensitive" || claims.Subject=="" || claims.Expires<=time.Now().Unix() || claims.MFAAt<=0 || claims.MFAAt>time.Now().Unix() || time.Now().Unix()-claims.MFAAt>300 || claims.Expires-claims.MFAAt>300 {
 		writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"Expired or invalid MFA elevation"}); return false
 	}
 	// The elevation is additionally bound to the same native account in the encrypted HttpOnly Console session.
