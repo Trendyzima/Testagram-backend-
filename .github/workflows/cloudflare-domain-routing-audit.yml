@@ -88,6 +88,28 @@ jobs:
                   echo "|---|---|---|"
                   jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + ((.proxied // false)|tostring) + " |"' "$tmp/dns.json"
                 } >> "$GITHUB_STEP_SUMMARY"
+                if [[ "$zone_name" == "testagram.site" ]]; then
+                  origin_record="$(jq -r '.result[]? | select(.name == "api.testagram.site" and (.type == "A" or .type == "AAAA")) | [.type,.content] | @tsv' "$tmp/dns.json" | head -n 1)"
+                  if [[ -n "$origin_record" ]]; then
+                    IFS=\\t' read -r origin_type origin_address <<< "$origin_record"
+                    if [[ "$origin_type" == "AAAA" ]]; then
+                      resolve_entry="api.testagram.site:443:[$origin_address]"
+                    else
+                      resolve_entry="api.testagram.site:443:$origin_address"
+                    fi
+                    origin_status="$(curl --silent --show-error --output "$tmp/api-origin-health.json" --write-out '%{http_code}' \
+                      --connect-timeout 8 --max-time 20 --resolve "$resolve_entry" \
+                      "https://api.testagram.site/healthz" 2>"$tmp/api-origin-health.err" || true)"
+                    if [[ "$origin_status" == "200" ]]; then
+                      echo "- Direct native API origin health (Cloudflare Worker bypassed): HTTP 200" >> "$GITHUB_STEP_SUMMARY"
+                    else
+                      echo "- Direct native API origin health (Cloudflare Worker bypassed): HTTP $origin_status; direct-origin reachability is not yet proven" >> "$GITHUB_STEP_SUMMARY"
+                      echo "::warning::Direct native API origin health returned HTTP $origin_status; check Caddy/API origin reachability before Worker cutover."
+                    fi
+                  else
+                    echo "- Direct native API origin health: no A/AAAA origin record found" >> "$GITHUB_STEP_SUMMARY"
+                  fi
+                fi
               fi
               if cf_get "/zones/$zone_id/workers/routes" "$tmp/routes.json"; then
                 {
