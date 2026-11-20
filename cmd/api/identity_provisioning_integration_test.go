@@ -39,10 +39,10 @@ func nativeStaffReviewerFixture(t *testing.T, ctx context.Context, db *pgxpool.P
 	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by) VALUES($1::uuid,TRUE,now(),now(),$2::uuid)", reviewerID, approverID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES($1::uuid,'administrator',$2::uuid)", reviewerID, approverID); err != nil {
+	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES($1::uuid,'identity_reviewer',$2::uuid)", reviewerID, approverID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_approval_events(subject_user_id,action,role,requested_by,approved_by,requested_at,approved_at,applied_at) VALUES($1::uuid,'grant_role','administrator',$2::uuid,$3::uuid,now()-interval '1 minute',now(),now())", reviewerID, requesterID, approverID); err != nil {
+	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_approval_events(subject_user_id,action,role,requested_by,approved_by,requested_at,approved_at,applied_at) VALUES($1::uuid,'grant_role','identity_reviewer',$2::uuid,$3::uuid,now()-interval '1 minute',now(),now())", reviewerID, requesterID, approverID); err != nil {
 		t.Fatal(err)
 	}
 	session, err := issueNativeSession(ctx, db, reviewerID, reviewerEmail, 1, "ci-native-reviewer", "127.0.0.1")
@@ -85,24 +85,24 @@ func TestIdentityReviewerHonorsNativeRoleRevocationAndMFA(t *testing.T) {
 		return status, err
 	}
 	if status, err := authorize(); status != http.StatusOK || err != nil {
-		t.Fatalf("active native administrator reviewer status=%d err=%v; want 200", status, err)
+		t.Fatalf("active native identity reviewer status=%d err=%v; want 200", status, err)
 	}
-	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET revoked_at=now(),revoked_by=granted_by WHERE user_id=$1::uuid AND role='administrator' AND revoked_at IS NULL", reviewerID); err != nil {
+	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET revoked_at=now(),revoked_by=granted_by WHERE user_id=$1::uuid AND role='identity_reviewer' AND revoked_at IS NULL", reviewerID); err != nil {
 		t.Fatal(err)
 	}
 	if status, err := authorize(); status != http.StatusForbidden || err == nil {
 		t.Fatalf("revoked native role status=%d err=%v; want 403", status, err)
 	}
-	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET revoked_at=NULL,revoked_by=NULL WHERE user_id=$1::uuid AND role='administrator'", reviewerID); err != nil {
+	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET revoked_at=NULL,revoked_by=NULL WHERE user_id=$1::uuid AND role='identity_reviewer'", reviewerID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET role='support' WHERE user_id=$1::uuid AND role='administrator' AND revoked_at IS NULL", reviewerID); err != nil {
+	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET role='support' WHERE user_id=$1::uuid AND role='identity_reviewer' AND revoked_at IS NULL", reviewerID); err != nil {
 		t.Fatal(err)
 	}
 	if status, err := authorize(); status != http.StatusForbidden || err == nil {
 		t.Fatalf("unsupported native staff role status=%d err=%v; want 403", status, err)
 	}
-	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET role='administrator' WHERE user_id=$1::uuid AND role='support' AND revoked_at IS NULL", reviewerID); err != nil {
+	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_role_grants SET role='identity_reviewer' WHERE user_id=$1::uuid AND role='support' AND revoked_at IS NULL", reviewerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, "UPDATE testagram_auth.staff_principals SET enabled=FALSE WHERE user_id=$1::uuid", reviewerID); err != nil {
