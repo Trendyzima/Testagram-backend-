@@ -79,18 +79,23 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	var email, username, displayName, applicationStatus, approvalRequestID string
-	var storedApplicationToken []byte
+	var email, username, displayName, applicationStatus, approvalRequestID, termsVersion, privacyVersion string
+	var evidenceFingerprint, storedApplicationToken []byte
 	err = tx.QueryRow(ctx, `
 		SELECT email,username,display_name,status,
 		       COALESCE(native_sensitive_action_request_id::text,''),
-		       status_access_token_sha256
+		       evidence_fingerprint_sha256,terms_version,privacy_version,status_access_token_sha256
 		FROM testagram_identity.identity_applications
 		WHERE id=$1::uuid AND status_access_token_expires_at>now()
 		FOR UPDATE
-	`, applicationID).Scan(&email, &username, &displayName, &applicationStatus, &approvalRequestID, &storedApplicationToken)
+	`, applicationID).Scan(&email, &username, &displayName, &applicationStatus, &approvalRequestID,
+		&evidenceFingerprint,&termsVersion,&privacyVersion,&storedApplicationToken)
 	if err != nil || subtle.ConstantTimeCompare(storedApplicationToken, authTokenHash(applicationToken)) != 1 {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
+		return
+	}
+	if len(evidenceFingerprint) != 32 || termsVersion == "" || privacyVersion == "" {
+		writeJSON(w, http.StatusConflict, errorBody("APPLICATION_EVIDENCE_INCOMPLETE", "Identity evidence and consent records are incomplete", requestID(r)))
 		return
 	}
 	if applicationStatus != "approved" && applicationStatus != "verification_pending" && applicationStatus != "verified" {
