@@ -1,23 +1,22 @@
 package main
 
 import (
- "bytes"
- "context"
- "crypto/rand"
- "crypto/sha256"
- "encoding/base64"
- "encoding/json"
- "io"
- "errors"
- "net/http"
- "os"
- "strings"
- "time"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 
- "github.com/go-webauthn/webauthn/protocol"
- "github.com/go-webauthn/webauthn/webauthn"
-
- nativeauth "github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
+	nativeauth "github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 type nativeElevationClaims struct {
