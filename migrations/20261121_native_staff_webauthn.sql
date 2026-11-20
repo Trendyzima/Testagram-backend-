@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS testagram_auth.staff_webauthn_enrollment_authorizatio
 CREATE INDEX IF NOT EXISTS staff_webauthn_enrollment_pending_idx
   ON testagram_auth.staff_webauthn_enrollment_authorizations(user_id,expires_at)
   WHERE consumed_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS staff_webauthn_enrollment_one_pending_idx
+  ON testagram_auth.staff_webauthn_enrollment_authorizations(user_id)
+  WHERE consumed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS testagram_auth.staff_webauthn_challenges (
   challenge_hash bytea PRIMARY KEY CHECK (octet_length(challenge_hash)=32),
