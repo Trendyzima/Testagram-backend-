@@ -45,6 +45,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('normalize_flag "$DATA_CENTRE_MEDIA_ENABLED"', step)
         self.assertIn('normalize_flag "$FRESH_MEDIA_ENABLED"', step)
 
+    def test_workflow_local_fresh_media_gate_name_does_not_shadow_step_environment(self):
+        self.assertEqual(self.workflow.count('fresh_gate_enabled="$(normalize_flag'), 2)
+        self.assertNotIn('fresh_media_enabled="$(normalize_flag', self.workflow)
+        self.assertIn('if [[ "$dc_media_enabled" != true || "$fresh_gate_enabled" != true ]]', self.workflow)
+        self.assertIn('if [[ "$dc_media_enabled" != "true" || "$fresh_gate_enabled" != "true" ]]', self.workflow)
+        self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
+
     def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
         self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
         self.assertIn("Verified R2 identity-evidence bucket has r2.dev disabled", self.workflow)
