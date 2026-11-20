@@ -89,6 +89,7 @@ func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter,r *http.Request
  input.Reason=strings.TrimSpace(input.Reason)
  if len(input.Reason)<8||len(input.Reason)>500{writeJSON(w,400,map[string]string{"error":"Provide an enrollment authorization reason of 8 to 500 characters"});return}
  if allowed,err:=a.consumeAdminRateLimit(r.Context(),actor.ID,"webauthn-enrollment",5,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"Enrollment authorization rate-limit unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"Enrollment authorization rate limit exceeded"});return}
+ if _,err:=a.database.Exec(r.Context(),"UPDATE testagram_auth.staff_webauthn_enrollment_authorizations SET consumed_at=now() WHERE user_id=$1::uuid AND consumed_at IS NULL AND expires_at<=now()",target);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not expire stale enrollment authorizations"});return}
  tag,err:=a.database.Exec(r.Context(),`INSERT INTO testagram_auth.staff_webauthn_enrollment_authorizations(user_id,authorized_by,authorization_method,reason,expires_at)
  SELECT sp.user_id,$2::uuid,'dual_control',$3,now()+interval '30 minutes'
  FROM testagram_auth.staff_principals sp
