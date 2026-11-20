@@ -94,7 +94,7 @@ func TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer(t *testing.T
 		t.Fatalf("native staff login status=%d body=%s", login.Code, login.Body.String())
 	}
 	var envelope struct {
-		OK bool `json:"ok"`
+		OK   bool                `json:"ok"`
 		Data nativeSessionTokens `json:"data"`
 	}
 	if err := json.Unmarshal(login.Body.Bytes(), &envelope); err != nil || !envelope.OK || envelope.Data.AccessToken == "" {
