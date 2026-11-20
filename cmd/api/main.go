@@ -74,7 +74,7 @@ type service struct {
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
 	identityEvidenceMedia     identityEvidenceMediaClient
-	// Set true only in code after real staff WebAuthn enrollment, verification, recovery and replay protection are implemented.
+	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
 	identityReviewWebAuthnReady bool
 	identityReviewWebAuthnPrerequisites func(context.Context) bool
 	freshMediaEnabled           bool
