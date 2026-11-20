@@ -8,7 +8,9 @@ RUNTIME_ROOTS = (
     "cmd",
     "internal",
     "admin-console",
-    "deploy/self-hosted",
+    "deploy",
+    "vps",
+    "docs",
     ".github/workflows",
     "scripts",
 )
