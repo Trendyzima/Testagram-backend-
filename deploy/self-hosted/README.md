@@ -28,7 +28,7 @@ service-owned PostgreSQL outboxes and idempotent workers.
 1. Copy `.env.example` to `.env`.
 2. Set strong unique values for PostgreSQL, MinIO, control-plane, media and admin session secrets.
 3. Configure the Testagram-native identity and staff security settings. Set a unique `TESTAGRAM_AUTH_JWT_SECRET` (at least 32 characters), HTTPS `AUTH_PUBLIC_BASE_URL`, and working SMTP settings (`SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `AUTH_FROM_EMAIL`). Configure secrets through protected VPS/GitHub secret stores; never commit them.
-4. Use Testagram-native authentication only. There is no provider selector, shadow mode, Appwrite fallback or transitional authentication path. Native activation requires the forward-only migrations, native account/session schema, a unique `TESTAGRAM_AUTH_JWT_SECRET`, HTTPS `AUTH_PUBLIC_BASE_URL` and working SMTP settings.
+4. Use Testagram-native authentication only. There is no external identity-provider selector, shadow mode or fallback authentication path. Native activation requires the forward-only migrations, native account/session schema, a unique `TESTAGRAM_AUTH_JWT_SECRET`, HTTPS `AUTH_PUBLIC_BASE_URL` and working SMTP settings.
 5. Do not configure Onspace AI or introduce an unapproved external moderation vendor. Keep publishing fail-closed unless the approved Testagram moderation implementation is deployed and its documented configuration, health checks and acceptance tests pass. Configure only secrets explicitly defined by the reviewed Testagram moderation implementation through protected deployment settings; never commit credentials.
 6. Keep `TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=false` until private evidence storage, two-person review, native staff WebAuthn, VPS/R2/B2 replication and restore acceptance pass. Native registration is the sole application/review/provisioning workflow.
 7. Confirm the native identity intake, review, staff WebAuthn, session/provisioning and runtime-grant migrations are included. For an existing PostgreSQL volume, use the explicit migration workflow; it creates and restore-tests a backup before applying the additive chain. Any historical account reconciliation is a separate, reviewed, one-time data operation; it must not create a runtime dependency on an external identity provider.
@@ -148,7 +148,7 @@ For the exact B2/R2 secret names, bucket separation requirements, deployment-pat
 - Back up PostgreSQL with a consistent snapshot and test restores regularly.
 - Back up MinIO/object storage and the Data Centre video media root; preserve checksums and namespace metadata.
 - Back up Caddy data/config, Grafana/Prometheus data where required, and all deployment secrets.
-- Preserve `ADMIN_SESSION_KEY`, `TESTAGRAM_AUTH_JWT_SECRET`, SMTP credentials and native staff WebAuthn recovery/operational secrets securely. No Appwrite endpoint, project ID, API key or JWT is required.
+- Preserve `ADMIN_SESSION_KEY`, `TESTAGRAM_AUTH_JWT_SECRET`, SMTP credentials and native staff WebAuthn recovery/operational secrets securely. No external identity-provider endpoint, project identifier, API key or provider-issued JWT is required.
 - No Redis/Valkey queue state exists to back up; transactional outbox rows are in PostgreSQL.
 
 ## Network and operations
