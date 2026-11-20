@@ -47,6 +47,8 @@ WITH checks(check_name, ok) AS (VALUES
   ('staff_role_grants table', to_regclass('testagram_auth.staff_role_grants') IS NOT NULL),
   ('native_staff_permission_overrides table', to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL),
   ('native_sensitive_action_requests table', to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL),
+  ('native sensitive action request source column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
+  ('identity application review stage column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
   ('native_sensitive_action_approvals table', to_regclass('testagram_auth.native_sensitive_action_approvals') IS NOT NULL),
   ('native_admin_security_audit table', to_regclass('testagram_auth.native_admin_security_audit') IS NOT NULL),
   ('native_registration_provisioning table', to_regclass('testagram_identity.native_registration_provisioning') IS NOT NULL),
@@ -120,6 +122,16 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.staff_role_grants'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_staff_permission_overrides'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\''
+            AND column_name='\''requested_by_service'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\''
+            AND column_name='\''review_stage'\''
+        )
         AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
@@ -313,6 +325,7 @@ for file in \
   056_native_verification_decider.sql \
   057_testagram_mail_outbox.sql \
   058_testagram_mail_outbox_runtime_role.sql \
+  059_native_identity_approval_circuit.sql \
   20261121_native_identity_intake_optional_fingerprint.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
@@ -343,6 +356,7 @@ apply_migration 055_native_identity_approval_ledger.sql
 apply_migration 056_native_verification_decider.sql
 apply_migration 057_testagram_mail_outbox.sql
 apply_migration 058_testagram_mail_outbox_runtime_role.sql
+apply_migration 059_native_identity_approval_circuit.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
@@ -357,5 +371,5 @@ if [[ "$(schema_ready)" != "t" ]]; then
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
