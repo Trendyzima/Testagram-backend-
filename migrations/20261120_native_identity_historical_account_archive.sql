@@ -91,10 +91,10 @@ BEGIN
     SELECT conrelid::regclass AS relation_name, conname
     FROM pg_constraint
     WHERE conrelid IN (
-      'testagram_identity.historical_external_identity_accounts'::regclass,
-      'testagram_identity.historical_external_identity_link_audit'::regclass,
-      'testagram_identity.historical_external_registration_consents'::regclass,
-      'testagram_identity.historical_external_registration_provisioning'::regclass
+      to_regclass('testagram_identity.historical_external_identity_accounts'),
+      to_regclass('testagram_identity.historical_external_identity_link_audit'),
+      to_regclass('testagram_identity.historical_external_registration_consents'),
+      to_regclass('testagram_identity.historical_external_registration_provisioning')
     )
       AND conname ILIKE '%appwrite%'
   LOOP
@@ -108,10 +108,10 @@ BEGIN
     FROM pg_index i
     JOIN pg_class c ON c.oid=i.indexrelid
     WHERE i.indrelid IN (
-      'testagram_identity.historical_external_identity_accounts'::regclass,
-      'testagram_identity.historical_external_identity_link_audit'::regclass,
-      'testagram_identity.historical_external_registration_consents'::regclass,
-      'testagram_identity.historical_external_registration_provisioning'::regclass
+      to_regclass('testagram_identity.historical_external_identity_accounts'),
+      to_regclass('testagram_identity.historical_external_identity_link_audit'),
+      to_regclass('testagram_identity.historical_external_registration_consents'),
+      to_regclass('testagram_identity.historical_external_registration_provisioning')
     )
       AND c.relname ILIKE '%appwrite%'
       AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=i.indexrelid)
@@ -130,7 +130,7 @@ DECLARE
 BEGIN
   FOR constraint_name IN
     SELECT conname FROM pg_constraint
-    WHERE conrelid='testagram_identity.historical_external_registration_provisioning'::regclass
+    WHERE conrelid=to_regclass('testagram_identity.historical_external_registration_provisioning')
       AND contype='c'
       AND pg_get_constraintdef(oid) LIKE '%appwrite_created%'
   LOOP
@@ -143,7 +143,7 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
-    WHERE conrelid='testagram_identity.historical_external_registration_provisioning'::regclass
+    WHERE conrelid=to_regclass('testagram_identity.historical_external_registration_provisioning')
       AND conname='historical_external_registration_provisioning_status_check'
   ) THEN
     ALTER TABLE testagram_identity.historical_external_registration_provisioning
@@ -164,41 +164,49 @@ ALTER TABLE testagram_auth.legacy_account_reconciliation
   ADD CONSTRAINT legacy_account_reconciliation_source_provider_check
   CHECK (source_provider='historical_external_provider');
 
-REVOKE ALL ON TABLE
-  testagram_identity.historical_external_identity_accounts,
-  testagram_identity.historical_external_identity_link_audit,
-  testagram_identity.historical_external_registration_consents,
-  testagram_identity.historical_external_registration_provisioning
-FROM PUBLIC;
-
-DO $revoke_runtime$
+DO $lock_historical_identity_tables$
+DECLARE
+  relation_name TEXT;
+  relation_names TEXT[] := ARRAY[
+    'testagram_identity.historical_external_identity_accounts',
+    'testagram_identity.historical_external_identity_link_audit',
+    'testagram_identity.historical_external_registration_consents',
+    'testagram_identity.historical_external_registration_provisioning'
+  ];
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
-    REVOKE ALL ON TABLE
-      testagram_identity.historical_external_identity_accounts,
-      testagram_identity.historical_external_identity_link_audit,
-      testagram_identity.historical_external_registration_consents,
-      testagram_identity.historical_external_registration_provisioning
-    FROM testagram_app;
+  FOREACH relation_name IN ARRAY relation_names LOOP
+    IF to_regclass(relation_name) IS NOT NULL THEN
+      EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC',relation_name);
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+        EXECUTE format('REVOKE ALL ON TABLE %s FROM testagram_app',relation_name);
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+        EXECUTE format('REVOKE ALL ON TABLE %s FROM service_role',relation_name);
+      END IF;
+    END IF;
+  END LOOP;
+END;
+$lock_historical_identity_tables$;
+
+DO $comment_historical_identity_tables$
+BEGIN
+  IF to_regclass('testagram_identity.historical_external_identity_accounts') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_identity.historical_external_identity_accounts IS
+      'Read-restricted historical account-link evidence. Not used for runtime authentication or account matching.';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
-    REVOKE ALL ON TABLE
-      testagram_identity.historical_external_identity_accounts,
-      testagram_identity.historical_external_identity_link_audit,
-      testagram_identity.historical_external_registration_consents,
-      testagram_identity.historical_external_registration_provisioning
-    FROM service_role;
+  IF to_regclass('testagram_identity.historical_external_identity_link_audit') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_identity.historical_external_identity_link_audit IS
+      'Read-restricted historical identity-link audit evidence. Not used for runtime authentication.';
+  END IF;
+  IF to_regclass('testagram_identity.historical_external_registration_consents') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_identity.historical_external_registration_consents IS
+      'Read-restricted historical registration-consent evidence. Not used as native registration consent or account proof.';
+  END IF;
+  IF to_regclass('testagram_identity.historical_external_registration_provisioning') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_identity.historical_external_registration_provisioning IS
+      'Read-restricted historical external-provider provisioning state. Native account provisioning uses native_registration_provisioning.';
   END IF;
 END;
-$revoke_runtime$;
-
-COMMENT ON TABLE testagram_identity.historical_external_identity_accounts IS
-  'Read-restricted historical account-link evidence. Not used for runtime authentication or account matching.';
-COMMENT ON TABLE testagram_identity.historical_external_identity_link_audit IS
-  'Read-restricted historical identity-link audit evidence. Not used for runtime authentication.';
-COMMENT ON TABLE testagram_identity.historical_external_registration_consents IS
-  'Read-restricted historical registration-consent evidence. Not used as native registration consent or account proof.';
-COMMENT ON TABLE testagram_identity.historical_external_registration_provisioning IS
-  'Read-restricted historical external-provider provisioning state. Native account provisioning uses native_registration_provisioning.';
+$comment_historical_identity_tables$;
 
 COMMIT;
