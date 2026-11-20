@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
@@ -79,18 +80,23 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	var email, username, displayName, applicationStatus, approvalRequestID string
-	var storedApplicationToken []byte
+	var email, username, displayName, applicationStatus, approvalRequestID, termsVersion, privacyVersion string
+	var evidenceFingerprint, storedApplicationToken []byte
 	err = tx.QueryRow(ctx, `
 		SELECT email,username,display_name,status,
-		       COALESCE(sensitive_action_request_id::text,''),
-		       status_access_token_sha256
+		       COALESCE(native_sensitive_action_request_id::text,''),
+		       evidence_fingerprint_sha256,terms_version,privacy_version,status_access_token_sha256
 		FROM testagram_identity.identity_applications
 		WHERE id=$1::uuid AND status_access_token_expires_at>now()
 		FOR UPDATE
-	`, applicationID).Scan(&email, &username, &displayName, &applicationStatus, &approvalRequestID, &storedApplicationToken)
+	`, applicationID).Scan(&email, &username, &displayName, &applicationStatus, &approvalRequestID,
+		&evidenceFingerprint, &termsVersion, &privacyVersion, &storedApplicationToken)
 	if err != nil || subtle.ConstantTimeCompare(storedApplicationToken, authTokenHash(applicationToken)) != 1 {
 		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
+		return
+	}
+	if len(evidenceFingerprint) != 32 || termsVersion == "" || privacyVersion == "" {
+		writeJSON(w, http.StatusConflict, errorBody("APPLICATION_EVIDENCE_INCOMPLETE", "Identity evidence and consent records are incomplete", requestID(r)))
 		return
 	}
 	if applicationStatus != "approved" && applicationStatus != "verification_pending" && applicationStatus != "verified" {
@@ -148,32 +154,59 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 		return
 	}
 
-	var actionType, actionStatus, targetReference string
-	var requiredApprovals, approvalCount, distinctApprovers, matchingApprovers, matchingReviewers int
-	var requestExpires time.Time
+	var approvalCircuitValid bool
 	err = tx.QueryRow(ctx, `
-		SELECT sar.action_type,sar.status,sar.target_reference,sar.required_approvals,sar.expires_at,
-		       (SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa
-		        WHERE sa.request_id=sar.id AND sa.decision='approved'),
-		       (SELECT count(DISTINCT sa.approver_user_id) FROM testagram_auth.sensitive_action_approvals sa
-		        WHERE sa.request_id=sar.id AND sa.decision='approved' AND sa.approver_user_id IS NOT NULL),
-		       (SELECT count(*) FROM testagram_auth.sensitive_action_approvals sa
-		        WHERE sa.request_id=sar.id AND sa.decision='approved'
-		          AND sa.approver_user_id IN ($2::uuid,$3::uuid)),
-		       (SELECT count(DISTINCT ar.reviewer_user_id) FROM testagram_identity.identity_application_reviews ar
-		        WHERE ar.application_id=$4::uuid AND ar.decision='approved'
-		          AND ar.reviewer_user_id IN ($2::uuid,$3::uuid))
-		FROM testagram_auth.sensitive_action_requests sar
-		WHERE sar.id=$1::uuid
-		FOR UPDATE
-	`, approvalRequestID, firstApprover, secondApprover, applicationID).Scan(
-		&actionType, &actionStatus, &targetReference, &requiredApprovals, &requestExpires,
-		&approvalCount, &distinctApprovers, &matchingApprovers, &matchingReviewers)
-	if err != nil || actionType != "identity.approve" || actionStatus != "approved" ||
-		targetReference != applicationID || requiredApprovals != 2 ||
-		approvalCount != 2 || distinctApprovers != 2 ||
-		matchingApprovers != 2 || matchingReviewers != 2 || !requestExpires.After(time.Now()) {
-		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_LEDGER_INVALID", "Two independent identity reviewers and two independent account approvers are required", requestID(r)))
+		SELECT EXISTS (
+		  SELECT 1
+		  FROM testagram_auth.native_sensitive_action_requests sar
+		  WHERE sar.id=$1::uuid AND sar.action_type='identity.approve'
+		    AND sar.status='approved' AND sar.required_approvals=2
+		    AND sar.target_reference=$2::text AND sar.requested_by_user_id IS NULL
+		    AND sar.requested_by_service='identity_pipeline' AND sar.expires_at>now()
+		    AND sar.payload->>'application_id'=$2::text
+		    AND sar.payload->>'email'=$3
+		    AND sar.payload->>'username'=$4
+		    AND sar.payload->>'display_name'=$5
+		    AND sar.payload->>'evidence_fingerprint_sha256'=$6
+		    AND sar.payload->>'terms_version'=$7
+		    AND sar.payload->>'privacy_version'=$8
+		    AND (
+		      SELECT count(DISTINCT approver_user_id)
+		      FROM testagram_auth.native_sensitive_action_approvals
+		      WHERE request_id=sar.id AND decision='approved'
+		    )=2
+		    AND (
+		      SELECT count(DISTINCT approver_user_id)
+		      FROM testagram_auth.native_sensitive_action_approvals
+		      WHERE request_id=sar.id AND decision='approved'
+		        AND approver_user_id IN ($9::uuid,$10::uuid)
+		    )=2
+		    AND (
+		      SELECT count(DISTINCT reviewer_user_id)
+		      FROM testagram_identity.identity_application_reviews
+		      WHERE application_id=$2::uuid AND review_stage='evidence_review'
+		        AND decision='approved'
+		        AND evidence_audit_reference=sar.payload->>'evidence_audit_reference'
+		    )=2
+		    AND (
+		      SELECT count(DISTINCT reviewer_user_id)
+		      FROM testagram_identity.identity_application_reviews
+		      WHERE application_id=$2::uuid AND review_stage='account_approval'
+		        AND decision='approved'
+		        AND reviewer_user_id IN ($9::uuid,$10::uuid)
+		    )=2
+		    AND NOT EXISTS (
+		      SELECT 1 FROM testagram_identity.identity_application_reviews
+		      WHERE application_id=$2::uuid AND review_stage='evidence_review'
+		        AND decision='approved'
+		        AND reviewer_user_id IN ($9::uuid,$10::uuid)
+		    )
+		)
+	`, approvalRequestID, applicationID, email, username, displayName,
+		hex.EncodeToString(evidenceFingerprint), termsVersion, privacyVersion,
+		firstApprover, secondApprover).Scan(&approvalCircuitValid)
+	if err != nil || !approvalCircuitValid {
+		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_LEDGER_INVALID", "Two independent evidence reviewers and two independent account approvers are required", requestID(r)))
 		return
 	}
 

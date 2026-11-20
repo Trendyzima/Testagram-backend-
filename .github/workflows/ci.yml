@@ -602,6 +602,14 @@ jobs:
           export ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           export ADMIN_PUBLIC_URL=https://ops.example.invalid
           export ADMIN_DOMAIN=ops.example.invalid
+          python tests/test_auth_proxy_ip_wiring.py -v
+          docker run --rm \
+            -e ACME_EMAIL=ci-only@example.invalid \
+            -e API_DOMAIN=api.example.invalid \
+            -e MEDIA_DOMAIN=media.example.invalid \
+            -e ADMIN_DOMAIN=ops.example.invalid \
+            -v "$PWD/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
           python - <<'PY'
           from pathlib import Path
@@ -624,7 +632,7 @@ jobs:
           deploy = deploy_workflow + "\n" + deploy_script
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" not in deploy_workflow, "deployment must not require a manually configured Federation read secret"
           assert 'FEDERATION_BACKEND_INTERNAL_TOKEN="${FEDERATION_BACKEND_INTERNAL_TOKEN:-$(openssl rand -hex 32)}"' in deploy_script, "deployment must generate a strong Federation service credential when none is supplied"
-          assert "envs:{" in deploy_script and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy_script and "APPWRITE" not in deploy_script.upper(), "native deployment must forward Federation credentials without legacy Appwrite configuration"
+          assert "envs:{" in deploy_script and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy_script, "native deployment must forward Federation credentials"
           dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then')
           dc_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', dc_media_gate)
           backend_media_gate = deploy.index('if [[ "$(read_env_value MEDIA_REPLICATION_ENABLED)" == "true" ]]; then')
@@ -635,7 +643,11 @@ jobs:
           assert 'write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"' in deploy and 'write_env_value FRESH_MEDIA_ENABLED "$media_enabled"' not in deploy and "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" in compose and "FRESH_MEDIA_ENABLED:$fresh_media_enabled" in deploy, "the explicit Fresh Media approval must reach the Backend runtime feature gate without being inferred from the Data Centre flag"
           assert 'if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]' in deploy and "refusing an ambiguous media profile" in deploy, "Fresh Media and Data Centre media approvals must match explicitly"
           assert 'write_env_value VIRTUAL_STORAGE_ENABLED true' in deploy and "VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-true}" in compose, "private evidence storage must be enabled on the VPS"
-          assert "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" not in deploy, "legacy registration kill switch must be absent from workflow and deployer"
+          assert "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" not in deploy_workflow + deploy_script + compose, "the retired environment switch must not bypass real staff WebAuthn readiness"
+          identity_intake = Path("cmd/api/identity_native.go").read_text()
+          service_definition = Path("cmd/api/main.go").read_text()
+          assert "if !s.identityReviewWebAuthnReady" in identity_intake and "IDENTITY_REVIEW_MFA_UNAVAILABLE" in identity_intake, "new identity intake must remain fail-closed until real WebAuthn staff review is implemented"
+          assert "identityReviewWebAuthnReady" in service_definition and "identityReviewWebAuthnReady:" not in service_definition, "production Backend service must not enable the WebAuthn release capability through configuration"
           assert '[[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" && "$FRESH_MEDIA_ENABLED" == "true" ]]' in deploy_script, "public registration must require the private Data Centre evidence profile"
           assert "Identity registration requires TESTAGRAM_TERMS_VERSION" in deploy_script and "Identity registration requires TESTAGRAM_PRIVACY_VERSION" in deploy_script, "public registration must have explicit policy versions"
           assert 'write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script and 'write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script, "the R2 metadata bucket must reach both Backend and Data Centre environment files"
@@ -661,12 +673,12 @@ jobs:
               "042_native_identity_evidence.sql",
               "043_native_identity_integrity.sql",
               "044_identity_evidence_access_audit.sql",
-              "047_appwrite_registration_consent.sql",
+              "059_native_identity_approval_circuit.sql",
           )
           assert all(f"/docker-entrypoint-initdb.d/{name}:ro" in compose for name in identity_migration_mounts), "fresh VPS databases must mount every native identity and reviewer security migration"
           assert "20261113_identity_idswyft_intake.sql" not in compose, "retired Idswyft intake must not enter the production schema path"
           apply_identity = Path("deploy/self-hosted/apply-native-identity-migrations.sh").read_text()
-          assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity and "047_appwrite_registration_consent.sql" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval for the consent ledger"
+          assert "pg_dump --format=custom" in apply_identity and "APPLY-NATIVE-IDENTITY-MIGRATIONS" in apply_identity and "059_native_identity_approval_circuit.sql" in apply_identity, "existing VPS databases require a verified backup and explicit migration approval for the native identity approval circuit"
           assert "identityEvidenceMatchesContentType" in identity and "evidence_access_attempted" in review, "identity evidence requires file-signature validation and audited reviewer access"
           identity_migration_test = Path("scripts/test-identity-registration-migration.sh").read_text()
           assert "adult_verification_session_id" not in identity and "adult_verification_result" not in identity and "adult_verification_mode" not in identity and "adult_verification_threshold," not in identity, "native identity status must read verification_sessions, not retired vendor columns"
@@ -685,7 +697,7 @@ jobs:
           admin = Path("admin-console/main.go").read_text()
           admin_security = Path("admin-console/security.go").read_text()
           assert 'BACKEND_INTERNAL_URL: http://api:8080' in compose and 'staffSession.AccessToken' in admin and 'verifyNativeSession' in admin and 'testagram_auth.staff_principals' in admin_security, "staff console must verify native Testagram sessions and proxy native bearer tokens through the private Backend network"
-          assert "APPWRITE" not in admin.upper() and "APPWRITE" not in admin_security.upper(), "staff console runtime must not contain legacy identity-provider integration"
+          assert "native_sensitive_action_requests" in admin_security and "native_sensitive_action_approvals" in admin_security and "recordIdentityApplicationReview" in admin_security, "staff console must use the native two-person identity approval ledger"
           assert 'loadIdentityReviewQueue' in Path("admin-console/web/app.js").read_text() and 'identity-review-panel' in Path("admin-console/web/index.html").read_text(), "staff console must expose the identity reviewer workflow"
           for check in (
               "DATA_CENTRE_MEDIA_ENABLED",
@@ -932,7 +944,6 @@ jobs:
             migrations/20261019_testagram_local_accounts_posts.sql \
             migrations/20261019_testagram_independent_auth.sql \
             migrations/20261019_testagram_media_replication_producers.sql \
-            migrations/20261106_appwrite_identity_bridge.sql \
             migrations/20261106_tv_health_postgres.sql \
             migrations/20261106_social_core.sql \
             migrations/20261110_native_media_post_links.sql \
@@ -1059,8 +1070,6 @@ jobs:
         run: |
           set -euo pipefail
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
-          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
-          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
           # The native auth foundation references the local-account table for
           # its legacy reconciliation ledger. Keep this auth-only fixture
@@ -1083,19 +1092,6 @@ jobs:
             END IF;
             IF (SELECT count(*) FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name IN ('verification_token_hash','reset_token_hash','token_version')) <> 3 THEN
               RAISE EXCEPTION 'verification, reset, or token-version columns missing';
-            END IF;
-            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='appwrite_accounts') THEN
-              RAISE EXCEPTION 'Appwrite identity bridge table missing';
-            END IF;
-            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='testagram_identity' AND table_name='link_audit') THEN
-              RAISE EXCEPTION 'Appwrite identity link audit table missing';
-            END IF;
-            INSERT INTO testagram_identity.appwrite_accounts(appwrite_user_id,canonical_user_id,legacy_user_id,email,email_verified,linked_at)
-            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','ci@example.test',TRUE,now());
-            INSERT INTO testagram_identity.link_audit(appwrite_user_id,canonical_user_id,legacy_user_id,event_type,request_id)
-            VALUES ('ci-appwrite-user','123e4567-e89b-42d3-a456-426614174000','123e4567-e89b-42d3-a456-426614174000','linked','ci-request');
-            IF (SELECT count(*) FROM testagram_identity.link_audit WHERE request_id='ci-request') <> 1 THEN
-              RAISE EXCEPTION 'identity link audit write failed';
             END IF;
           END $ci$;
           DO $duplicate$
@@ -1179,27 +1175,44 @@ jobs:
           docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto'
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_dual_backend_replication.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_social_core.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261112_instabox_avatar_storage.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261112_profile_presentation_fields.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
-          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_bridge.sql
-          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_appwrite_identity_link_audit.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261110_staff_roles.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_admin_security_controls.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261111_identity_registration_pipeline.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261113_identity_registration_hardening.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261113_native_identity_verification.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261114_native_identity_evidence.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261114_native_identity_integrity.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_identity_evidence_access_audit.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_native_identity_status_access.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261116_native_approved_identity_provisioning.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261117_native_staff_reviewer_grants.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261118_native_admin_console.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261119_native_identity_approval_ledger.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261120_native_identity_approval_circuit.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261120_native_verification_decider.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261117_native_staff_reviewer_grants.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261118_native_admin_console.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261119_native_identity_approval_ledger.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261120_native_identity_approval_circuit.sql
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.11"
           cache: true
+      - name: Run native approved identity provisioning and email verification against PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run '^TestNativeApprovedIdentityProvisioningAndEmailVerification$' -count=1 -v
+      - name: Run native login, refresh rotation, replay and logout integration
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./cmd/api -run '^TestNativeAuthSessionRotationReplayAndRevocation$' -count=1 -v
       - name: Run two-person identity approval transaction against PostgreSQL
         env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
@@ -1276,4 +1289,3 @@ jobs:
       - name: Stop isolated MinIO services
         if: always()
         run: docker stop testagram-minio-ci testagram-minio-r2 testagram-minio-b2 || true
-

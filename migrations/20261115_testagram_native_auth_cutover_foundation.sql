@@ -1,7 +1,9 @@
 -- Native Testagram auth cutover foundation.
--- Additive only: does not delete Appwrite records, alter canonical user IDs,
--- or fabricate password hashes. Import is deliberately a separate audited step.
+-- Additive only: does not alter canonical user IDs or fabricate password hashes.
+-- Any historical identity reconciliation is deliberately outside this native schema.
 BEGIN;
+
+CREATE SCHEMA IF NOT EXISTS testagram_identity;
 
 CREATE SCHEMA IF NOT EXISTS testagram_auth;
 

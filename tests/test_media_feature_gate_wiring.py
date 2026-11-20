@@ -13,6 +13,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def setUpClass(cls):
         cls.workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         cls.deployer = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        cls.compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        cls.env_example = (ROOT / "deploy/self-hosted/.env.example").read_text()
 
     def test_r2_bucket_provisioning_uses_the_same_normalized_media_gates_as_remote_deploy(self):
         self.assertNotIn("if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)

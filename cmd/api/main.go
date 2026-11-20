@@ -74,16 +74,18 @@ type service struct {
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
 	identityEvidenceMedia     identityEvidenceMediaClient
-	freshMediaEnabled         bool
-	cdnMediaAssertions        *mediaassertion.Issuer
-	cdnMediaBaseURL           string
-	cdnOriginAuthToken        string
-	cdnPurger                 *cdnPurger
-	freshMediaInternalToken   string
-	virtualStorage            *virtualstorage.Manager
-	mediaReplicator           *virtualstorage.Replicator
-	algorithm                 *algorithmclient.Client
-	replicationReceiver       http.Handler
+	// Set true only in code after real staff WebAuthn enrollment, verification, recovery and replay protection are implemented.
+	identityReviewWebAuthnReady bool
+	freshMediaEnabled           bool
+	cdnMediaAssertions          *mediaassertion.Issuer
+	cdnMediaBaseURL             string
+	cdnOriginAuthToken          string
+	cdnPurger                   *cdnPurger
+	freshMediaInternalToken     string
+	virtualStorage              *virtualstorage.Manager
+	mediaReplicator             *virtualstorage.Replicator
+	algorithm                   *algorithmclient.Client
+	replicationReceiver         http.Handler
 }
 
 type capabilityRequest struct {
@@ -470,8 +472,6 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.identityReviewEvidence)
 	mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/decision", s.mediaPreflight)
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", s.identityReviewDecision)
-	mux.HandleFunc("OPTIONS /api/admin/identity/applications/{application_id}/approve", s.mediaPreflight)
-	mux.HandleFunc("POST /api/admin/identity/applications/{application_id}/approve", s.identityApplicationApproveSafe)
 	// Independent authentication routes use Testagram-owned PostgreSQL; external caches are not part of this request path.
 	for _, action := range []string{"signup", "resend-verification", "verify-email", "login", "refresh", "logout", "logout-all", "forgot-password", "reset-password"} {
 		action := action
@@ -1290,7 +1290,7 @@ func main() {
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
-	log.Printf("Testagram-native manual identity verification is available when private evidence storage and registration policy are configured")
+	log.Printf("Native identity application intake remains disabled until staff WebAuthn step-up is implemented and verified")
 	internalAddr := env("INTERNAL_LISTEN_ADDR", ":8082")
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),

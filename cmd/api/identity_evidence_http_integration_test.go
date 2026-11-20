@@ -266,7 +266,8 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "true")
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "terms-http-v1")
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "privacy-http-v1")
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager, replicator: replicator}}
+	// Exercise the evidence lifecycle after the separate staff WebAuthn release capability is accepted.
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager, replicator: replicator}, identityReviewWebAuthnReady: true}
 	router := svc.routes()
 
 	idempotencyKey, err := authRandomToken()

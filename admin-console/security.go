@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -166,18 +168,18 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	if linkedRequestID != requestID {
 		return "", errors.New("identity application is not linked to this approval request")
 	}
-	if applicationStatus != "pending" && applicationStatus != "under_review" {
+	if applicationStatus != "verified" && applicationStatus != "under_review" {
 		return "", errors.New("identity application is no longer reviewable")
 	}
-	var actionType, requestStatus, targetReference string
+	var actionType, requestStatus, targetReference, requesterID, requesterService string
 	var requiredApprovals, recordedApprovals int
 	err = tx.QueryRow(ctx, `
-		SELECT action_type, status, target_reference, required_approvals
+		SELECT action_type, status, target_reference, COALESCE(requested_by_user_id::text,''), requested_by_service, required_approvals
 		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid
 		FOR UPDATE
-	`, requestID).Scan(&actionType, &requestStatus, &targetReference, &requiredApprovals)
-	if err != nil || actionType != "identity.approve" || targetReference != applicationID || requiredApprovals != 2 {
+	`, requestID).Scan(&actionType, &requestStatus, &targetReference, &requesterID, &requesterService, &requiredApprovals)
+	if err != nil || actionType != "identity.approve" || targetReference != applicationID || requiredApprovals != 2 || requesterID != "" || requesterService != "identity_pipeline" {
 		return "", errors.New("linked approval request does not match the identity application")
 	}
 	err = tx.QueryRow(ctx, `
@@ -191,7 +193,10 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	if decision == "rejected" && requestStatus != "rejected" {
 		return "", errors.New("rejected identity decision is not reflected in the approval ledger")
 	}
-	if decision == "approved" && approvalCount >= 2 && requestStatus != "approved" {
+	if decision == "approved" && approvalCount > 2 {
+		return "", errors.New("identity approval has more than two approvers")
+	}
+	if decision == "approved" && approvalCount == 2 && requestStatus != "approved" {
 		return "", errors.New("completed two-person approval is not reflected in the approval ledger")
 	}
 	if decision == "approved" && approvalCount < 2 && requestStatus != "pending" {
@@ -207,10 +212,22 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 		return "", errors.New("identity application changed after the review request was created")
 	}
 
+	var wasEvidenceReviewer bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1 FROM testagram_identity.identity_application_reviews
+		  WHERE application_id=$1::uuid AND reviewer_user_id=$2::uuid
+		    AND review_stage='evidence_review'
+		)
+	`, applicationID, reviewerID).Scan(&wasEvidenceReviewer)
+	if err != nil || wasEvidenceReviewer {
+		return "", errors.New("evidence reviewers cannot approve account activation")
+	}
+
 	_, err = tx.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_application_reviews
-		  (application_id, reviewer_user_id, decision, reason, evidence_audit_reference)
-		VALUES ($1::uuid, $2, $3, $4, $5)
+		  (application_id, reviewer_user_id, review_stage, decision, reason, evidence_audit_reference)
+		VALUES ($1::uuid, $2, 'account_approval', $3, $4, $5)
 	`, applicationID, reviewerID, decision, reason, snapshot.EvidenceAuditReference)
 	if err != nil {
 		return "", errors.New("identity review was already recorded or could not be persisted")
@@ -230,25 +247,77 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	if err != nil {
 		return "", errors.New("identity application status could not be updated")
 	}
+	if decision == "approved" && approvalCount > 2 {
+		return "", errors.New("identity approval has more than two approvers")
+	}
+	if decision == "approved" && approvalCount == 2 {
+		rows, err := tx.Query(ctx, `
+			SELECT approver_user_id::text
+			FROM testagram_auth.native_sensitive_action_approvals
+			WHERE request_id=$1::uuid AND decision='approved'
+			ORDER BY created_at ASC, id ASC
+			LIMIT 2
+		`, requestID)
+		if err != nil {
+			return "", errors.New("independent account approvers could not be loaded")
+		}
+		approvers := make([]string, 0, 2)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return "", errors.New("independent account approvers could not be loaded")
+			}
+			approvers = append(approvers, id)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return "", errors.New("independent account approvers could not be loaded")
+		}
+		rows.Close()
+		if len(approvers) != 2 || approvers[0] == approvers[1] {
+			return "", errors.New("exactly two distinct account approvers are required")
+		}
+		var tokenSeed, jtiSeed [32]byte
+		if _, err := rand.Read(tokenSeed[:]); err != nil {
+			return "", errors.New("provisioning authorization seed could not be generated")
+		}
+		if _, err := rand.Read(jtiSeed[:]); err != nil {
+			return "", errors.New("provisioning authorization identifier could not be generated")
+		}
+		tokenDigest := sha256.Sum256(tokenSeed[:])
+		jtiDigest := sha256.Sum256(jtiSeed[:])
+		_, err = tx.Exec(ctx, `
+			INSERT INTO testagram_identity.identity_approval_tokens
+			  (token_sha256,jti_sha256,application_id,first_approver_user_id,second_approver_user_id,expires_at)
+			VALUES ($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
+		`, tokenDigest[:], jtiDigest[:], applicationID, approvers[0], approvers[1])
+		if err != nil {
+			return "", fmt.Errorf("provisioning authorization could not be initialized: %w", err)
+		}
+	}
+
 	return nextStatus, nil
 }
 
 func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, decision, reason string) (string, string, int, error) {
-	var actionType, requesterID, requestStatus, targetReference string
+	var actionType, requesterID, requesterService, requestStatus, targetReference string
 	var payload []byte
 	err := tx.QueryRow(ctx, `
-		SELECT action_type, requested_by_user_id, status, target_reference, payload
+		SELECT action_type, COALESCE(requested_by_user_id::text,''), requested_by_service, status, target_reference, payload
 		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 		FOR UPDATE
-	`, requestID).Scan(&actionType, &requesterID, &requestStatus, &targetReference, &payload)
+	`, requestID).Scan(&actionType, &requesterID, &requesterService, &requestStatus, &targetReference, &payload)
 	if err != nil || requestStatus != "pending" {
 		return "", "", 0, errors.New("approval request is missing, expired or no longer pending")
 	}
-	if actionType != expectedAction || requesterID != expectedRequester {
+	if actionType != expectedAction || requesterID != expectedRequester ||
+		(requesterID == "" && requesterService != "identity_pipeline") ||
+		(requesterID != "" && requesterService != "staff") {
 		return "", "", 0, errors.New("approval request changed after authorization")
 	}
-	if approverID == requesterID {
+	if requesterID != "" && approverID == requesterID {
 		return "", "", 0, errors.New("requester cannot approve their own sensitive action")
 	}
 	if decision != "approved" && decision != "rejected" {
@@ -340,7 +409,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 	var action, requester, status string
 	err := a.database.QueryRow(ctx, `
-		SELECT action_type, requested_by_user_id, status
+		SELECT action_type, COALESCE(requested_by_user_id::text,''), status
 		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 	`, id).Scan(&action, &requester, &status)
@@ -371,7 +440,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, 429, map[string]string{"error": "Too many approval decisions. Try again later."})
 		return
 	}
-	if approver.ID == requester {
+	if requester != "" && approver.ID == requester {
 		writeJSON(w, 403, map[string]string{"error": "The requester cannot approve their own sensitive action"})
 		return
 	}
@@ -417,7 +486,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	}
 	if !canReview { writeJSON(w,403,map[string]string{"error":"You do not have permission to review sensitive actions"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,requested_by_user_id,target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.native_sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
+	rows,err:=a.database.Query(ctx,"SELECT id::text,action_type,COALESCE(requested_by_user_id::text,requested_by_service),target_reference,reason,status,required_approvals,expires_at,created_at,payload,(SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals sa WHERE sa.request_id=sar.id AND sa.decision='approved') FROM testagram_auth.native_sensitive_action_requests sar WHERE status='pending' AND expires_at>now() ORDER BY created_at ASC LIMIT 100")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load the approval queue"}); return }
 	defer rows.Close()
 	type item struct {

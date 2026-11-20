@@ -29,6 +29,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('identity_applications table', to_regclass('testagram_identity.identity_applications') IS NOT NULL),
   ('identity_application_reviews table', to_regclass('testagram_identity.identity_application_reviews') IS NOT NULL),
   ('identity_application_reviews.reviewer_user_id', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='reviewer_user_id')),
+  ('identity_application_reviews.review_stage', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
   ('verification_reviews.reviewer_user_id', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='reviewer_user_id')),
   ('identity_approval_tokens table', to_regclass('testagram_identity.identity_approval_tokens') IS NOT NULL),
   ('registration_provisioning table', to_regclass('testagram_identity.registration_provisioning') IS NOT NULL),
@@ -37,7 +38,6 @@ WITH checks(check_name, ok) AS (VALUES
   ('verification_reviews table', to_regclass('testagram_identity.verification_reviews') IS NOT NULL),
   ('verification_evidence table', to_regclass('testagram_identity.verification_evidence') IS NOT NULL),
   ('legal_consent_audit table', to_regclass('testagram_identity.legal_consent_audit') IS NOT NULL),
-  ('appwrite_registration_consents table', to_regclass('testagram_identity.appwrite_registration_consents') IS NOT NULL),
   ('auth sessions table', to_regclass('testagram_auth.sessions') IS NOT NULL),
   ('auth rate_limits table', to_regclass('testagram_auth.rate_limits') IS NOT NULL),
   ('password_reset_tokens table', to_regclass('testagram_auth.password_reset_tokens') IS NOT NULL),
@@ -47,6 +47,9 @@ WITH checks(check_name, ok) AS (VALUES
   ('staff_role_grants table', to_regclass('testagram_auth.staff_role_grants') IS NOT NULL),
   ('native_staff_permission_overrides table', to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL),
   ('native_sensitive_action_requests table', to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL),
+  ('native_sensitive_action_requests.requested_by_service', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
+  ('native sensitive action request source column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
+  ('identity application review stage column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
   ('native_sensitive_action_approvals table', to_regclass('testagram_auth.native_sensitive_action_approvals') IS NOT NULL),
   ('native_admin_security_audit table', to_regclass('testagram_auth.native_admin_security_audit') IS NOT NULL),
   ('native_registration_provisioning table', to_regclass('testagram_identity.native_registration_provisioning') IS NOT NULL),
@@ -110,7 +113,6 @@ schema_ready() {
         AND to_regclass('\''testagram_identity.verification_reviews'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_evidence'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.legal_consent_audit'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.appwrite_registration_consents'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.sessions'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.rate_limits'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
@@ -120,6 +122,18 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.staff_role_grants'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_staff_permission_overrides'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\'' AND column_name='\''requested_by_service'\'')
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\'' AND column_name='\''review_stage'\'')
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\''
+            AND column_name='\''requested_by_service'\''
+        )
+        AND EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\''
+            AND column_name='\''review_stage'\''
+        )
         AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
@@ -303,7 +317,6 @@ for file in \
   043_native_identity_integrity.sql \
   044_identity_evidence_access_audit.sql \
   045_native_identity_status_access.sql \
-  047_appwrite_registration_consent.sql \
   049_native_auth_cutover_foundation.sql \
   050_native_approved_identity_provisioning.sql \
   051_native_auth_runtime_grants.sql \
@@ -313,6 +326,7 @@ for file in \
   056_native_verification_decider.sql \
   057_testagram_mail_outbox.sql \
   058_testagram_mail_outbox_runtime_role.sql \
+  059_native_identity_approval_circuit.sql \
   20261121_native_identity_intake_optional_fingerprint.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
@@ -333,7 +347,6 @@ apply_migration 042_native_identity_evidence.sql
 apply_migration 043_native_identity_integrity.sql
 apply_migration 044_identity_evidence_access_audit.sql
 apply_migration 045_native_identity_status_access.sql
-apply_migration 047_appwrite_registration_consent.sql
 apply_migration 049_native_auth_cutover_foundation.sql
 apply_migration 050_native_approved_identity_provisioning.sql
 apply_migration 051_native_auth_runtime_grants.sql
@@ -343,6 +356,7 @@ apply_migration 055_native_identity_approval_ledger.sql
 apply_migration 056_native_verification_decider.sql
 apply_migration 057_testagram_mail_outbox.sql
 apply_migration 058_testagram_mail_outbox_runtime_role.sql
+apply_migration 059_native_identity_approval_circuit.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
@@ -357,5 +371,5 @@ if [[ "$(schema_ready)" != "t" ]]; then
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and compatibility consent schema."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and native approval circuit."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."

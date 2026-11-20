@@ -89,6 +89,10 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return
 	}
+	if !s.identityReviewWebAuthnReady {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed until staff WebAuthn step-up is implemented and verified", requestID(r)))
+		return
+	}
 	if s.db == nil || !s.identityEvidenceStorageConfigured() {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification requires PostgreSQL and the private Data Centre evidence lifecycle or a verified private storage replica", requestID(r)))
 		return

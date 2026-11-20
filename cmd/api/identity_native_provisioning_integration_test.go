@@ -30,9 +30,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	defer db.Close()
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
-	var reviewerOne, reviewerTwo, staffGrantor string
-	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text").
-		Scan(&reviewerOne, &reviewerTwo, &staffGrantor); err != nil {
+	var reviewerOne, reviewerTwo, approverOne, approverTwo, staffGrantor string
+	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text").
+		Scan(&reviewerOne, &reviewerTwo, &approverOne, &approverTwo, &staffGrantor); err != nil {
 		t.Fatal(err)
 	}
 	applicantEmail := "native-" + suffix + "@example.test"
@@ -51,7 +51,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	fingerprint := fmt.Sprintf("%064x", time.Now().UTC().UnixNano())
 
-	for i, reviewer := range []string{reviewerOne, reviewerTwo} {
+	for i, reviewer := range []string{reviewerOne, reviewerTwo, approverOne, approverTwo} {
 		email := fmt.Sprintf("native-reviewer-%d-%s@example.test", i+1, suffix)
 		username := fmt.Sprintf("nr%d_%s", i+1, suffix[len(suffix)-12:])
 		if _, err := db.Exec(ctx, `
@@ -70,17 +70,21 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by)
 		VALUES
-		  ($1::uuid,TRUE,now(),now(),$3::uuid),
-		  ($2::uuid,TRUE,now(),now(),$3::uuid)
-	`, reviewerOne, reviewerTwo, staffGrantor); err != nil {
+		  ($1::uuid,TRUE,now(),now(),$5::uuid),
+		  ($2::uuid,TRUE,now(),now(),$5::uuid),
+		  ($3::uuid,TRUE,now(),now(),$5::uuid),
+		  ($4::uuid,TRUE,now(),now(),$5::uuid)
+	`, reviewerOne, reviewerTwo, approverOne, approverTwo, staffGrantor); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by)
 		VALUES
-		  ($1::uuid,'identity_reviewer',$3::uuid),
-		  ($2::uuid,'identity_reviewer',$3::uuid)
-	`, reviewerOne, reviewerTwo, staffGrantor); err != nil {
+		  ($1::uuid,'identity_reviewer',$5::uuid),
+		  ($2::uuid,'identity_reviewer',$5::uuid),
+		  ($3::uuid,'administrator',$5::uuid),
+		  ($4::uuid,'administrator',$5::uuid)
+	`, reviewerOne, reviewerTwo, approverOne, approverTwo, staffGrantor); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,15 +96,16 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		"application_id": applicationID, "email": applicantEmail, "username": username,
 		"display_name": "Native Provisioning CI", "evidence_fingerprint_sha256": fingerprint,
 		"terms_version": "terms-v1", "privacy_version": "privacy-v1",
+		"evidence_audit_reference": "native-evidence-audit-reference",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_requests
-		  (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256,
+		INSERT INTO testagram_auth.native_sensitive_action_requests
+		  (action_type,requested_by_user_id,requested_by_service,target_reference,reason,payload,payload_sha256,
 		   required_approvals,status,expires_at)
-		VALUES('identity.approve','ci-intake-service',$1,'Native provisioning integration fixture',
+		VALUES('identity.approve',NULL,'identity_pipeline',$1,'Native provisioning integration fixture',
 		       $2::jsonb,repeat('e',64),2,'pending',now()+interval '1 hour')
 		RETURNING id::text
 	`, applicationID, string(payload)).Scan(&requestID); err != nil {
@@ -112,7 +117,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		   adult_verification_provider,adult_verification_reference,adult_verification_checked_at,
 		   evidence_reference,evidence_fingerprint_sha256,terms_version,privacy_version,
 		   terms_accepted_at,privacy_accepted_at,submission_key_sha256,
-		   status_access_token_sha256,status_access_token_expires_at,status,sensitive_action_request_id)
+		   status_access_token_sha256,status_access_token_expires_at,status,native_sensitive_action_request_id)
 		VALUES($1::uuid,$2,$3,'Native Provisioning CI',now(),now(),
 		       'testagram_manual','native-provisioning-adult-ref',now(),
 		       'opaque-native-provisioning-evidence',decode($4,'hex'),'terms-v1','privacy-v1',
@@ -137,23 +142,25 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_application_reviews
-		  (application_id,reviewer_user_id,decision,reason,evidence_audit_reference)
-		VALUES($1::uuid,$2::uuid,'approved','First independent identity review','native-review-audit-01'),
-		      ($1::uuid,$3::uuid,'approved','Second independent identity review','native-review-audit-02')
-	`, applicationID, reviewerOne, reviewerTwo); err != nil {
+		  (application_id,reviewer_user_id,review_stage,decision,reason,evidence_audit_reference)
+		VALUES($1::uuid,$2::uuid,'evidence_review','approved','First independent evidence review','native-evidence-audit-reference'),
+		      ($1::uuid,$3::uuid,'evidence_review','approved','Second independent evidence review','native-evidence-audit-reference'),
+		      ($1::uuid,$4::uuid,'account_approval','approved','First independent account approval','native-account-audit-01'),
+		      ($1::uuid,$5::uuid,'account_approval','approved','Second independent account approval','native-account-audit-02')
+	`, applicationID, reviewerOne, reviewerTwo, approverOne, approverTwo); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
+		INSERT INTO testagram_auth.native_sensitive_action_approvals(request_id,approver_user_id,decision,reason)
 		VALUES($1::uuid,$2::uuid,'approved','First independent account approval')
-	`, requestID, reviewerOne); err != nil {
+	`, requestID, approverOne); err != nil {
 		t.Fatal(err)
 	}
 	// The approval request can reach its decision state, but the database must
 	// refuse to mint a provisioning capability until both independent account
 	// approvals exist. The trigger protects the capability issuance boundary.
 	if _, err := db.Exec(ctx, `
-		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
+		UPDATE testagram_auth.native_sensitive_action_requests SET status='approved',decided_at=now()
 		WHERE id=$1::uuid
 	`, requestID); err != nil {
 		t.Fatal(err)
@@ -191,7 +198,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		  (token_sha256,jti_sha256,application_id,first_approver_user_id,
 		   second_approver_user_id,expires_at)
 		VALUES($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
-	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, reviewerOne, reviewerTwo); err == nil {
+	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, approverOne, approverTwo); err == nil {
 		_ = approvalTx.Rollback(ctx)
 		t.Fatal("database issued provisioning capability with only one account approver")
 	}
@@ -200,9 +207,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := approvalTx.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
+		INSERT INTO testagram_auth.native_sensitive_action_approvals(request_id,approver_user_id,decision,reason)
 		VALUES($1::uuid,$2::uuid,'approved','Second independent account approval')
-	`, requestID, reviewerTwo); err != nil {
+	`, requestID, approverTwo); err != nil {
 		_ = approvalTx.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -211,7 +218,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		  (token_sha256,jti_sha256,application_id,first_approver_user_id,
 		   second_approver_user_id,expires_at)
 		VALUES($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
-	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, reviewerOne, reviewerTwo); err != nil {
+	`, authTokenHash(approvalToken), authTokenHash(jti), applicationID, approverOne, approverTwo); err != nil {
 		_ = approvalTx.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -220,8 +227,6 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 
 	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.example")
-	t.Setenv("APPWRITE_ENDPOINT", "")
-	t.Setenv("APPWRITE_PROJECT_ID", "")
 	type deliveredEmail struct {
 		recipient string
 		subject   string

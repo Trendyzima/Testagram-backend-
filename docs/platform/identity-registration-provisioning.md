@@ -34,7 +34,7 @@ Legacy compatibility note: the Backend's older `testagram_media.media_replicatio
 
 ## Staff MFA release blocker
 
-The current Admin Console step-up handler reauthenticates the staff password; it does not verify a TOTP or passkey challenge. The Backend also checks the recorded `mfa_enrolled_at` marker and explicit role grants, but that marker is not proof that a second factor was just verified. Keep production staff identity-review activation fail-closed until real factor enrollment, challenge verification, recovery and replay protection are implemented and tested. Two-person approval does not substitute for MFA.
+The current Admin Console step-up handler returns HTTP 503; it does not issue a step-up session and does not verify a TOTP or WebAuthn challenge. The Backend also checks the recorded `mfa_enrolled_at` marker and explicit role grants, but that marker is not proof that a second factor was just verified. The native application-intake handler therefore returns `IDENTITY_REVIEW_MFA_UNAVAILABLE` until real WebAuthn enrollment, challenge verification, recovery and replay protection are implemented and tested. Two-person approval does not substitute for MFA.
 
 ## Legacy Appwrite records
 
@@ -42,8 +42,8 @@ The current Admin Console step-up handler reauthenticates the staff password; it
 
 ## Staff controls
 
-The Admin Console uses native Backend login and an encrypted `testagram-staff` cookie. It currently checks a recorded MFA-enrollment marker and password step-up but does not verify a TOTP/passkey challenge. Staff invitations and role-grant activation remain paused until dual-control onboarding and actual second-factor verification are implemented.
+The Admin Console uses native Backend login and an encrypted `testagram-staff` cookie. Its step-up route is deliberately unavailable (HTTP 503) until a real WebAuthn ceremony exists; the recorded MFA-enrollment timestamp alone is not accepted as proof. Staff invitations and role-grant activation remain paused until dual-control onboarding and actual second-factor verification are implemented.
 
 ## Release status
 
-The source implementation is present in mainline. Registration remains disabled until the Data Centre media profile, separate identity-evidence service credential, live B2/R2 replication and restore, reviewer retrieval/deletion, real email delivery and two-person approval gates pass. The deployment gate requires both `DATA_CENTRE_MEDIA_ENABLED=true` and `FRESH_MEDIA_ENABLED=true` plus a separate explicit registration confirmation. A merged PR, passing unit test or visible Create your account entry does not enable production registration, provision a real account or prove live email delivery.
+The source implementation is present in mainline, but new application intake is hard-disabled in code until the Admin Console has real phishing-resistant WebAuthn enrollment, challenge verification, recovery and replay protection. A stale `TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=true` value cannot bypass that review-readiness check; the legacy variable is not an authorization boundary. After WebAuthn is implemented and accepted, registration still requires the private Data Centre media profile (`DATA_CENTRE_MEDIA_ENABLED=true` and `FRESH_MEDIA_ENABLED=true`), the dedicated identity-evidence service, live B2/R2 replication and restore, reviewer retrieval/deletion, real email delivery and two-person approval. A merged PR, passing unit test or visible Create your account entry does not enable production registration, provision a real account or prove live email delivery.

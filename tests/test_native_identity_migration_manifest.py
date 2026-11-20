@@ -21,7 +21,6 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "043_native_identity_integrity.sql",
             "044_identity_evidence_access_audit.sql",
             "045_native_identity_status_access.sql",
-            "047_appwrite_registration_consent.sql",
             "049_native_auth_cutover_foundation.sql",
             "050_native_approved_identity_provisioning.sql",
             "051_native_auth_runtime_grants.sql",
@@ -31,6 +30,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "056_native_verification_decider.sql",
             "057_testagram_mail_outbox.sql",
             "058_testagram_mail_outbox_runtime_role.sql",
+            "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]

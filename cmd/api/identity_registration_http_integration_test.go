@@ -28,11 +28,11 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	}
 	defer db.Close()
 
-	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "true")
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "terms-ci-v1")
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "privacy-ci-v1")
 
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{}}
+	// This fixture exercises the full application path after the WebAuthn release capability is accepted; it does not implement or test the ceremony itself.
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{}, identityReviewWebAuthnReady: true}
 	router := svc.routes()
 	idempotencyKey, err := authRandomToken()
 	if err != nil {

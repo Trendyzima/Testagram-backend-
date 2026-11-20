@@ -380,7 +380,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 			SET status='failed',
 			    verified_age_over_threshold=CASE WHEN purpose='age_assurance' THEN FALSE ELSE NULL END,
 			    assurance_level='none',
-			    decided_at=now(),decided_by_user_id=$2::uuid,decided_by_appwrite_user_id=NULL,
+			    decided_at=now(),decided_by_user_id=$2::uuid,
 			    decision_reason_code=$3,updated_at=now()
 			WHERE id=$1::uuid
 		`, sessionID, reviewer.ID, input.ReasonCode)
@@ -444,9 +444,9 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 	payloadHash := sha256.Sum256(payloadBytes)
 	var approvalRequestID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_requests
-		  (action_type,requested_by_appwrite_user_id,target_reference,reason,payload,payload_sha256,required_approvals)
-		VALUES ('identity.approve','testagram-identity-service',$1,
+		INSERT INTO testagram_auth.native_sensitive_action_requests
+		  (action_type,requested_by_user_id,requested_by_service,target_reference,reason,payload,payload_sha256,required_approvals)
+		VALUES ('identity.approve',NULL,'identity_pipeline',$1,
 		        'Verified identity application requires independent two-person account approval',
 		        $2::jsonb,$3,2)
 		RETURNING id::text
@@ -455,8 +455,8 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 		for _, v := range approvedReviewers {
 			_, err = tx.Exec(ctx, `
 				INSERT INTO testagram_identity.identity_application_reviews
-				  (application_id,reviewer_user_id,decision,reason,evidence_audit_reference)
-				VALUES ($1::uuid,$2,'approved',$3,$4)
+				  (application_id,reviewer_user_id,review_stage,decision,reason,evidence_audit_reference)
+				VALUES ($1::uuid,$2,'evidence_review','approved',$3,$4)
 			`, applicationID, v.id, "Independent evidence review: "+v.reason, evidenceRef)
 			if err != nil {
 				break
@@ -468,7 +468,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 			UPDATE testagram_identity.identity_applications
 			SET adult_verified_at=now(),adult_verification_provider='testagram_manual',
 			    adult_verification_reference=$2,adult_verification_checked_at=now(),
-			    status='verified',sensitive_action_request_id=$3::uuid,updated_at=now()
+			    status='verified',native_sensitive_action_request_id=$3::uuid,updated_at=now()
 			WHERE id=$1::uuid
 		`, applicationID, evidenceRef, approvalRequestID)
 	}
@@ -478,7 +478,7 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 			SET status='verified',
 			    verified_age_over_threshold=CASE WHEN purpose='age_assurance' THEN TRUE ELSE NULL END,
 			    assurance_level='reviewed',
-			    decided_at=now(),decided_by_user_id=$2::uuid,decided_by_appwrite_user_id=NULL,
+			    decided_at=now(),decided_by_user_id=$2::uuid,
 			    decision_reason_code=$3,updated_at=now()
 			WHERE id=$1::uuid
 		`, sessionID, reviewer.ID, input.ReasonCode)
@@ -492,171 +492,4 @@ func (s *service) identityReviewDecision(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "verified", "application_status": "verified", "account_approval": "awaiting_two_person_approval"})
-}
-
-func (s *service) identityApplicationApprove(w http.ResponseWriter, r *http.Request) {
-	if !s.cors(w, r) {
-		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
-		return
-	}
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
-		return
-	}
-	reviewer, status, err := s.identityReviewer(r)
-	if err != nil {
-		writeJSON(w, status, errorBody("STAFF_ACCESS_DENIED", err.Error(), requestID(r)))
-		return
-	}
-	applicationID := strings.TrimSpace(r.PathValue("application_id"))
-	if !identityApplicationIDPattern.MatchString(applicationID) {
-		writeJSON(w, http.StatusNotFound, errorBody("APPLICATION_NOT_FOUND", "Application was not found", requestID(r)))
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	defer r.Body.Close()
-	var input identityApprovalInput
-	if err := decodeSingleJSON(r.Body, &input); err != nil || len(strings.TrimSpace(input.Reason)) < 8 || len(input.Reason) > 1000 {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_APPROVAL_REASON", "A reason of 8 to 1000 characters is required", requestID(r)))
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Approval could not be recorded", requestID(r)))
-		return
-	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-	var email, requestIDValue, appStatus string
-	err = tx.QueryRow(ctx, `
-		SELECT email,COALESCE(sensitive_action_request_id::text,''),status
-		FROM testagram_identity.identity_applications WHERE id=$1::uuid FOR UPDATE
-	`, applicationID).Scan(&email, &requestIDValue, &appStatus)
-	if err != nil || requestIDValue == "" || appStatus != "verified" {
-		writeJSON(w, http.StatusConflict, errorBody("APPLICATION_NOT_APPROVABLE", "Application is not awaiting account approval", requestID(r)))
-		return
-	}
-
-	// Lock and validate the linked sensitive-action request before accepting
-	// another approval. The general admin approval path already enforces this
-	// expiry boundary; identity approval must enforce the same policy.
-	var actionType, actionStatus, targetReference string
-	var requiredApprovals int
-	var requestUnexpired bool
-	err = tx.QueryRow(ctx, `
-		SELECT action_type,status,target_reference,required_approvals,(expires_at>now())
-		FROM testagram_auth.sensitive_action_requests
-		WHERE id=$1::uuid
-		FOR UPDATE
-	`, requestIDValue).Scan(&actionType, &actionStatus, &targetReference, &requiredApprovals, &requestUnexpired)
-	if err != nil || actionType != "identity.approve" || actionStatus != "pending" ||
-		targetReference != applicationID || requiredApprovals != 2 || !requestUnexpired {
-		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_REQUEST_EXPIRED_OR_INVALID", "The linked two-person approval request is expired or no longer pending", requestID(r)))
-		return
-	}
-	if strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(reviewer.Email)) {
-		writeJSON(w, http.StatusForbidden, errorBody("SELF_APPROVAL_FORBIDDEN", "Applicants cannot approve their own applications", requestID(r)))
-		return
-	}
-	var isReviewer bool
-	err = tx.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM testagram_identity.identity_application_reviews
-		WHERE application_id=$1::uuid AND reviewer_user_id=$2 AND decision='approved')
-	`, applicationID, reviewer.ID).Scan(&isReviewer)
-	if err != nil || !isReviewer {
-		writeJSON(w, http.StatusForbidden, errorBody("APPROVAL_REVIEWER_MISMATCH", "Only the two independent identity reviewers may approve account activation", requestID(r)))
-		return
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO testagram_auth.sensitive_action_approvals(request_id,approver_user_id,decision,reason)
-		VALUES ($1::uuid,$2,'approved',$3)
-	`, requestIDValue, reviewer.ID, input.Reason)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_ALREADY_RECORDED", "This reviewer has already decided this approval request", requestID(r)))
-		return
-	}
-	var approvalCount int
-	err = tx.QueryRow(ctx, `
-		SELECT count(*) FROM testagram_auth.sensitive_action_approvals
-		WHERE request_id=$1::uuid AND decision='approved' AND approver_user_id IS NOT NULL
-	`, requestIDValue).Scan(&approvalCount)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Approval status could not be evaluated", requestID(r)))
-		return
-	}
-	if approvalCount < 2 {
-		if err := tx.Commit(ctx); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORE_UNAVAILABLE", "Approval could not be committed", requestID(r)))
-			return
-		}
-		writeJSON(w, http.StatusAccepted, map[string]any{"status": "pending", "approvals_received": approvalCount, "approvals_required": 2})
-		return
-	}
-	if approvalCount != 2 {
-		writeJSON(w, http.StatusConflict, errorBody("INVALID_APPROVAL_COUNT", "Approval ledger has an unexpected number of approvals", requestID(r)))
-		return
-	}
-	requestTag, updateErr := tx.Exec(ctx, `
-		UPDATE testagram_auth.sensitive_action_requests SET status='approved',decided_at=now()
-		WHERE id=$1::uuid AND action_type='identity.approve' AND target_reference=$2
-		  AND status='pending' AND required_approvals=2 AND expires_at>now()
-	`, requestIDValue, applicationID)
-	if updateErr != nil || requestTag.RowsAffected() != 1 {
-		writeJSON(w, http.StatusConflict, errorBody("APPROVAL_REQUEST_EXPIRED_OR_INVALID", "The linked two-person approval request could not be finalized", requestID(r)))
-		return
-	}
-	applicationTag, updateErr := tx.Exec(ctx, `
-		UPDATE testagram_identity.identity_applications SET status='approved',updated_at=now()
-		WHERE id=$1::uuid AND status='verified'
-	`, applicationID)
-	if updateErr != nil || applicationTag.RowsAffected() != 1 {
-		writeJSON(w, http.StatusConflict, errorBody("APPLICATION_NOT_APPROVABLE", "Application changed before approval could be finalized", requestID(r)))
-		return
-	}
-	var firstApprover, secondApprover string
-	err = tx.QueryRow(ctx, `
-		SELECT approver_user_id::text FROM testagram_auth.sensitive_action_approvals
-		WHERE request_id=$1::uuid AND decision='approved'
-		ORDER BY created_at ASC LIMIT 1
-	`, requestIDValue).Scan(&firstApprover)
-	if err == nil {
-		err = tx.QueryRow(ctx, `
-			SELECT approver_user_id::text FROM testagram_auth.sensitive_action_approvals
-			WHERE request_id=$1::uuid AND decision='approved' AND approver_user_id::text<>$2
-			ORDER BY created_at ASC LIMIT 1
-		`, requestIDValue, firstApprover).Scan(&secondApprover)
-	}
-	token, jti := "", ""
-	if err == nil {
-		token, err = authRandomToken()
-	}
-	if err == nil {
-		jti, err = authRandomToken()
-	}
-	if err == nil {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO testagram_identity.identity_approval_tokens
-			  (token_sha256,jti_sha256,application_id,first_approver_user_id,
-			   second_approver_user_id,expires_at)
-			VALUES ($1,$2,$3::uuid,$4,$5,now()+interval '15 minutes')
-		`, authTokenHash(token), authTokenHash(jti), applicationID, firstApprover, secondApprover)
-	}
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_APPROVAL_TOKEN_FAILED", "Approved account could not receive a provisioning authorization", requestID(r)))
-		return
-	}
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO testagram_auth.admin_security_audit(actor_user_id,action,target_reference,request_id,metadata)
-		VALUES ($1,'identity.account_approval.completed',$2,$3::uuid,jsonb_build_object('approval_count',2))
-	`, reviewer.ID, applicationID, requestIDValue); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_AUDIT_FAILED", "Approval audit could not be recorded", requestID(r)))
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_APPROVAL_FAILED", "Approval could not be committed", requestID(r)))
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"status": "approved", "approval_token": token, "expires_in_seconds": 900, "provisioning": "authorized"})
 }
