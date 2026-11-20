@@ -146,7 +146,7 @@ func (c *Client) Rank(ctx context.Context, input Request) (Response, error) {
 		return Response{}, errors.New("algorithm result limit must be between 1 and 50")
 	}
 	switch input.FeedMode {
-	case "for_you", "following", "latest", "media", "discover", "federated":
+	case "for_you", "following", "media", "discover":
 	default:
 		return Response{}, errors.New("algorithm feed mode is invalid")
 	}
