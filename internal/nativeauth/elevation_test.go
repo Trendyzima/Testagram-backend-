@@ -27,7 +27,7 @@ func TestMintStaffElevationTokenVerifiesBaseAndAddsFreshMFAClaim(t *testing.T) {
 	mac := hmacForTest(secret, unsigned)
 	base := unsigned + "." + enc.EncodeToString(mac)
 
-	elevated, expiresAt, err := MintStaffElevationToken(base, secret, now)
+	elevated, expiresAt, err := MintStaffElevationToken(base, claims.Subject, secret, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +47,11 @@ func TestMintStaffElevationTokenVerifiesBaseAndAddsFreshMFAClaim(t *testing.T) {
 		got.ExpiresAt != expiresAt || expiresAt != now.Unix()+300 || got.JWTID == "" {
 		t.Fatalf("elevation claims are incomplete or incorrectly timed: %#v", got)
 	}
-	if _, _, err := MintStaffElevationToken(base, secret[:16], now); err == nil {
+	if _, _, err := MintStaffElevationToken(base, claims.Subject, secret[:16], now); err == nil {
 		t.Fatal("short signing key was accepted")
 	}
 	tampered := parts[0] + "." + parts[1] + "." + enc.EncodeToString([]byte("invalid"))
-	if _, _, err := MintStaffElevationToken(tampered, secret, now); err == nil {
+	if _, _, err := MintStaffElevationToken(tampered, claims.Subject, secret, now); err == nil {
 		t.Fatal("invalid base-token signature was elevated")
 	}
 }
