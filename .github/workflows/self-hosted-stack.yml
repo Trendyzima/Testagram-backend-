@@ -92,7 +92,7 @@ jobs:
         with:
           go-version: "1.26.10"
           cache: false
-      - name: Test control plane and Appwrite staff console
+      - name: Test control plane and Testagram-native staff console
         run: |
           go test -race -count=1 ./control-plane
           go vet ./control-plane
