@@ -72,10 +72,10 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 		router.ServeHTTP(rec, req)
 		return rec
 	}
-	login := func() nativeSessionTokens {
+	loginWithPassword := func(loginPassword string) nativeSessionTokens {
 		t.Helper()
 		rec := request(http.MethodPost, "/api/auth/login", map[string]string{
-			"email": email, "password": password,
+			"email": email, "password": loginPassword,
 		}, "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("native login status=%d body=%s", rec.Code, rec.Body.String())
@@ -93,6 +93,7 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 		}
 		return envelope.Data
 	}
+	login := func() nativeSessionTokens { return loginWithPassword(password) }
 	refresh := func(token string) *httptest.ResponseRecorder {
 		return request(http.MethodPost, "/api/auth/refresh", map[string]string{"refresh_token": token}, "")
 	}
@@ -163,5 +164,46 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 	}
 	if rec := profile(allSessionTwo.AccessToken); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("logout-all left another access token active: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// Password reset consumes a one-time token, increments token_version,
+	// revokes every active session and permits a fresh login only with the new
+	// password. This exercises the recovery-to-authentication boundary.
+	preResetSession := login()
+	resetToken := "native-password-reset-integration-token-" + suffix
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.password_reset_tokens(token_hash,user_id,expires_at,request_ip_hash)
+		VALUES($1,$2::uuid,now()+interval '30 minutes',$3)
+	`, authTokenHash(resetToken), userID, authFingerprint("192.0.2.181")); err != nil {
+		t.Fatalf("insert one-time password reset capability: %v", err)
+	}
+	newPassword := "NativeSession-Reset-Password-2026!"
+	reset := request(http.MethodPost, "/api/auth/reset-password", map[string]string{
+		"token": resetToken, "password": newPassword,
+	}, "")
+	if reset.Code != http.StatusOK {
+		t.Fatalf("password reset status=%d body=%s", reset.Code, reset.Body.String())
+	}
+	if rec := refresh(preResetSession.RefreshToken); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("password reset left a pre-reset refresh token active: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := profile(preResetSession.AccessToken); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("password reset left a pre-reset access token active: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	replayedReset := request(http.MethodPost, "/api/auth/reset-password", map[string]string{
+		"token": resetToken, "password": "AnotherNativePassword-2026!",
+	}, "")
+	if replayedReset.Code != http.StatusBadRequest {
+		t.Fatalf("consumed password reset token replay status=%d body=%s", replayedReset.Code, replayedReset.Body.String())
+	}
+	oldPasswordLogin := request(http.MethodPost, "/api/auth/login", map[string]string{
+		"email": email, "password": password,
+	}, "")
+	if oldPasswordLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("old password remained valid after reset: status=%d body=%s", oldPasswordLogin.Code, oldPasswordLogin.Body.String())
+	}
+	newPasswordLogin := loginWithPassword(newPassword)
+	if newPasswordLogin.AccessToken == "" || newPasswordLogin.RefreshToken == "" {
+		t.Fatal("new password did not establish a native session")
 	}
 }
