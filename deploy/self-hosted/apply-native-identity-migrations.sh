@@ -29,6 +29,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('identity_applications table', to_regclass('testagram_identity.identity_applications') IS NOT NULL),
   ('identity_application_reviews table', to_regclass('testagram_identity.identity_application_reviews') IS NOT NULL),
   ('identity_application_reviews.reviewer_user_id', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='reviewer_user_id')),
+  ('identity_application_reviews.review_stage', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
   ('verification_reviews.reviewer_user_id', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='reviewer_user_id')),
   ('identity_approval_tokens table', to_regclass('testagram_identity.identity_approval_tokens') IS NOT NULL),
   ('registration_provisioning table', to_regclass('testagram_identity.registration_provisioning') IS NOT NULL),
@@ -46,6 +47,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('staff_role_grants table', to_regclass('testagram_auth.staff_role_grants') IS NOT NULL),
   ('native_staff_permission_overrides table', to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL),
   ('native_sensitive_action_requests table', to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL),
+  ('native_sensitive_action_requests.requested_by_service', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
   ('native sensitive action request source column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
   ('identity application review stage column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
   ('native_sensitive_action_approvals table', to_regclass('testagram_auth.native_sensitive_action_approvals') IS NOT NULL),
@@ -120,6 +122,8 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.staff_role_grants'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_staff_permission_overrides'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\'' AND column_name='\''requested_by_service'\'')
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\'' AND column_name='\''review_stage'\'')
         AND EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\''
