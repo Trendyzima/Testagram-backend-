@@ -97,11 +97,14 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn('{"3000", "8080", "8081", "9000"}', stack)
         self.assertNotIn('if "ports" in cdn:', stack)
 
-    def test_caddy_reload_precedes_public_apex_health_probe(self):
+    def test_caddy_admin_off_configuration_is_reloaded_by_container_restart(self):
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         remote_health = workflow.split("REMOTE_HEALTH_CHECK", 1)[1].split("REMOTE_HEALTH_CHECK", 1)[0]
         self.assertIn("caddy validate --config /etc/caddy/Caddyfile", remote_health)
-        self.assertIn("caddy reload --config /etc/caddy/Caddyfile", remote_health)
+        self.assertIn("admin off", (ROOT / "deploy/self-hosted/Caddyfile").read_text())
+        self.assertNotIn("caddy reload --config /etc/caddy/Caddyfile", remote_health)
+        self.assertIn("docker restart testagram-self-hosted-caddy-1", remote_health)
+        self.assertIn("caddy_running", remote_health)
         apex = workflow.split("Publish the apex federation edge over HTTPS", 1)[1].split("Configure public CDN URL", 1)[0]
         self.assertNotIn('Host: testagram.site', apex)
         self.assertIn('/_testagram/edge-health', apex)
