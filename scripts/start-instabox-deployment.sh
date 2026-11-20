@@ -25,13 +25,13 @@ normalize_boolean() {
 normalize_boolean FRESH_MEDIA_ENABLED false
 normalize_boolean DATA_CENTRE_MEDIA_ENABLED false
 normalize_boolean MEDIA_REPLICATION_ENABLED false
+normalize_boolean TESTAGRAM_IDENTITY_REGISTRATION_ENABLED false
 if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]; then
   echo "::error::FRESH_MEDIA_ENABLED and DATA_CENTRE_MEDIA_ENABLED must both be true or both be false; refusing an ambiguous media profile."
   exit 1
 fi
-# Registration is enabled by the deployed identity service when its actual
-# readiness checks pass. Keep the private evidence profile and policy versions
-# as mandatory deployment prerequisites, without a second kill switch.
+# Registration requires both this explicit release gate and the identity
+# service's independent storage, policy, and verification-readiness checks.
 [[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" && "$FRESH_MEDIA_ENABLED" == "true" ]] || { echo "::error::Identity registration requires the private Data Centre media profile (DATA_CENTRE_MEDIA_ENABLED=true and FRESH_MEDIA_ENABLED=true)."; exit 1; }
 [[ -n "$TESTAGRAM_TERMS_VERSION" && ${#TESTAGRAM_TERMS_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_TERMS_VERSION (1-64 characters)."; exit 1; }
 [[ -n "$TESTAGRAM_PRIVACY_VERSION" && ${#TESTAGRAM_PRIVACY_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_PRIVACY_VERSION (1-64 characters)."; exit 1; }
@@ -145,6 +145,7 @@ B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=
 B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
 TESTAGRAM_AUTH_JWT_SECRET=${TESTAGRAM_AUTH_JWT_SECRET:-}
+TESTAGRAM_IDENTITY_REGISTRATION_ENABLED=$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED
 AUTH_PUBLIC_BASE_URL=$AUTH_PUBLIC_BASE_URL
 CLOUDFLARE_EMAIL_ACCOUNT_ID=${CLOUDFLARE_EMAIL_ACCOUNT_ID:-}
 CLOUDFLARE_EMAIL_API_TOKEN=${CLOUDFLARE_EMAIL_API_TOKEN:-}
@@ -236,6 +237,7 @@ write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-pri
 write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
 write_env_value TESTAGRAM_TERMS_VERSION "$TESTAGRAM_TERMS_VERSION"
 write_env_value TESTAGRAM_PRIVACY_VERSION "$TESTAGRAM_PRIVACY_VERSION"
+write_env_value TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
 if [[ -z "$(read_env_value MEDIA_REPLICATION_ENABLED)" ]]; then write_env_value MEDIA_REPLICATION_ENABLED false; fi
 # The Backend three-provider replicator has its own explicit activation
 # switch; credentials are copied only when that switch is true.
@@ -861,6 +863,7 @@ verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_IDENTITY_REGISTRATION_ENABLED "$TESTAGRAM_IDENTITY_REGISTRATION_ENABLED"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
