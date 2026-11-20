@@ -82,10 +82,8 @@ jobs:
             jq -r '.result[]? | [.pattern, (.script // "")] | @tsv' "$tmp/routes-$zone_id.json" >> "$tmp/routes.tsv"
           done < "$tmp/zones.tsv"
 
-          account_id="$(awk -F '\t' '$2=="testagram.site" {print $1; exit}' "$tmp/zones.tsv")"
-          [[ -n "$account_id" ]] || { echo "::error::The testagram.site zone was not found."; exit 1; }
-          account_id="$(jq -r --arg zone "$account_id" '.result[]? | select(.id == $zone) | .account.id // empty' "$tmp/zones-1.json" | head -n 1)"
-          [[ -n "$account_id" ]] || { echo "::error::Could not resolve the Testagram Cloudflare account."; exit 1; }
+          account_id="$(awk -F '\t' '$2=="testagram.site" {print $3; exit}' "$tmp/zones.tsv")"
+          [[ -n "$account_id" ]] || { echo "::error::The testagram.site zone/account was not found."; exit 1; }
 
           cf_get "/accounts/$account_id/workers/scripts" "$tmp/scripts.json"
           jq -r '.result[]?.id // empty' "$tmp/scripts.json" > "$tmp/scripts.txt"
@@ -94,10 +92,10 @@ jobs:
           # and no service bindings in the read-only audit. Re-check every condition
           # immediately before deletion. Active web/CDN Workers are intentionally
           # excluded and must be cut over separately.
+          # Only the observed orphaned Xclone artifact is eligible here.
+          # Testagram API, heartbeat and federation each have live custom domains;
+          # their cutover must be completed separately before any retirement.
           candidates=(
-            "testagram-api"
-            "testagram-heartbeat"
-            "testagram-federation"
             "xclone-9b4dz1-9b4dz1-8936-20260809"
           )
 
@@ -114,6 +112,12 @@ jobs:
 
             if awk -F '\t' -v w="$worker" '$2==w {found=1} END {exit !found}' "$tmp/routes.tsv"; then
               echo "::error::$worker still has a live zone route; refusing deletion."
+              exit 1
+            fi
+
+            cf_get "/accounts/$account_id/workers/domains?per_page=100" "$tmp/worker-domains.json"
+            if jq -e --arg worker "$worker" '.result[]? | select(.service == $worker)' "$tmp/worker-domains.json" >/dev/null; then
+              echo "::error::$worker still owns a Worker custom domain; refusing deletion."
               exit 1
             fi
 
