@@ -79,6 +79,74 @@ BEGIN
 END;
 $indexes$;
 
+-- Constraint names and standalone index names are catalog objects too. Rename
+-- any provider-branded identifiers left on archived relations without touching
+-- their definitions or historical row values.
+DO $rename_historical_identifiers$
+DECLARE
+  item RECORD;
+  replacement_name TEXT;
+BEGIN
+  FOR item IN
+    SELECT conrelid::regclass AS relation_name, conname
+    FROM pg_constraint
+    WHERE conrelid IN (
+      'testagram_identity.historical_external_identity_accounts'::regclass,
+      'testagram_identity.historical_external_identity_link_audit'::regclass,
+      'testagram_identity.historical_external_registration_consents'::regclass,
+      'testagram_identity.historical_external_registration_provisioning'::regclass
+    )
+      AND conname ILIKE '%appwrite%'
+  LOOP
+    replacement_name := replace(item.conname,'appwrite','source');
+    EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
+      item.relation_name,item.conname,replacement_name);
+  END LOOP;
+
+  FOR item IN
+    SELECT i.indexrelid::regclass AS index_name, c.relname
+    FROM pg_index i
+    JOIN pg_class c ON c.oid=i.indexrelid
+    WHERE i.indrelid IN (
+      'testagram_identity.historical_external_identity_accounts'::regclass,
+      'testagram_identity.historical_external_identity_link_audit'::regclass,
+      'testagram_identity.historical_external_registration_consents'::regclass,
+      'testagram_identity.historical_external_registration_provisioning'::regclass
+    )
+      AND c.relname ILIKE '%appwrite%'
+      AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=i.indexrelid)
+  LOOP
+    replacement_name := replace(item.relname,'appwrite','source');
+    EXECUTE format('ALTER INDEX %s RENAME TO %I',item.index_name,replacement_name);
+  END LOOP;
+END;
+$rename_historical_identifiers$;
+
+-- The retired saga status was provider-specific. Preserve the event meaning
+-- while neutralizing the label in the restricted historical ledger.
+DO $neutralize_historical_status$
+DECLARE
+  constraint_name TEXT;
+BEGIN
+  FOR constraint_name IN
+    SELECT conname FROM pg_constraint
+    WHERE conrelid='testagram_identity.historical_external_registration_provisioning'::regclass
+      AND contype='c'
+      AND pg_get_constraintdef(oid) LIKE '%appwrite_created%'
+  LOOP
+    EXECUTE format('ALTER TABLE testagram_identity.historical_external_registration_provisioning DROP CONSTRAINT %I',constraint_name);
+  END LOOP;
+
+  UPDATE testagram_identity.historical_external_registration_provisioning
+  SET status='source_provider_created'
+  WHERE status='appwrite_created';
+
+  ALTER TABLE testagram_identity.historical_external_registration_provisioning
+    ADD CONSTRAINT historical_external_registration_provisioning_status_check
+    CHECK (status IN ('pending','source_provider_created','linked','verification_sent','completed','compensation_required','failed'));
+END;
+$neutralize_historical_status$;
+
 -- Normalize the provenance label in the native reconciliation ledger while
 -- preserving the source account ID and all reconciliation evidence.
 ALTER TABLE testagram_auth.legacy_account_reconciliation
