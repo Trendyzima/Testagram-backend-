@@ -75,17 +75,17 @@ type service struct {
 	dataCentreMedia           *datacentreclient.Client
 	identityEvidenceMedia     identityEvidenceMediaClient
 	// Set true only in code after real staff WebAuthn enrollment, verification, recovery and replay protection are implemented.
-	identityReviewWebAuthnReady	bool
-	freshMediaEnabled	bool
-	cdnMediaAssertions	*mediaassertion.Issuer
-	cdnMediaBaseURL	string
-	cdnOriginAuthToken	string
-	cdnPurger	*cdnPurger
-	freshMediaInternalToken	string
-	virtualStorage	*virtualstorage.Manager
-	mediaReplicator	*virtualstorage.Replicator
-	algorithm	*algorithmclient.Client
-	replicationReceiver	http.Handler
+	identityReviewWebAuthnReady bool
+	freshMediaEnabled           bool
+	cdnMediaAssertions          *mediaassertion.Issuer
+	cdnMediaBaseURL             string
+	cdnOriginAuthToken          string
+	cdnPurger                   *cdnPurger
+	freshMediaInternalToken     string
+	virtualStorage              *virtualstorage.Manager
+	mediaReplicator             *virtualstorage.Replicator
+	algorithm                   *algorithmclient.Client
+	replicationReceiver         http.Handler
 }
 
 type capabilityRequest struct {
