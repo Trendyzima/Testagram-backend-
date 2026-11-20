@@ -57,3 +57,26 @@ The migration ledger is the source of truth for completed native Flutter slices.
 A route is not complete merely because it navigates or renders a placeholder.
 Cross-repository CI, PostgreSQL integration tests, Appwrite authentication tests
 and end-to-end API contracts must pass before a feature is marked complete.
+
+
+## Seven-repository Testagram integration
+
+This repository is one component of a single Testagram product. The shared ownership map, runtime request flow, security boundaries, hostname ownership and release gates are maintained in the [Testagram API integration control plane](https://github.com/Trendyzima/testagram-api). That repository is build-time contract governance only; it is not a runtime gateway.
+
+| Repository | Responsibility |
+|---|---|
+| [Flutter Client](https://github.com/Trendyzima/testagram-flutter-client-) | Native Android/web UI and public Backend transport |
+| [Backend](https://github.com/Trendyzima/Testagram-backend-) | Canonical identity, sessions, authorization, PostgreSQL and public APIs |
+| [Data Centre](https://github.com/Trendyzima/Testagram-data-centre-) | Private infrastructure, storage, processing, backups and restore |
+| [CDN](https://github.com/Trendyzima/cdn-) | Authorized media byte delivery, edge cache and streaming transport |
+| [Federated Content](https://github.com/Trendyzima/federated-content) | ActivityPub/WebFinger protocol state and remote delivery |
+| [The Algorithm](https://github.com/Trendyzima/the-algorithm) | Private ranking of Backend-authorized candidates |
+| [Testagram API](https://github.com/Trendyzima/testagram-api) | OpenAPI, private contracts, SDKs, immutable source pins and compatibility CI |
+
+**This repository's boundary:** Canonical identity, sessions, authorization, PostgreSQL product records and public API orchestration.
+
+**Contract entry points:** [Public API contract](https://github.com/Trendyzima/testagram-api/blob/main/contracts/openapi/testagram-v1.yaml) · [Private service contracts](https://github.com/Trendyzima/testagram-api/tree/main/contracts/internal/openapi)
+
+**Shared integration references:** [Seven-repository ownership and request flow](https://github.com/Trendyzima/testagram-api/blob/main/docs/architecture/service-ownership.md) · [Locked end-to-end acceptance gates](https://github.com/Trendyzima/testagram-api/blob/main/docs/integration/locked-seven-repository-acceptance.md) · [Machine-readable service registry](https://github.com/Trendyzima/testagram-api/blob/main/contracts/registry/services.json)
+
+Keep the ownership boundaries intact: Flutter calls only the public Backend API and approved media URLs; Backend remains the authority for user identity and product authorization; Data Centre owns storage mechanics; CDN transports bytes but does not authorize access; Federation owns protocol state but not local accounts or canonical posts; Algorithm ranks but does not authorize or hydrate product records. Never place private service credentials, database credentials or storage-provider keys in client code.
