@@ -122,7 +122,7 @@ jobs:
 
 
   staff-webauthn-schema-integration:
-    name: Native staff WebAuthn PostgreSQL integration
+    name: Native staff WebAuthn PostgreSQL integration — credentials, replay and counters
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Verify native staff WebAuthn schema and enrollment invariants
+      - name: Verify native staff WebAuthn schema, enrollment and one-time ceremony invariants
         env:
           DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: bash tests/test-native-staff-webauthn-migration.sh
