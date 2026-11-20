@@ -7,7 +7,6 @@ import (
  "crypto/sha256"
  "encoding/base64"
  "encoding/json"
- "crypto/hmac"
  "io"
  "errors"
  "net/http"
@@ -17,6 +16,8 @@ import (
 
  "github.com/go-webauthn/webauthn/protocol"
  "github.com/go-webauthn/webauthn/webauthn"
+
+ nativeauth "github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
 )
 
 type staffWebAuthnUser struct {
@@ -162,37 +163,14 @@ func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Reques
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"publicKey":options.Response,"challenge":sd.Challenge})
 }
-type nativeElevationClaims struct {
- Subject string `json:"sub"`
- Email string `json:"email"`
- Role string `json:"role"`
- Issuer string `json:"iss"`
- Audience string `json:"aud"`
- IssuedAt int64 `json:"iat"`
- ExpiresAt int64 `json:"exp"`
- TokenVersion int64 `json:"ver"`
- SessionID string `json:"sid"`
- MFAAuthenticatedAt int64 `json:"mfa_at,omitempty"`
- JWTID string `json:"jti,omitempty"`
+func (a *app) mintStaffElevation(user authUser, accessToken string) (string, int64, error) {
+	if user.ID == "" {
+		return "", 0, errors.New("native staff identity is unavailable")
+	}
+	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	return nativeauth.MintStaffElevationToken(accessToken, secret, time.Now().UTC())
 }
-func (a *app) mintStaffElevation(user authUser, accessToken string)(string,int64,error){
- secret:=[]byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")));if len(secret)<32{return "",0,errors.New("native MFA signing key unavailable")}
- parts:=strings.Split(accessToken,".");if len(parts)!=3{return "",0,errors.New("native access token is invalid")}
- payload,err:=base64.RawURLEncoding.DecodeString(parts[1]);if err!=nil{return "",0,errors.New("native access token claims are invalid")}
- var claims nativeElevationClaims
- if err=json.Unmarshal(payload,&claims);err!=nil||claims.Subject!=user.ID||claims.Issuer!="testagram-auth"||claims.Audience!="testagram-api"||claims.Role!="authenticated"||claims.TokenVersion<1||claims.SessionID==""{
-  return "",0,errors.New("native access token cannot be elevated")
- }
- nonce:=make([]byte,16);if _,err:=rand.Read(nonce);err!=nil{return "",0,err}
- now:=time.Now().UTC().Unix();exp:=now+5*60
- claims.IssuedAt=now;claims.ExpiresAt=exp;claims.MFAAuthenticatedAt=now;claims.JWTID=base64.RawURLEncoding.EncodeToString(nonce)
- header,_:=json.Marshal(map[string]string{"alg":"HS256","typ":"JWT"})
- payload,err=json.Marshal(claims);if err!=nil{return "",0,err}
- enc:=base64.RawURLEncoding
- unsigned:=enc.EncodeToString(header)+"."+enc.EncodeToString(payload)
- mac:=hmac.New(sha256.New,secret);_,_=mac.Write([]byte(unsigned))
- return unsigned+"."+enc.EncodeToString(mac.Sum(nil)),exp,nil
-}
+
 func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Request){
  s,user,ok:=a.requireStaff(w,r);if !ok{return}
  if !a.requireStaffWebAuthnRuntime(w,r,false){return}
