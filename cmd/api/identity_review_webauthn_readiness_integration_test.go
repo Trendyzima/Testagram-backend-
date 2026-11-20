@@ -109,7 +109,17 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	}
 
 	if !identityReviewWebAuthnPrerequisitesReady(ctx, db) {
-		t.Fatal("readiness rejected two independent verified reviewers and two independent verified approvers")
+		t.Fatal("readiness rejected two independent verified reviewers and two independent approvers")
+	}
+	// Loopback attestation targets are test-only; production must use the
+	// private Admin Console service address.
+	t.Setenv("TEST_DATABASE_URL", "")
+	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("readiness accepted a loopback Admin Console target outside database-backed tests")
+	}
+	t.Setenv("TEST_DATABASE_URL", dsn)
+	if !identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("readiness did not recover after restoring the database-backed test mode")
 	}
 	// A staff member holding both roles must not count toward both independent
 	// credential groups. Four credentialed people still exist, but only one
