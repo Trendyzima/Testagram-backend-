@@ -602,6 +602,14 @@ jobs:
           export ADMIN_SESSION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           export ADMIN_PUBLIC_URL=https://ops.example.invalid
           export ADMIN_DOMAIN=ops.example.invalid
+          python tests/test_auth_proxy_ip_wiring.py -v
+          docker run --rm \
+            -e ACME_EMAIL=ci-only@example.invalid \
+            -e API_DOMAIN=api.example.invalid \
+            -e MEDIA_DOMAIN=media.example.invalid \
+            -e ADMIN_DOMAIN=ops.example.invalid \
+            -v "$PWD/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
           python - <<'PY'
           from pathlib import Path
