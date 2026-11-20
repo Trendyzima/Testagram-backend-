@@ -1,9 +1,6 @@
 package main
 
 import (
-	"os"
-
-	"github.com/jackc/pgx/v5"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -16,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // identityReviewWebAuthnPrerequisitesReady is the Backend-side half of the
@@ -30,7 +29,7 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 	}
 	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
 	origins := strings.FieldsFunc(os.Getenv("TESTAGRAM_WEBAUTHN_ORIGINS"), func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\\n'
+		return r == ',' || r == ' ' || r == '\n'
 	})
 	if rpid == "" || len(origins) == 0 {
 		return false
