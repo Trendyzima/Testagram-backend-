@@ -50,7 +50,7 @@ DECLARE
   v_approved_count INTEGER;
   v_matching_approved_count INTEGER;
   v_evidence_review_count INTEGER;
-  v_evidence_reference_present BOOLEAN;
+  v_matching_evidence_review_count INTEGER;
   v_account_review_count INTEGER;
   v_evidence_overlap_count INTEGER;
 BEGIN
@@ -108,13 +108,20 @@ BEGIN
     RAISE EXCEPTION 'exactly two distinct native approval decisions are required';
   END IF;
 
-  SELECT count(DISTINCT reviewer_user_id),
-         COALESCE(bool_or(evidence_audit_reference=v_payload->>'evidence_audit_reference'),FALSE)
-    INTO v_evidence_review_count,v_evidence_reference_present
+  SELECT count(DISTINCT reviewer_user_id)
+    INTO v_evidence_review_count
   FROM testagram_identity.identity_application_reviews
   WHERE application_id=NEW.application_id
     AND decision='approved' AND review_stage='evidence_review';
-  IF v_evidence_review_count<>2 OR NOT v_evidence_reference_present THEN
+
+  SELECT count(DISTINCT reviewer_user_id)
+    INTO v_matching_evidence_review_count
+  FROM testagram_identity.identity_application_reviews
+  WHERE application_id=NEW.application_id
+    AND decision='approved' AND review_stage='evidence_review'
+    AND evidence_audit_reference=v_payload->>'evidence_audit_reference';
+
+  IF v_evidence_review_count<>2 OR v_matching_evidence_review_count<>2 THEN
     RAISE EXCEPTION 'two matching evidence reviews are required before account approval';
   END IF;
 
@@ -142,21 +149,15 @@ BEGIN
 END;
 $function$;
 
-DO $triggers$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger
-    WHERE tgrelid='testagram_identity.identity_approval_tokens'::regclass
-      AND tgname='identity_approval_token_requires_two_person_approval'
-      AND NOT tgisinternal
-  ) THEN
-    CREATE TRIGGER identity_approval_token_requires_two_person_approval
-      BEFORE INSERT OR UPDATE OF application_id,first_approver_user_id,second_approver_user_id
-      ON testagram_identity.identity_approval_tokens
-      FOR EACH ROW
-      EXECUTE FUNCTION testagram_identity.assert_two_person_identity_approval();
-  END IF;
-END;
-$triggers$;
+-- Replace the earlier INSERT-only trigger. Token signer/application changes
+-- must be revalidated too; otherwise an UPDATE could mutate the approval quorum.
+DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval
+  ON testagram_identity.identity_approval_tokens;
+
+CREATE TRIGGER identity_approval_token_requires_two_person_approval
+  BEFORE INSERT OR UPDATE OF application_id,first_approver_user_id,second_approver_user_id
+  ON testagram_identity.identity_approval_tokens
+  FOR EACH ROW
+  EXECUTE FUNCTION testagram_identity.assert_two_person_identity_approval();
 
 COMMIT;
