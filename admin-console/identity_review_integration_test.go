@@ -106,6 +106,26 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		t.Fatalf("insert verified identity application: %v", err)
 	}
 
+	// The database token trigger requires a completed, verified age-assurance
+	// session, not merely an adult_verified_at marker on the application.
+	var verificationSessionID string
+	if err := conn.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&verificationSessionID); err != nil {
+		t.Fatalf("generate verified evidence session ID: %v", err)
+	}
+	sessionTokenHash := sha256.Sum256([]byte("identity-review-session:" + applicationID))
+	_, err = conn.Exec(ctx, `
+		INSERT INTO testagram_identity.verification_sessions
+		  (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,
+		   evidence_reference,evidence_fingerprint_sha256,assurance_method,assurance_level,
+		   verified_age_over_threshold,expires_at,submitted_at,decided_at,decided_by_user_id)
+		VALUES($1::uuid,$2::uuid,$3,'age_assurance',18,'verified',
+		       'opaque-evidence-reference-ci',$4,'document_review','reviewed',
+		       TRUE,now()+interval '1 day',now(),now(),$5::uuid)
+	`, verificationSessionID, applicationID, sessionTokenHash[:], fingerprint[:], evidenceReviewerOne)
+	if err != nil {
+		t.Fatalf("insert completed verified age-assurance session: %v", err)
+	}
+
 	// The evidence-review pair and account-approval pair must be disjoint.
 	_, err = conn.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_application_reviews
