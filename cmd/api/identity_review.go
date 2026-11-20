@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+
+	"github.com/jackc/pgx/v5"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -14,6 +17,44 @@ import (
 	"strings"
 	"time"
 )
+
+// identityReviewWebAuthnPrerequisitesReady is the Backend-side half of the
+// Admin Console readiness contract. It requires real, active, user-verified
+// credentials for at least two independent reviewers and two independent
+// approvers. A stored enrollment timestamp alone is not sufficient.
+func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}) bool {
+	if db == nil || len(strings.TrimSpace(env("TESTAGRAM_AUTH_JWT_SECRET", ""))) < 32 {
+		return false
+	}
+	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	origins := strings.FieldsFunc(os.Getenv("TESTAGRAM_WEBAUTHN_ORIGINS"), func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\\n'
+	})
+	if rpid == "" || len(origins) == 0 {
+		return false
+	}
+	for _, origin := range origins {
+		if !strings.HasPrefix(origin, "https://") &&
+			!(strings.HasPrefix(origin, "http://localhost") || strings.HasPrefix(origin, "http://127.0.0.1")) {
+			return false
+		}
+	}
+	var reviewers, approvers int
+	err := db.QueryRow(ctx, `SELECT
+		count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
+		count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator'))
+		FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+		JOIN testagram_auth.staff_webauthn_credentials wc
+		  ON wc.user_id=sp.user_id AND wc.rpid=$1 AND wc.revoked_at IS NULL
+		   AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+		WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		  AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL`, rpid).Scan(&reviewers, &approvers)
+	return err == nil && reviewers >= 2 && approvers >= 2
+}
 
 type identityReviewDecisionInput struct {
 	Decision   string `json:"decision"`
