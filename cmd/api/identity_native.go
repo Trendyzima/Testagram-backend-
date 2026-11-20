@@ -85,6 +85,10 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
 		return
 	}
+	if !strings.EqualFold(env("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "false"), "true") {
+		writeJSON(w, http.StatusForbidden, errorBody("IDENTITY_REGISTRATION_DISABLED", "New identity applications are not currently being accepted", requestID(r)))
+		return
+	}
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return
