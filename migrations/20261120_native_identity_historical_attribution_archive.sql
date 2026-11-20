@@ -1,0 +1,102 @@
+-- Neutralize the remaining provider-specific attribution columns on native
+-- identity ledgers. Their values remain intact as historical audit evidence;
+-- all new writes use the parallel Testagram UUID columns.
+BEGIN;
+
+DO $rename_columns$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='reviewer_appwrite_user_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='historical_source_reviewer_id') THEN
+    ALTER TABLE testagram_identity.identity_application_reviews
+      RENAME COLUMN reviewer_appwrite_user_id TO historical_source_reviewer_id;
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='reviewer_appwrite_user_id')
+     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='historical_source_reviewer_id') THEN
+    RAISE EXCEPTION 'both historical and provider-keyed identity reviewer columns exist';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='reviewer_appwrite_user_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='historical_source_reviewer_id') THEN
+    ALTER TABLE testagram_identity.verification_reviews
+      RENAME COLUMN reviewer_appwrite_user_id TO historical_source_reviewer_id;
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='reviewer_appwrite_user_id')
+     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='historical_source_reviewer_id') THEN
+    RAISE EXCEPTION 'both historical and provider-keyed verification reviewer columns exist';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_sessions' AND column_name='decided_by_appwrite_user_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_sessions' AND column_name='historical_source_decider_id') THEN
+    ALTER TABLE testagram_identity.verification_sessions
+      RENAME COLUMN decided_by_appwrite_user_id TO historical_source_decider_id;
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_sessions' AND column_name='decided_by_appwrite_user_id')
+     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_sessions' AND column_name='historical_source_decider_id') THEN
+    RAISE EXCEPTION 'both historical and provider-keyed verification decider columns exist';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='first_approver_appwrite_user_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='historical_first_approver_source_id') THEN
+    ALTER TABLE testagram_identity.identity_approval_tokens
+      RENAME COLUMN first_approver_appwrite_user_id TO historical_first_approver_source_id;
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='first_approver_appwrite_user_id')
+     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='historical_first_approver_source_id') THEN
+    RAISE EXCEPTION 'both historical and provider-keyed first approver columns exist';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='second_approver_appwrite_user_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='historical_second_approver_source_id') THEN
+    ALTER TABLE testagram_identity.identity_approval_tokens
+      RENAME COLUMN second_approver_appwrite_user_id TO historical_second_approver_source_id;
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='second_approver_appwrite_user_id')
+     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='historical_second_approver_source_id') THEN
+    RAISE EXCEPTION 'both historical and provider-keyed second approver columns exist';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='consumed_by_appwrite_user_id')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='historical_consumed_by_source_id') THEN
+    ALTER TABLE testagram_identity.identity_approval_tokens
+      RENAME COLUMN consumed_by_appwrite_user_id TO historical_consumed_by_source_id;
+  ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='consumed_by_appwrite_user_id')
+     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens' AND column_name='historical_consumed_by_source_id') THEN
+    RAISE EXCEPTION 'both historical and provider-keyed consumer columns exist';
+  END IF;
+END;
+$rename_columns$;
+
+-- Column renames update FK and CHECK expressions automatically. Rename any
+-- remaining provider-branded constraint identifiers without changing data.
+DO $rename_constraints$
+DECLARE
+  item RECORD;
+  replacement_name TEXT;
+BEGIN
+  FOR item IN
+    SELECT conrelid::regclass AS relation_name, conname
+    FROM pg_constraint
+    WHERE conrelid IN (
+      'testagram_identity.identity_application_reviews'::regclass,
+      'testagram_identity.verification_reviews'::regclass,
+      'testagram_identity.verification_sessions'::regclass,
+      'testagram_identity.identity_approval_tokens'::regclass
+    )
+      AND conname ILIKE '%appwrite%'
+  LOOP
+    replacement_name := replace(item.conname,'appwrite','historical_source');
+    EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
+      item.relation_name,item.conname,replacement_name);
+  END LOOP;
+END;
+$rename_constraints$;
+
+COMMENT ON COLUMN testagram_identity.identity_application_reviews.historical_source_reviewer_id IS
+  'Historical reviewer source identifier retained for audit only; native review authorization uses reviewer_user_id.';
+COMMENT ON COLUMN testagram_identity.verification_reviews.historical_source_reviewer_id IS
+  'Historical reviewer source identifier retained for audit only; native review authorization uses reviewer_user_id.';
+COMMENT ON COLUMN testagram_identity.verification_sessions.historical_source_decider_id IS
+  'Historical decision source identifier retained for audit only; native decisions use decided_by_user_id.';
+COMMENT ON COLUMN testagram_identity.identity_approval_tokens.historical_first_approver_source_id IS
+  'Historical first approver source identifier; native approvals use first_approver_user_id.';
+COMMENT ON COLUMN testagram_identity.identity_approval_tokens.historical_second_approver_source_id IS
+  'Historical second approver source identifier; native approvals use second_approver_user_id.';
+COMMENT ON COLUMN testagram_identity.identity_approval_tokens.historical_consumed_by_source_id IS
+  'Historical token consumer source identifier; native consumption uses consumed_by_native_user_id.';
+
+COMMIT;
