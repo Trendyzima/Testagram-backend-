@@ -74,6 +74,8 @@ type service struct {
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
 	identityEvidenceMedia     identityEvidenceMediaClient
+	// Set true only in code after real staff WebAuthn enrollment, verification, recovery and replay protection are implemented.
+	identityReviewWebAuthnReady bool
 	freshMediaEnabled         bool
 	cdnMediaAssertions        *mediaassertion.Issuer
 	cdnMediaBaseURL           string
