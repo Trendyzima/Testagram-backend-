@@ -65,11 +65,11 @@ jobs:
             END IF;
           END $ci$;
           INSERT INTO testagram.profiles(user_id,handle,display_name)
-          VALUES ('appwrite-user-ci','ci_user','CI User');
+          VALUES ('testagram-user-ci','ci_user','CI User');
           INSERT INTO testagram.posts(id,author_id,body,visibility,idempotency_key_hash,request_hash)
-          VALUES ('post-ci','appwrite-user-ci','Neon schema integration test','public',repeat('a',64),repeat('b',64));
+          VALUES ('post-ci','testagram-user-ci','Neon schema integration test','public',repeat('a',64),repeat('b',64));
           INSERT INTO testagram.backend_outbox(event_id,event_type,actor_id,object_id,visibility,payload)
-          VALUES ('event-ci','testagram.post.published','appwrite-user-ci','post-ci','public','{"post_id":"post-ci"}'::jsonb);
+          VALUES ('event-ci','testagram.post.published','testagram-user-ci','post-ci','public','{"post_id":"post-ci"}'::jsonb);
           DO $verify$
           BEGIN
             IF (SELECT count(*) FROM testagram.posts WHERE id='post-ci' AND status='published') <> 1 THEN
