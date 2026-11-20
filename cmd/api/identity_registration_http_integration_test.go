@@ -32,7 +32,7 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "privacy-ci-v1")
 
 	// This fixture exercises the full application path after the WebAuthn release capability is accepted; it does not implement or test the ceremony itself.
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{}, identityReviewWebAuthnReady: true}
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{}, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
 	router := svc.routes()
 	idempotencyKey, err := authRandomToken()
 	if err != nil {
