@@ -33,6 +33,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "058a_native_identity_historical_account_archive.sql",
             "058b_native_identity_historical_staff_archive.sql",
             "058c_native_identity_historical_admin_archive.sql",
+            "058d_native_identity_historical_attribution_archive.sql",
             "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
@@ -75,6 +76,16 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("RENAME COLUMN requested_by_appwrite_user_id TO source_requester_staff_id", migration)
         self.assertIn("REVOKE ALL ON TABLE", migration)
         self.assertNotIn("DROP TABLE", migration)
+
+    def test_historical_attribution_columns_are_neutralized_without_losing_values(self):
+        migration = (ROOT / "migrations" / "20261120_native_identity_historical_attribution_archive.sql").read_text(encoding="utf-8")
+        self.assertIn("RENAME COLUMN reviewer_appwrite_user_id TO historical_source_reviewer_id", migration)
+        self.assertIn("RENAME COLUMN decided_by_appwrite_user_id TO historical_source_decider_id", migration)
+        self.assertIn("RENAME COLUMN consumed_by_appwrite_user_id TO historical_consumed_by_source_id", migration)
+        self.assertIn("first_approver_user_id", migration)
+        self.assertIn("second_approver_user_id", migration)
+        self.assertNotIn("DROP COLUMN", migration)
+        self.assertNotIn("UPDATE testagram_identity", migration)
 
     def test_corrective_mail_role_migration_is_mounted_and_applied(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
