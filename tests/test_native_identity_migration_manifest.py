@@ -173,6 +173,24 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         positions = [manifest.index(name) for name in ordered]
         self.assertEqual(positions, sorted(positions))
 
+    def test_backend_admin_console_readiness_is_explicitly_wired_privately(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        env_example = (ROOT / "deploy/self-hosted/.env.example").read_text(encoding="utf-8")
+        self.assertIn(
+            "TESTAGRAM_ADMIN_CONSOLE_READINESS_URL: ${TESTAGRAM_ADMIN_CONSOLE_READINESS_URL:-http://admin-console:8090/internal/webauthn/readiness}",
+            compose,
+        )
+        self.assertGreaterEqual(
+            compose.count("TESTAGRAM_WEBAUTHN_READINESS_TOKEN: ${TESTAGRAM_WEBAUTHN_READINESS_TOKEN:-}"),
+            2,
+        )
+        self.assertIn("networks: [edge, data, monitoring, platform, egress]", compose)
+        self.assertIn("networks: [edge, monitoring, platform]", compose)
+        self.assertIn(
+            "TESTAGRAM_ADMIN_CONSOLE_READINESS_URL=http://admin-console:8090/internal/webauthn/readiness",
+            env_example,
+        )
+
     def test_corrective_mail_role_migration_is_mounted_and_applied(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
         migration = "20261123_testagram_mail_outbox_runtime_role.sql"
