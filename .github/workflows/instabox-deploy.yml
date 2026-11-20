@@ -408,8 +408,24 @@ jobs:
           MACHINE_ID="${{ steps.machine.outputs.machine_id }}"
           cmd="$(cat <<'REMOTE_HEALTH_CHECK'
           set -euo pipefail
+          ROOT=/data/home/testagram
+          BASE_ENV="$ROOT/repos/backend/deploy/self-hosted/.env"
+          COMPOSE_FILE="$ROOT/repos/backend/deploy/self-hosted/docker-compose.yml"
           sudo docker exec testagram-self-hosted-caddy-1 caddy validate --config /etc/caddy/Caddyfile
-          sudo docker exec testagram-self-hosted-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+          sudo docker compose --env-file "$BASE_ENV" -f "$COMPOSE_FILE" up -d --force-recreate caddy
+          caddy_ready=false
+          for attempt in $(seq 1 36); do
+            if sudo docker exec testagram-self-hosted-caddy-1 wget -q -O /dev/null http://127.0.0.1:8443/_testagram/edge-health; then
+              caddy_ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$caddy_ready" != true ]]; then
+            sudo docker logs --tail=100 testagram-self-hosted-caddy-1 2>&1 || true
+            echo "Caddy did not load the validated apex health route after recreation." >&2
+            exit 1
+          fi
           containers=(testagram-self-hosted-postgres-1 testagram-self-hosted-control-plane-1 testagram-self-hosted-api-1 testagram-self-hosted-admin-console-1 testagram-self-hosted-object-storage-1 testagram-self-hosted-media-cache-1 testagram-self-hosted-caddy-1 testagram-self-hosted-prometheus-1 testagram-data-centre-algorithm-1 testagram-data-centre-federation-api-1 testagram-data-centre-platform-1 testagram-data-centre-notification-1 testagram-data-centre-video-1 testagram-data-centre-video-worker-1 testagram-data-centre-worker-1)
           if [[ -f /data/home/testagram/media-enabled.txt ]] && grep -qx true /data/home/testagram/media-enabled.txt; then
             containers+=(testagram-data-centre-media-1)
