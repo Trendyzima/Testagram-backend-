@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS testagram_auth.staff_webauthn_credentials (
   rpid varchar(512) NOT NULL,
   user_id uuid NOT NULL REFERENCES testagram_auth.staff_principals(user_id) ON DELETE CASCADE,
   credential_id bytea NOT NULL,
-  credential jsonb NOT NULL,
+  credential bytea NOT NULL,
   sign_count bigint NOT NULL DEFAULT 0 CHECK (sign_count >= 0),
   clone_warning boolean NOT NULL DEFAULT false,
   user_verified boolean NOT NULL DEFAULT false,
