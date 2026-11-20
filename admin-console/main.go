@@ -649,7 +649,8 @@ func (a *app) requireStaff(w http.ResponseWriter,r *http.Request,roles ...string
 }
 
 func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
-	if _,_,ok:=a.requireStaff(w,r,"owner");!ok{return}
+	s,_,ok:=a.requireStaff(w,r,"owner");if !ok{return}
+	if !a.requireRecentStepUp(w,s){return}
 	writeJSON(w,http.StatusNotImplemented,map[string]string{"error":"Native staff invitation provisioning is not yet available. Staff access remains closed until the two-person Testagram provisioning workflow is completed."})
 }
 
