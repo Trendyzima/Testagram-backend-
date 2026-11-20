@@ -49,6 +49,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('staff WebAuthn credentials table', to_regclass('testagram_auth.staff_webauthn_credentials') IS NOT NULL),
   ('staff WebAuthn challenges table', to_regclass('testagram_auth.staff_webauthn_challenges') IS NOT NULL),
   ('staff WebAuthn enrollment authorizations table', to_regclass('testagram_auth.staff_webauthn_enrollment_authorizations') IS NOT NULL),
+  ('testagram_app staff MFA timestamp update', COALESCE((SELECT has_column_privilege(oid,'testagram_auth.staff_principals','mfa_enrolled_at','UPDATE') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('native_staff_permission_overrides table', to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL),
   ('native_sensitive_action_requests table', to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL),
   ('native_sensitive_action_requests.requested_by_service', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
