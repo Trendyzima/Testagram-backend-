@@ -332,7 +332,7 @@ for file in \
   057_testagram_mail_outbox.sql \
   058_testagram_mail_outbox_runtime_role.sql \
   059_native_identity_approval_circuit.sql \
-  20261121_native_identity_intake_optional_fingerprint.sql \\
+  20261121_native_identity_intake_optional_fingerprint.sql \
   060_native_staff_webauthn.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
