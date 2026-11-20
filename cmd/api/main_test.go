@@ -179,11 +179,10 @@ func TestMediaUploadIntentFailsClosedWithoutIdentityDatabase(t *testing.T) {
 }
 
 func TestPrivateMediaDownloadURLFailsClosedWithoutIdentityDatabase(t *testing.T) {
-	upstream := testAppwriteAuthServer(t)
-	s := &service{media: testMediaSigner(t), upstream: upstream.Client()}
+	s := &service{media: testMediaSigner(t)}
 	r := httptest.NewRequest(http.MethodPost, "/api/media/private-download-url", strings.NewReader(`{"key":"users/user-123/0123456789abcdef0123456789abcdef"}`))
 	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Authorization", "Bearer valid-session-token")
+	r.Header.Set("Authorization", "Bearer external-provider-token")
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable {
