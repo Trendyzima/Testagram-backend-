@@ -2,6 +2,8 @@
 
 The native Go application API and PostgreSQL data plane for Testagram.
 
+For the retired Appwrite runtime files and their Testagram-native replacement owners, see [`docs/architecture/appwrite-retirement-native-replacements.md`](docs/architecture/appwrite-retirement-native-replacements.md).
+
 ## Six-runtime-repository ownership + API contract control plane
 
 - [Flutter client](https://github.com/Trendyzima/testagram-flutter-client-): native Android/web UI; Testagram-native login/session acquisition; all product data through this API.
