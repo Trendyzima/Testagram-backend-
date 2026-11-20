@@ -63,8 +63,7 @@ from the target staff member and a separate independent authorization.
 - Credential JSON is AEAD-encrypted before it is written to PostgreSQL.
 - Assertion completion updates the credential counter and consumes the
   challenge in one transaction. Clone warnings and counter races are denied.
-- Successful assertions issue a five-minute HMAC-signed elevation bound to the
-  canonical subject and the same encrypted HttpOnly Console session.
+- Successful assertions issue a five-minute HMAC-signed native Testagram access JWT with the existing issuer, audience, session ID and token version plus the backend-recognized mfa_at claim. The token is bound to the canonical subject and encrypted HttpOnly Console session, then forwarded to the Backend identity-review API.
 - Sensitive staff actions, permission changes, staff directory, audit and
   approval queue endpoints require this proof. Console-local MFA booleans are
   not accepted.
