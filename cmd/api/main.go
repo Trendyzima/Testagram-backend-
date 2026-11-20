@@ -77,16 +77,16 @@ type service struct {
 	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
 	identityReviewWebAuthnReady         bool
 	identityReviewWebAuthnPrerequisites func(context.Context) bool
-	freshMediaEnabled           bool
-	cdnMediaAssertions          *mediaassertion.Issuer
-	cdnMediaBaseURL             string
-	cdnOriginAuthToken          string
-	cdnPurger                   *cdnPurger
-	freshMediaInternalToken     string
-	virtualStorage              *virtualstorage.Manager
-	mediaReplicator             *virtualstorage.Replicator
-	algorithm                   *algorithmclient.Client
-	replicationReceiver         http.Handler
+	freshMediaEnabled                   bool
+	cdnMediaAssertions                  *mediaassertion.Issuer
+	cdnMediaBaseURL                     string
+	cdnOriginAuthToken                  string
+	cdnPurger                           *cdnPurger
+	freshMediaInternalToken             string
+	virtualStorage                      *virtualstorage.Manager
+	mediaReplicator                     *virtualstorage.Replicator
+	algorithm                           *algorithmclient.Client
+	replicationReceiver                 http.Handler
 }
 
 type capabilityRequest struct {
