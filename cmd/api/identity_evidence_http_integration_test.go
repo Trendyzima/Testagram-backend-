@@ -330,7 +330,7 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	}
 	// Exercise the real Backend PostgreSQL readiness query and authenticated
 	// private Admin Console attestation before testing the evidence lifecycle.
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager, replicator: replicator}, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager, replicator: replicator}, identityReviewWebAuthnReady: true}
 	router := svc.routes()
 
 	idempotencyKey, err := authRandomToken()
