@@ -248,6 +248,22 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','INSERT')
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','UPDATE')`).Scan(&privilegesOK)
  }
+ credentialedReviewers:=0
+ credentialedApprovers:=0
+ if dbOK&&schemaOK&&privilegesOK&&rpid!="" {
+  _=a.database.QueryRow(ctx,`SELECT
+   count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
+   count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator'))
+   FROM testagram_auth.staff_principals sp
+   JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+   JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+   JOIN testagram_auth.staff_webauthn_credentials wc
+     ON wc.user_id=sp.user_id AND wc.rpid=$1 AND wc.revoked_at IS NULL
+      AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+   WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+     AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+  `,rpid).Scan(&credentialedReviewers,&credentialedApprovers)
+ }
  signingKeyOK:=len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32
  encryptionOK:=a.aead!=nil
  enrollmentEnabled:=strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")
@@ -273,6 +289,9 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
   "database":dbOK,"schema":schemaOK,"privileges":privilegesOK,
   "signing_key":signingKeyOK,"credential_encryption":encryptionOK,
   "backend_api":backendAPIReady,"enrollment_enabled":enrollmentEnabled,
+  "credentialed_reviewers":credentialedReviewers,
+  "credentialed_approvers":credentialedApprovers,
+  "identity_review_ready":ceremoniesReady&&credentialedReviewers>=2&&credentialedApprovers>=2,
  }
 }
 
