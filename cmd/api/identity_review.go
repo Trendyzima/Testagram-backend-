@@ -53,7 +53,54 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 		   AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
 		WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
 		  AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL`, rpid).Scan(&reviewers, &approvers)
-	return err == nil && reviewers >= 2 && approvers >= 2
+	if err != nil || reviewers < 2 || approvers < 2 {
+		return false
+	}
+	// Require a live attestation from the Admin Console process itself. This
+	// verifies its RP configuration, encryption key, schema privileges and
+	// credential store before the API accepts identity applications.
+	readinessToken := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN"))
+	if len(readinessToken) < 32 {
+		return false
+	}
+	readinessURL := strings.TrimSpace(os.Getenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL"))
+	if readinessURL == "" {
+		readinessURL = "http://admin-console:8090/internal/webauthn/readiness"
+	}
+	parsedURL, parseErr := url.Parse(readinessURL)
+	if parseErr != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") ||
+		parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return false
+	}
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if reqErr != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+readinessToken)
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, requestErr := client.Do(req)
+	if requestErr != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return false
+	}
+	var attestation struct {
+		IdentityReviewReady bool `json:"identity_review_ready"`
+		CredentialedReviewers int `json:"credentialed_reviewers"`
+		CredentialedApprovers int `json:"credentialed_approvers"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&attestation) != nil {
+		return false
+	}
+	return attestation.IdentityReviewReady &&
+		attestation.CredentialedReviewers >= 2 &&
+		attestation.CredentialedApprovers >= 2
 }
 
 type identityReviewDecisionInput struct {
