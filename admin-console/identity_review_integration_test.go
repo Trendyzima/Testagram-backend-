@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
@@ -67,11 +68,18 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		`, person.id); err != nil {
 			t.Fatalf("insert staff WebAuthn user: %v", err)
 		}
+		encryptedCredential, err := admin.encryptStaffCredential(&webauthn.Credential{
+			ID: []byte("credential-" + person.id),
+			PublicKey: []byte("test-public-key"),
+		})
+		if err != nil {
+			t.Fatalf("encrypt staff WebAuthn credential fixture: %v", err)
+		}
 		if _, err := conn.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_credentials
 			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
-			VALUES('ops.example.test',$1::uuid,decode(md5($1),'hex'),decode(md5($1||'credential'),'hex'),TRUE,FALSE)
-		`, person.id); err != nil {
+			VALUES('ops.example.test',$1::uuid,decode(md5($1),'hex'),$2,TRUE,FALSE)
+		`, person.id, encryptedCredential); err != nil {
 			t.Fatalf("insert verified staff WebAuthn credential: %v", err)
 		}
 	}
@@ -80,6 +88,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://ops.example.test")
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-admin-webauthn-readiness-key-", 2))
 	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", strings.Repeat("testagram-admin-readiness-token-", 2))
+	admin := testApp(t)
 	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -90,7 +99,6 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		t.Fatalf("open Admin Console readiness pool: %v", err)
 	}
 	defer pool.Close()
-	admin := testApp(t)
 	admin.database = pool
 	admin.apiHealthURL = health.URL
 	admin.client = health.Client()
