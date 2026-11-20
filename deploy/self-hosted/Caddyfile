@@ -48,8 +48,9 @@
 # protocol resources are routed to the private Federation service.
 testagram.site {
   encode zstd gzip
-  @edge_health path /_testagram/edge-health
-  respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200
+  handle /_testagram/edge-health {
+    respond `{"ok":true,"service":"testagram-apex-edge"}` 200
+  }
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Content-Type-Options nosniff
@@ -94,8 +95,9 @@ testagram.site {
     Referrer-Policy no-referrer
     -Server
   }
-  @edge_health path /_testagram/edge-health
-  respond @edge_health `{"ok":true,"service":"testagram-apex-edge"}` 200
+  handle /_testagram/edge-health {
+    respond `{"ok":true,"service":"testagram-apex-edge"}` 200
+  }
   # The Worker strips untrusted forwarding headers and sets this value
   # from the incoming public hostname. The web origin shares this edge listener.
   @www_frontend header X-Forwarded-Host www.testagram.site
