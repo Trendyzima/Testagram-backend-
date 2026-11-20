@@ -1190,10 +1190,12 @@ jobs:
         with:
           go-version: "1.26.11"
           cache: true
-      - name: Run two-person identity approval transaction against PostgreSQL
+      - name: Run native approved identity provisioning and email verification against PostgreSQL
         env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
-        run: go test ./cmd/api -run '^TestNativeApprovedIdentityProvisioningAndEmailVerification        env:
+        run: go test ./cmd/api -run '^TestNativeApprovedIdentityProvisioningAndEmailVerification$' -count=1 -v
+      - name: Run two-person identity approval transaction against PostgreSQL
+        env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1 -v
       - name: Verify permission isolation and two-person approval ledger
