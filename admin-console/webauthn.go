@@ -296,10 +296,10 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
  credentialedReviewers:=0
  credentialedApprovers:=0
  if dbOK&&schemaOK&&privilegesOK&&rpid!="" {
-  _=a.database.QueryRow(ctx,`SELECT
-   count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator','identity_reviewer')),
-   count(DISTINCT sp.user_id) FILTER (WHERE rg.role = 'identity_reviewer'),
-   count(DISTINCT sp.user_id) FILTER (WHERE rg.role IN ('owner','administrator'))
+  _=a.database.QueryRow(ctx,`WITH eligible_staff AS (
+   SELECT sp.user_id,
+          bool_or(rg.role='identity_reviewer') AS is_reviewer,
+          bool_or(rg.role IN ('owner','administrator')) AS is_approver
    FROM testagram_auth.staff_principals sp
    JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
    JOIN testagram_auth.identities i ON i.user_id=sp.user_id
@@ -308,6 +308,13 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
       AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
    WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
      AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+     AND rg.role IN ('owner','administrator','identity_reviewer')
+   GROUP BY sp.user_id
+  )
+  SELECT count(*) FILTER (WHERE is_reviewer OR is_approver),
+         count(*) FILTER (WHERE is_reviewer AND NOT is_approver),
+         count(*) FILTER (WHERE is_approver AND NOT is_reviewer)
+  FROM eligible_staff
   `,rpid).Scan(&credentialedStaff,&credentialedReviewers,&credentialedApprovers)
  }
  signingKeyOK:=len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32
