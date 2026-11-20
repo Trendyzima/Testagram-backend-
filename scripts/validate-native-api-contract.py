@@ -7,7 +7,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_ROOTS = (ROOT / "cmd", ROOT / "internal", ROOT / "admin-console", ROOT / "control-plane", ROOT / "deploy" / "self-hosted", ROOT / ".github" / "workflows")
 ROOT_FILES = (ROOT / "docker-compose.yml", ROOT / "Dockerfile", ROOT / ".env.example")
-FORBIDDEN = re.compile(r"appwrite|APPWRITE_|X-Appwrite-|cloud\\.appwrite|appwrite\\.io", re.IGNORECASE)
+FORBIDDEN = re.compile(r"appwrite|APPWRITE_|X-Appwrite-", re.IGNORECASE)
 
 failures = []
 scanned = 0
@@ -53,7 +53,7 @@ for action in ('"signup"', '"login"', '"refresh"', '"logout"'):
 
 if failures:
     print("Native API contract validation failed:", file=sys.stderr)
-    print("\\n".join(failures), file=sys.stderr)
+    print("\n".join(failures), file=sys.stderr)
     raise SystemExit(1)
 
 print(f"Native Testagram API contract: PASS ({scanned} runtime/config files scanned)")
