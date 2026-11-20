@@ -331,6 +331,7 @@ for file in \
   056_native_verification_decider.sql \
   057_testagram_mail_outbox.sql \
   058_testagram_mail_outbox_runtime_role.sql \
+  058a_native_identity_reviewer_uuid_bridge.sql \
   059_native_identity_approval_circuit.sql \
   20261121_native_identity_intake_optional_fingerprint.sql \
   060_native_staff_webauthn.sql; do
@@ -362,6 +363,7 @@ apply_migration 055_native_identity_approval_ledger.sql
 apply_migration 056_native_verification_decider.sql
 apply_migration 057_testagram_mail_outbox.sql
 apply_migration 058_testagram_mail_outbox_runtime_role.sql
+apply_migration 058a_native_identity_reviewer_uuid_bridge.sql
 apply_migration 059_native_identity_approval_circuit.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 apply_migration 060_native_staff_webauthn.sql
