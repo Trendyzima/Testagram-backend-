@@ -50,6 +50,9 @@ func TestMintStaffElevationTokenVerifiesBaseAndAddsFreshMFAClaim(t *testing.T) {
 	if _, _, err := MintStaffElevationToken(base, claims.Subject, secret[:16], now); err == nil {
 		t.Fatal("short signing key was accepted")
 	}
+	if _, _, err := MintStaffElevationToken(base, "00000000-0000-4000-8000-000000000099", secret, now); err == nil {
+		t.Fatal("elevation was issued for a different staff principal")
+	}
 	tampered := parts[0] + "." + parts[1] + "." + enc.EncodeToString([]byte("invalid"))
 	if _, _, err := MintStaffElevationToken(tampered, claims.Subject, secret, now); err == nil {
 		t.Fatal("invalid base-token signature was elevated")
