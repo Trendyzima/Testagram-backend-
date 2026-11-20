@@ -10,6 +10,7 @@ RUNTIME_ROOTS = (
     "admin-console",
     "deploy/self-hosted",
     ".github/workflows",
+    "scripts",
 )
 RUNTIME_FILES = (
     ".env.example",
@@ -19,6 +20,7 @@ RUNTIME_FILES = (
     "scripts/native-auth-staging-smoke.py",
     "scripts/validate-native-api-contract.py",
 )
+EXCLUDED_RUNTIME_FILES = {"scripts/test-identity-registration-migration.sh"}
 TEXT_SUFFIXES = {
     ".conf", ".go", ".json", ".md", ".mod", ".py", ".service", ".sh",
     ".sum", ".toml", ".txt", ".yaml", ".yml",
@@ -38,7 +40,7 @@ class NativeAuthRuntimeBoundaryTests(unittest.TestCase):
 
         offenders = []
         for path in sorted(set(paths)):
-            if not path.is_file():
+            if not path.is_file() or str(path.relative_to(ROOT)) in EXCLUDED_RUNTIME_FILES:
                 continue
             try:
                 content = path.read_text(encoding="utf-8")
