@@ -88,10 +88,8 @@ jobs:
                   echo "|---|---|---|"
                   jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + ((.proxied // false)|tostring) + " |"' "$tmp/dns.json"
                 } >> "$GITHUB_STEP_SUMMARY"
-                if [[ "$zone_name" == "testagram.site" ]]; then
-                  origin_record="$(jq -r '.result[]? | select(.name == "api.testagram.site" and (.type == "A" or .type == "AAAA")) | [.type,.content] | @tsv' "$tmp/dns.json" | head -n 1)"
-                  if [[ -n "$origin_record" ]]; then
-                    IFS=
+              fi
+              if cf_get "/zones/$zone_id/workers/routes" "$tmp/routes.json"; then
                 {
                   echo ""
                   echo "#### Worker routes: $zone_name"
@@ -130,7 +128,7 @@ jobs:
               api_worker_service="$(jq -r '.result[]? | select(.hostname == "api.testagram.site") | .service // empty' "$tmp/worker-domains.json" | head -n 1)"
               if [[ -n "$api_worker_service" ]]; then
                 legacy_api_worker_domain_found="yes"
-                echo "::warning::api.testagram.site remains attached to Worker service '$api_worker_service'; production cutover is not complete."
+                echo "::warning::api.testagram.site remains attached to Worker service $api_worker_service."
               fi
             else
               echo "- Worker custom-domain inventory unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
@@ -200,6 +198,6 @@ jobs:
           echo "Audit completed. DNS record values/content and all credentials were intentionally excluded from the summary." >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"
           if [[ "$legacy_api_worker_domain_found" == "yes" ]]; then
-            echo "::error::Production acceptance blocked: api.testagram.site is still attached to a Cloudflare Worker custom domain. Transfer it only after the native origin passes direct health and route smoke tests."
+            echo "::error::Production acceptance blocked: transfer api.testagram.site from its legacy Worker custom domain only after native origin health and API route smoke tests pass."
             exit 1
           fi
