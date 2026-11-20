@@ -101,6 +101,23 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	if !identityReviewWebAuthnPrerequisitesReady(ctx, db) {
 		t.Fatal("readiness rejected two independent verified reviewers and two independent verified approvers")
 	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.staff_role_grants
+		SET role='administrator'
+		WHERE user_id=ANY($1::uuid[])
+	`, users[:2]); err != nil {
+		t.Fatal(err)
+	}
+	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("readiness accepted overlapping administrator-only reviewer and approver groups")
+	}
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_auth.staff_role_grants
+		SET role='identity_reviewer'
+		WHERE user_id=ANY($1::uuid[])
+	`, users[:2]); err != nil {
+		t.Fatal(err)
+	}
 	adminReady = false
 	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
 		t.Fatal("Backend accepted an Admin Console readiness attestation that was not ready")
