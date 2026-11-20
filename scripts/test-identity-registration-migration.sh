@@ -602,7 +602,8 @@ BEGIN
      OR to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
      OR to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
      OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL
-     OR to_regclass('testagram_identity.identity_applications_sensitive_action_request_idx') IS NOT NULL THEN
+     OR to_regclass('testagram_identity.identity_applications_sensitive_action_request_idx') IS NOT NULL
+     OR to_regclass('testagram_identity.verification_reviews_reviewer_idx') IS NOT NULL THEN
     RAISE EXCEPTION 'provider-keyed identity or staff tables remain in the live schema';
   END IF;
 
@@ -618,7 +619,8 @@ BEGIN
      OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL
      OR to_regclass('testagram_auth.native_sensitive_action_requests') IS NULL
      OR to_regclass('testagram_auth.native_sensitive_action_approvals') IS NULL
-     OR to_regclass('testagram_identity.historical_external_identity_applications_sensitive_request_idx') IS NULL THEN
+     OR to_regclass('testagram_identity.historical_external_identity_applications_sensitive_request_idx') IS NULL
+     OR to_regclass('testagram_identity.historical_source_verification_reviews_reviewer_idx') IS NULL THEN
     RAISE EXCEPTION 'historical evidence or native replacement tables are missing';
   END IF;
 
@@ -700,6 +702,20 @@ BEGIN
       AND conname='identity_applications_historical_external_sensitive_action_request_fk'
   ) THEN
     RAISE EXCEPTION 'historical and native identity approval request links are not separated';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_constraint
+    WHERE confrelid='testagram_auth.historical_external_staff_roles'::regclass
+      AND conname IN (
+        'identity_application_reviews_reviewer_staff_fk',
+        'identity_approval_tokens_first_approver_staff_fk',
+        'identity_approval_tokens_second_approver_staff_fk',
+        'verification_reviews_reviewer_staff_fk',
+        'verification_sessions_decider_staff_fk'
+      )
+  ) <> 5 THEN
+    RAISE EXCEPTION 'historical staff foreign-key audit lineage was not preserved';
   END IF;
 
   IF NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','SELECT')
