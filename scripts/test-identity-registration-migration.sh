@@ -544,7 +544,6 @@ $mail_role_repair$;
 SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
- -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
