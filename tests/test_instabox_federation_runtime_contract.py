@@ -56,6 +56,25 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn("X-Testagram-API-Version: 1", probe)
         self.assertIn("X-Request-ID: testagram-deploy-acceptance", probe)
 
+    def test_deployment_health_gate_requires_runtime_services_not_optional_monitoring(self):
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        health_gate = workflow.split("containers=(", 1)[1].split(")", 1)[0]
+        for required in (
+            "testagram-self-hosted-postgres-1",
+            "testagram-self-hosted-api-1",
+            "testagram-self-hosted-object-storage-1",
+            "testagram-self-hosted-media-cache-1",
+            "testagram-data-centre-algorithm-1",
+            "testagram-data-centre-federation-api-1",
+        ):
+            self.assertIn(required, health_gate)
+        for optional in (
+            "testagram-self-hosted-node-exporter-1",
+            "testagram-self-hosted-alertmanager-1",
+            "testagram-self-hosted-grafana-1",
+        ):
+            self.assertNotIn(optional, health_gate)
+
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
         self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e', self.script)
