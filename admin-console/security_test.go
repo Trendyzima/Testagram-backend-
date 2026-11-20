@@ -1,8 +1,9 @@
 package main
 
 import (
-	"net/http"
 	"fmt"
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"net/http/httptest"
 	"testing"
@@ -43,30 +44,26 @@ func TestUnknownSensitiveActionIsRejected(t *testing.T) {
 	}
 }
 
-func TestRecentStepUpRequiresLivePhishingResistantMFA(t *testing.T) {
-	a := testApp(t)
-	for _, tc := range []struct {
-		name string
-		until int64
-		mfaVerified bool
-		want bool
-	}{
-		{"expired MFA proof", time.Now().Add(-time.Second).Unix(), true, false},
-		{"missing proof", 0, false, false},
-		{"password-only step-up", time.Now().Add(time.Minute).Unix(), false, false},
-		{"fresh verified MFA proof", time.Now().Add(time.Minute).Unix(), true, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			got := a.requireRecentStepUp(w, session{StepUpUntil: tc.until, StepUpMFA: tc.mfaVerified})
-			if got != tc.want {
-				t.Fatalf("requireRecentStepUp() = %v, want %v", got, tc.want)
-			}
-			if !tc.want && w.Code != http.StatusUnauthorized {
-				t.Fatalf("missing/expired MFA proof returned HTTP %d, want 401", w.Code)
-			}
-		})
-	}
+func TestRecentStepUpRequiresBackendSignedWebAuthnElevation(t *testing.T) {
+ a:=testApp(t)
+ t.Setenv("TESTAGRAM_AUTH_JWT_SECRET",strings.Repeat("s",48))
+ user:=authUser{ID:"11111111-1111-4111-8111-111111111111",StaffRole:"owner"}
+ now:=time.Now().UTC().Unix()
+ accessClaims:=nativeElevationClaims{Subject:user.ID,Email:"owner@testagram.invalid",Role:"authenticated",Issuer:"testagram-auth",Audience:"testagram-api",IssuedAt:now-60,ExpiresAt:now+600,TokenVersion:3,SessionID:"33333333-3333-4333-8333-333333333333"}
+ accessPayload,_:=json.Marshal(accessClaims)
+ accessToken:="header."+base64.RawURLEncoding.EncodeToString(accessPayload)+".signature"
+ token,_,err:=a.mintStaffElevation(user,accessToken);if err!=nil{t.Fatal(err)}
+ validSession:=session{AccessToken:accessToken,ElevatedToken:token}
+ other:=accessClaims;other.Subject="22222222-2222-4222-8222-222222222222"
+ otherPayload,_:=json.Marshal(other)
+ for _,tc:=range []struct{name string;s session;want bool}{
+  {"valid native elevated proof",validSession,true},
+  {"missing proof",session{AccessToken:accessToken},false},
+  {"tampered proof",session{AccessToken:accessToken,ElevatedToken:token+"x"},false},
+  {"proof bound to another identity",session{AccessToken:"header."+base64.RawURLEncoding.EncodeToString(otherPayload)+".signature",ElevatedToken:token},false},
+ }{
+  t.Run(tc.name,func(t *testing.T){w:=httptest.NewRecorder();got:=a.requireRecentStepUp(w,tc.s);if got!=tc.want{t.Fatalf("requireRecentStepUp()=%v want %v; status=%d",got,tc.want,w.Code)}})
+ }
 }
 
 func TestNormalizeSensitiveDecision(t *testing.T) {

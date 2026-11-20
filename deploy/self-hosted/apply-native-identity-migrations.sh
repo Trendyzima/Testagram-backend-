@@ -45,6 +45,11 @@ WITH checks(check_name, ok) AS (VALUES
   ('legacy_account_reconciliation table', to_regclass('testagram_auth.legacy_account_reconciliation') IS NOT NULL),
   ('staff_principals table', to_regclass('testagram_auth.staff_principals') IS NOT NULL),
   ('staff_role_grants table', to_regclass('testagram_auth.staff_role_grants') IS NOT NULL),
+  ('staff WebAuthn users table', to_regclass('testagram_auth.staff_webauthn_users') IS NOT NULL),
+  ('staff WebAuthn credentials table', to_regclass('testagram_auth.staff_webauthn_credentials') IS NOT NULL),
+  ('staff WebAuthn challenges table', to_regclass('testagram_auth.staff_webauthn_challenges') IS NOT NULL),
+  ('staff WebAuthn enrollment authorizations table', to_regclass('testagram_auth.staff_webauthn_enrollment_authorizations') IS NOT NULL),
+  ('testagram_app staff MFA timestamp update', COALESCE((SELECT has_column_privilege(oid,'testagram_auth.staff_principals','mfa_enrolled_at','UPDATE') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('native_staff_permission_overrides table', to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL),
   ('native_sensitive_action_requests table', to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL),
   ('native_sensitive_action_requests.requested_by_service', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
@@ -327,7 +332,8 @@ for file in \
   057_testagram_mail_outbox.sql \
   058_testagram_mail_outbox_runtime_role.sql \
   059_native_identity_approval_circuit.sql \
-  20261121_native_identity_intake_optional_fingerprint.sql; do
+  20261121_native_identity_intake_optional_fingerprint.sql \
+  060_native_staff_webauthn.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -358,6 +364,7 @@ apply_migration 057_testagram_mail_outbox.sql
 apply_migration 058_testagram_mail_outbox_runtime_role.sql
 apply_migration 059_native_identity_approval_circuit.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
+apply_migration 060_native_staff_webauthn.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."

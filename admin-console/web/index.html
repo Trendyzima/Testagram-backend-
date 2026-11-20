@@ -85,9 +85,13 @@
         <div class="content-grid">
           <section id="stepup-panel" class="panel">
             <div class="panel-heading"><div><div class="eyebrow">PRIVILEGED ACTIONS</div><h2>Confirm your identity</h2></div><span class="panel-symbol">⌁</span></div>
-            <p class="field-help">Re-enter your Testagram password to unlock sensitive actions for five minutes. This is password re-authentication, not a substitute for MFA.</p>
-            <form id="stepup-form" class="form compact"><label for="stepup-password">Current password</label><input id="stepup-password" type="password" autocomplete="current-password" required maxlength="1024"><button class="button button-primary full" type="submit">Re-authenticate</button></form>
-            <p id="stepup-state" class="field-help" aria-live="polite">Sensitive controls remain locked until re-authentication.</p>
+            <p class="field-help">Register a hardware security key or platform passkey against your canonical Testagram staff identity. Sensitive actions require a fresh cryptographic assertion with user verification.</p>
+            <div class="form compact">
+              <button id="webauthn-enroll" class="button button-secondary full" type="button">Register staff authenticator</button>
+              <form id="stepup-form"><button class="button button-primary full" type="submit">Verify with passkey / security key</button></form>
+            </div>
+            <p id="webauthn-readiness" class="field-help" aria-live="polite">Checking WebAuthn prerequisites…</p>
+            <p id="stepup-state" class="field-help" aria-live="polite">Sensitive controls remain locked until a successful WebAuthn assertion.</p>
           </section>
           <section id="permission-panel" class="panel hidden">
             <div class="panel-heading"><div><div class="eyebrow">MASTER CONTROLS</div><h2>Assign a permission</h2></div><span class="panel-symbol">♙</span></div>

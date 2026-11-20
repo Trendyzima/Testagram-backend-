@@ -32,6 +32,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "058_testagram_mail_outbox_runtime_role.sql",
             "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
+            "060_native_staff_webauthn.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -65,6 +66,9 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("identity evidence-complete approval trigger", SOURCE)
         self.assertIn("two-person identity approval trigger", SOURCE)
         self.assertIn("testagram_app mail outbox UPDATE", SOURCE)
+        self.assertIn("staff WebAuthn users table", SOURCE)
+        self.assertIn("staff WebAuthn credentials table", SOURCE)
+        self.assertIn("staff WebAuthn challenges table", SOURCE)
 
     def test_migration_requires_explicit_authorization_and_verified_restore(self):
         self.assertIn("APPLY-NATIVE-IDENTITY-MIGRATIONS", SOURCE)
