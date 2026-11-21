@@ -75,6 +75,9 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("v_eligible_approved_count", sql)
         self.assertIn("OLD.required_approvals", sql)
         self.assertIn("NEW.status='approved'", sql)
+        self.assertIn("native sensitive-action requests are append-only", sql)
+        self.assertIn("native_sensitive_action_request_append_only", sql)
+        self.assertIn("native sensitive-action rejection decision is missing", sql)
 
     def test_archive_migrations_are_mounted_and_applied_in_order(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
