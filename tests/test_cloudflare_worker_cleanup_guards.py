@@ -52,7 +52,7 @@ class CloudflareWorkerCleanupGuardsTest(unittest.TestCase):
 
     def test_only_explicit_legacy_workers_are_candidates(self):
         self.assertIn("candidates=(", WORKFLOW)
-        candidate_block = WORKFLOW.split("candidates=(", 1)[1].split("\\n          )", 1)[0]
+        candidate_block = WORKFLOW.split("candidates=(", 1)[1].split("\n          )", 1)[0]
         self.assertIn('"testagram-api|supabase|sb-project-ref"', candidate_block)
         self.assertIn('"testagram-heartbeat|supabase|sb-project-ref"', candidate_block)
         self.assertIn('"testagram-federation|supabase|sb-project-ref|xclone"', candidate_block)
