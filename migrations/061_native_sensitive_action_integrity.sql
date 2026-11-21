@@ -43,6 +43,16 @@ BEGIN
   -- Enforce the quorum at the database state transition itself. A caller
   -- cannot mark a request approved after only one signer, after expiry, or
   -- after a signer's staff identity/credential has been disabled or revoked.
+  IF NEW.status='rejected' THEN
+    SELECT count(*) FILTER (WHERE a.decision='rejected')
+      INTO v_rejected_count
+    FROM testagram_auth.native_sensitive_action_approvals a
+    WHERE a.request_id=OLD.id;
+    IF v_rejected_count<1 THEN
+      RAISE EXCEPTION 'native sensitive-action rejection decision is missing';
+    END IF;
+  END IF;
+
   IF NEW.status='approved' THEN
     IF OLD.expires_at<=now() THEN
       RAISE EXCEPTION 'expired sensitive-action request cannot be approved';
@@ -91,6 +101,22 @@ CREATE TRIGGER native_sensitive_action_request_immutable
   BEFORE UPDATE ON testagram_auth.native_sensitive_action_requests
   FOR EACH ROW
   EXECUTE FUNCTION testagram_auth.guard_native_sensitive_action_request_immutable();
+
+CREATE OR REPLACE FUNCTION testagram_auth.reject_native_sensitive_action_request_deletion()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+  RAISE EXCEPTION 'native sensitive-action requests are append-only';
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS native_sensitive_action_request_append_only
+  ON testagram_auth.native_sensitive_action_requests;
+CREATE TRIGGER native_sensitive_action_request_append_only
+  BEFORE DELETE ON testagram_auth.native_sensitive_action_requests
+  FOR EACH ROW
+  EXECUTE FUNCTION testagram_auth.reject_native_sensitive_action_request_deletion();
 
 CREATE OR REPLACE FUNCTION testagram_auth.assert_native_sensitive_action_approver()
 RETURNS trigger
@@ -166,7 +192,9 @@ CREATE TRIGGER native_sensitive_action_approval_append_only
   EXECUTE FUNCTION testagram_auth.reject_native_sensitive_action_approval_mutation();
 
 COMMENT ON FUNCTION testagram_auth.guard_native_sensitive_action_request_immutable() IS
-  'Prevents changing a native approval request target, requester, action, payload digest or quorum after creation.';
+  'Prevents changing a native approval request target, requester, action, payload digest or quorum after creation and enforces the final decision quorum.';
+COMMENT ON FUNCTION testagram_auth.reject_native_sensitive_action_request_deletion() IS
+  'Native sensitive-action requests are immutable audit evidence and cannot be deleted.';
 COMMENT ON FUNCTION testagram_auth.assert_native_sensitive_action_approver() IS
   'Requires a pending unexpired request and an enabled, verified, MFA-enrolled native staff approver for every approval insert.';
 COMMENT ON FUNCTION testagram_auth.reject_native_sensitive_action_approval_mutation() IS
