@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -22,14 +23,15 @@ type elevationClaims struct {
 	TokenVersion       int64  `json:"ver"`
 	SessionID          string `json:"sid"`
 	MFAAuthenticatedAt int64  `json:"mfa_at,omitempty"`
+	MFAAuthenticatorID string `json:"mfa_credential,omitempty"`
 	JWTID              string `json:"jti,omitempty"`
 }
 
 // MintStaffElevationToken adds a short-lived, signed phishing-resistant MFA
 // assertion to an already-authenticated native Testagram session. Callers
 // must first verify the base session and complete the WebAuthn ceremony.
-func MintStaffElevationToken(accessToken, expectedSubject string, secret []byte, now time.Time) (string, int64, error) {
-	if len(secret) < 32 || strings.TrimSpace(expectedSubject) == "" {
+func MintStaffElevationToken(accessToken, expectedSubject string, authenticatorID []byte, secret []byte, now time.Time) (string, int64, error) {
+	if len(secret) < 32 || strings.TrimSpace(expectedSubject) == "" || len(authenticatorID) == 0 || len(authenticatorID) > 1024 {
 		return "", 0, errors.New("native MFA signing key unavailable")
 	}
 	parts := strings.Split(accessToken, ".")
@@ -81,6 +83,7 @@ func MintStaffElevationToken(accessToken, expectedSubject string, secret []byte,
 	claims.IssuedAt = nowUnix
 	claims.ExpiresAt = expiresAt
 	claims.MFAAuthenticatedAt = nowUnix
+	claims.MFAAuthenticatorID = hex.EncodeToString(authenticatorID)
 	claims.JWTID = base64.RawURLEncoding.EncodeToString(nonce)
 	headerBytes, _ = json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
 	payload, err = json.Marshal(claims)
