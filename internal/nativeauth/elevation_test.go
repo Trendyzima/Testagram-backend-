@@ -27,7 +27,7 @@ func TestMintStaffElevationTokenVerifiesBaseAndAddsFreshMFAClaim(t *testing.T) {
 	mac := hmacForTest(secret, unsigned)
 	base := unsigned + "." + enc.EncodeToString(mac)
 
-	elevated, expiresAt, err := MintStaffElevationToken(base, claims.Subject, secret, now)
+	elevated, expiresAt, err := MintStaffElevationToken(base, claims.Subject, []byte("credential-id-1"), secret, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,17 +44,17 @@ func TestMintStaffElevationTokenVerifiesBaseAndAddsFreshMFAClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.MFAAuthenticatedAt != now.Unix() || got.IssuedAt != now.Unix() ||
-		got.ExpiresAt != expiresAt || expiresAt != now.Unix()+300 || got.JWTID == "" {
+		got.ExpiresAt != expiresAt || expiresAt != now.Unix()+300 || got.JWTID == "" || got.MFAAuthenticatorID != "63726564656e7469616c2d69642d31" {
 		t.Fatalf("elevation claims are incomplete or incorrectly timed: %#v", got)
 	}
-	if _, _, err := MintStaffElevationToken(base, claims.Subject, secret[:16], now); err == nil {
+	if _, _, err := MintStaffElevationToken(base, claims.Subject, []byte("credential-id-1"), secret[:16], now); err == nil {
 		t.Fatal("short signing key was accepted")
 	}
-	if _, _, err := MintStaffElevationToken(base, "00000000-0000-4000-8000-000000000099", secret, now); err == nil {
+	if _, _, err := MintStaffElevationToken(base, "00000000-0000-4000-8000-000000000099", []byte("credential-id-1"), secret, now); err == nil {
 		t.Fatal("elevation was issued for a different staff principal")
 	}
 	tampered := parts[0] + "." + parts[1] + "." + enc.EncodeToString([]byte("invalid"))
-	if _, _, err := MintStaffElevationToken(tampered, claims.Subject, secret, now); err == nil {
+	if _, _, err := MintStaffElevationToken(tampered, claims.Subject, []byte("credential-id-1"), secret, now); err == nil {
 		t.Fatal("invalid base-token signature was elevated")
 	}
 }
