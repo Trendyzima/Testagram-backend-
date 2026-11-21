@@ -86,7 +86,7 @@ jobs:
           while IFS=
 
           # These candidates were observed as legacy residue in a read-only audit.
-          # Re-check zone routes, custom domains, Cron, service bindings and consumers
+          # Re-check zone zone routes, custom domains, workers.dev/preview URLs, Cron, service bindings and consumers
           # immediately before deletion. Active web/CDN Workers are excluded.
           candidates=(
             "testagram-api"
@@ -130,6 +130,14 @@ jobs:
                 echo "::error::The canonical Backend health endpoint is not healthy through api.testagram.site; refusing legacy API Worker deletion."
                 exit 1
               }
+            fi
+
+            cf_get "/accounts/$account_id/workers/scripts/$worker/subdomain" "$tmp/target-subdomain.json"
+            workers_dev_enabled="$(jq -r '.result.enabled // "unknown"' "$tmp/target-subdomain.json")"
+            preview_urls_enabled="$(jq -r '.result.previews_enabled // "unknown"' "$tmp/target-subdomain.json")"
+            if [[ "$workers_dev_enabled" != "false" || "$preview_urls_enabled" != "false" ]]; then
+              echo "::error::$worker still has a public workers.dev or preview URL (or its state is unknown); refusing deletion."
+              exit 1
             fi
 
             cf_get "/accounts/$account_id/workers/scripts/$worker/schedules" "$tmp/schedules.json"
