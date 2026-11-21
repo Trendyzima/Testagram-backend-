@@ -95,25 +95,23 @@ func (a *app) saveStaffChallenge(ctx context.Context,userID,kind string,sd *weba
  return err
 }
 
-func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter,r *http.Request) {
- s,actor,ok:=a.requireStaff(w,r,"owner");if !ok{return}
- if !a.requireRecentStepUp(w,s){return}
- target:=strings.TrimSpace(r.PathValue("id"))
- if target==""||target==actor.ID{writeJSON(w,400,map[string]string{"error":"A different canonical staff identity is required"});return}
- var input struct{Reason string `json:"reason"`}
- if !decodeBody(w,r,&input){return}
- input.Reason=strings.TrimSpace(input.Reason)
- if len(input.Reason)<8||len(input.Reason)>500{writeJSON(w,400,map[string]string{"error":"Provide an enrollment authorization reason of 8 to 500 characters"});return}
- if allowed,err:=a.consumeAdminRateLimit(r.Context(),actor.ID,"webauthn-enrollment",5,time.Hour);err!=nil{writeJSON(w,503,map[string]string{"error":"Enrollment authorization rate-limit unavailable"});return}else if !allowed{writeJSON(w,429,map[string]string{"error":"Enrollment authorization rate limit exceeded"});return}
- if _,err:=a.database.Exec(r.Context(),"UPDATE testagram_auth.staff_webauthn_enrollment_authorizations SET consumed_at=now() WHERE user_id=$1::uuid AND consumed_at IS NULL AND expires_at<=now()",target);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not expire stale enrollment authorizations"});return}
- tag,err:=a.database.Exec(r.Context(),`INSERT INTO testagram_auth.staff_webauthn_enrollment_authorizations(user_id,authorized_by,authorization_method,reason,expires_at)
- SELECT sp.user_id,$2::uuid,'dual_control',$3,now()+interval '30 minutes'
- FROM testagram_auth.staff_principals sp
- JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
- WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
- AND rg.role IN ('owner','administrator','identity_reviewer','engineer','operations','support','moderator')`,target,actor.ID,input.Reason)
- if err!=nil||tag.RowsAffected()!=1{writeJSON(w,404,map[string]string{"error":"Target is not an enabled, independently provisioned Testagram staff identity"});return}
- writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"expires_in_seconds":1800})
+func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter, r *http.Request) {
+	s, _, ok := a.requireStaff(w, r, "owner")
+	if !ok {
+		return
+	}
+	if !a.requireRecentStepUp(w, s) {
+		return
+	}
+
+	// A single owner approval is not sufficient to authorize staff enrollment.
+	// Keep this endpoint fail-closed until enrollment authorization is created
+	// by the same durable two-person staff lifecycle approval transaction that
+	// provisions the target principal. Operator bootstrap remains a separate,
+	// audited deployment procedure.
+	writeJSON(w, http.StatusNotImplemented, map[string]string{
+		"error": "Staff enrollment authorization requires two independent Testagram approvals. No enrollment authorization was created.",
+	})
 }
 
 func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Request){
