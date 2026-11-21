@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -71,6 +72,10 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 	if len(readinessToken) < 32 {
 		return false
 	}
+	expectedRPFingerprint := nativeauth.WebAuthnConfigurationFingerprint(rpid, origins)
+	if expectedRPFingerprint == "" {
+		return false
+	}
 	readinessURL := strings.TrimSpace(os.Getenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL"))
 	if readinessURL == "" {
 		readinessURL = "http://admin-console:8090/internal/webauthn/readiness"
@@ -114,6 +119,7 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 		CredentialedStaff     int  `json:"credentialed_staff"`
 		CredentialedReviewers int  `json:"credentialed_reviewers"`
 		CredentialedApprovers int  `json:"credentialed_approvers"`
+		RPConfigurationFingerprint string `json:"rp_configuration_fingerprint"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&attestation) != nil {
 		return false
@@ -121,7 +127,8 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 	return attestation.IdentityReviewReady &&
 		attestation.CredentialedStaff >= 4 &&
 		attestation.CredentialedReviewers >= 2 &&
-		attestation.CredentialedApprovers >= 2
+		attestation.CredentialedApprovers >= 2 &&
+		attestation.RPConfigurationFingerprint == expectedRPFingerprint
 }
 
 type identityReviewDecisionInput struct {
