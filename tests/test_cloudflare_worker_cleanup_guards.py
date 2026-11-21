@@ -50,13 +50,18 @@ class CloudflareWorkerCleanupGuardsTest(unittest.TestCase):
         self.assertIn('/content/v2', WORKFLOW)
         self.assertIn('cf_delete "/accounts/$account_id/workers/scripts/$worker"', WORKFLOW)
 
-    def test_active_web_and_cdn_workers_are_not_candidates(self):
-        self.assertIn('"testagram-api"', WORKFLOW)
-        self.assertIn('"testagram-heartbeat"', WORKFLOW)
-        self.assertIn('"testagram-federation"', WORKFLOW)
-        self.assertIn('"xclone-9b4dz1-9b4dz1-8936-20260809"', WORKFLOW)
-        self.assertNotIn('"testagram-web"\n', WORKFLOW[WORKFLOW.find("candidates=("):WORKFLOW.find(")")])
-        self.assertNotIn('"testagram-cdn"\n', WORKFLOW[WORKFLOW.find("candidates=("):WORKFLOW.find(")")])
+    def test_only_explicit_legacy_workers_are_candidates(self):
+        self.assertIn("candidates=(", WORKFLOW)
+        candidate_block = WORKFLOW.split("candidates=(", 1)[1].split("\\n          )", 1)[0]
+        self.assertIn('"testagram-api|supabase|sb-project-ref"', candidate_block)
+        self.assertIn('"testagram-heartbeat|supabase|sb-project-ref"', candidate_block)
+        self.assertIn('"testagram-federation|supabase|sb-project-ref|xclone"', candidate_block)
+        self.assertIn('"xclone-9b4dz1-9b4dz1-8936-20260809|xclone"', candidate_block)
+        self.assertNotIn('"testagram-web|', candidate_block)
+        self.assertNotIn('"testagram-cdn|', candidate_block)
+        self.assertIn('worker="${item%%|*}"', WORKFLOW)
+        self.assertIn('marker="${item#*|}"', WORKFLOW)
+        self.assertIn('grep -Eiq "$marker" "$tmp/source"', WORKFLOW)
 
     def test_cleanup_never_mutates_dns_or_routes(self):
         self.assertNotIn('cf_delete "/zones/', WORKFLOW)
