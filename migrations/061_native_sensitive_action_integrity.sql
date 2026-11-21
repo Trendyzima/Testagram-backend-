@@ -36,6 +36,47 @@ BEGIN
     RAISE EXCEPTION 'approval decision timestamp cannot change without a terminal status transition';
   END IF;
 
+  -- Enforce the quorum at the database state transition itself. A caller
+  -- cannot mark a request approved after only one signer, after expiry, or
+  -- after a signer's staff identity/credential has been disabled or revoked.
+  IF NEW.status='approved' THEN
+    IF v_expires_at<=now() THEN
+      RAISE EXCEPTION 'expired sensitive-action request cannot be approved';
+    END IF;
+
+    SELECT
+      count(DISTINCT a.approver_user_id) FILTER (WHERE a.decision='approved'),
+      count(DISTINCT a.approver_user_id) FILTER (
+        WHERE a.decision='approved' AND EXISTS (
+          SELECT 1
+          FROM testagram_auth.staff_principals sp
+          JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+          JOIN testagram_auth.staff_role_grants rg
+            ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+          JOIN testagram_auth.staff_webauthn_credentials wc
+            ON wc.user_id=sp.user_id
+           AND wc.revoked_at IS NULL
+           AND wc.user_verified=TRUE
+           AND wc.clone_warning=FALSE
+          WHERE sp.user_id=a.approver_user_id
+            AND sp.enabled=TRUE
+            AND sp.mfa_enrolled_at IS NOT NULL
+            AND i.disabled_at IS NULL
+            AND i.email_verified_at IS NOT NULL
+        )
+      ),
+      count(*) FILTER (WHERE a.decision='rejected')
+    INTO v_approved_count,v_eligible_approved_count,v_rejected_count
+    FROM testagram_auth.native_sensitive_action_approvals a
+    WHERE a.request_id=OLD.id;
+
+    IF v_approved_count<>v_required_approvals
+       OR v_eligible_approved_count<>v_required_approvals
+       OR v_rejected_count<>0 THEN
+      RAISE EXCEPTION 'native sensitive-action approval quorum is incomplete';
+    END IF;
+  END IF;
+
   RETURN NEW;
 END;
 $function$;
@@ -55,10 +96,14 @@ DECLARE
   v_requester UUID;
   v_status TEXT;
   v_expires_at TIMESTAMPTZ;
+  v_required_approvals SMALLINT;
   v_staff_eligible BOOLEAN;
+  v_approved_count INTEGER;
+  v_eligible_approved_count INTEGER;
+  v_rejected_count INTEGER;
 BEGIN
-  SELECT requested_by_user_id,status,expires_at
-    INTO v_requester,v_status,v_expires_at
+  SELECT requested_by_user_id,status,expires_at,required_approvals
+    INTO v_requester,v_status,v_expires_at,v_required_approvals
   FROM testagram_auth.native_sensitive_action_requests
   WHERE id=NEW.request_id
   FOR UPDATE;
