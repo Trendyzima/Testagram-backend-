@@ -37,6 +37,8 @@ jobs:
         run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh tests/test-native-staff-webauthn-migration.sh
       - name: Verify native identity migration manifest
         run: python3 tests/test_native_identity_migration_manifest.py
+      - name: Verify Cloudflare legacy Worker cleanup safety contract
+        run: python3 tests/test_cloudflare_legacy_worker_cleanup.py
       - name: Verify Cloudflare legacy Worker cleanup guards
         run: python3 tests/test_cloudflare_worker_cleanup_guards.py
       - name: Verify external media backup inventories and checksums
