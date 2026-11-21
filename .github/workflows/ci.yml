@@ -1389,6 +1389,23 @@ jobs:
             (request_id,approver_user_id,decision,reason)
           SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Independent reviewer approves CI request'
           FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001';
+          DO $premature_approval$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              UPDATE testagram_auth.native_sensitive_action_requests
+              SET status='approved',decided_at=now()
+              WHERE target_reference='ci-release-001' AND status='pending';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'native sensitive-action approval quorum is incomplete%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'request was approved without its full two-person quorum';
+            END IF;
+          END $premature_approval$;
           INSERT INTO testagram_auth.native_sensitive_action_approvals
             (request_id,approver_user_id,decision,reason)
           SELECT id,'123e4567-e89b-42d3-a456-426614174003','approved','Second distinct reviewer approves CI request'
