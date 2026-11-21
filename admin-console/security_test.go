@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -119,4 +120,34 @@ func TestServiceCredentialMatches(t *testing.T) {
 	if serviceCredentialMatches(strings.Repeat("0",64),key) { t.Fatal("incorrect service key was accepted") }
 	if serviceCredentialMatches(encoded,nil) { t.Fatal("missing configured service key was accepted") }
 	if serviceCredentialMatches(strings.Repeat("z",64),key) { t.Fatal("non-hex service key was accepted") }
+}
+
+func TestStaffPermissionMutationRemainsClosedUntilTwoPersonExecutorExists(t *testing.T) {
+	source, err := os.ReadFile("security.go")
+	if err != nil {
+		t.Fatalf("read staff security handlers: %v", err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (a *app) handleSetStaffPermission")
+	if start < 0 {
+		t.Fatal("staff permission handler is missing")
+	}
+	relativeEnd := strings.Index(text[start:], "\\nfunc (a *app) handleStaffList")
+	if relativeEnd < 0 {
+		t.Fatal("could not isolate staff permission handler")
+	}
+	handler := text[start : start+relativeEnd]
+	if !strings.Contains(handler, "http.StatusNotImplemented") ||
+		!strings.Contains(handler, "two-person approval executor") {
+		t.Fatal("staff permission changes must remain explicitly closed until two-person execution exists")
+	}
+	for _, forbidden := range []string{
+		"native_staff_permission_overrides",
+		"INSERT INTO",
+		"UPDATE testagram_auth",
+	} {
+		if strings.Contains(handler, forbidden) {
+			t.Fatalf("staff permission handler must not mutate permissions directly; found %q", forbidden)
+		}
+	}
 }
