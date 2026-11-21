@@ -1289,13 +1289,13 @@ jobs:
             ('123e4567-e89b-42d3-a456-426614174003',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
             ('123e4567-e89b-42d3-a456-426614174004',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001');
           INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES
-            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174001',decode(repeat('01',32),'hex')),
-            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174002',decode(repeat('02',32),'hex')),
-            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174003',decode(repeat('03',32),'hex'));
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174001',digest('123e4567-e89b-42d3-a456-426614174001','sha256')),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174002',digest('123e4567-e89b-42d3-a456-426614174002','sha256')),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174003',digest('123e4567-e89b-42d3-a456-426614174003','sha256'));
           INSERT INTO testagram_auth.staff_webauthn_credentials(rpid,user_id,credential_id,credential,user_verified,clone_warning) VALUES
-            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174001',decode(repeat('11',32),'hex'),decode('01','hex'),TRUE,FALSE),
-            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174002',decode(repeat('22',32),'hex'),decode('02','hex'),TRUE,FALSE),
-            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174003',decode(repeat('33',32),'hex'),decode('03','hex'),TRUE,FALSE);
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174001',digest('credential:123e4567-e89b-42d3-a456-426614174001','sha256'),decode('01','hex'),TRUE,FALSE),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174002',digest('credential:123e4567-e89b-42d3-a456-426614174002','sha256'),decode('02','hex'),TRUE,FALSE),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174003',digest('credential:123e4567-e89b-42d3-a456-426614174003','sha256'),decode('03','hex'),TRUE,FALSE);
           INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES
             ('123e4567-e89b-42d3-a456-426614174001','owner','123e4567-e89b-42d3-a456-426614174001'),
             ('123e4567-e89b-42d3-a456-426614174002','administrator','123e4567-e89b-42d3-a456-426614174001'),
