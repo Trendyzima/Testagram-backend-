@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -106,6 +108,57 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	readiness := admin.staffWebAuthnReadiness(ctx)
 	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
 		t.Fatalf("Admin Console rejected complete PostgreSQL WebAuthn readiness: %#v", readiness)
+	}
+
+	// A valid MFA elevation is accepted only while the exact authenticator
+	// used for the assertion remains active in PostgreSQL.
+	var reviewerEmail, nativeSessionID string
+	if err := conn.QueryRow(ctx, "SELECT email FROM testagram_auth.identities WHERE user_id=$1::uuid", evidenceReviewerOne).Scan(&reviewerEmail); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&nativeSessionID); err != nil {
+		t.Fatal(err)
+	}
+	nowUnix := time.Now().UTC().Unix()
+	accessClaims := nativeElevationClaims{
+		Subject: evidenceReviewerOne, Email: reviewerEmail, Role: "authenticated",
+		Issuer: "testagram-auth", Audience: "testagram-api",
+		IssuedAt: nowUnix - 60, ExpiresAt: nowUnix + 600,
+		TokenVersion: 1, SessionID: nativeSessionID,
+	}
+	accessHeader, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
+	accessPayload, _ := json.Marshal(accessClaims)
+	accessUnsigned := base64.RawURLEncoding.EncodeToString(accessHeader) + "." + base64.RawURLEncoding.EncodeToString(accessPayload)
+	accessMAC := hmac.New(sha256.New, []byte(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	_, _ = accessMAC.Write([]byte(accessUnsigned))
+	accessToken := accessUnsigned + "." + base64.RawURLEncoding.EncodeToString(accessMAC.Sum(nil))
+	reviewerCredentialID := []byte("credential-" + evidenceReviewerOne)
+	elevatedToken, _, err := admin.mintStaffElevation(authUser{ID: evidenceReviewerOne}, accessToken, reviewerCredentialID)
+	if err != nil {
+		t.Fatalf("mint test MFA elevation: %v", err)
+	}
+	stepUpSession := session{AccessToken: accessToken, ElevatedToken: elevatedToken}
+	stepUpResponse := httptest.NewRecorder()
+	if !admin.requireRecentStepUp(stepUpResponse, stepUpSession) {
+		t.Fatalf("Admin Console rejected active credential-bound MFA elevation: status=%d body=%s", stepUpResponse.Code, stepUpResponse.Body.String())
+	}
+	if _, err := conn.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_credentials
+		SET revoked_at=now()
+		WHERE user_id=$1::uuid AND rpid='ops.example.test' AND credential_id=$2
+	`, evidenceReviewerOne, reviewerCredentialID); err != nil {
+		t.Fatal(err)
+	}
+	stepUpResponse = httptest.NewRecorder()
+	if admin.requireRecentStepUp(stepUpResponse, stepUpSession) {
+		t.Fatal("Admin Console accepted MFA elevation after its WebAuthn credential was revoked")
+	}
+	if _, err := conn.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_credentials
+		SET revoked_at=NULL
+		WHERE user_id=$1::uuid AND rpid='ops.example.test' AND credential_id=$2
+	`, evidenceReviewerOne, reviewerCredentialID); err != nil {
+		t.Fatal(err)
 	}
 	// Dual-role staff must not satisfy both independent reviewer and approver
 	// groups, even when four credentialed staff accounts exist.
