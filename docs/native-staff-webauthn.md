@@ -85,6 +85,18 @@ report this same disjoint quorum. Backend application intake remains closed
 unless the explicit production policy gate is enabled and the live Admin
 Console attestation and Backend PostgreSQL query both pass on each request.
 
+## Staff principal lifecycle boundary
+
+This implementation enrolls and authenticates already-provisioned staff principals.
+It does not yet implement a complete staff invitation, role-change or revocation
+workflow in the Admin Console; those handlers remain fail-closed and return
+501. Do not enable general staff onboarding or use a one-person shortcut to
+create staff roles. Until the dedicated two-person staff-provisioning workflow
+is implemented and independently tested, initial principal creation and
+emergency recovery must use the documented audited operator procedure with
+separate approval evidence. Authenticator enrollment remains separately
+authorized, target-bound, time-limited and single-use.
+
 ## Ceremony and elevation behavior
 
 - Registration and assertion ceremony state is server-side AEAD-encrypted bytea, challenge-hash
