@@ -73,8 +73,8 @@ jobs:
             page=$((page + 1))
           done
 
-          testagram_zone_id="$(awk -F '\t' '$2=="testagram.site" {print $1; exit}' "$tmp/zones.tsv")"
-          testagram_account_id="$(awk -F '\t' '$2=="testagram.site" {print $4; exit}' "$tmp/zones.tsv")"
+          testagram_zone_id="$(awk -F '\t' '$2=="testagram.site" && $3=="active" {print $1; exit}' "$tmp/zones.tsv")"
+          testagram_account_id="$(awk -F '\t' '$2=="testagram.site" && $3=="active" {print $4; exit}' "$tmp/zones.tsv")"
           [[ -n "$testagram_zone_id" && -n "$testagram_account_id" ]] || {
             echo "::error::The active testagram.site zone did not resolve to an account; refusing to accept routing."
             exit 1
@@ -133,8 +133,9 @@ jobs:
                 jq -r '.result[]? | "| " + (.hostname // "") + " | " + (.service // "") + " | " + (.environment // "") + " | " + (.zone_name // "") + " |"' "$tmp/worker-domains.json"
               } >> "$GITHUB_STEP_SUMMARY"
               if [[ "$account_id" == "$testagram_account_id" ]]; then
-                api_domain_count="$(jq --arg zone "$testagram_zone_id" '[.result[]? | select(.hostname == "api.testagram.site" and .zone_id == $zone and .service == "testagram-cdn" and .enabled == true and ((.previews_enabled // false) == false))] | length' "$tmp/worker-domains.json")"
-                if [[ "$api_domain_count" == "1" ]]; then
+                api_domain_count="$(jq --arg zone "$testagram_zone_id" '[.result[]? | select(.hostname == "api.testagram.site" and .zone_id == $zone)] | length' "$tmp/worker-domains.json")"
+                canonical_api_domain_count="$(jq --arg zone "$testagram_zone_id" '[.result[]? | select(.hostname == "api.testagram.site" and .zone_id == $zone and .service == "testagram-cdn" and .enabled == true and ((.previews_enabled // false) == false))] | length' "$tmp/worker-domains.json")"
+                if [[ "$api_domain_count" == "1" && "$canonical_api_domain_count" == "1" ]]; then
                   api_worker_domain_found="no"
                   echo "- API hostname owner: one enabled production Testagram gateway custom domain" >> "$GITHUB_STEP_SUMMARY"
                 else
