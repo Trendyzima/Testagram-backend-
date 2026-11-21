@@ -1410,6 +1410,27 @@ jobs:
             (request_id,approver_user_id,decision,reason)
           SELECT id,'123e4567-e89b-42d3-a456-426614174003','approved','Second distinct reviewer approves CI request'
           FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001';
+          UPDATE testagram_auth.staff_webauthn_credentials SET revoked_at=now()
+          WHERE user_id='123e4567-e89b-42d3-a456-426614174003';
+          DO $revoked_quorum$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              UPDATE testagram_auth.native_sensitive_action_requests
+              SET status='approved',decided_at=now()
+              WHERE target_reference='ci-release-001' AND status='pending';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'native sensitive-action approval quorum is incomplete%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'request was approved after one signer's credential was revoked';
+            END IF;
+          END $revoked_quorum$;
+          UPDATE testagram_auth.staff_webauthn_credentials SET revoked_at=NULL
+          WHERE user_id='123e4567-e89b-42d3-a456-426614174003';
           UPDATE testagram_auth.native_sensitive_action_requests
           SET status='approved',decided_at=now()
           WHERE target_reference='ci-release-001' AND status='pending';
@@ -1430,6 +1451,43 @@ jobs:
               RAISE EXCEPTION 'terminal approval request was reopened';
             END IF;
           END $terminal_request$;
+          DO $request_delete$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              DELETE FROM testagram_auth.native_sensitive_action_requests
+              WHERE target_reference='ci-release-001';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'native sensitive-action requests are append-only%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'sensitive-action request audit evidence was deleted';
+            END IF;
+          END $request_delete$;
+          INSERT INTO testagram_auth.native_sensitive_action_requests
+            (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256)
+          VALUES
+            ('security.change','123e4567-e89b-42d3-a456-426614174001','ci-reject-001','CI validates rejected request evidence','{}'::jsonb,repeat('b',64));
+          DO $premature_rejection$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              UPDATE testagram_auth.native_sensitive_action_requests
+              SET status='rejected',decided_at=now()
+              WHERE target_reference='ci-reject-001';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'native sensitive-action rejection decision is missing%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'request was rejected without an append-only rejection decision';
+            END IF;
+          END $premature_rejection$;
           DO $immutable_approval$
           DECLARE blocked BOOLEAN := FALSE;
           BEGIN
