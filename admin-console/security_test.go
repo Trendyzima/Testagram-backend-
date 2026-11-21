@@ -57,7 +57,7 @@ func TestRecentStepUpRequiresBackendSignedWebAuthnElevation(t *testing.T) {
  unsigned:=base64.RawURLEncoding.EncodeToString(header)+"."+base64.RawURLEncoding.EncodeToString(accessPayload)
  mac:=hmac.New(sha256.New,[]byte(strings.Repeat("s",48)));_,_=mac.Write([]byte(unsigned))
  accessToken:=unsigned+"."+base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
- token,_,err:=a.mintStaffElevation(user,accessToken);if err!=nil{t.Fatal(err)}
+ token,_,err:=a.mintStaffElevation(user,accessToken,[]byte("test-authenticator-id"));if err!=nil{t.Fatal(err)}
  validSession:=session{AccessToken:accessToken,ElevatedToken:token}
  other:=accessClaims;other.Subject="22222222-2222-4222-8222-222222222222"
  otherPayload,_:=json.Marshal(other)
