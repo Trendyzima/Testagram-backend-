@@ -35,6 +35,9 @@ class CloudflareWorkerCleanupGuardsTest(unittest.TestCase):
     def test_all_candidate_consumers_are_checked_before_delete(self):
         self.assertIn('/workers/routes', WORKFLOW)
         self.assertIn('/schedules', WORKFLOW)
+        self.assertIn('/subdomain', WORKFLOW)
+        self.assertIn('workers_dev_enabled', WORKFLOW)
+        self.assertIn('preview_urls_enabled', WORKFLOW)
         self.assertIn('tail_consumers', WORKFLOW)
         self.assertIn('type == "service" and .service == $target', WORKFLOW)
         self.assertIn('/content/v2', WORKFLOW)
