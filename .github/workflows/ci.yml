@@ -1396,6 +1396,41 @@ jobs:
           UPDATE testagram_auth.native_sensitive_action_requests
           SET status='approved',decided_at=now()
           WHERE target_reference='ci-release-001' AND status='pending';
+          DO $terminal_request$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              UPDATE testagram_auth.native_sensitive_action_requests
+              SET status='pending',decided_at=NULL
+              WHERE target_reference='ci-release-001';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'native sensitive-action request status transition is invalid or terminal%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'terminal approval request was reopened';
+            END IF;
+          END $terminal_request$;
+          DO $immutable_approval$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              UPDATE testagram_auth.native_sensitive_action_approvals
+              SET decision='rejected'
+              WHERE request_id=(SELECT id FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001')
+                AND approver_user_id='123e4567-e89b-42d3-a456-426614174002';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'native sensitive-action approval decisions are append-only%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'persisted approval decision was mutable';
+            END IF;
+          END $immutable_approval$;
           DO $approval$
           BEGIN
             IF (SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals
