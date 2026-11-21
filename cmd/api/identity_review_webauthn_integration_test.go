@@ -32,8 +32,8 @@ func TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer(t *testing.T
 	secret := strings.Repeat("testagram-cross-service-mfa-integration-key-", 2)
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", secret)
 	t.Setenv("TESTAGRAM_AUTH_PROVIDER", "native")
-	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "ops.example.test")
-	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://ops.example.test")
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "backend-mfa.example.test")
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://backend-mfa.example.test")
 
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	email := "staff-mfa-" + suffix + "@example.test"
@@ -78,14 +78,14 @@ func TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer(t *testing.T
 	credentialID := []byte("testagram-webauthn-credential-" + suffix)
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
-		VALUES('ops.example.test',$1::uuid,decode(md5($1::text),'hex'))
+		VALUES('backend-mfa.example.test',$1::uuid,decode(md5($1::text),'hex'))
 	`, userID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.staff_webauthn_credentials
 		  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
-		VALUES('ops.example.test',$1::uuid,$2,'ci-only-encrypted-credential',TRUE,FALSE)
+		VALUES('backend-mfa.example.test',$1::uuid,$2,'ci-only-encrypted-credential',TRUE,FALSE)
 	`, userID, credentialID); err != nil {
 		t.Fatal(err)
 	}
