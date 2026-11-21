@@ -59,6 +59,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('native_admin_security_audit table', to_regclass('testagram_auth.native_admin_security_audit') IS NOT NULL),
   ('native sensitive-action request immutability trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_requests') AND tgname='native_sensitive_action_request_immutable' AND NOT tgisinternal)),
   ('native sensitive-action approver guard trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals') AND tgname='native_sensitive_action_approver_guard' AND NOT tgisinternal)),
+  ('native sensitive-action approval append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals') AND tgname='native_sensitive_action_approval_append_only' AND NOT tgisinternal)),
   ('native_registration_provisioning table', to_regclass('testagram_identity.native_registration_provisioning') IS NOT NULL),
   ('testagram_mail.outbox table', to_regclass('testagram_mail.outbox') IS NOT NULL),
   ('mail outbox encrypted payload and lifecycle columns', (SELECT count(*)=10 FROM information_schema.columns WHERE table_schema='testagram_mail' AND table_name='outbox' AND column_name IN ('payload_ciphertext','payload_nonce','status','attempts','available_at','lease_until','sent_at','provider_message_id','last_error_code','updated_at'))),
@@ -145,6 +146,7 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
         AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') AND tgname='\''native_sensitive_action_request_immutable'\'' AND NOT tgisinternal)
         AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') AND tgname='\''native_sensitive_action_approver_guard'\'' AND NOT tgisinternal)
+        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') AND tgname='\''native_sensitive_action_approval_append_only'\'' AND NOT tgisinternal)
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
         AND (
