@@ -51,11 +51,11 @@ jobs:
               --connect-timeout 10 --max-time 45 -X DELETE \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               -H "Accept: application/json" "$API$path")"
-            [[ "$status" == "200" || "$status" == "202" ]] || {
+            if [[ "$status" != "200" && "$status" != "202" ]]; then
               echo "::error::Cloudflare DELETE failed (HTTP $status): $path"
               jq -r '(.errors // [])[]? | .message // "Cloudflare API error"' "$output" >&2 || true
               return 1
-            }
+            fi
             jq -e '.success == true' "$output" >/dev/null
           }
 
@@ -161,10 +161,10 @@ jobs:
               }
               api_health_status="$(curl --silent --show-error --connect-timeout 10 --max-time 25 \
                 --output "$tmp/api-health.json" --write-out '%{http_code}' https://api.testagram.site/healthz || true)"
-              [[ "$api_health_status" == "200" ]] && jq -e '.ok == true and .service == "testagram-api"' "$tmp/api-health.json" >/dev/null || {
+              if [[ "$api_health_status" != "200" ]] || ! jq -e '.ok == true and .service == "testagram-api"' "$tmp/api-health.json" >/dev/null; then
                 echo "::error::The canonical Backend health endpoint is not healthy through api.testagram.site; refusing legacy API Worker deletion."
                 exit 1
-              }
+              fi
             fi
 
             cf_get "/accounts/$account_id/workers/scripts/$worker/schedules" "$tmp/schedules.json"
