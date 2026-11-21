@@ -132,7 +132,7 @@ func TestStaffPermissionMutationRemainsClosedUntilTwoPersonExecutorExists(t *tes
 	if start < 0 {
 		t.Fatal("staff permission handler is missing")
 	}
-	relativeEnd := strings.Index(text[start:], "\\nfunc (a *app) handleStaffList")
+	relativeEnd := strings.Index(text[start:], "\nfunc (a *app) handleStaffList")
 	if relativeEnd < 0 {
 		t.Fatal("could not isolate staff permission handler")
 	}
