@@ -58,6 +58,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("native_sensitive_action_request_immutable", sql)
         self.assertIn("native_sensitive_action_approver_guard", sql)
         self.assertIn("native_sensitive_action_approval_append_only", sql)
+        self.assertIn("native_sensitive_action_request_append_only", sql)
+        self.assertIn("native_sensitive_action_request_append_only", SOURCE)
         self.assertIn("native sensitive-action approval decisions are append-only", sql)
         self.assertIn("native sensitive-action request status transition is invalid or terminal", sql)
         self.assertIn("completed approval decisions require a decision timestamp", sql)
