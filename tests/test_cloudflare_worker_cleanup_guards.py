@@ -11,10 +11,15 @@ WORKFLOW = (ROOT / ".github" / "workflows" / "remove-orphaned-legacy-cloudflare-
 
 
 class CloudflareWorkerCleanupGuardsTest(unittest.TestCase):
-    def test_cleanup_requires_explicit_manual_confirmation(self):
+    def test_cleanup_defaults_to_read_only_dry_run_and_requires_confirmation_for_delete(self):
+        self.assertIn("dry_run:", WORKFLOW)
+        self.assertIn("default: true", WORKFLOW)
         self.assertIn("confirm_remove_orphaned_workers:", WORKFLOW)
         self.assertIn("default: false", WORKFLOW)
-        self.assertIn("if: inputs.confirm_remove_orphaned_workers == true", WORKFLOW)
+        self.assertIn("if: inputs.dry_run == true || inputs.confirm_remove_orphaned_workers == true", WORKFLOW)
+        self.assertIn("Destructive cleanup requires dry_run=false and explicit confirmation.", WORKFLOW)
+        self.assertIn('if [[ "${CLEANUP_DRY_RUN}" == "true" ]]; then', WORKFLOW)
+        self.assertIn("eligible in dry-run; no deletion performed.", WORKFLOW)
 
     def test_inventory_is_paginated_and_routes_are_initialized(self):
         self.assertIn('"/zones?per_page=50&page=$page"', WORKFLOW)
