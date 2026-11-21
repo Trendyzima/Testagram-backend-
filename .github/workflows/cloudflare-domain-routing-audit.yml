@@ -116,6 +116,7 @@ jobs:
           fi
 
           api_worker_domain_found="yes"
+          api_legacy_worker_found="yes"
           sort -u "$tmp/accounts.txt" -o "$tmp/accounts.txt"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Account services" >> "$GITHUB_STEP_SUMMARY"
@@ -151,6 +152,15 @@ jobs:
             if cf_get "/accounts/$account_id/workers/scripts" "$tmp/workers.json"; then
               echo "- Workers scripts: $(jq -r '.result | length' "$tmp/workers.json")" >> "$GITHUB_STEP_SUMMARY"
               jq -r '.result[]? | "- Worker: " + (.id // .name // "unnamed")' "$tmp/workers.json" >> "$GITHUB_STEP_SUMMARY"
+              if [[ "$account_id" == "$testagram_account_id" ]]; then
+                if jq -e '.result[]? | select(.id == "testagram-api")' "$tmp/workers.json" >/dev/null; then
+                  api_legacy_worker_found="yes"
+                  echo "::warning::The detached testagram-api Worker script still exists and requires the separately confirmed post-cutover cleanup workflow."
+                else
+                  api_legacy_worker_found="no"
+                  echo "- Detached testagram-api Worker script: absent" >> "$GITHUB_STEP_SUMMARY"
+                fi
+              fi
               while IFS= read -r worker; do
                 [[ -z "$worker" ]] && continue
                 schedules="unavailable"
@@ -175,6 +185,9 @@ jobs:
               done < <(jq -r '.result[]?.id // empty' "$tmp/workers.json")
             else
               echo "- Workers scripts: unavailable with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
+              if [[ "$account_id" == "$testagram_account_id" ]]; then
+                echo "::warning::Cannot verify that the detached testagram-api Worker script has been removed."
+              fi
             fi
 
             if cf_get "/accounts/$account_id/pages/projects" "$tmp/pages.json"; then
@@ -202,18 +215,17 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Audit completed. DNS record values/content and all credentials were intentionally excluded from the summary." >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"
-          if [[ "$api_worker_domain_found" == "yes" ]]; then
-            echo "::warning::Production routing is not accepted: api.testagram.site is not attached to the canonical Testagram gateway. Transfer is permitted only after the native API origin is deployed and its health and protected-route smoke tests pass."
+          if [[ "$api_worker_domain_found" == "yes" || "$api_legacy_worker_found" == "yes" ]]; then
+            [[ "$api_worker_domain_found" == "no" ]] || echo "::warning::Production routing is not accepted: api.testagram.site is not attached to the canonical Testagram gateway."
+            [[ "$api_legacy_worker_found" == "no" ]] || echo "::warning::The detached testagram-api Worker script remains; remove it only through the separately confirmed cleanup workflow after the native gateway health checks pass."
 
-            # The production deploy workflow intentionally deploys only main,
-            # then publishes and health-checks the native API origin before the
-            # CDN routing workflow transfers api.testagram.site. Failing a PR
-            # here creates a deadlock: the route cannot be safely moved until
-            # after the main-branch deployment.
+            # The production deploy workflow intentionally deploys only main.
+            # The hostname handoff and detached Worker cleanup are separate,
+            # explicitly approved operations after the native origin is healthy.
             if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
-              echo "::notice::PR preflight only: routing findings are recorded above. The production routing gate remains enforced on main/workflow_dispatch after native-origin deployment."
+              echo "::notice::PR preflight only: routing and cleanup findings are recorded above. The production acceptance gate remains enforced on workflow_dispatch after the native API cutover."
             else
-              echo "::error::Production acceptance remains blocked until the native API origin is healthy and api.testagram.site is attached to the canonical Testagram gateway."
+              echo "::error::Production acceptance remains blocked until the canonical API custom domain is verified and the detached legacy API Worker script is absent."
               exit 1
             fi
           fi
