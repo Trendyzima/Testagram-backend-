@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
