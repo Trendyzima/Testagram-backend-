@@ -1281,11 +1281,13 @@ jobs:
           INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at) VALUES
             ('123e4567-e89b-42d3-a456-426614174001','ci-master@example.test','ci_master','test-only-invalid-password-hash',now()),
             ('123e4567-e89b-42d3-a456-426614174002','ci-admin@example.test','ci_admin','test-only-invalid-password-hash',now()),
-            ('123e4567-e89b-42d3-a456-426614174003','ci-engineer@example.test','ci_engineer','test-only-invalid-password-hash',now());
+            ('123e4567-e89b-42d3-a456-426614174003','ci-engineer@example.test','ci_engineer','test-only-invalid-password-hash',now()),
+            ('123e4567-e89b-42d3-a456-426614174004','ci-uncredentialed@example.test','ci_uncredentialed','test-only-invalid-password-hash',now());
           INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by) VALUES
             ('123e4567-e89b-42d3-a456-426614174001',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
             ('123e4567-e89b-42d3-a456-426614174002',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
-            ('123e4567-e89b-42d3-a456-426614174003',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001');
+            ('123e4567-e89b-42d3-a456-426614174003',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
+            ('123e4567-e89b-42d3-a456-426614174004',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001');
           INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES
             ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174001',decode(repeat('01',32),'hex')),
             ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174002',decode(repeat('02',32),'hex')),
@@ -1297,7 +1299,8 @@ jobs:
           INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES
             ('123e4567-e89b-42d3-a456-426614174001','owner','123e4567-e89b-42d3-a456-426614174001'),
             ('123e4567-e89b-42d3-a456-426614174002','administrator','123e4567-e89b-42d3-a456-426614174001'),
-            ('123e4567-e89b-42d3-a456-426614174003','engineer','123e4567-e89b-42d3-a456-426614174001');
+            ('123e4567-e89b-42d3-a456-426614174003','engineer','123e4567-e89b-42d3-a456-426614174001'),
+            ('123e4567-e89b-42d3-a456-426614174004','moderator','123e4567-e89b-42d3-a456-426614174001');
           DO $permissions$
           BEGIN
             IF NOT EXISTS (
@@ -1320,6 +1323,44 @@ jobs:
             (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256)
           VALUES
             ('deployment.production','123e4567-e89b-42d3-a456-426614174001','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          DO $self_approval$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              INSERT INTO testagram_auth.native_sensitive_action_approvals
+                (request_id,approver_user_id,decision,reason)
+              SELECT id,'123e4567-e89b-42d3-a456-426614174001','approved','Requester cannot approve own action'
+              FROM testagram_auth.native_sensitive_action_requests
+              WHERE target_reference='ci-release-001';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'requester cannot approve their own sensitive action%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'requester self-approval was not blocked';
+            END IF;
+          END $self_approval$;
+          DO $uncredentialed_approval$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              INSERT INTO testagram_auth.native_sensitive_action_approvals
+                (request_id,approver_user_id,decision,reason)
+              SELECT id,'123e4567-e89b-42d3-a456-426614174004','approved','Uncredentialed staff must not approve'
+              FROM testagram_auth.native_sensitive_action_requests
+              WHERE target_reference='ci-release-001';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'approver is not an enabled, verified and MFA-enrolled native staff principal%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'staff without an active verified WebAuthn credential was allowed to approve';
+            END IF;
+          END $uncredentialed_approval$;
           DO $immutable$
           DECLARE blocked BOOLEAN := FALSE;
           BEGIN
