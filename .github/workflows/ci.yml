@@ -1426,7 +1426,7 @@ jobs:
               blocked := TRUE;
             END;
             IF NOT blocked THEN
-              RAISE EXCEPTION 'request was approved after one signer's credential was revoked';
+              RAISE EXCEPTION 'request was approved after one signer credential was revoked';
             END IF;
           END $revoked_quorum$;
           UPDATE testagram_auth.staff_webauthn_credentials SET revoked_at=NULL
