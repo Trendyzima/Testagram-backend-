@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, native-auth/remove-appwrite-legacy-adapter]
+    branches: [main, 'native-auth/*']
 
 permissions:
   contents: read
