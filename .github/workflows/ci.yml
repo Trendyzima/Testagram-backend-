@@ -154,6 +154,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
+      - name: Check browser ceremony harness syntax
+        run: node --check scripts/test-staff-webauthn-browser.mjs
       - name: Install pinned Playwright browser harness
         run: npm install --no-save --package-lock=false playwright@1.56.1
       - name: Install Chromium and system dependencies
