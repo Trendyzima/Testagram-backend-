@@ -221,7 +221,17 @@ jobs:
             curl --silent --show-error --fail --connect-timeout 10 --max-time 45 \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "$API/accounts/$account_id/workers/scripts/$worker/content/v2" -o "$tmp/source"
-            if ! grep -Eiq "$marker" "$tmp/source"; then
+            source_marker_found="false"
+            if grep -Eiq "$marker" "$tmp/source"; then
+              source_marker_found="true"
+            fi
+            if [[ "$worker" == "testagram-api" ]]; then
+              legacy_binding_count="$(jq -r '.result.bindings // [] | map(select((.name // "") | test("^(SUPABASE_|SB_PROJECT_REF)"; "i"))) | length' "$tmp/target-settings.json")"
+              if [[ "$source_marker_found" != "true" && "$legacy_binding_count" == "0" ]]; then
+                echo "::error::$worker has neither the expected legacy source marker nor a legacy Supabase binding; refusing deletion."
+                exit 1
+              fi
+            elif [[ "$source_marker_found" != "true" ]]; then
               echo "::error::$worker source no longer matches the expected legacy marker; refusing deletion."
               exit 1
             fi
