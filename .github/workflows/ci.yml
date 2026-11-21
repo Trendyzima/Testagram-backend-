@@ -1243,6 +1243,7 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261120_native_identity_approval_circuit.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261120_native_verification_decider.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261121_native_staff_webauthn.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/061_native_sensitive_action_integrity.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261117_native_staff_reviewer_grants.sql
@@ -1285,6 +1286,14 @@ jobs:
             ('123e4567-e89b-42d3-a456-426614174001',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
             ('123e4567-e89b-42d3-a456-426614174002',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001'),
             ('123e4567-e89b-42d3-a456-426614174003',TRUE,now(),now(),'123e4567-e89b-42d3-a456-426614174001');
+          INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174001',decode(repeat('01',32),'hex')),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174002',decode(repeat('02',32),'hex')),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174003',decode(repeat('03',32),'hex'));
+          INSERT INTO testagram_auth.staff_webauthn_credentials(rpid,user_id,credential_id,credential,user_verified,clone_warning) VALUES
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174001',decode(repeat('11',32),'hex'),decode('01','hex'),TRUE,FALSE),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174002',decode(repeat('22',32),'hex'),decode('02','hex'),TRUE,FALSE),
+            ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174003',decode(repeat('33',32),'hex'),decode('03','hex'),TRUE,FALSE);
           INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES
             ('123e4567-e89b-42d3-a456-426614174001','owner','123e4567-e89b-42d3-a456-426614174001'),
             ('123e4567-e89b-42d3-a456-426614174002','administrator','123e4567-e89b-42d3-a456-426614174001'),
@@ -1311,6 +1320,30 @@ jobs:
             (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256)
           VALUES
             ('deployment.production','123e4567-e89b-42d3-a456-426614174001','ci-release-001','CI validates dual control request','{"environment":"production"}'::jsonb,repeat('a',64));
+          DO $immutable$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              UPDATE testagram_auth.native_sensitive_action_requests
+              SET target_reference='tampered-release'
+              WHERE target_reference='ci-release-001';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'native sensitive-action request identity and payload are immutable%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'approval request target mutation was not blocked';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.native_sensitive_action_requests
+              WHERE target_reference='ci-release-001'
+                AND payload_sha256=repeat('a',64)
+            ) THEN
+              RAISE EXCEPTION 'approval request changed after rejected mutation';
+            END IF;
+          END $immutable$;
           INSERT INTO testagram_auth.native_sensitive_action_approvals
             (request_id,approver_user_id,decision,reason)
           SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Independent reviewer approves CI request'
