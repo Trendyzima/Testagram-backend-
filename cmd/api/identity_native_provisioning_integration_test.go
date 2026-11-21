@@ -88,6 +88,27 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Sensitive-action approvals require an active, user-verified native
+	// WebAuthn credential. Seed the two account approvers accordingly; the
+	// identity-reviewer evidence rows above remain a separate review stage.
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
+		VALUES
+		  ('ops.testagram.invalid',$1::uuid,decode(repeat('01',32),'hex')),
+		  ('ops.testagram.invalid',$2::uuid,decode(repeat('02',32),'hex'))
+	`, approverOne, approverTwo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_webauthn_credentials
+		  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
+		VALUES
+		  ('ops.testagram.invalid',$1::uuid,decode(repeat('11',32),'hex'),decode('01','hex'),TRUE,FALSE),
+		  ('ops.testagram.invalid',$2::uuid,decode(repeat('22',32),'hex'),decode('02','hex'),TRUE,FALSE)
+	`, approverOne, approverTwo); err != nil {
+		t.Fatal(err)
+	}
+
 	var applicationID, requestID, sessionID string
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
 		t.Fatal(err)
@@ -156,21 +177,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	`, requestID, approverOne); err != nil {
 		t.Fatal(err)
 	}
-	// The approval request can reach its decision state, but the database must
-	// refuse to mint a provisioning capability until both independent account
-	// approvals exist. The trigger protects the capability issuance boundary.
-	if _, err := db.Exec(ctx, `
-		UPDATE testagram_auth.native_sensitive_action_requests SET status='approved',decided_at=now()
-		WHERE id=$1::uuid
-	`, requestID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, `
-		UPDATE testagram_identity.identity_applications SET status='approved'
-		WHERE id=$1::uuid
-	`, applicationID); err != nil {
-		t.Fatal(err)
-	}
+	// Keep the request pending while the first approval is recorded. The
+	// database requires every approval row to be appended before the request
+	// can transition to its terminal approved state.
 
 	// Exercise the real provisioning-token HTTP endpoint with only one
 	// account approver. It must not mint or return a capability.
@@ -210,6 +219,20 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		INSERT INTO testagram_auth.native_sensitive_action_approvals(request_id,approver_user_id,decision,reason)
 		VALUES($1::uuid,$2::uuid,'approved','Second independent account approval')
 	`, requestID, approverTwo); err != nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := approvalTx.Exec(ctx, `
+		UPDATE testagram_auth.native_sensitive_action_requests SET status='approved',decided_at=now()
+		WHERE id=$1::uuid
+	`, requestID); err != nil {
+		_ = approvalTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := approvalTx.Exec(ctx, `
+		UPDATE testagram_identity.identity_applications SET status='approved'
+		WHERE id=$1::uuid
+	`, applicationID); err != nil {
 		_ = approvalTx.Rollback(ctx)
 		t.Fatal(err)
 	}
