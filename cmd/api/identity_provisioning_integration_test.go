@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 func nativeStaffReviewerFixture(t *testing.T, ctx context.Context, db *pgxpool.Pool) (string, string, string) {
 	t.Helper()
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 64))
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "ci-native-reviewer.example.test")
 	passwordHash, err := authPasswordHash("native-reviewer-password-123")
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +44,14 @@ func nativeStaffReviewerFixture(t *testing.T, ctx context.Context, db *pgxpool.P
 	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES($1::uuid,'identity_reviewer',$2::uuid)", reviewerID, approverID); err != nil {
 		t.Fatal(err)
 	}
+
+	credentialID := []byte("native-reviewer-credential-" + reviewerID)
+	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES('ci-native-reviewer.example.test',$1::uuid,decode(md5($1::text),'hex'))", reviewerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_webauthn_credentials(rpid,user_id,credential_id,credential,user_verified,clone_warning) VALUES('ci-native-reviewer.example.test',$1::uuid,$2,'ci-only-credential',TRUE,FALSE)", reviewerID, credentialID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, "INSERT INTO testagram_auth.staff_approval_events(subject_user_id,action,role,requested_by,approved_by,requested_at,approved_at,applied_at) VALUES($1::uuid,'grant_role','identity_reviewer',$2::uuid,$3::uuid,now()-interval '1 minute',now(),now())", reviewerID, requesterID, approverID); err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +64,7 @@ func nativeStaffReviewerFixture(t *testing.T, ctx context.Context, db *pgxpool.P
 		t.Fatalf("verify native reviewer session status=%d err=%v", status, err)
 	}
 	claims.MFAAuthenticatedAt = time.Now().UTC().Unix()
+	claims.MFAAuthenticatorID = hex.EncodeToString(credentialID)
 	session.AccessToken, err = authSignJWTClaims(claims)
 	if err != nil {
 		t.Fatal(err)
