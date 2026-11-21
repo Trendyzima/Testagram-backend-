@@ -98,7 +98,7 @@ jobs:
           echo "## Cloudflare orphan cleanup" >> "$GITHUB_STEP_SUMMARY"
           echo "- Only explicitly named legacy Workers are considered." >> "$GITHUB_STEP_SUMMARY"
           echo "- Every candidate is rechecked for zone routes, Worker custom domains, Cron triggers, service bindings, consumers and legacy source markers." >> "$GITHUB_STEP_SUMMARY"
-          echo "- testagram-api additionally requires exactly one enabled, non-preview api.testagram.site binding to testagram-cdn and a successful live Backend health response."
+          echo "- testagram-api additionally requires exactly one enabled, non-preview api.testagram.site binding to testagram-cdn and a successful live Backend health response." >> "$GITHUB_STEP_SUMMARY"
           echo "- testagram-web and testagram-cdn are not deletion candidates because they still have live routes/triggers." >> "$GITHUB_STEP_SUMMARY"
 
           for worker in "${candidates[@]}"; do
@@ -118,8 +118,9 @@ jobs:
             fi
 
             if [[ "$worker" == "testagram-api" ]]; then
+              api_domain_count="$(awk -F '\t' '$1=="api.testagram.site" {count++} END {print count+0}' "$tmp/domains.tsv")"
               canonical_api_domain_count="$(awk -F '\t' '$1=="api.testagram.site" && $2=="testagram-cdn" && $4=="true" && $5=="false" {count++} END {print count+0}' "$tmp/domains.tsv")"
-              [[ "$canonical_api_domain_count" == "1" ]] || {
+              [[ "$api_domain_count" == "1" && "$canonical_api_domain_count" == "1" ]] || {
                 echo "::error::The canonical API custom domain is not uniquely attached to testagram-cdn; refusing legacy API Worker deletion."
                 exit 1
               }
