@@ -143,8 +143,8 @@ schema_ready() {
         )
         AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
-        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\\''testagram_auth.native_sensitive_action_requests'\\'') AND tgname='\\''native_sensitive_action_request_immutable'\\'' AND NOT tgisinternal)
-        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\\''testagram_auth.native_sensitive_action_approvals'\\'') AND tgname='\\''native_sensitive_action_approver_guard'\\'' AND NOT tgisinternal)
+        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') AND tgname='\''native_sensitive_action_request_immutable'\'' AND NOT tgisinternal)
+        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') AND tgname='\''native_sensitive_action_approver_guard'\'' AND NOT tgisinternal)
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
         AND (
@@ -341,7 +341,7 @@ for file in \
   058d_native_identity_historical_attribution_archive.sql \
   059_native_identity_approval_circuit.sql \
   20261121_native_identity_intake_optional_fingerprint.sql \
-  060_native_staff_webauthn.sql \\
+  060_native_staff_webauthn.sql \
   061_native_sensitive_action_integrity.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
