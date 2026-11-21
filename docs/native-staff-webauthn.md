@@ -95,7 +95,7 @@ Console attestation and Backend PostgreSQL query both pass on each request.
 - Credential JSON is AEAD-encrypted before it is written to PostgreSQL.
 - Assertion completion updates the credential counter and consumes the
   challenge in one transaction. Clone warnings and counter races are denied.
-- Successful assertions issue a five-minute HMAC-signed native Testagram access JWT with the existing issuer, audience, session ID and token version plus the backend-recognized mfa_at claim. The token is bound to the canonical subject, native session ID and token version, stored only in the encrypted HttpOnly Console session, and forwarded server-to-server to the Backend identity-review API. It is not exposed to browser JavaScript.
+- Successful assertions issue a five-minute HMAC-signed native Testagram access JWT with the existing issuer, audience, session ID and token version plus the backend-recognized `mfa_at` and exact WebAuthn credential identifier claims. The token is bound to the canonical subject, native session ID, token version and authenticator used for the verified assertion, stored only in the encrypted HttpOnly Console session, and forwarded server-to-server to the Backend identity-review API. The Backend checks that exact credential is still active, user-verified and not clone-warned on every privileged identity-review request, so credential revocation immediately invalidates outstanding elevation. The token is not exposed to browser JavaScript.
 - Sensitive staff actions, permission changes, staff directory, audit and
   approval queue endpoints require this proof. Console-local MFA booleans are
   not accepted.
