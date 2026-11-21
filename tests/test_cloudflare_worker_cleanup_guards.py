@@ -62,6 +62,9 @@ class CloudflareWorkerCleanupGuardsTest(unittest.TestCase):
         self.assertIn('worker="${item%%|*}"', WORKFLOW)
         self.assertIn('marker="${item#*|}"', WORKFLOW)
         self.assertIn('grep -Eiq "$marker" "$tmp/source"', WORKFLOW)
+        self.assertIn('legacy_binding_count="$(jq -r', WORKFLOW)
+        self.assertIn('test("^(SUPABASE_|SB_PROJECT_REF)"; "i")', WORKFLOW)
+        self.assertIn('if [[ "$source_marker_found" != "true" && "$legacy_binding_count" == "0" ]]; then', WORKFLOW)
 
     def test_cleanup_never_mutates_dns_or_routes(self):
         self.assertNotIn('cf_delete "/zones/', WORKFLOW)
