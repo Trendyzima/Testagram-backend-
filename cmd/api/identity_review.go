@@ -156,7 +156,7 @@ func requireLiveIdentityReviewMFA(claims authClaims) error {
 	now := time.Now().Unix()
 	const maxAgeSeconds = int64(5 * 60)
 	const allowedFutureClockSkewSeconds = int64(60)
-	if claims.MFAAuthenticatedAt <= 0 ||
+	if claims.MFAAuthenticatedAt <= 0 || claims.MFAAuthenticatorID == "" ||
 		claims.MFAAuthenticatedAt > now+allowedFutureClockSkewSeconds ||
 		now-claims.MFAAuthenticatedAt > maxAgeSeconds {
 		return errors.New("fresh phishing-resistant MFA proof is not present; identity review remains disabled")
@@ -182,6 +182,11 @@ func (s *service) identityReviewer(r *http.Request) (nativeIdentityReviewer, int
 	if err != nil {
 		return nativeIdentityReviewer{}, status, errors.New("native staff session is invalid or expired")
 	}
+	credentialID, credentialErr := hex.DecodeString(claims.MFAAuthenticatorID)
+	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	if credentialErr != nil || len(credentialID) == 0 || rpid == "" {
+		return nativeIdentityReviewer{}, http.StatusUnauthorized, errors.New("fresh WebAuthn credential proof is missing")
+	}
 	var allowed bool
 	err = s.db.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -189,17 +194,20 @@ func (s *service) identityReviewer(r *http.Request) (nativeIdentityReviewer, int
 			FROM testagram_auth.staff_principals sp
 			JOIN testagram_auth.staff_role_grants rg
 			  ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+			JOIN testagram_auth.staff_webauthn_credentials wc
+			  ON wc.user_id=sp.user_id AND wc.rpid=$3 AND wc.credential_id=$2
+			 AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
 			WHERE sp.user_id=$1::uuid
 			  AND sp.enabled=TRUE
 			  AND sp.mfa_enrolled_at IS NOT NULL
 			  AND rg.role = 'identity_reviewer'
 		)
-	`, claims.Subject).Scan(&allowed)
+	`, claims.Subject, credentialID, rpid).Scan(&allowed)
 	if err != nil {
 		return nativeIdentityReviewer{}, http.StatusServiceUnavailable, errors.New("native staff authorization is unavailable")
 	}
 	if !allowed {
-		return nativeIdentityReviewer{}, http.StatusForbidden, errors.New("enabled Testagram identity reviewer role and enrolled MFA are required")
+		return nativeIdentityReviewer{}, http.StatusForbidden, errors.New("enabled Testagram identity reviewer role and the exact active WebAuthn credential used for MFA are required")
 	}
 	if err := requireLiveIdentityReviewMFA(claims); err != nil {
 		return nativeIdentityReviewer{}, http.StatusServiceUnavailable, err
