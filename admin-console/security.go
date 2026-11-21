@@ -607,7 +607,7 @@ func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
 	// The approval ledger currently records two-person decisions but does not
 	// atomically execute staff permission changes after the second approval.
 	// Keep this mutation closed rather than allowing a single owner to write
-	// native_staff_permission_overrides directly.
+	// the permission override table directly.
 	writeJSON(w, http.StatusNotImplemented, map[string]string{
 		"error": "Native staff permission changes remain disabled until a two-person approval executor atomically applies approved changes. No direct permission mutation is permitted.",
 	})
