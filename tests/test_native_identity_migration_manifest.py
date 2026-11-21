@@ -73,7 +73,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("wc.clone_warning=FALSE", sql)
         self.assertIn("native sensitive-action approval quorum is incomplete", sql)
         self.assertIn("v_eligible_approved_count", sql)
-        self.assertIn("v_required_approvals", sql)
+        self.assertIn("OLD.required_approvals", sql)
         self.assertIn("NEW.status='approved'", sql)
 
     def test_archive_migrations_are_mounted_and_applied_in_order(self):
