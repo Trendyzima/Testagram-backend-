@@ -196,6 +196,22 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if ready, _ := readiness["identity_review_ready"].(bool); ready {
 		t.Fatalf("Admin Console remained ready after an approver credential was revoked: %#v", readiness)
 	}
+	// Restore the credential after the negative-readiness assertion. The
+	// following approval-flow fixture must model two currently eligible
+	// approvers; leaving this credential revoked would correctly make the
+	// database approval guard reject the second decision.
+	if _, err := conn.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_credentials
+		SET revoked_at=NULL
+		WHERE user_id=$1::uuid AND rpid='ops.example.test'
+		  AND credential_id=$2 AND user_verified=TRUE AND clone_warning=FALSE
+	`, approverTwo, []byte("credential-"+approverTwo)); err != nil {
+		t.Fatalf("restore second approver credential after readiness negative test: %v", err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
+		t.Fatalf("Admin Console did not recover after restoring the second approver credential: %#v", readiness)
+	}
 
 	var applicationID, requestID string
 	if err := conn.QueryRow(ctx, "SELECT gen_random_uuid()::text, gen_random_uuid()::text").Scan(&applicationID, &requestID); err != nil {
