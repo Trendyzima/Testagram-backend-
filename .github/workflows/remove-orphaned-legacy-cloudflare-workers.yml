@@ -3,6 +3,11 @@ name: Remove orphaned legacy Cloudflare Workers
 on:
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: Inspect every candidate and report eligibility without deleting anything.
+        required: true
+        type: boolean
+        default: true
       confirm_remove_orphaned_workers:
         description: Delete only explicitly listed legacy Workers after route, custom-domain, workers.dev, schedule, service-binding, replacement-health and source checks pass.
         required: true
@@ -17,7 +22,7 @@ concurrency:
 
 jobs:
   cleanup:
-    if: inputs.confirm_remove_orphaned_workers == true
+    if: inputs.dry_run == true || inputs.confirm_remove_orphaned_workers == true
     name: Guard and remove unreferenced legacy Workers
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -25,11 +30,17 @@ jobs:
       - name: Verify and remove only proven orphans
         shell: bash
         env:
-          CLOUDFLARE_API_TOKEN: \${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLEANUP_DRY_RUN: ${{ inputs.dry_run }}
+          CONFIRM_REMOVE_ORPHANED_WORKERS: ${{ inputs.confirm_remove_orphaned_workers }}
         run: |
           set -euo pipefail
           set +x
-          [[ -n "\${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing existing CLOUDFLARE_API_TOKEN secret."; exit 1; }
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing existing CLOUDFLARE_API_TOKEN secret."; exit 1; }
+          if [[ "${CLEANUP_DRY_RUN}" != "true" && "${CONFIRM_REMOVE_ORPHANED_WORKERS}" != "true" ]]; then
+            echo "::error::Destructive cleanup requires dry_run=false and explicit confirmation."
+            exit 1
+          fi
 
           API="https://api.cloudflare.com/client/v4"
           tmp="$(mktemp -d)"
@@ -123,12 +134,17 @@ jobs:
           )
 
           echo "## Cloudflare orphan cleanup" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${CLEANUP_DRY_RUN}" == "true" ]]; then
+            echo "- Mode: dry-run; no Worker scripts will be deleted." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Mode: destructive cleanup; explicit confirmation was supplied." >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "- Only explicitly named legacy Workers are considered." >> "$GITHUB_STEP_SUMMARY"
           echo "- Every candidate is rechecked for zone routes, custom domains, workers.dev/preview URLs, Cron, service bindings, consumers and legacy source markers." >> "$GITHUB_STEP_SUMMARY"
           echo "- testagram-api additionally requires exactly one enabled, non-preview api.testagram.site binding to testagram-cdn and a successful live Backend health response." >> "$GITHUB_STEP_SUMMARY"
           echo "- testagram-web and testagram-cdn are not deletion candidates." >> "$GITHUB_STEP_SUMMARY"
 
-          for worker in "\${candidates[@]}"; do
+          for worker in "${candidates[@]}"; do
             if ! grep -Fxq "$worker" "$tmp/scripts.txt"; then
               echo "- $worker: already absent; no action." >> "$GITHUB_STEP_SUMMARY"
               continue
@@ -205,8 +221,16 @@ jobs:
               exit 1
             fi
 
-            cf_delete "/accounts/$account_id/workers/scripts/$worker" "$tmp/delete.json"
-            echo "- $worker: deleted after all safety guards passed." >> "$GITHUB_STEP_SUMMARY"
+            if [[ "${CLEANUP_DRY_RUN}" == "true" ]]; then
+              echo "- $worker: all safety guards passed; eligible in dry-run; no deletion performed." >> "$GITHUB_STEP_SUMMARY"
+            else
+              [[ "${CONFIRM_REMOVE_ORPHANED_WORKERS}" == "true" ]] || {
+                echo "::error::Explicit cleanup confirmation is missing; refusing deletion."
+                exit 1
+              }
+              cf_delete "/accounts/$account_id/workers/scripts/$worker" "$tmp/delete.json"
+              echo "- $worker: deleted after all safety guards passed." >> "$GITHUB_STEP_SUMMARY"
+            fi
           done
 
           echo "Cleanup finished. No DNS records, Worker routes, Pages domains, R2 buckets or account settings were modified." >> "$GITHUB_STEP_SUMMARY"
