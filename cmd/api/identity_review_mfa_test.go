@@ -8,10 +8,10 @@ import (
 func TestIdentityReviewRequiresFreshPhishingResistantMFAClaim(t *testing.T) {
 	now := time.Now().Unix()
 	cases := []struct {
-		name    string
-		mfaAt   int64
+		name          string
+		mfaAt         int64
 		mfaCredential string
-		wantErr bool
+		wantErr       bool
 	}{
 		{name: "missing proof", mfaAt: 0, wantErr: true},
 		{name: "expired proof", mfaAt: now - 301, mfaCredential: "63726564", wantErr: true},
