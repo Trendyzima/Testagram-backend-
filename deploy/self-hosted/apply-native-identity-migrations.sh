@@ -32,7 +32,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('identity_application_reviews.review_stage', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
   ('verification_reviews.reviewer_user_id', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='verification_reviews' AND column_name='reviewer_user_id')),
   ('identity_approval_tokens table', to_regclass('testagram_identity.identity_approval_tokens') IS NOT NULL),
-  ('registration_provisioning table', to_regclass('testagram_identity.registration_provisioning') IS NOT NULL),
+  ('historical external provisioning evidence table', to_regclass('testagram_identity.historical_external_registration_provisioning') IS NOT NULL),
   ('verification_sessions table', to_regclass('testagram_identity.verification_sessions') IS NOT NULL),
   ('verification_events table', to_regclass('testagram_identity.verification_events') IS NOT NULL),
   ('verification_reviews table', to_regclass('testagram_identity.verification_reviews') IS NOT NULL),
@@ -112,7 +112,7 @@ schema_ready() {
             AND column_name='\''reviewer_user_id'\''
         )
         AND to_regclass('\''testagram_identity.identity_approval_tokens'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.registration_provisioning'\'') IS NOT NULL
+        AND to_regclass('\''testagram_identity.historical_external_registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_events'\'') IS NOT NULL
         AND to_regclass('\''testagram_identity.verification_reviews'\'') IS NOT NULL
@@ -331,6 +331,10 @@ for file in \
   056_native_verification_decider.sql \
   057_testagram_mail_outbox.sql \
   058_testagram_mail_outbox_runtime_role.sql \
+  058a_native_identity_historical_account_archive.sql \
+  058b_native_identity_historical_staff_archive.sql \
+  058c_native_identity_historical_admin_archive.sql \
+  058d_native_identity_historical_attribution_archive.sql \
   059_native_identity_approval_circuit.sql \
   20261121_native_identity_intake_optional_fingerprint.sql \
   060_native_staff_webauthn.sql; do
@@ -362,6 +366,10 @@ apply_migration 055_native_identity_approval_ledger.sql
 apply_migration 056_native_verification_decider.sql
 apply_migration 057_testagram_mail_outbox.sql
 apply_migration 058_testagram_mail_outbox_runtime_role.sql
+apply_migration 058a_native_identity_historical_account_archive.sql
+apply_migration 058b_native_identity_historical_staff_archive.sql
+apply_migration 058c_native_identity_historical_admin_archive.sql
+apply_migration 058d_native_identity_historical_attribution_archive.sql
 apply_migration 059_native_identity_approval_circuit.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 apply_migration 060_native_staff_webauthn.sql

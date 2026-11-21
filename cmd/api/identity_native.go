@@ -90,7 +90,19 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !s.identityReviewWebAuthnReady {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed until staff WebAuthn step-up is implemented and verified", requestID(r)))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed by production policy", requestID(r)))
+		return
+	}
+	readinessReady := false
+	if s.identityReviewWebAuthnPrerequisites != nil {
+		readinessReady = s.identityReviewWebAuthnPrerequisites(r.Context())
+	} else {
+		readinessCtx, readinessCancel := context.WithTimeout(r.Context(), 4*time.Second)
+		readinessReady = identityReviewWebAuthnPrerequisitesReady(readinessCtx, s.db)
+		readinessCancel()
+	}
+	if !readinessReady {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed until PostgreSQL and live Admin Console WebAuthn readiness are verified", requestID(r)))
 		return
 	}
 	if s.db == nil || !s.identityEvidenceStorageConfigured() {
@@ -224,7 +236,7 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 	if existing {
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS(
-				SELECT 1 FROM testagram_identity.registration_provisioning
+				SELECT 1 FROM testagram_identity.native_registration_provisioning
 				WHERE application_id=$1::uuid
 			)
 		`, applicationID).Scan(&provisioningExists); err != nil {

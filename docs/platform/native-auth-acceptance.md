@@ -31,9 +31,11 @@ Dispatch only with `confirm_staging_only=true` after verifying the origin and ac
 
 Do not use a production user or production credentials for this test.
 
-## Staff authentication limitation
+## Staff authentication and identity-intake gate
 
-Staff review routes currently require a native Backend session, an enabled staff principal, a role grant, and a non-null MFA-enrolment timestamp. The Admin Console step-up currently reauthenticates the password; it does not perform a live TOTP or passkey challenge. The timestamp alone is not proof of a second factor. Therefore staff-review production activation remains gated until a real second-factor enrollment and challenge flow is implemented and verified end to end.
+Staff review routes require a native Backend session, an enabled staff principal, the appropriate role grant, an enrolled authenticator and a fresh signed MFA claim bound to the exact WebAuthn credential used for the assertion. Backend rechecks that credential's active, user-verified, non-cloned state for every privileged review request; revoking it invalidates existing elevation immediately. The Admin Console implements native WebAuthn registration/assertion with RP ID/origin validation, user verification, encrypted credential/challenge storage, single-use challenge consumption, counter/clone checks and a short-lived Backend-signed elevation token. Enrollment is independently authorized and gated by `TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED=true`.
+
+The Backend checks PostgreSQL staff roles and active verified credentials, then calls the Admin Console's private `/internal/webauthn/readiness` endpoint on every identity-application request. The endpoint is protected by a shared `TESTAGRAM_WEBAUTHN_READINESS_TOKEN` (32+ random bytes) passed only between the API and Admin Console containers; the Admin Console independently verifies RP/origin configuration, credential encryption, database schema/privileges, backend health and at least four distinct eligible credentialed staff so the reviewer pair and approver pair can be disjoint. API intake also requires the explicit `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED=true` policy gate. Leave it false until real browser ceremony, recovery and replay acceptance pass. A non-null MFA-enrolment timestamp alone is never proof of a fresh assertion.
 
 ## Production boundary
 

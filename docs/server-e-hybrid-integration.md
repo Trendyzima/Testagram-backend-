@@ -1,47 +1,18 @@
-# Testagram Native Integration Contract
+# Historical hybrid integration note
 
-This contract describes the retained five-repository runtime. It supersedes
-older hybrid instructions that routed product traffic through Supabase,
-PostgREST, Redis, Valkey or Upstash.
+This file is retained only as a historical pointer. Its earlier repository count, identity ownership and service-flow assumptions have been superseded. Do not use it as a current runtime, authentication or deployment contract.
 
-## Ownership
+## Current authoritative contracts
 
-- Flutter is the only product UI and sends Appwrite JWTs to the Backend.
-- The Backend validates Appwrite sessions, owns authorization and canonical
-  PostgreSQL state, and exposes the public product API.
-- The Data Centre owns storage nodes, video processing, notifications and
-  platform infrastructure.
-- The Algorithm ranks only Backend-authorized feed candidates.
-- Federated Content validates signed remote activities and owns federation
-  delivery state.
+- [Six-repository runtime integration contract](six-repository-runtime-integration-contract.md) defines the current runtime repositories, service ownership and communication paths.
+- [Testagram-native replacement ownership](architecture/native-replacement-ownership.md) defines the Backend's native subsystem owners.
+- [Native authentication acceptance](platform/native-auth-acceptance.md) defines the current user and staff authentication gates.
+- [Testagram service ownership catalogue](platform/service-catalog.md) summarizes the current service boundaries.
 
-## Prohibited runtime paths
+## Current identity boundary
 
-- No Supabase Auth, PostgREST, Storage, Realtime or Edge Function runtime.
-- No Redis/Valkey/Upstash clients, credentials, URLs, cache wrappers or generic
-  Redis queue APIs.
-- No Flutter-to-database, Flutter-to-ranker or Flutter-to-federation calls.
-- No service-role credential in browser or mobile configuration.
+Flutter obtains native Testagram access and refresh credentials from Backend. Backend owns account creation, password verification, email verification, session issuance and revocation, canonical Testagram UUIDs, authorization and PostgreSQL identity state. Internal services receive scoped service-to-service credentials only; they do not issue user sessions or validate user bearer credentials as a separate identity authority.
 
-## Data and async contracts
+## Current release rule
 
-- PostgreSQL is canonical for accounts, posts, interactions, media metadata,
-  authorization counters and transactional outboxes.
-- Appwrite owns session issuance. The Backend validates the JWT with Appwrite
-  and resolves the canonical Testagram UUID from the identity bridge.
-- Media object bytes are accessed only through the Backend's signed storage
-  lifecycle. Post media references are native object keys.
-- Feed ranking is a bounded internal call. The Backend rejects ranker IDs not
-  present in the authorized candidate set.
-- Federation delivery and media cleanup use durable PostgreSQL outboxes/jobs,
-  idempotency keys, bounded retries and reconciliation.
-
-## Release gates
-
-- All five repository CI workflows pass on the coordinated commits.
-- Flutter dependency-boundary checks pass.
-- Backend PostgreSQL integration tests cover privacy, media references and
-  interaction projections.
-- Appwrite session verification and identity mapping fail closed.
-- Restore, backup, signed media and federation contract tests pass before
-  production cutover.
+Use the production router and shared API contract control plane for route decisions. Verify the exact coordinated repository commits, database migrations, authorization tests, media lifecycle tests, federation contract tests, backup/restore evidence and deployed staging acceptance before production cutover. This historical note does not authorize enabling a feature flag or changing production routing.

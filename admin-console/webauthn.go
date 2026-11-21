@@ -1,23 +1,39 @@
 package main
 
 import (
- "bytes"
- "context"
- "crypto/rand"
- "crypto/sha256"
- "encoding/base64"
- "encoding/json"
- "crypto/hmac"
- "io"
- "errors"
- "net/http"
- "os"
- "strings"
- "time"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 
- "github.com/go-webauthn/webauthn/protocol"
- "github.com/go-webauthn/webauthn/webauthn"
+	nativeauth "github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
+
+type nativeElevationClaims struct {
+ Subject string `json:"sub"`
+ Email string `json:"email"`
+ Role string `json:"role"`
+ Issuer string `json:"iss"`
+ Audience string `json:"aud"`
+ IssuedAt int64 `json:"iat"`
+ ExpiresAt int64 `json:"exp"`
+ TokenVersion int64 `json:"ver"`
+ SessionID string `json:"sid"`
+ MFAAuthenticatedAt int64 `json:"mfa_at,omitempty"`
+ MFAAuthenticatorID string `json:"mfa_credential,omitempty"`
+ JWTID string `json:"jti,omitempty"`
+}
 
 type staffWebAuthnUser struct {
  id string
@@ -162,37 +178,14 @@ func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Reques
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"publicKey":options.Response,"challenge":sd.Challenge})
 }
-type nativeElevationClaims struct {
- Subject string `json:"sub"`
- Email string `json:"email"`
- Role string `json:"role"`
- Issuer string `json:"iss"`
- Audience string `json:"aud"`
- IssuedAt int64 `json:"iat"`
- ExpiresAt int64 `json:"exp"`
- TokenVersion int64 `json:"ver"`
- SessionID string `json:"sid"`
- MFAAuthenticatedAt int64 `json:"mfa_at,omitempty"`
- JWTID string `json:"jti,omitempty"`
+func (a *app) mintStaffElevation(user authUser, accessToken string, authenticatorID []byte) (string, int64, error) {
+	if user.ID == "" {
+		return "", 0, errors.New("native staff identity is unavailable")
+	}
+	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	return nativeauth.MintStaffElevationToken(accessToken, user.ID, authenticatorID, secret, time.Now().UTC())
 }
-func (a *app) mintStaffElevation(user authUser, accessToken string)(string,int64,error){
- secret:=[]byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")));if len(secret)<32{return "",0,errors.New("native MFA signing key unavailable")}
- parts:=strings.Split(accessToken,".");if len(parts)!=3{return "",0,errors.New("native access token is invalid")}
- payload,err:=base64.RawURLEncoding.DecodeString(parts[1]);if err!=nil{return "",0,errors.New("native access token claims are invalid")}
- var claims nativeElevationClaims
- if err=json.Unmarshal(payload,&claims);err!=nil||claims.Subject!=user.ID||claims.Issuer!="testagram-auth"||claims.Audience!="testagram-api"||claims.Role!="authenticated"||claims.TokenVersion<1||claims.SessionID==""{
-  return "",0,errors.New("native access token cannot be elevated")
- }
- nonce:=make([]byte,16);if _,err:=rand.Read(nonce);err!=nil{return "",0,err}
- now:=time.Now().UTC().Unix();exp:=now+5*60
- claims.IssuedAt=now;claims.ExpiresAt=exp;claims.MFAAuthenticatedAt=now;claims.JWTID=base64.RawURLEncoding.EncodeToString(nonce)
- header,_:=json.Marshal(map[string]string{"alg":"HS256","typ":"JWT"})
- payload,err=json.Marshal(claims);if err!=nil{return "",0,err}
- enc:=base64.RawURLEncoding
- unsigned:=enc.EncodeToString(header)+"."+enc.EncodeToString(payload)
- mac:=hmac.New(sha256.New,secret);_,_=mac.Write([]byte(unsigned))
- return unsigned+"."+enc.EncodeToString(mac.Sum(nil)),exp,nil
-}
+
 func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Request){
  s,user,ok:=a.requireStaff(w,r);if !ok{return}
  if !a.requireStaffWebAuthnRuntime(w,r,false){return}
@@ -219,12 +212,42 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  if tag.RowsAffected()!=1{_,_=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);_ = tx.Commit(r.Context());writeJSON(w,401,map[string]string{"error":"Credential counter changed or credential was revoked"});return}
  if _,err=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not consume assertion challenge"});return}
  if err=tx.Commit(r.Context());err!=nil{writeJSON(w,503,map[string]string{"error":"Could not commit assertion"});return}
- token,exp,err:=a.mintStaffElevation(user,s.AccessToken);if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not issue backend MFA elevation"});return}
+ token,exp,err:=a.mintStaffElevation(user,s.AccessToken,credential.ID);if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not issue backend MFA elevation"});return}
  s.ElevatedToken=token
  if err=a.setSession(w,s);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not persist elevated session"});return}
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"ok":true,"elevated":true,"expires_at":exp})
 }
+func (a *app) staffWebAuthnCredentialsDecryptable(ctx context.Context, rpid string) bool {
+	if a.database == nil || a.aead == nil || rpid == "" {
+		return false
+	}
+	rows, err := a.database.Query(ctx, `
+		SELECT credential FROM testagram_auth.staff_webauthn_credentials
+		WHERE rpid=$1 AND revoked_at IS NULL
+		ORDER BY user_id,id
+	`, rpid)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var encrypted []byte
+		if err := rows.Scan(&encrypted); err != nil || len(encrypted) < a.aead.NonceSize() {
+			return false
+		}
+		plain, err := a.aead.Open(nil, encrypted[:a.aead.NonceSize()], encrypted[a.aead.NonceSize():], []byte("testagram-staff-webauthn-credential-v1"))
+		if err != nil {
+			return false
+		}
+		var credential webauthn.Credential
+		if err := json.Unmarshal(plain, &credential); err != nil || len(credential.ID) == 0 || len(credential.PublicKey) == 0 {
+			return false
+		}
+	}
+	return rows.Err() == nil
+}
+
 func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
  wa,rpid,configErr:=a.staffWebAuthn()
  dbOK:=a.database!=nil&&a.database.Ping(ctx)==nil
@@ -270,9 +293,36 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','INSERT')
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','UPDATE')`).Scan(&privilegesOK)
  }
+ credentialedStaff:=0
+ credentialedReviewers:=0
+ credentialedApprovers:=0
+ if dbOK&&schemaOK&&privilegesOK&&rpid!="" {
+  _=a.database.QueryRow(ctx,`WITH eligible_staff AS (
+   SELECT sp.user_id,
+          bool_or(rg.role='identity_reviewer') AS is_reviewer,
+          bool_or(rg.role IN ('owner','administrator')) AS is_approver
+   FROM testagram_auth.staff_principals sp
+   JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+   JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+   JOIN testagram_auth.staff_webauthn_credentials wc
+     ON wc.user_id=sp.user_id AND wc.rpid=$1 AND wc.revoked_at IS NULL
+      AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+   WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+     AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+     AND rg.role IN ('owner','administrator','identity_reviewer')
+   GROUP BY sp.user_id
+  )
+  SELECT count(*) FILTER (WHERE is_reviewer OR is_approver),
+         count(*) FILTER (WHERE is_reviewer AND NOT is_approver),
+         count(*) FILTER (WHERE is_approver AND NOT is_reviewer)
+  FROM eligible_staff
+  `,rpid).Scan(&credentialedStaff,&credentialedReviewers,&credentialedApprovers)
+ }
  signingKeyOK:=len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32
- encryptionOK:=a.aead!=nil
+ encryptionOK:=a.aead!=nil&&a.staffWebAuthnCredentialsDecryptable(ctx,rpid)
  enrollmentEnabled:=strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")
+ origins:=strings.FieldsFunc(os.Getenv("TESTAGRAM_WEBAUTHN_ORIGINS"),func(r rune)bool{return r==','||r==' '||r=='\n'})
+ rpFingerprint:=nativeauth.WebAuthnConfigurationFingerprint(rpid,origins)
  backendAPIReady:=false
  if a.apiHealthURL!=""&&a.client!=nil {
   req,err:=http.NewRequestWithContext(ctx,http.MethodGet,a.apiHealthURL,nil)
@@ -291,10 +341,15 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
   "ready":ceremoniesReady&&enrollmentEnabled,
   "ceremonies_ready":ceremoniesReady,
   "rpid_configured":rpid!="",
+  "rp_configuration_fingerprint":rpFingerprint,
   "origins_configured":originsOK,
   "database":dbOK,"schema":schemaOK,"privileges":privilegesOK,
   "signing_key":signingKeyOK,"credential_encryption":encryptionOK,
   "backend_api":backendAPIReady,"enrollment_enabled":enrollmentEnabled,
+  "credentialed_staff":credentialedStaff,
+   "credentialed_reviewers":credentialedReviewers,
+  "credentialed_approvers":credentialedApprovers,
+  "identity_review_ready":ceremoniesReady&&credentialedStaff>=4&&credentialedReviewers>=2&&credentialedApprovers>=2,
  }
 }
 
@@ -307,6 +362,18 @@ func (a *app) requireStaffWebAuthnRuntime(w http.ResponseWriter,r *http.Request,
   return false
  }
  return true
+}
+
+func (a *app) handleInternalWebAuthnReadiness(w http.ResponseWriter, r *http.Request) {
+	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN"))
+	if len(secret) < 32 || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+secret)) != 1 {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Internal WebAuthn readiness authentication required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, a.staffWebAuthnReadiness(ctx))
 }
 
 func (a *app) handleWebAuthnReadiness(w http.ResponseWriter,r *http.Request){

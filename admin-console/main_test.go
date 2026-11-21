@@ -30,6 +30,29 @@ func testApp(t *testing.T) *app {
 	}
 }
 
+func TestInternalWebAuthnReadinessRequiresSharedServiceToken(t *testing.T) {
+	secret := strings.Repeat("testagram-internal-readiness-token-", 2)
+	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", secret)
+	a := testApp(t)
+
+	unauthorized := httptest.NewRecorder()
+	a.handleInternalWebAuthnReadiness(unauthorized, httptest.NewRequest(http.MethodGet, "/internal/webauthn/readiness", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated readiness status=%d; want 401", unauthorized.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/webauthn/readiness", nil)
+	req.Header.Set("Authorization", "Bearer "+secret)
+	authorized := httptest.NewRecorder()
+	a.handleInternalWebAuthnReadiness(authorized, req)
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("authenticated readiness status=%d body=%s; want 200", authorized.Code, authorized.Body.String())
+	}
+	if !strings.Contains(authorized.Body.String(), `"identity_review_ready":false`) {
+		t.Fatalf("readiness must remain false without PostgreSQL credentials: %s", authorized.Body.String())
+	}
+}
+
 func TestNewAppRejectsInvalidSessionKey(t *testing.T) {
 	t.Setenv("ADMIN_SESSION_KEY", "too-short")
 	t.Setenv("ADMIN_PUBLIC_URL", "https://ops.example.test")

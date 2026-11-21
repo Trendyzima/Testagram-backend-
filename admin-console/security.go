@@ -87,29 +87,84 @@ func (a *app) requirePermission(w http.ResponseWriter, r *http.Request, permissi
 	if !allowed { writeJSON(w, http.StatusForbidden, map[string]string{"error":"Your staff account does not have permission for this action"}); return session{}, authUser{}, false }
 	return s, user, true
 }
+func validateRecentStepUpToken(s session, secret []byte, now time.Time) (nativeElevationClaims, error) {
+	var claims nativeElevationClaims
+	parts := strings.Split(s.ElevatedToken, ".")
+	if len(parts) != 3 || len(secret) < 32 {
+		return claims, errors.New("a verified WebAuthn elevation is required")
+	}
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	var header struct {
+		Algorithm string `json:"alg"`
+		Type      string `json:"typ"`
+	}
+	if err != nil || json.Unmarshal(headerBytes, &header) != nil || header.Algorithm != "HS256" || header.Type != "JWT" {
+		return claims, errors.New("invalid MFA token header")
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) {
+		return claims, errors.New("invalid MFA elevation signature")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || json.Unmarshal(payload, &claims) != nil {
+		return claims, errors.New("invalid MFA elevation claims")
+	}
+	accessParts := strings.Split(s.AccessToken, ".")
+	if len(accessParts) != 3 {
+		return claims, errors.New("native session binding unavailable")
+	}
+	accessPayload, err := base64.RawURLEncoding.DecodeString(accessParts[1])
+	var native nativeElevationClaims
+	if err != nil || json.Unmarshal(accessPayload, &native) != nil {
+		return claims, errors.New("native session binding unavailable")
+	}
+	nowUnix := now.UTC().Unix()
+	if claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" || claims.Role != "authenticated" ||
+		claims.Subject == "" || claims.Subject != native.Subject || claims.SessionID == "" || claims.SessionID != native.SessionID ||
+		claims.TokenVersion < 1 || claims.TokenVersion != native.TokenVersion ||
+		claims.IssuedAt <= 0 || claims.IssuedAt > nowUnix+60 || claims.ExpiresAt <= nowUnix || claims.ExpiresAt <= claims.IssuedAt ||
+		claims.ExpiresAt-claims.IssuedAt > 300 || claims.MFAAuthenticatedAt <= 0 || claims.MFAAuthenticatorID == "" ||
+		claims.MFAAuthenticatedAt > nowUnix+60 || nowUnix-claims.MFAAuthenticatedAt > 300 {
+		return claims, errors.New("expired or invalid native MFA elevation")
+	}
+	return claims, nil
+}
+
 func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
-	parts:=strings.Split(s.ElevatedToken,".")
-	if len(parts)!=3 { writeJSON(w,401,map[string]string{"error":"A verified WebAuthn elevation is required"});return false }
-	secret:=[]byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
-	if len(secret)<32 { writeJSON(w,503,map[string]string{"error":"Native MFA signing key unavailable"});return false }
-	headerBytes,err:=base64.RawURLEncoding.DecodeString(parts[0]);var header struct{Algorithm string `json:"alg"`;Type string `json:"typ"`}
-	if err!=nil||json.Unmarshal(headerBytes,&header)!=nil||header.Algorithm!="HS256"||header.Type!="JWT" { writeJSON(w,401,map[string]string{"error":"Invalid MFA token header"});return false }
-	mac:=hmac.New(sha256.New,secret);_,_=mac.Write([]byte(parts[0]+"."+parts[1]))
-	sig,err:=base64.RawURLEncoding.DecodeString(parts[2])
-	if err!=nil||!hmac.Equal(sig,mac.Sum(nil)){writeJSON(w,401,map[string]string{"error":"Invalid MFA elevation signature"});return false}
-	payload,err:=base64.RawURLEncoding.DecodeString(parts[1]);var claims nativeElevationClaims
-	if err!=nil||json.Unmarshal(payload,&claims)!=nil {writeJSON(w,401,map[string]string{"error":"Invalid MFA elevation claims"});return false}
-	accessParts:=strings.Split(s.AccessToken,".");if len(accessParts)!=3{writeJSON(w,401,map[string]string{"error":"Native session binding unavailable"});return false}
-	accessPayload,e:=base64.RawURLEncoding.DecodeString(accessParts[1]);var native nativeElevationClaims
-	if e!=nil||json.Unmarshal(accessPayload,&native)!=nil {writeJSON(w,401,map[string]string{"error":"Native session binding unavailable"});return false}
-	now:=time.Now().UTC().Unix()
-	if claims.Issuer!="testagram-auth"||claims.Audience!="testagram-api"||claims.Role!="authenticated"||
-		claims.Subject==""||claims.Subject!=native.Subject||claims.SessionID==""||claims.SessionID!=native.SessionID||
-		claims.TokenVersion<1||claims.TokenVersion!=native.TokenVersion||
-		claims.IssuedAt<=0||claims.IssuedAt>now+60||claims.ExpiresAt<=now||claims.ExpiresAt<=claims.IssuedAt||
-		claims.ExpiresAt-claims.IssuedAt>300||claims.MFAAuthenticatedAt<=0||
-		claims.MFAAuthenticatedAt>now+60||now-claims.MFAAuthenticatedAt>300 {
-		writeJSON(w,401,map[string]string{"error":"Expired or invalid native MFA elevation"});return false
+	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	claims, err := validateRecentStepUpToken(s, secret, time.Now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return false
+	}
+	credentialID, err := hex.DecodeString(claims.MFAAuthenticatorID)
+	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	if err != nil || len(credentialID) == 0 || rpid == "" || a.database == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential bound to this elevation is unavailable"})
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var active bool
+	err = a.database.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM testagram_auth.staff_principals sp
+			JOIN testagram_auth.staff_webauthn_credentials wc
+			  ON wc.user_id=sp.user_id AND wc.rpid=$2 AND wc.credential_id=$3
+			 AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+			WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
+		)
+	`, claims.Subject, rpid, credentialID).Scan(&active)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "WebAuthn credential status is unavailable"})
+		return false
+	}
+	if !active {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential used for MFA has been revoked or is no longer trusted"})
+		return false
 	}
 	return true
 }

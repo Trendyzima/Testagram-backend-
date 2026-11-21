@@ -1,60 +1,56 @@
-# Testagram Service Ownership Catalogue
+# Testagram service ownership catalogue
 
-This catalogue describes the retained five-repository architecture. The
-canonical product database is PostgreSQL. Appwrite issues identity sessions;
-the Backend validates Appwrite JWTs and owns product authorization.
+This catalogue reflects the current six-runtime-repository architecture and the separate build-time API contract control plane. Testagram Backend is the sole authority for product identity, sessions, authorization and canonical product state.
 
-## Five-repository ownership
+## Repository ownership
 
 | Repository | Owns | Explicit boundary |
 |---|---|---|
-| Flutter client | Native screens, navigation, Appwrite session acquisition | No direct database, object-store, ranker or federation access |
-| Testagram Backend | Public API, privacy/authorization, canonical PostgreSQL, media lifecycle, rate limits and hosting control plane | No Supabase/PostgREST runtime, no Redis/Upstash |
-| Data Centre | Internal platform API, video/notification services, storage nodes, workers and VPS operations | Uses shared PostgreSQL identity bridge; does not own product authorization |
-| The Algorithm | Feed ranking over Backend-authorized candidates | Cannot broaden the authorized candidate set or write product data |
-| Federated Content | Signed inbox/outbox, remote policy and delivery | Cannot override local account/content authorization |
+| `testagram-flutter-client-` | Flutter UI, navigation, local presentation state and native Testagram session client | Calls the public Backend API only; no direct database, storage-provider or internal-service access |
+| `Testagram-backend-` | Native authentication, canonical PostgreSQL product state, privacy/authorization, social API, media lifecycle, orchestration and outboxes | Sole user identity/session authority; does not delegate product authorization |
+| `Testagram-data-centre-` | VPS/runtime deployment, private infrastructure API, storage nodes, video/notification services, backup and operations | Operates infrastructure; does not own product identity, user sessions or content authorization |
+| `cdn-` | Media/HLS/DASH delivery, cache, origin/shield routing, range handling and playback-token validation | Delivery plane only; no product authorization or account identity |
+| `federated-content` | ActivityPub actors, keys, inbox/outbox, signature verification, remote delivery and federation state | Cannot override local account/content authorization |
+| `the-algorithm` | Stateless feed ordering over an already-authorized bounded candidate set | Cannot broaden candidate visibility or write canonical product data |
+| `testagram-api` (control plane; not runtime) | OpenAPI, private contracts, event schemas, SDKs, source pins and cross-repository compatibility CI | Build-time contract authority only; no runtime requests or authorization decisions |
 
 ## Service contracts
 
-| Capability | Owner | API / persistence | Health and recovery |
+| Capability | Owner | Persistence / API | Boundary |
 |---|---|---|---|
-| Authentication | Appwrite | Appwrite sessions and JWTs | Backend validates Account endpoint; unknown/disabled identities fail closed |
-| Product data | Backend | PostgreSQL schemas under `testagram_local`, `testagram_auth`, `testagram_identity` | PostgreSQL readiness, migrations, backups and restore drills |
-| Media metadata | Backend | `testagram_media.assets`; `posts.media_ids` stores native object keys | Signed upload/download, checksum, quotas and durable deletion jobs |
-| Rate limiting | Backend | PostgreSQL fixed-window counters | Fail closed for sensitive writes; bounded expiry cleanup |
+| User authentication | Backend | `testagram_auth.identities`, `testagram_auth.sessions`, `/api/auth/*` | Backend issues and validates native access/refresh credentials; no external session fallback |
+| Identity applications and review | Backend | `testagram_identity.*`, native reviewer UUIDs, dual-control approval and evidence lifecycle | Public intake remains fail-closed until staff WebAuthn readiness and evidence-service acceptance pass |
+| Product data | Backend | PostgreSQL schemas under `testagram_local`, `testagram_auth`, `testagram_identity` | Backend migrations, least-privilege roles, backup and restore |
+| Media metadata and authorization | Backend | `testagram_media.assets`, upload intents, replica/deletion ledgers | Backend owns owner, visibility, quotas, checksum and deletion state |
+| Physical media storage | Data Centre + configured providers | Private S3-compatible object stores, R2/B2 replicas and replica evidence | Private by default; signed access and read-back checksum verification |
+| Media delivery | CDN | Stable media API, HLS/DASH and origin routing | Backend-issued viewer/object authorization; no product authorization |
+| Rate limiting | Backend | PostgreSQL counters | Fail closed for sensitive writes; bounded expiry cleanup |
 | Durable asynchronous work | Owning service | PostgreSQL transactional outbox/lease tables | Idempotency keys, bounded retries, reconciliation and oldest-pending age |
-| Feature configuration | Data Centre | Internal platform API and PostgreSQL `testagram_platform.feature_flags` | Private bearer token, /readyz and DB readiness |
-| Events and audit | Data Centre | Internal platform API and PostgreSQL events/audit tables | Private bearer token, retention and metrics |
-| Video processing | Data Centre | Video API, persistent media root and FFmpeg worker | /healthz, /readyz, quota, HLS playback and worker recovery |
-| Notifications | Data Centre | Device registration, preferences and delivery state | Appwrite JWT validation, internal producer token and idempotent delivery |
-| Feed ranking | The Algorithm | Private ranker contract called by Backend | Bounded requests, candidate-subset validation and pagination tests |
-| Federation | Federated Content | Signed inbox/outbox and remote delivery | Signature verification, consent rechecks, deduplication and durable retry |
-| Hosting control plane | Backend | `openapi/hosting-control-plane.yaml`, PostgreSQL hosting schema | Private operator API, active-domain verification and restore tests |
-| Object storage | Backend + Data Centre | S3-compatible boundary and node inventory | Private by default, signed access, checksums, capacity and restore tests |
-| Monitoring | Backend + Data Centre | Prometheus-compatible metrics, Caddy, Grafana | Private observability ports and explicit alerting |
+| Feature configuration and platform events | Data Centre | Private platform API and PostgreSQL platform tables | Private service credentials; not a user-facing product API |
+| Video processing | Data Centre | Video API, persistent media root and FFmpeg workers | Readiness, quota, HLS playback and worker recovery |
+| Notifications | Data Centre | Device registration, preferences and delivery state | Backend-authorized events and scoped internal producer credentials |
+| Feed ranking | The Algorithm | Private bounded ranking API | Backend supplies authorized candidates and rechecks visibility after ranking |
+| Federation | Federated Content | Signed inbox/outbox and remote delivery | Backend authorizes local actors/content; signature, consent, replay and deduplication gates apply |
+| Hosting control plane | Backend + Data Centre | Private deployment API, immutable image digests and node allowlists | Explicit operator authorization and auditable rollout |
+| Monitoring | Backend + Data Centre | Prometheus-compatible metrics, private dashboards and alerts | Private observability endpoints; never expose secrets or private media URLs |
 
-## Dependency policy
+## Native authentication contract
 
-- No Supabase Auth, PostgREST, Storage, Realtime or Edge Function runtime.
-- No Redis/Valkey/Upstash clients, URLs, credentials, cache wrappers or generic
-  Redis queue APIs.
-- PostgreSQL owns rate-limit counters, product data and durable outbox state.
-- Public immutable media may use HTTP/CDN caching; cache is never authoritative.
-- External payment, email and federation peers are explicit adapters with
-  durable local ledger/retry state.
+- Flutter signs up, logs in, refreshes and logs out through Backend native auth routes.
+- Backend owns password hashing, email verification, token issuance, refresh rotation, revocation, disabled/reset-required state and canonical Testagram UUIDs.
+- Every protected request validates the native token and rechecks current PostgreSQL account/session state.
+- Internal services use distinct, scoped service credentials. End-user access tokens are never reused as service credentials.
+- Historical external identity identifiers are inert audit metadata. They cannot authenticate, authorize, or establish account ownership; account linking requires explicit verified reconciliation, never email equality alone.
 
 ## Health and API conventions
 
-- `/healthz`: process liveness.
-- `/readyz`: required dependencies ready.
-- `/metrics`: private-network-only operational metrics.
-- Internal service APIs use private bearer credentials and bounded JSON bodies.
-- Mobile/web clients never receive service credentials or direct database URLs.
+- Use each service's documented liveness and readiness endpoints; readiness must include required dependencies, not merely process liveness.
+- Public endpoints use HTTPS. Private service traffic uses the private service network and bounded JSON contracts.
+- Propagate request IDs across service hops. Never log passwords, JWTs, service tokens, signed URLs or raw authorization headers.
+- Enforce strict schemas, body/batch limits, request deadlines, bounded concurrency and bounded retries.
+- Retry only idempotent operations or operations protected by an idempotency key.
+- Preserve privacy, blocks, moderation and deletion tombstones across every projection and delivery path.
 
-## Production cutover gates
+## Production acceptance gates
 
-Require all five repository CI workflows, Appwrite session/identity tests,
-PostgreSQL privacy integration tests, media checksum/ownership tests, ranking
-pagination tests, federation signature/deduplication tests, backup/restore
-drills and a real device-to-playback video test. A route or placeholder is not
-a completed feature.
+Require all runtime repository CI workflows, native signup/email verification/login/refresh/logout tests, staff WebAuthn enrollment/assertion/recovery and dual-control tests, PostgreSQL privacy integration, media checksum/ownership/replication/deletion tests, ranking candidate-subset tests, federation signature/consent/deduplication tests, backup/restore drills and a real device-to-playback test. A route, schema or placeholder is not a completed feature.

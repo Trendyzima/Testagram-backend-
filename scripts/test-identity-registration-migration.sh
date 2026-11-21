@@ -24,6 +24,10 @@ psql_ci() {
   docker exec -i "$container" psql -U postgres -v ON_ERROR_STOP=1 "$@"
 }
 
+psql_clean() {
+  docker exec -i "$container" psql -U postgres -d native_clean_archive_test -v ON_ERROR_STOP=1 "$@"
+}
+
 psql_ci <<'SQL'
 CREATE ROLE testagram_app NOLOGIN;
 CREATE ROLE service_role NOLOGIN;
@@ -31,6 +35,9 @@ SQL
 
 for migration in \
   migrations/20261019_testagram_independent_auth.sql \
+  migrations/20261106_appwrite_identity_bridge.sql \
+  migrations/20261106_appwrite_identity_link_audit.sql \
+  migrations/20261114_appwrite_registration_consent.sql \
   migrations/20261110_staff_roles.sql \
   migrations/20261111_admin_security_controls.sql \
   migrations/20261111_identity_registration_pipeline.sql \
@@ -50,7 +57,8 @@ for migration in \
   migrations/20261119_native_identity_approval_ledger.sql \
   migrations/20261120_native_identity_approval_circuit.sql \
   migrations/20261120_native_verification_decider.sql \
-  migrations/20261121_native_identity_intake_optional_fingerprint.sql; do
+  migrations/20261121_native_identity_intake_optional_fingerprint.sql \
+  migrations/20261121_native_staff_webauthn.sql; do
   psql_ci < "$migration"
 done
 
@@ -82,6 +90,7 @@ psql_ci < migrations/20261120_native_identity_approval_circuit.sql
 psql_ci < migrations/20261120_native_identity_approval_circuit.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
+psql_ci < migrations/20261121_native_staff_webauthn.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
@@ -550,6 +559,264 @@ if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tam
   exit 1
 fi
 
+# Seed one legacy saga state so the archive migration must transform the
+# provider-specific status value, not merely prove the empty-table case.
+psql_ci <<'SQL'
+DO $seed_historical_status$
+DECLARE
+  affected BIGINT;
+BEGIN
+  UPDATE testagram_identity.registration_provisioning
+  SET status='appwrite_created'
+  WHERE application_id=(
+    SELECT id FROM testagram_identity.identity_applications
+    WHERE email='first@example.test'
+  );
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected <> 1 THEN
+    RAISE EXCEPTION 'expected exactly one historical provisioning fixture, got %', affected;
+  END IF;
+END;
+$seed_historical_status$;
+SQL
+
+# Apply the forward-only retirement migrations after all legacy compatibility
+# fixtures have been exercised. This proves the live schema no longer exposes
+# provider-keyed tables/columns while preserving restricted historical evidence.
+psql_ci < migrations/20261120_native_identity_historical_account_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
+
+# The production migration runner reapplies its ordered manifest on every run.
+# Reapply the archive sequence to prove every rename/revoke is safe to repeat.
+psql_ci < migrations/20261120_native_identity_historical_account_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
+
+psql_ci <<'SQL'
+DO $retirement_acceptance$
+BEGIN
+  IF to_regclass('testagram_identity.appwrite_accounts') IS NOT NULL
+     OR to_regclass('testagram_identity.link_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.appwrite_registration_consents') IS NOT NULL
+     OR to_regclass('testagram_identity.registration_provisioning') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_role_audit') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_permission_overrides') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
+     OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.identity_applications_sensitive_action_request_idx') IS NOT NULL
+     OR to_regclass('testagram_identity.verification_reviews_reviewer_idx') IS NOT NULL THEN
+    RAISE EXCEPTION 'provider-keyed identity or staff tables remain in the live schema';
+  END IF;
+
+  IF to_regclass('testagram_identity.historical_external_identity_accounts') IS NULL
+     OR to_regclass('testagram_identity.historical_external_identity_link_audit') IS NULL
+     OR to_regclass('testagram_identity.historical_external_registration_consents') IS NULL
+     OR to_regclass('testagram_identity.historical_external_registration_provisioning') IS NULL
+     OR to_regclass('testagram_auth.historical_external_staff_roles') IS NULL
+     OR to_regclass('testagram_auth.historical_external_staff_role_audit') IS NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NULL
+     OR to_regclass('testagram_auth.historical_external_admin_security_audit') IS NULL
+     OR to_regclass('testagram_identity.native_registration_provisioning') IS NULL
+     OR to_regclass('testagram_auth.native_sensitive_action_requests') IS NULL
+     OR to_regclass('testagram_auth.native_sensitive_action_approvals') IS NULL
+     OR to_regclass('testagram_identity.historical_external_identity_applications_sensitive_request_idx') IS NULL
+     OR to_regclass('testagram_identity.historical_source_verification_reviews_reviewer_idx') IS NULL THEN
+    RAISE EXCEPTION 'historical evidence or native replacement tables are missing';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND ((table_name='identity_application_reviews' AND column_name='reviewer_appwrite_user_id')
+        OR (table_name='verification_reviews' AND column_name='reviewer_appwrite_user_id')
+        OR (table_name='verification_sessions' AND column_name='decided_by_appwrite_user_id')
+        OR (table_name='identity_approval_tokens' AND column_name IN (
+          'first_approver_appwrite_user_id','second_approver_appwrite_user_id',
+          'consumed_by_appwrite_user_id'))
+        OR (table_name='identity_applications' AND column_name='sensitive_action_request_id'))
+  ) THEN
+    RAISE EXCEPTION 'provider-keyed reviewer/approver columns remain on live identity tables';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid IN (
+      'testagram_identity.historical_external_identity_accounts'::regclass,
+      'testagram_identity.historical_external_identity_link_audit'::regclass,
+      'testagram_identity.historical_external_registration_consents'::regclass,
+      'testagram_identity.historical_external_registration_provisioning'::regclass,
+      'testagram_auth.historical_external_staff_roles'::regclass,
+      'testagram_auth.historical_external_staff_role_audit'::regclass,
+      'testagram_auth.historical_external_staff_permission_overrides'::regclass,
+      'testagram_auth.historical_external_sensitive_action_requests'::regclass,
+      'testagram_auth.historical_external_sensitive_action_approvals'::regclass,
+      'testagram_auth.historical_external_admin_security_audit'::regclass
+    ) AND conname ILIKE '%appwrite%'
+  ) THEN
+    RAISE EXCEPTION 'provider-branded constraints remain on archived relations';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid
+    WHERE i.indrelid IN (
+      'testagram_identity.historical_external_identity_accounts'::regclass,
+      'testagram_identity.historical_external_identity_link_audit'::regclass,
+      'testagram_identity.historical_external_registration_consents'::regclass,
+      'testagram_identity.historical_external_registration_provisioning'::regclass,
+      'testagram_auth.historical_external_staff_roles'::regclass,
+      'testagram_auth.historical_external_staff_role_audit'::regclass,
+      'testagram_auth.historical_external_staff_permission_overrides'::regclass,
+      'testagram_auth.historical_external_sensitive_action_requests'::regclass,
+      'testagram_auth.historical_external_sensitive_action_approvals'::regclass,
+      'testagram_auth.historical_external_admin_security_audit'::regclass
+    ) AND idx.relname ILIKE '%appwrite%'
+  ) THEN
+    RAISE EXCEPTION 'provider-branded indexes remain on archived relations';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
+    WHERE status='appwrite_created'
+  ) THEN
+    RAISE EXCEPTION 'provider-specific provisioning status remains in historical ledger';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
+    WHERE status='source_provider_created'
+  ) THEN
+    RAISE EXCEPTION 'historical provider-created provisioning event was not preserved under a neutral status';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity' AND table_name='identity_applications'
+      AND column_name='historical_external_sensitive_action_request_id'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity' AND table_name='identity_applications'
+      AND column_name='native_sensitive_action_request_id'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.identity_applications'::regclass
+      AND conname='identity_applications_historical_request_fk'
+  ) THEN
+    RAISE EXCEPTION 'historical and native identity approval request links are not separated';
+  END IF;
+
+  IF (
+    SELECT count(*) FROM pg_constraint
+    WHERE confrelid='testagram_auth.historical_external_staff_roles'::regclass
+      AND conname IN (
+        'identity_application_reviews_historical_source_reviewer_fk',
+        'identity_approval_tokens_historical_first_approver_fk',
+        'identity_approval_tokens_historical_second_approver_fk',
+        'verification_reviews_historical_source_reviewer_fk',
+        'verification_sessions_historical_source_decider_fk'
+      )
+  ) <> 5 THEN
+    RAISE EXCEPTION 'historical staff foreign-key audit lineage was not preserved';
+  END IF;
+
+  IF NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_identity.native_registration_provisioning','UPDATE')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.native_sensitive_action_requests','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_auth.native_sensitive_action_approvals','SELECT') THEN
+    RAISE EXCEPTION 'runtime role lost required native identity or approval access';
+  END IF;
+
+  IF has_table_privilege('testagram_app','testagram_identity.historical_external_identity_accounts','SELECT')
+     OR has_table_privilege('testagram_app','testagram_identity.historical_external_registration_provisioning','SELECT')
+     OR has_table_privilege('testagram_app','testagram_auth.historical_external_staff_roles','SELECT')
+     OR has_table_privilege('testagram_app','testagram_auth.historical_external_sensitive_action_requests','SELECT') THEN
+    RAISE EXCEPTION 'runtime role can still read archived historical identity or staff data';
+  END IF;
+END;
+$retirement_acceptance$;
+SQL
+
+# Fresh-install fixture: the production Compose manifest intentionally does
+# not mount the retired account-link/audit/consent migrations. The archive must
+# therefore succeed when those optional historical tables never existed.
+psql_ci -c "CREATE DATABASE native_clean_archive_test;"
+psql_clean <<'SQL'
+CREATE SCHEMA testagram_identity;
+CREATE SCHEMA testagram_auth;
+CREATE TABLE testagram_identity.registration_provisioning (
+  id BIGINT PRIMARY KEY,
+  appwrite_user_id TEXT,
+  canonical_user_id UUID,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','appwrite_created','linked','verification_sent','completed','compensation_required','failed')),
+  CHECK ((status IN ('linked','verification_sent','completed')) =
+    (appwrite_user_id IS NOT NULL AND canonical_user_id IS NOT NULL))
+);
+INSERT INTO testagram_identity.registration_provisioning(id,status)
+VALUES (1,'appwrite_created');
+CREATE TABLE testagram_auth.legacy_account_reconciliation (
+  source_provider TEXT NOT NULL
+    CONSTRAINT legacy_account_reconciliation_source_provider_check
+    CHECK (source_provider='appwrite')
+);
+INSERT INTO testagram_auth.legacy_account_reconciliation(source_provider)
+VALUES ('appwrite');
+SQL
+psql_clean < migrations/20261120_native_identity_historical_account_archive.sql
+psql_clean < migrations/20261120_native_identity_historical_account_archive.sql
+psql_clean <<'SQL'
+DO $clean_install_archive$
+BEGIN
+  IF to_regclass('testagram_identity.appwrite_accounts') IS NOT NULL
+     OR to_regclass('testagram_identity.link_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.appwrite_registration_consents') IS NOT NULL THEN
+    RAISE EXCEPTION 'clean install unexpectedly created optional historical provider tables';
+  END IF;
+  IF to_regclass('testagram_identity.historical_external_identity_accounts') IS NOT NULL
+     OR to_regclass('testagram_identity.historical_external_identity_link_audit') IS NOT NULL
+     OR to_regclass('testagram_identity.historical_external_registration_consents') IS NOT NULL THEN
+    RAISE EXCEPTION 'clean install created historical tables without source data';
+  END IF;
+  IF to_regclass('testagram_identity.historical_external_registration_provisioning') IS NULL THEN
+    RAISE EXCEPTION 'clean install did not archive the legacy provisioning ledger';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='historical_external_registration_provisioning'
+      AND column_name='appwrite_user_id'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='historical_external_registration_provisioning'
+      AND column_name='source_account_id'
+  ) THEN
+    RAISE EXCEPTION 'clean-install historical provisioning column was not neutralized';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
+    WHERE status='source_provider_created'
+  ) THEN
+    RAISE EXCEPTION 'clean-install provisioning state was not preserved';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_auth.legacy_account_reconciliation
+    WHERE source_provider='historical_external_provider'
+  ) THEN
+    RAISE EXCEPTION 'clean-install reconciliation provenance was not normalized';
+  END IF;
+END;
+$clean_install_archive$;
+SQL
+
+echo "Legacy-provider retirement, native replacement, historical retention and runtime privilege checks passed."
+
 # Reproduce the production ordering defect: remove the NOLOGIN application
 # group role after all other identity tests, then prove the corrective migration
 # recreates it and restores the exact outbox grants on an existing database.
@@ -588,6 +855,13 @@ TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?
 # Exercise the Admin Console review handler against this same isolated database.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1
 
+# Verify Backend and Admin Console readiness use the same disjoint PostgreSQL staff quorum.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff$' -count=1
+
+# Verify the Admin Console's signed MFA elevation is accepted by Backend staff authorization
+# and that revoking the underlying PostgreSQL session invalidates that elevation.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer$' -count=1
+
 # Consent evidence must be immutable after insertion.
 if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
   echo "legal consent audit mutation unexpectedly succeeded" >&2
@@ -623,3 +897,4 @@ $mail_role_repair$;
 SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
+
