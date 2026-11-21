@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Validate deployment shell syntax and PostgreSQL readiness regression
         shell: bash
         run: |
@@ -71,7 +71,7 @@ jobs:
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
     steps:
       - name: Check out deployment scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Resolve and start the InstaBox machine
         id: machine
         shell: bash
