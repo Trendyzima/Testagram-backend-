@@ -602,35 +602,20 @@ type permissionGrantInput struct {
 }
 
 func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
-	s, actor, ok := a.requireStaff(w, r, "owner")
-	if !ok { return }
-	if !a.requireRecentStepUp(w,s) { return }
-	target:=r.PathValue("id")
-	if len(target)<1 || len(target)>36 { writeJSON(w,400,map[string]string{"error":"Invalid staff user ID"}); return }
-	var input permissionGrantInput
-	if !decodeBody(w,r,&input) { return }
-	input.Permission=strings.TrimSpace(input.Permission)
-	input.Reason=strings.TrimSpace(input.Reason)
-	if input.Permission=="" || len(input.Permission)>100 || len(input.Reason)<12 || len(input.Reason)>500 {
-		writeJSON(w,400,map[string]string{"error":"Permission and a reason of at least 12 characters are required"}); return
+	// Permission overrides are security-sensitive staff lifecycle mutations.
+	// Until the durable two-person approval executor binds the exact target,
+	// permission and grant value into one transaction, this route must not
+	// mutate native authorization state, even for an owner with recent MFA.
+	s, _, ok := a.requireStaff(w, r, "owner")
+	if !ok {
+		return
 	}
-	if input.Permission=="staff.manage" { writeJSON(w,403,map[string]string{"error":"Staff management remains reserved to the Master owner"}); return }
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	tx,err:=a.database.Begin(ctx)
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
-	defer func(){_ = tx.Rollback(context.Background())}()
-	var exists bool
-	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_principals WHERE user_id=$1::uuid AND enabled=TRUE AND mfa_enrolled_at IS NOT NULL)",target).Scan(&exists)
-	if err!=nil || !exists { writeJSON(w,404,map[string]string{"error":"Staff account not found"}); return }
-	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.admin_permissions WHERE permission_key=$1)",input.Permission).Scan(&exists)
-	if err!=nil || !exists { writeJSON(w,400,map[string]string{"error":"Unknown permission"}); return }
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_staff_permission_overrides(user_id,permission_key,granted,reason,changed_by_user_id) VALUES($1::uuid,$2,$3,$4,$5::uuid) ON CONFLICT(user_id,permission_key) DO UPDATE SET granted=EXCLUDED.granted,reason=EXCLUDED.reason,changed_by_user_id=EXCLUDED.changed_by_user_id,created_at=now()",target,input.Permission,input.Granted,input.Reason,actor.ID)
-	if err==nil {
-		_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.permission_changed',$2,jsonb_build_object('permission',$3,'granted',$4,'reason',$5))",actor.ID,target,input.Permission,input.Granted,input.Reason)
+	if !a.requireRecentStepUp(w, s) {
+		return
 	}
-	if err==nil { err=tx.Commit(ctx) }
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely update staff permissions"}); return }
-	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"permission":input.Permission,"granted":input.Granted})
+	writeJSON(w, http.StatusNotImplemented, map[string]string{
+		"error": "Staff permission changes require the two-person native staff approval workflow. No permission override was changed.",
+	})
 }
 
 
