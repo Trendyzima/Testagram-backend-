@@ -31,7 +31,7 @@ const server = createServer(async (request, response) => {
 
 await new Promise((resolveListen, reject) => {
   server.once("error", reject);
-  server.listen(0, "127.0.0.1", resolveListen);
+  server.listen(0, "::", resolveListen);
 });
 const address = server.address();
 assert.ok(address && typeof address === "object");
@@ -47,8 +47,9 @@ function decodeClientData(value) {
   return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
 }
 
-const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+let browser;
 try {
+  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext();
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
@@ -186,6 +187,6 @@ try {
   if (ceremonyFailure) throw new AggregateError([error, ceremonyFailure], "Browser WebAuthn ceremony failed");
   throw error;
 } finally {
-  await browser.close();
+  if (browser) await browser.close();
   await new Promise((resolveClose) => server.close(resolveClose));
 }
