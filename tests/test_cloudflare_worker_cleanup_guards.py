@@ -45,6 +45,8 @@ class CloudflareWorkerCleanupGuardsTest(unittest.TestCase):
         self.assertIn('preview_urls_enabled', WORKFLOW)
         self.assertIn('tail_consumers', WORKFLOW)
         self.assertIn('type == "service" and .service == $target', WORKFLOW)
+        self.assertIn('type == "workflow" and .workflow_name == $target', WORKFLOW)
+        self.assertIn('any(.service == $target)', WORKFLOW)
         self.assertIn('/content/v2', WORKFLOW)
         self.assertIn('cf_delete "/accounts/$account_id/workers/scripts/$worker"', WORKFLOW)
 
