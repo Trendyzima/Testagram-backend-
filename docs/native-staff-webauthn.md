@@ -61,12 +61,15 @@ WHERE sp.user_id = '<canonical-owner-uuid>'::uuid
   AND rg.role = 'owner';
 ```
 
-After an owner has enrolled, further staff enrollment authorizations are
-created by an enrolled owner through
-`POST /api/admin/staff/{id}/webauthn/enrollment-authorize`. That endpoint
-requires a fresh WebAuthn elevation and refuses self-authorization. Each grant expires after 30 minutes and is consumed in the same PostgreSQL transaction
-that stores a new credential. Adding a second credential also requires a fresh assertion
-from the target staff member and a separate independent authorization.
+The owner-only `POST /api/admin/staff/{id}/webauthn/enrollment-authorize`
+endpoint is intentionally fail-closed and returns HTTP 501. A single owner
+approval is not sufficient to authorize enrollment. It must remain closed
+until the native two-person staff lifecycle transaction creates an
+invitation-bound authorization after two distinct eligible approvers have
+approved the exact target and role. The authorization must expire, be
+single-use, and be consumed in the same PostgreSQL transaction that stores
+the credential. Adding a second credential must require a separate,
+target-bound authorization and fresh assertion from the target staff member.
 
 ## Identity-review readiness quorum
 
