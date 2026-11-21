@@ -73,8 +73,9 @@ jobs:
             page=$((page + 1))
           done
 
-          testagram_account_id="$(awk -F '\\t' '$2=="testagram.site" {print $4; exit}' "$tmp/zones.tsv")"
-          [[ -n "$testagram_account_id" ]] || {
+          testagram_zone_id="$(awk -F '\t' '$2=="testagram.site" {print $1; exit}' "$tmp/zones.tsv")"
+          testagram_account_id="$(awk -F '\t' '$2=="testagram.site" {print $4; exit}' "$tmp/zones.tsv")"
+          [[ -n "$testagram_zone_id" && -n "$testagram_account_id" ]] || {
             echo "::error::The active testagram.site zone did not resolve to an account; refusing to accept routing."
             exit 1
           }
