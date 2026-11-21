@@ -560,3 +560,25 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	if existingTokens.AccessToken == "" || existingTokens.RefreshToken == "" {
 		t.Fatal("existing native identity received an incomplete session")
+	}
+	existingClaims, existingStatus, existingErr := verifyNativeAccessToken(ctx, db, existingTokens.AccessToken)
+	if existingErr != nil || existingStatus != http.StatusOK || existingClaims.Subject != existingUserID {
+		t.Fatalf("existing native identity access token status=%d subject=%q err=%v", existingStatus, existingClaims.Subject, existingErr)
+	}
+	rotatedExistingTokens, err := svc.rotateNativeRefresh(ctx, existingTokens.RefreshToken, "native-ci", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("existing native identity refresh rotation failed: %v", err)
+	}
+	if _, status, err := verifyNativeAccessToken(ctx, db, rotatedExistingTokens.AccessToken); err != nil || status != http.StatusOK {
+		t.Fatalf("existing native identity rotated access token status=%d err=%v", status, err)
+	}
+
+	existingLogin := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader("{\"email\":\""+existingEmail+"\",\"password\":\"ExistingNativePassword-123!\"}"))
+	existingLoginResp := httptest.NewRecorder()
+	if !svc.authRespond(existingLoginResp, existingLogin, "login") ||
+		existingLoginResp.Code != http.StatusOK ||
+		!strings.Contains(existingLoginResp.Body.String(), "access_token") {
+		t.Fatalf("verified legacy native identity login status=%d body=%s", existingLoginResp.Code, existingLoginResp.Body.String())
+	}
+}
