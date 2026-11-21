@@ -320,6 +320,8 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
  signingKeyOK:=len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))>=32
  encryptionOK:=a.aead!=nil&&a.staffWebAuthnCredentialsDecryptable(ctx,rpid)
  enrollmentEnabled:=strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")
+ origins:=strings.FieldsFunc(os.Getenv("TESTAGRAM_WEBAUTHN_ORIGINS"),func(r rune)bool{return r==','||r==' '||r=='\n'})
+ rpFingerprint:=nativeauth.WebAuthnConfigurationFingerprint(rpid,origins)
  backendAPIReady:=false
  if a.apiHealthURL!=""&&a.client!=nil {
   req,err:=http.NewRequestWithContext(ctx,http.MethodGet,a.apiHealthURL,nil)
@@ -338,6 +340,7 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
   "ready":ceremoniesReady&&enrollmentEnabled,
   "ceremonies_ready":ceremoniesReady,
   "rpid_configured":rpid!="",
+  "rp_configuration_fingerprint":rpFingerprint,
   "origins_configured":originsOK,
   "database":dbOK,"schema":schemaOK,"privileges":privilegesOK,
   "signing_key":signingKeyOK,"credential_encryption":encryptionOK,
