@@ -177,12 +177,12 @@ func (a *app) handleStaffWebAuthnLoginBegin(w http.ResponseWriter,r *http.Reques
  w.Header().Set("Cache-Control","no-store")
  writeJSON(w,200,map[string]any{"publicKey":options.Response,"challenge":sd.Challenge})
 }
-func (a *app) mintStaffElevation(user authUser, accessToken string) (string, int64, error) {
+func (a *app) mintStaffElevation(user authUser, accessToken string, authenticatorID []byte) (string, int64, error) {
 	if user.ID == "" {
 		return "", 0, errors.New("native staff identity is unavailable")
 	}
 	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
-	return nativeauth.MintStaffElevationToken(accessToken, user.ID, secret, time.Now().UTC())
+	return nativeauth.MintStaffElevationToken(accessToken, user.ID, authenticatorID, secret, time.Now().UTC())
 }
 
 func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Request){
@@ -211,7 +211,7 @@ func (a *app) handleStaffWebAuthnLoginFinish(w http.ResponseWriter,r *http.Reque
  if tag.RowsAffected()!=1{_,_=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);_ = tx.Commit(r.Context());writeJSON(w,401,map[string]string{"error":"Credential counter changed or credential was revoked"});return}
  if _,err=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not consume assertion challenge"});return}
  if err=tx.Commit(r.Context());err!=nil{writeJSON(w,503,map[string]string{"error":"Could not commit assertion"});return}
- token,exp,err:=a.mintStaffElevation(user,s.AccessToken);if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not issue backend MFA elevation"});return}
+ token,exp,err:=a.mintStaffElevation(user,s.AccessToken,credential.ID);if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not issue backend MFA elevation"});return}
  s.ElevatedToken=token
  if err=a.setSession(w,s);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not persist elevated session"});return}
  w.Header().Set("Cache-Control","no-store")
