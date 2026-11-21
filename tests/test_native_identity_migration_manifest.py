@@ -144,6 +144,25 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertGreaterEqual(script.count("psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql"), 2)
         self.assertGreaterEqual(script.count("psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql"), 2)
 
+    def test_original_provider_migrations_are_history_only(self):
+        # Keep applied migration files immutable, but never mount or execute
+        # them in a fresh-install or production upgrade manifest.
+        legacy_migrations = (
+            "20261106_appwrite_identity_bridge.sql",
+            "20261106_appwrite_identity_link_audit.sql",
+            "20261114_appwrite_registration_consent.sql",
+        )
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        production_runner = SOURCE
+        migration_test = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+
+        for migration in legacy_migrations:
+            with self.subTest(migration=migration):
+                self.assertTrue((ROOT / "migrations" / migration).is_file(), "applied migration history must remain immutable")
+                self.assertNotIn(migration, compose, "fresh-install Compose must not mount retired provider migrations")
+                self.assertNotIn(migration, production_runner, "production upgrade runner must not execute retired provider migrations")
+                self.assertIn(migration, migration_test, "isolated CI fixture must continue testing upgrades from historical schemas")
+
     def test_provider_archive_privilege_changes_are_table_scoped(self):
         archive_names = (
             "20261120_native_identity_historical_account_archive.sql",
