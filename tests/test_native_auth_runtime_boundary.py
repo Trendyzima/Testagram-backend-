@@ -22,7 +22,7 @@ RUNTIME_FILES = (
     "scripts/native-auth-staging-smoke.py",
     "scripts/validate-native-api-contract.py",
 )
-EXCLUDED_RUNTIME_FILES = {"scripts/test-identity-registration-migration.sh"}
+HISTORICAL_MIGRATION_FIXTURE_FILES = {"scripts/test-identity-registration-migration.sh"}
 TEXT_SUFFIXES = {
     ".conf", ".go", ".json", ".md", ".mod", ".py", ".service", ".sh",
     ".sum", ".toml", ".txt", ".yaml", ".yml",
@@ -30,6 +30,33 @@ TEXT_SUFFIXES = {
 
 
 class NativeAuthRuntimeBoundaryTests(unittest.TestCase):
+    def test_legacy_provider_names_are_confined_to_ci_migration_fixtures(self):
+        # This script deliberately seeds the pre-retirement PostgreSQL schema so
+        # forward migrations are tested against real historical identifiers.
+        # It is not a runtime, deployment, or operator migration command.
+        fixture = "scripts/test-identity-registration-migration.sh"
+        self.assertEqual(HISTORICAL_MIGRATION_FIXTURE_FILES, {fixture})
+        self.assertTrue((ROOT / fixture).is_file())
+
+        ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn(f"bash {fixture}", ci_workflow)
+
+        deployment_roots = (
+            ROOT / "deploy",
+            ROOT / "vps",
+            ROOT / "scripts" / "start-instabox-deployment.sh",
+            ROOT / "deploy" / "self-hosted" / "apply-native-identity-migrations.sh",
+        )
+        for target in deployment_roots:
+            if target.is_file():
+                content = target.read_text(encoding="utf-8")
+                self.assertNotIn(fixture, content, f"{target.relative_to(ROOT)} must not invoke a test fixture")
+            elif target.is_dir():
+                for path in target.rglob("*"):
+                    if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES:
+                        content = path.read_text(encoding="utf-8", errors="ignore")
+                        self.assertNotIn(fixture, content, f"{path.relative_to(ROOT)} must not invoke a test fixture")
+
     def test_retired_provider_is_absent_from_runtime_and_deployment_inputs(self):
         paths = [ROOT / name for name in RUNTIME_FILES]
         for root_name in RUNTIME_ROOTS:
@@ -42,7 +69,7 @@ class NativeAuthRuntimeBoundaryTests(unittest.TestCase):
 
         offenders = []
         for path in sorted(set(paths)):
-            if not path.is_file() or str(path.relative_to(ROOT)) in EXCLUDED_RUNTIME_FILES:
+            if not path.is_file() or str(path.relative_to(ROOT)) in HISTORICAL_MIGRATION_FIXTURE_FILES:
                 continue
             try:
                 content = path.read_text(encoding="utf-8")
