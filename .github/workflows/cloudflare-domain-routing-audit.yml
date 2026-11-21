@@ -149,11 +149,14 @@ jobs:
               echo "- Worker custom-domain inventory unavailable for account $account_id with this token's current permissions" >> "$GITHUB_STEP_SUMMARY"
             fi
 
-            if cf_get "/accounts/$account_id/workers/scripts" "$tmp/workers.json"; then
+            if cf_get "/accounts/$account_id/workers/scripts?per_page=100&page=1" "$tmp/workers.json"; then
               echo "- Workers scripts: $(jq -r '.result | length' "$tmp/workers.json")" >> "$GITHUB_STEP_SUMMARY"
               jq -r '.result[]? | "- Worker: " + (.id // .name // "unnamed")' "$tmp/workers.json" >> "$GITHUB_STEP_SUMMARY"
               if [[ "$account_id" == "$testagram_account_id" ]]; then
-                if jq -e '.result[]? | select(.id == "testagram-api")' "$tmp/workers.json" >/dev/null; then
+                if ! jq -e '(.result_info.total_pages // 1) <= 1' "$tmp/workers.json" >/dev/null; then
+                  api_legacy_worker_found="yes"
+                  echo "::warning::Worker script inventory is paginated; cannot prove the detached testagram-api Worker is absent."
+                elif jq -e '.result[]? | select(.id == "testagram-api")' "$tmp/workers.json" >/dev/null; then
                   api_legacy_worker_found="yes"
                   echo "::warning::The detached testagram-api Worker script still exists and requires the separately confirmed post-cutover cleanup workflow."
                 else
