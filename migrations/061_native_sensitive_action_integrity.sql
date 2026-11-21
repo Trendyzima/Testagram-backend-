@@ -7,6 +7,10 @@ CREATE OR REPLACE FUNCTION testagram_auth.guard_native_sensitive_action_request_
 RETURNS trigger
 LANGUAGE plpgsql
 AS $function$
+DECLARE
+  v_approved_count INTEGER;
+  v_eligible_approved_count INTEGER;
+  v_rejected_count INTEGER;
 BEGIN
   IF NEW.action_type IS DISTINCT FROM OLD.action_type
      OR NEW.requested_by_user_id IS DISTINCT FROM OLD.requested_by_user_id
@@ -40,7 +44,7 @@ BEGIN
   -- cannot mark a request approved after only one signer, after expiry, or
   -- after a signer's staff identity/credential has been disabled or revoked.
   IF NEW.status='approved' THEN
-    IF v_expires_at<=now() THEN
+    IF OLD.expires_at<=now() THEN
       RAISE EXCEPTION 'expired sensitive-action request cannot be approved';
     END IF;
 
@@ -70,8 +74,8 @@ BEGIN
     FROM testagram_auth.native_sensitive_action_approvals a
     WHERE a.request_id=OLD.id;
 
-    IF v_approved_count<>v_required_approvals
-       OR v_eligible_approved_count<>v_required_approvals
+    IF v_approved_count<>OLD.required_approvals
+       OR v_eligible_approved_count<>OLD.required_approvals
        OR v_rejected_count<>0 THEN
       RAISE EXCEPTION 'native sensitive-action approval quorum is incomplete';
     END IF;
@@ -96,14 +100,10 @@ DECLARE
   v_requester UUID;
   v_status TEXT;
   v_expires_at TIMESTAMPTZ;
-  v_required_approvals SMALLINT;
   v_staff_eligible BOOLEAN;
-  v_approved_count INTEGER;
-  v_eligible_approved_count INTEGER;
-  v_rejected_count INTEGER;
 BEGIN
-  SELECT requested_by_user_id,status,expires_at,required_approvals
-    INTO v_requester,v_status,v_expires_at,v_required_approvals
+  SELECT requested_by_user_id,status,expires_at
+    INTO v_requester,v_status,v_expires_at
   FROM testagram_auth.native_sensitive_action_requests
   WHERE id=NEW.request_id
   FOR UPDATE;
