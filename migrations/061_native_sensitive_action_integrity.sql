@@ -20,6 +20,22 @@ BEGIN
      OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
     RAISE EXCEPTION 'native sensitive-action request identity and payload are immutable';
   END IF;
+
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF OLD.status<>'pending'
+       OR NEW.status NOT IN ('approved','rejected','expired') THEN
+      RAISE EXCEPTION 'native sensitive-action request status transition is invalid or terminal';
+    END IF;
+    IF NEW.status IN ('approved','rejected') AND NEW.decided_at IS NULL THEN
+      RAISE EXCEPTION 'completed approval decisions require a decision timestamp';
+    END IF;
+    IF NEW.status='expired' AND OLD.expires_at>now() THEN
+      RAISE EXCEPTION 'an approval request cannot be expired before its deadline';
+    END IF;
+  ELSIF NEW.decided_at IS DISTINCT FROM OLD.decided_at THEN
+    RAISE EXCEPTION 'approval decision timestamp cannot change without a terminal status transition';
+  END IF;
+
   RETURN NEW;
 END;
 $function$;
@@ -88,9 +104,27 @@ CREATE TRIGGER native_sensitive_action_approver_guard
   FOR EACH ROW
   EXECUTE FUNCTION testagram_auth.assert_native_sensitive_action_approver();
 
+CREATE OR REPLACE FUNCTION testagram_auth.reject_native_sensitive_action_approval_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+  RAISE EXCEPTION 'native sensitive-action approval decisions are append-only';
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS native_sensitive_action_approval_append_only
+  ON testagram_auth.native_sensitive_action_approvals;
+CREATE TRIGGER native_sensitive_action_approval_append_only
+  BEFORE UPDATE OR DELETE ON testagram_auth.native_sensitive_action_approvals
+  FOR EACH ROW
+  EXECUTE FUNCTION testagram_auth.reject_native_sensitive_action_approval_mutation();
+
 COMMENT ON FUNCTION testagram_auth.guard_native_sensitive_action_request_immutable() IS
   'Prevents changing a native approval request target, requester, action, payload digest or quorum after creation.';
 COMMENT ON FUNCTION testagram_auth.assert_native_sensitive_action_approver() IS
   'Requires a pending unexpired request and an enabled, verified, MFA-enrolled native staff approver for every approval insert.';
+COMMENT ON FUNCTION testagram_auth.reject_native_sensitive_action_approval_mutation() IS
+  'Native sensitive-action decisions are immutable evidence and cannot be updated or deleted.';
 
 COMMIT;
