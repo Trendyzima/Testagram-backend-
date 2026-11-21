@@ -1393,6 +1393,9 @@ jobs:
             (request_id,approver_user_id,decision,reason)
           SELECT id,'123e4567-e89b-42d3-a456-426614174003','approved','Second distinct reviewer approves CI request'
           FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001';
+          UPDATE testagram_auth.native_sensitive_action_requests
+          SET status='approved',decided_at=now()
+          WHERE target_reference='ci-release-001' AND status='pending';
           DO $approval$
           BEGIN
             IF (SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals
