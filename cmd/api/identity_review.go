@@ -115,10 +115,10 @@ func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface 
 		return false
 	}
 	var attestation struct {
-		IdentityReviewReady   bool `json:"identity_review_ready"`
-		CredentialedStaff     int  `json:"credentialed_staff"`
-		CredentialedReviewers int  `json:"credentialed_reviewers"`
-		CredentialedApprovers int  `json:"credentialed_approvers"`
+		IdentityReviewReady        bool   `json:"identity_review_ready"`
+		CredentialedStaff          int    `json:"credentialed_staff"`
+		CredentialedReviewers      int    `json:"credentialed_reviewers"`
+		CredentialedApprovers      int    `json:"credentialed_approvers"`
 		RPConfigurationFingerprint string `json:"rp_configuration_fingerprint"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&attestation) != nil {
