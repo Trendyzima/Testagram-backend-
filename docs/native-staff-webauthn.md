@@ -30,7 +30,7 @@ Do not point this URL at a public hostname or an untrusted service. The Backend
 accepts only the exact private service hostname/path, sends the shared bearer
 without following redirects, and fails closed if the attestation is missing,
 invalid or not ready. Keep `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED=false`
-until the API-side PostgreSQL quorum and the live Console attestation both pass.
+until the API-side PostgreSQL quorum and the live Console attestation both pass. The Backend and Admin Console also calculate the same canonical fingerprint over the exact RP ID and allowed-origin set; a mismatch fails readiness closed.
 
 ## Migration
 
