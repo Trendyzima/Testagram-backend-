@@ -88,6 +88,27 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Sensitive-action approvals require an active, user-verified native
+	// WebAuthn credential. Seed the two account approvers accordingly; the
+	// identity-reviewer evidence rows above remain a separate review stage.
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
+		VALUES
+		  ('ops.testagram.invalid',$1::uuid,decode(repeat('01',32),'hex')),
+		  ('ops.testagram.invalid',$2::uuid,decode(repeat('02',32),'hex'))
+	`, approverOne, approverTwo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_webauthn_credentials
+		  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
+		VALUES
+		  ('ops.testagram.invalid',$1::uuid,decode(repeat('11',32),'hex'),decode('01','hex'),TRUE,FALSE),
+		  ('ops.testagram.invalid',$2::uuid,decode(repeat('22',32),'hex'),decode('02','hex'),TRUE,FALSE)
+	`, approverOne, approverTwo); err != nil {
+		t.Fatal(err)
+	}
+
 	var applicationID, requestID, sessionID string
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&applicationID); err != nil {
 		t.Fatal(err)
