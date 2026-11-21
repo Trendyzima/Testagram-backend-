@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,7 +31,11 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-webauthn-readiness-key-", 2))
 	readinessToken := strings.Repeat("testagram-webauthn-readiness-shared-", 2)
 	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", readinessToken)
+	rpid := "admin-" + suffix + ".testagram.example"
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", rpid)
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://"+rpid)
 	adminReady := true
+	adminFingerprint := nativeauth.WebAuthnConfigurationFingerprint(rpid, []string{"https://" + rpid})
 	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+readinessToken {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -41,6 +46,7 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 			"credentialed_staff":     4,
 			"credentialed_reviewers": 2,
 			"credentialed_approvers": 2,
+			"rp_configuration_fingerprint": adminFingerprint,
 		})
 	}))
 	defer admin.Close()
@@ -49,9 +55,6 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 	suffix := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	// Scope this test's credentials to a unique RP ID so unrelated staff
 	// credentials from other PostgreSQL fixtures cannot affect independence counts.
-	rpid := "admin-" + suffix + ".testagram.example"
-	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", rpid)
-	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://"+rpid)
 	var users [4]string
 	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text").
 		Scan(&users[0], &users[1], &users[2], &users[3]); err != nil {
@@ -164,6 +167,11 @@ func TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff(t *
 		t.Fatal("Backend accepted an Admin Console readiness attestation that was not ready")
 	}
 	adminReady = true
+	adminFingerprint = nativeauth.WebAuthnConfigurationFingerprint("mismatched-"+rpid, []string{"https://" + rpid})
+	if identityReviewWebAuthnPrerequisitesReady(ctx, db) {
+		t.Fatal("Backend accepted an Admin Console readiness attestation with a different RP configuration")
+	}
+	adminFingerprint = nativeauth.WebAuthnConfigurationFingerprint(rpid, []string{"https://" + rpid})
 	// The shared readiness bearer must never be forwarded to an arbitrary
 	// configured host, even if that host returns a syntactically valid attestation.
 	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", "http://attacker.example:8090/internal/webauthn/readiness")
