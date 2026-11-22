@@ -76,7 +76,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
             '/domains/managed',
-            '''jq -cn '{enabled:false}' | tr -d '\\n' > "$managed_request"''',
+            '''jq -cn '{enabled:false}' | tr -d '\012' > "$managed_request"''',
             '''--data-binary "@$managed_request"''',
             "-H 'Content-Type: application/json'",
             'managed_status="$(curl -sS --connect-timeout 5 --max-time 20',
