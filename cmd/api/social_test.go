@@ -50,7 +50,6 @@ func TestSocialInteractionAvatarURLUsesPublicMediaBase(t *testing.T) {
 	}
 }
 
-
 func TestValidSocialUsername(t *testing.T) {
 	for _, value := range []string{"testagram", "Trendz_01", "a.b", "user.name"} {
 		if !validSocialUsername(value) {
