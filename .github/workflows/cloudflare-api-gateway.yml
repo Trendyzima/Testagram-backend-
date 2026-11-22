@@ -5,6 +5,7 @@ on:
     paths:
       - "infra/cloudflare-api-gateway/**"
       - ".github/workflows/cloudflare-api-gateway.yml"
+      - "tests/test_cloudflare_api_gateway_deployment_order.py"
   workflow_dispatch:
     inputs:
       confirm_production_deploy:
