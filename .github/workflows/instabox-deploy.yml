@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           bash -n scripts/start-instabox-deployment.sh
+          python3 tests/test_r2_managed_domain_request.py -v
           python3 tests/test_instabox_postgres_readiness.py -v
           python3 tests/test_instabox_runtime_healthcheck_paths.py -v
           python3 tests/test_media_feature_gate_wiring.py -v
@@ -321,19 +322,27 @@ jobs:
             '
           # R2 does not implement S3 GetBucketPolicy. Use Cloudflare's native
           # public-access controls and verify both public access surfaces.
-          # Use Cloudflare's documented JSON request form for the managed r2.dev domain.
-          # Keep the body literal and explicit; this avoids an intermediate payload-file encoding path.
+          # Generate and validate the exact JSON request with jq, then send its
+          # bytes from a file. This avoids shell/curl argument ambiguity and makes
+          # the request body independently inspectable in a failing CI run.
           : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
           : "${R2_IDENTITY_BUCKET:?R2_IDENTITY_BUCKET is required}"
           : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
           r2_managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/managed"
+          managed_request="$RUNNER_TEMP/r2-managed-disable-request.json"
           managed_response="$RUNNER_TEMP/r2-managed-disable.json"
+          jq -cn '{enabled:false}' > "$managed_request"
+          jq -e 'type == "object" and .enabled == false and (keys == ["enabled"])' "$managed_request" >/dev/null
+          managed_request_bytes="$(wc -c < "$managed_request" | tr -d '[:space:]')"
+          [[ "$managed_request_bytes" -gt 0 ]] || { echo "::error::R2 managed-domain disable request body is empty."; exit 1; }
+          echo "Sending validated R2 managed-domain JSON body ($managed_request_bytes bytes)."
           managed_status="$(curl -sS --connect-timeout 5 --max-time 20 \
             -o "$managed_response" -w '%{http_code}' \
             -X PUT \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H 'Content-Type: application/json' \
-            --data-raw '{"enabled":false}' \
+            -H 'Accept: application/json' \
+            --data-binary "@$managed_request" \
             "$r2_managed_url")"
           if [[ "$managed_status" != "200" ]] ||
              ! jq -e '.success == true and .result.enabled == false' "$managed_response" >/dev/null; then

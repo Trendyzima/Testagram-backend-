@@ -56,14 +56,15 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         self.assertIn("did not become ready within 300 seconds", machine)
         self.assertIn("exit 1", machine)
 
-    def test_r2_managed_domain_update_uses_documented_literal_json_body(self):
+    def test_r2_managed_domain_update_uses_validated_json_file_body(self):
         start = self.workflow.index("r2_managed_url=")
         end = self.workflow.index("managed_check_status=", start)
         request = self.workflow[start:end]
-        self.assertIn("--data-raw '{\"enabled\":false}'", request)
+        self.assertIn("jq -cn '{enabled:false}' > \"$managed_request\"", request)
+        self.assertIn("--data-binary \"@$managed_request\"", request)
         self.assertIn("-H 'Content-Type: application/json'", request)
-        self.assertNotIn("--data-binary @", request)
         self.assertIn("result.enabled == false", self.workflow)
+        self.assertNotIn("--data-raw", request)
 
     def test_compose_and_caddy_consume_the_persisted_name(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
