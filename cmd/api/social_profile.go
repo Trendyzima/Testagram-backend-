@@ -88,7 +88,6 @@ WHERE a.user_id=$2 AND a.account_status='active'
 	})
 }
 
-
 type socialProfileResolveRequest struct {
 	Username string `json:"username"`
 }
