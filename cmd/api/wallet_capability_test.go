@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMoneyAmount(t *testing.T) {
 	tests := []struct {
@@ -72,5 +75,50 @@ func TestValidWalletUsername(t *testing.T) {
 		if validWalletUsername(username) {
 			t.Errorf("validWalletUsername(%q) = true, want false", username)
 		}
+	}
+}
+
+func TestMpesaTopupIdempotencyBindsOriginalPayload(t *testing.T) {
+	if !mpesaTopupRequestMatches("500.00", "254712345678", "KES", 500, "254712345678", "KES") {
+		t.Fatal("same M-Pesa payload should be an idempotent retry")
+	}
+	tests := []struct {
+		name, amount, phone, currency     string
+		requestedAmount                   float64
+		requestedPhone, requestedCurrency string
+	}{
+		{name: "different amount", amount: "500.00", phone: "254712345678", currency: "KES", requestedAmount: 501, requestedPhone: "254712345678", requestedCurrency: "KES"},
+		{name: "different phone", amount: "500.00", phone: "254712345678", currency: "KES", requestedAmount: 500, requestedPhone: "254711111111", requestedCurrency: "KES"},
+		{name: "different currency", amount: "500.00", phone: "254712345678", currency: "KES", requestedAmount: 500, requestedPhone: "254712345678", requestedCurrency: "USD"},
+		{name: "malformed stored amount", amount: "not-money", phone: "254712345678", currency: "KES", requestedAmount: 500, requestedPhone: "254712345678", requestedCurrency: "KES"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if mpesaTopupRequestMatches(tt.amount, tt.phone, tt.currency, tt.requestedAmount, tt.requestedPhone, tt.requestedCurrency) {
+				t.Fatal("different or malformed payload must not reuse an idempotency key")
+			}
+		})
+	}
+}
+
+func TestValidMpesaStatusReferences(t *testing.T) {
+	tests := []struct {
+		name, checkout, key string
+		want                bool
+	}{
+		{name: "no reference", want: false},
+		{name: "checkout only", checkout: "ws_CO_123456789", want: true},
+		{name: "idempotency only", key: "topup-test-123", want: true},
+		{name: "both references", checkout: "ws_CO_123456789", key: "topup-test-123", want: true},
+		{name: "checkout too long", checkout: strings.Repeat("x", 129), want: false},
+		{name: "key too short", key: "short", want: false},
+		{name: "key too long", key: strings.Repeat("x", 129), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validMpesaStatusReferences(tt.checkout, tt.key); got != tt.want {
+				t.Fatalf("validMpesaStatusReferences(%q, %q) = %v, want %v", tt.checkout, tt.key, got, tt.want)
+			}
+		})
 	}
 }
