@@ -38,17 +38,17 @@ func TestCommunicationRecipientAndBlockPolicyPostgresIntegration(t *testing.T) {
 		err := tx.QueryRow(ctx, `
 INSERT INTO testagram_local.accounts(user_id,username,protected_account,discoverable_by_username)
 VALUES(gen_random_uuid(),$1,$2,$3)
-RETURNING user_id::text`, username+"_"+suffix, protected, discoverable).Scan(&id)
+RETURNING user_id::text`, username+suffix, protected, discoverable).Scan(&id)
 		if err != nil {
 			t.Fatalf("insert communication fixture account %s: %v", username, err)
 		}
 		return id
 	}
 
-	sender := insertAccount("ci_comm_sender", false, true)
-	publicRecipient := insertAccount("ci_comm_public", false, true)
-	hiddenRecipient := insertAccount("ci_comm_hidden", false, false)
-	protectedRecipient := insertAccount("ci_comm_protected", true, true)
+	sender := insertAccount("cmsender", false, true)
+	publicRecipient := insertAccount("cmpub", false, true)
+	hiddenRecipient := insertAccount("cmhidden", false, false)
+	protectedRecipient := insertAccount("cmprotected", true, true)
 
 	assertAllowed := func(name, recipient string, want bool) {
 		t.Helper()
