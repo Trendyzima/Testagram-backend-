@@ -378,6 +378,7 @@ export class EventLedger {
       if (retryDelay) await this.state.storage.setAlarm(Date.now() + retryDelay);
     });
   }
+}
 
 export default {
   async fetch(request, env) {
