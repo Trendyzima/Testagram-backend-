@@ -7,6 +7,7 @@ TESTAGRAM_EDGE_PROXY_SHARED_TOKEN="${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}"
 [[ "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_EDGE_PROXY_SHARED_TOKEN must be a configured 32-byte hexadecimal secret shared with the Cloudflare API Worker."; exit 1; }
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
+[[ "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_WEB_IMAGE must be the approved immutable GHCR digest before remote deployment starts."; exit 1; }
 for key in CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY; do
   [[ -n "${!key:-}" ]] || { echo "::error::Cloudflare transactional mail requires $key."; exit 1; }
 done
@@ -50,6 +51,9 @@ fi
 
 read -r -d '' REMOTE_COMMAND <<'REMOTE_OUTER' || true
 set -euo pipefail
+# The InstaBox exec service backgrounds the deploy process. Embed the reviewed
+# image digest in the remote command so it cannot be lost across that boundary.
+export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"
 ROOT=/data/home/testagram
 mkdir -p "$ROOT/repos"
 cat > "$ROOT/deploy.sh" <<'REMOTE_SCRIPT'
@@ -326,7 +330,7 @@ write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
 # Preserve the exact immutable image selected by the protected deployment
 # workflow. For a recovery run without an override, retain only the previously
 # pinned digest from .env; never replace it with a baked-in historical image.
-TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-$(read_env_value TESTAGRAM_WEB_IMAGE)}"
+TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"
 if [[ ! "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
   echo "::error::Flutter web release must be supplied as an immutable GHCR digest."
   exit 1
@@ -980,6 +984,9 @@ nohup bash "$ROOT/deploy.sh" > "$ROOT/deploy.log" 2>&1 < /dev/null &
 echo $! > "$ROOT/deploy.pid"
 echo "REMOTE_DEPLOY_STARTED"
 REMOTE_OUTER
+# Replace the literal placeholder only after validating the digest above.
+# This keeps the approved image value in the detached remote process environment.
+REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"
 
 if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then
   b2_endpoint="${B2_S3_ENDPOINT:-}" b2_region="${B2_S3_REGION:-}" b2_bucket="${B2_S3_BUCKET:-}"
