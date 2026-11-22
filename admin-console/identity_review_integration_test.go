@@ -403,6 +403,24 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit second account approval: %v", err)
 	}
+	var credentialBoundApprovals int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*)
+		FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid
+		  AND webauthn_rpid='ops.example.test'
+		  AND (
+		    (approver_user_id=$2::uuid AND webauthn_credential_id=$4)
+		    OR
+		    (approver_user_id=$3::uuid AND webauthn_credential_id=$5)
+		  )
+	`, requestID, approverOne, approverTwo,
+		[]byte("credential-"+approverOne), []byte("credential-"+approverTwo)).Scan(&credentialBoundApprovals); err != nil {
+		t.Fatalf("verify exact WebAuthn approval evidence: %v", err)
+	}
+	if credentialBoundApprovals != 2 {
+		t.Fatalf("exact credential-bound approvals=%d; want 2", credentialBoundApprovals)
+	}
 
 	var finalStatus, requestStatus string
 	var evidenceReviewCount, accountReviewCount, approvalCountFinal, tokenCount int
