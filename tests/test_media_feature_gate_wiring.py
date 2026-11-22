@@ -17,7 +17,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         cls.env_example = (ROOT / "deploy/self-hosted/.env.example").read_text()
 
     def test_r2_bucket_provisioning_uses_the_same_normalized_media_gates_as_remote_deploy(self):
-        self.assertIn("if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)
+        self.assertIn("if: steps.media-gates.outputs.media_enabled == 'true'", self.workflow)
         self.assertIn('DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || \'false\' }}', self.workflow)
         self.assertIn('FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || \'false\' }}', self.workflow)
         self.assertIn('normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}"', self.workflow)
@@ -40,7 +40,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         start = self.workflow.index("Provision dedicated private B2 identity-evidence bucket")
         end = self.workflow.index("Start deployment on the machine", start)
         step = self.workflow[start:end]
-        self.assertIn("if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'", step)
+        self.assertIn("if: steps.media-gates.outputs.media_enabled == 'true'", step)
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", step)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", step)
         self.assertIn("normalize_flag", step)
