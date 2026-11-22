@@ -340,6 +340,9 @@ jobs:
           import urllib.request
 
           url, response_path, status_path = sys.argv[1:]
+          api_token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+          if not api_token or not api_token.isascii() or any(ord(char) < 33 or ord(char) > 126 for char in api_token):
+              raise SystemExit("Cloudflare API token contains invalid header characters.")
           body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")
           if body != b'{"enabled":false}':
               raise SystemExit("Unexpected R2 managed-domain JSON serialization.")
@@ -347,7 +350,7 @@ jobs:
               url,
               data=body,
               headers={
-                  "Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
+                  "Authorization": f"Bearer {api_token}",
                   "Content-Type": "application/json",
                   "Accept": "application/json",
               },
