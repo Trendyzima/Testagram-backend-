@@ -331,22 +331,47 @@ jobs:
           r2_managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/managed"
           managed_request="$RUNNER_TEMP/r2-managed-disable-request.json"
           managed_response="$RUNNER_TEMP/r2-managed-disable.json"
-          # Cloudflare's managed-domain endpoint has rejected a valid JSON file
-          # with a trailing newline. Serialize the compact object without any
-          # trailing bytes, then verify both its exact size and parsed shape.
-          jq -cn '{enabled:false}' | head -c 17 > "$managed_request"
-          jq -e 'type == "object" and .enabled == false and (keys == ["enabled"])' "$managed_request" >/dev/null
-          managed_request_bytes="$(wc -c < "$managed_request" | tr -d '[:space:]')"
-          [[ "$managed_request_bytes" == "17" ]] || { echo "::error::R2 managed-domain JSON body must be exactly 17 bytes; got $managed_request_bytes."; exit 1; }
-          echo "Sending validated R2 managed-domain JSON body ($managed_request_bytes bytes)."
-          managed_status="$(curl -sS --connect-timeout 5 --max-time 20 \
-            -o "$managed_response" -w '%{http_code}' \
-            -X PUT \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            -H 'Content-Type: application/json' \
-            -H 'Accept: application/json' \
-            --data-binary "@$managed_request" \
-            "$r2_managed_url")"
+          # Use Python's standard HTTP/1.1 client to isolate the request from curl's
+          # command-line/body handling. urllib computes Content-Length from the exact
+          # UTF-8 JSON bytes and sends the documented PUT with explicit JSON headers.
+          : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+          : "${R2_IDENTITY_BUCKET:?R2_IDENTITY_BUCKET is required}"
+          : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
+          r2_managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/managed"
+          managed_response="$RUNNER_TEMP/r2-managed-disable.json"
+          managed_status_file="$RUNNER_TEMP/r2-managed-disable.status"
+          python3 - "$r2_managed_url" "$managed_response" "$managed_status_file" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+          import urllib.error
+          import urllib.request
+
+          url, response_path, status_path = sys.argv[1:]
+          body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")
+          if body != b'{"enabled":false}':
+              raise SystemExit("Unexpected R2 managed-domain JSON serialization.")
+          request = urllib.request.Request(
+              url,
+              data=body,
+              headers={
+                  "Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}",
+                  "Content-Type": "application/json",
+                  "Accept": "application/json",
+              },
+              method="PUT",
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  status, response_body = response.status, response.read()
+          except urllib.error.HTTPError as error:
+              status, response_body = error.code, error.read()
+          pathlib.Path(response_path).write_bytes(response_body)
+          pathlib.Path(status_path).write_text(str(status), encoding="ascii")
+          print(f"Cloudflare R2 managed-domain update: HTTP {status}; JSON body bytes={len(body)}.")
+          PY
+          managed_status="$(cat "$managed_status_file")"
           if [[ "$managed_status" != "200" ]] ||
              ! jq -e '.success == true and .result.enabled == false' "$managed_response" >/dev/null; then
             echo "::error::Could not disable R2 r2.dev public access for the identity-evidence bucket (HTTP $managed_status)."
