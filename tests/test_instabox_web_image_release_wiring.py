@@ -17,14 +17,30 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         deploy = DEPLOY.read_text(encoding="utf-8")
         self.assertIn('TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"', deploy)
         self.assertIn("Flutter web release must be supplied as an immutable GHCR digest", deploy)
-        self.assertIn('export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
+        self.assertNotIn('export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
         self.assertIn('REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"', deploy)
-        self.assertIn('TESTAGRAM_WEB_IMAGE" =~ ^ghcr\\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$', deploy)
+        self.assertIn('if ! grep -Fq "DEPLOY_WEB_IMAGE=\\"$TESTAGRAM_WEB_IMAGE\\"" <<<"$REMOTE_COMMAND"; then', deploy)
+        self.assertIn('TESTAGRAM_WEB_IMAGE" =~ ^ghcr\\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}
         self.assertNotIn("sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b", deploy)
 
     def test_web_image_is_forwarded_to_remote_and_pinned_by_digest(self):
         deploy = DEPLOY.read_text(encoding="utf-8")
-        self.assertIn('DEPLOY_WEB_IMAGE="${TESTAGRAM_WEB_IMAGE:-}"', deploy)
+        self.assertIn('DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
+        self.assertIn('write_env_value TESTAGRAM_WEB_IMAGE "$DEPLOY_WEB_IMAGE"', deploy)
+        self.assertIn('--arg web_image "$TESTAGRAM_WEB_IMAGE"', deploy)
+        self.assertIn("TESTAGRAM_WEB_IMAGE:$web_image", deploy)
+        self.assertIn('write_env_value TESTAGRAM_WEB_IMAGE "$web_image_digest"', deploy)
+        self.assertIn('sudo docker pull --platform linux/amd64 "$web_image_ref"', deploy)
+
+
+if __name__ == "__main__":
+    unittest.main()
+, deploy)
+        self.assertNotIn("sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b", deploy)
+
+    def test_web_image_is_forwarded_to_remote_and_pinned_by_digest(self):
+        deploy = DEPLOY.read_text(encoding="utf-8")
+        self.assertIn('DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
         self.assertIn('write_env_value TESTAGRAM_WEB_IMAGE "$DEPLOY_WEB_IMAGE"', deploy)
         self.assertIn('--arg web_image "$TESTAGRAM_WEB_IMAGE"', deploy)
         self.assertIn("TESTAGRAM_WEB_IMAGE:$web_image", deploy)
