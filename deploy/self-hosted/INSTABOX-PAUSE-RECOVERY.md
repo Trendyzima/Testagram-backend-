@@ -78,6 +78,18 @@ This A/B result shows that the Backend itself is running, but the canonical API 
 
 The public 9000 root and MinIO health-path fetches could not be reliably interpreted by the external content probe; the Compose mapping still identifies the published port as MinIO object storage. Treat the publication as an unnecessary public object-storage surface until the operator unpublishes it and verifies that no approved external S3 client depends on it.
 
+### Cloudflare API route root cause (read-only account audit)
+
+The successful Cloudflare API audit (GitHub Actions run 44997378902) established the configuration behind the 404:
+
+- `api.testagram.site` has a proxied AAAA record with placeholder target `100::`.
+- The Testagram zone has no Worker route for `api.testagram.site/*`.
+- A legacy Worker named `testagram-api` exists, but it is not attached to the API hostname. Its `APP_ORIGIN` plain-text binding is `https://testagram.site` (the Pages frontend), not the Backend.
+- That legacy Worker has Supabase secret/plain-text bindings and source references, and its latest deployment is dated 2026-09-14. It must not be reattached as the production API gateway.
+- The `testagram.site` and `www.testagram.site` Pages domains are active. The media hostname is routed separately through R2/Worker paths.
+
+A separate clean API gateway is proposed in [Backend PR #445](undefined). It targets the operator-provided published port 8080 URL, has no Supabase/Xclone bindings, preserves auth and idempotency, removes spoofed forwarding headers, and disables caching. It is manual-deploy only; this PR has not changed Cloudflare production routing.
+
 ## 6. Verify persistent storage before manual recovery
 
 If native wake-on-request does not restore the machine, connect after a supported resume/start operation and verify the existing PostgreSQL volume before starting or recreating containers.
