@@ -332,7 +332,8 @@ export async function reconcileStoppedEvent(env, event, deliveryId) {
     );
     if (String(finalSnapshot.id) !== String(machine.id) ||
         finalSnapshot.name !== (env.INSTABOX_MACHINE_NAME || "testagramdb") ||
-        finalSnapshot.state !== "running") {
+        finalSnapshot.state !== "running" ||
+        finalSnapshot.desiredState !== "running") {
       throw new Error("InstaBox returned no operation ID and the independent machine read did not confirm running");
     }
     return { action: "started", machineId: machine.id, eventId: deliveryId, providerState: "running" };
