@@ -104,6 +104,48 @@ test("rejects requests for another hostname", async () => {
   assert.equal(response.status, 421);
 });
 
+test("marks upstream 503 responses for safe client recovery and normalizes gateway HTML", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response("<html>machine waking</html>", {
+      status: 503,
+      headers: { "content-type": "text/html" },
+    });
+    const gatewayResponse = await gateway.fetch(apiRequest("/healthz"), {
+      APP_ORIGIN,
+      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
+    });
+    assert.equal(gatewayResponse.status, 503);
+    assert.equal(gatewayResponse.headers.get("x-testagram-recovery"), "attempted");
+    assert.equal(gatewayResponse.headers.get("retry-after"), "2");
+    assert.equal(gatewayResponse.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await gatewayResponse.json(), {
+      error: {
+        code: "api_origin_unavailable",
+        message: "Testagram API is waking or temporarily unavailable.",
+      },
+    });
+
+    globalThis.fetch = async () => new Response(
+      JSON.stringify({ ok: false, error: { code: "BACKEND_TEMPORARY", message: "Retry later" } }),
+      { status: 503, headers: { "content-type": "application/json", "retry-after": "9" } },
+    );
+    const backendResponse = await gateway.fetch(apiRequest("/api/feed/home"), {
+      APP_ORIGIN,
+      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
+    });
+    assert.equal(backendResponse.status, 503);
+    assert.equal(backendResponse.headers.get("x-testagram-recovery"), "attempted");
+    assert.equal(backendResponse.headers.get("retry-after"), "9");
+    assert.deepEqual(await backendResponse.json(), {
+      ok: false,
+      error: { code: "BACKEND_TEMPORARY", message: "Retry later" },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("returns a bounded 503 without leaking upstream exception details", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {
