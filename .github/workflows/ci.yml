@@ -790,7 +790,8 @@ jobs:
               raise SystemExit("Deployment must recreate services after updating immutable image pins")
           assert 'DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script, "deployment must embed the workflow-selected Flutter web release into the detached script"
           assert 'TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"' in deploy_script, "deployment must use only the workflow-selected Flutter digest"
-          assert 'DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script and 'REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"' in deploy_script, "deployment must embed the approved digest directly into the detached remote script"
+          assert 'DEPLOY_WEB_IMAGE=__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__' in deploy_script and 'source "$ROOT/deploy-image.env"' in deploy_script, "deployment must persist and source the approved digest from a protected file"
+          assert 'chmod 600 "$ROOT/deploy-image.env"' in deploy_script and 'REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"' in deploy_script, "deployment must protect and inject the immutable digest before remote execution"
           assert 'grep -Fq "DEPLOY_WEB_IMAGE=' in deploy_script, "deployment must verify the exact digest is present before remote execution"
           assert 'TESTAGRAM_WEB_IMAGE" =~ ^ghcr' in deploy_script and '@sha256:[a-f0-9]{64}' in deploy_script, "deployment must reject missing or mutable Flutter image references"
           assert "Flutter web release must be supplied as an immutable GHCR digest" in deploy_script, "deployment must reject mutable Flutter web tags"
