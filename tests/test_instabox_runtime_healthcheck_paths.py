@@ -26,7 +26,7 @@ class TestInstaBoxRuntimeHealthcheckPaths(unittest.TestCase):
         self.assertIn('for attempt in $(seq 1 60); do', deploy)
         self.assertIn('[[ "$video_worker_health" == "healthy" ]] && break', deploy)
         self.assertIn('within 120 seconds', deploy)
-        self.assertIn('video worker readiness healthcheck did not report healthy', deploy)
+        self.assertIn('video worker readiness healthcheck did not become healthy within 120 seconds', deploy)
         self.assertIn("{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}", deploy)
         self.assertNotIn("/app/healthcheck", deploy)
         self.assertNotIn("/app/healthcheck", workflow)
