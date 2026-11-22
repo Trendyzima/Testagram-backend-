@@ -1,0 +1,100 @@
+name: Unpublish Testagram public MinIO port
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Inspect the machine and published ports without changing anything.
+        required: true
+        type: boolean
+        default: true
+      confirm_no_external_s3_clients:
+        description: Confirm no approved external S3 client depends on the public MinIO endpoint.
+        required: true
+        type: boolean
+        default: false
+      confirm_unpublish_port_9000:
+        description: Explicitly authorize unpublishing port 9000 on testagramdb.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-instabox-port-9000
+  cancel-in-progress: false
+
+jobs:
+  inspect-and-unpublish:
+    if: inputs.dry_run == true || (inputs.confirm_no_external_s3_clients == true && inputs.confirm_unpublish_port_9000 == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify machine and published port
+        shell: bash
+        env:
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY || secrets.INSTABOX_API_KEY }}
+          INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID || 'm_agq4me2xgrgx5ge52ts437tqea' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          CONFIRM_NO_EXTERNAL_S3: ${{ inputs.confirm_no_external_s3_clients }}
+          CONFIRM_UNPUBLISH: ${{ inputs.confirm_unpublish_port_9000 }}
+        run: |
+          set -euo pipefail
+          set +x
+          API="https://api.instabox.sh"
+          EXPECTED_MACHINE_ID="m_agq4me2xgrgx5ge52ts437tqea"
+          [[ -n "${INSTABOX_API_KEY:-}" ]] || { echo "::error::Missing existing InstaBox API key secret."; exit 1; }
+          [[ "$INSTABOX_MACHINE_ID" == "$EXPECTED_MACHINE_ID" ]] || { echo "::error::Machine ID does not match the reviewed testagramdb target."; exit 1; }
+
+          auth=(-H "Authorization: Bearer $INSTABOX_API_KEY" -H "Accept: application/json")
+          machine="$(mktemp)"
+          ports="$(mktemp)"
+          result="$(mktemp)"
+          trap 'rm -f "$machine" "$ports" "$result"' EXIT
+
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" "$API/v1/machines/$INSTABOX_MACHINE_ID" -o "$machine"
+          jq -e --arg id "$EXPECTED_MACHINE_ID" '.id == $id and .name == "testagramdb"' "$machine" >/dev/null || {
+            echo "::error::Machine identity check failed; no port change was attempted."
+            exit 1
+          }
+
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" "$API/v1/machines/$INSTABOX_MACHINE_ID/ports" -o "$ports"
+          if ! jq -e '.ports | any(.port == 9000)' "$ports" >/dev/null; then
+            echo "Port 9000 is already unpublished; no change needed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "## Testagram MinIO public-port review" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Machine identity: testagramdb (exact ID verified)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Port 9000 publication: present" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Compose uses object-storage:9000 on the private Docker network; the public media hostname is routed separately." >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "- Mode: dry run; no changes made." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          [[ "$CONFIRM_NO_EXTERNAL_S3" == "true" && "$CONFIRM_UNPUBLISH" == "true" ]] || {
+            echo "::error::Both explicit confirmation inputs are required for the destructive port-unpublish action."
+            exit 1
+          }
+
+          status="$(curl --silent --show-error --output "$result" --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 30 -X DELETE \
+            "${auth[@]}" \
+            -H "Idempotency-Key: testagram-minio-port-9000-unpublish-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            "$API/v1/machines/$INSTABOX_MACHINE_ID/ports/9000")"
+          [[ "$status" == "204" ]] || {
+            echo "::error::InstaBox unpublish request returned HTTP $status."
+            jq -r '.error.message // "No additional provider detail."' "$result" >&2 || true
+            exit 1
+          }
+
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" "$API/v1/machines/$INSTABOX_MACHINE_ID/ports" -o "$ports"
+          if jq -e '.ports | any(.port == 9000)' "$ports" >/dev/null; then
+            echo "::error::Port 9000 still appears in the published-port list after unpublish."
+            exit 1
+          fi
+          echo "- Result: port 9000 successfully unpublished and verified absent." >> "$GITHUB_STEP_SUMMARY"
