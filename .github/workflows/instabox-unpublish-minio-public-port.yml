@@ -35,7 +35,7 @@ jobs:
       - name: Verify machine and published port
         shell: bash
         env:
-          INSTABOX_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY || secrets.INSTABOX_API_KEY }}
+          INSTABOX_API_KEY: ${{ secrets.INSTABOX_PORT_ADMIN_API_KEY }}
           INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID || 'm_agq4me2xgrgx5ge52ts437tqea' }}
           DRY_RUN: ${{ inputs.dry_run }}
           CONFIRM_NO_EXTERNAL_S3: ${{ inputs.confirm_no_external_s3_clients }}
@@ -45,7 +45,7 @@ jobs:
           set +x
           API="https://api.instabox.sh"
           EXPECTED_MACHINE_ID="m_agq4me2xgrgx5ge52ts437tqea"
-          [[ -n "${INSTABOX_API_KEY:-}" ]] || { echo "::error::Missing existing InstaBox API key secret."; exit 1; }
+          [[ -n "${INSTABOX_API_KEY:-}" ]] || { echo "::error::Add INSTABOX_PORT_ADMIN_API_KEY as a dedicated InstaBox key with machines:write scope. Do not reuse the read-only watchdog key."; exit 1; }
           [[ "$INSTABOX_MACHINE_ID" == "$EXPECTED_MACHINE_ID" ]] || { echo "::error::Machine ID does not match the reviewed testagramdb target."; exit 1; }
 
           auth=(-H "Authorization: Bearer $INSTABOX_API_KEY" -H "Accept: application/json")
