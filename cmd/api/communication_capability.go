@@ -676,17 +676,8 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			fail("CALL_END_FAILED", "Could not lock call session", http.StatusServiceUnavailable)
 			return true
 		}
-		var authorized bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(
-			SELECT 1 FROM testagram_local.call_sessions c
-			JOIN testagram_local.conversation_members cm ON cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL
-			WHERE c.id=$1 AND (
-				c.created_by=$2 OR EXISTS(
-					SELECT 1 FROM testagram_local.call_participants cp
-					WHERE cp.call_id=c.id AND cp.user_id=$2 AND cp.left_at IS NULL
-				)
-			)
-		)`, id, userID).Scan(&authorized); err != nil {
+		authorized, authErr := communicationCallEndAuthorized(ctx, tx, id, userID)
+		if authErr != nil {
 			fail("CALL_END_FAILED", "Could not verify active call participation", http.StatusServiceUnavailable)
 			return true
 		}
