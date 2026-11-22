@@ -87,3 +87,68 @@ WHERE a.user_id=$2 AND a.account_status='active'
 		"ok": true, "data": profile, "error": nil, "request_id": requestID,
 	})
 }
+
+type socialProfileResolveRequest struct {
+	Username string `json:"username"`
+}
+
+// validSocialUsername accepts only the public Testagram handle alphabet.
+// Resolution remains viewer-scoped: private, undiscoverable and blocked
+// accounts are not revealed by this lookup.
+func validSocialUsername(value string) bool {
+	if len(value) < 2 || len(value) > 30 {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') &&
+			!(r >= '0' && r <= '9') && r != '_' && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *service) socialProfileResolveByUsername(w http.ResponseWriter, r *http.Request) {
+	viewerID, requestID, ok := s.socialAuth(w, r)
+	if !ok {
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_UNAVAILABLE", "The profile could not be resolved", requestID))
+		return
+	}
+	var input socialProfileResolveRequest
+	if err := decodeMediaJSON(w, r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PROFILE_USERNAME", "A valid profile username is required", requestID))
+		return
+	}
+	input.Username = strings.TrimPrefix(strings.TrimSpace(input.Username), "@")
+	if !validSocialUsername(input.Username) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PROFILE_USERNAME", "A valid profile username is required", requestID))
+		return
+	}
+	var targetID string
+	err := s.db.QueryRow(r.Context(), `
+SELECT a.user_id::text
+FROM testagram_local.accounts a
+WHERE lower(a.username)=lower($1)
+  AND a.account_status='active'
+  AND (a.user_id=$2 OR a.discoverable_by_username OR EXISTS(
+    SELECT 1 FROM testagram_local.follows f
+    WHERE f.follower_id=$2 AND f.following_id=a.user_id AND f.status='accepted'
+  ))
+  AND NOT EXISTS(
+    SELECT 1 FROM testagram_local.blocks b
+    WHERE (b.blocker_id=$2 AND b.blocked_id=a.user_id)
+       OR (b.blocker_id=a.user_id AND b.blocked_id=$2)
+  )`, input.Username, viewerID).Scan(&targetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, errorBody("PROFILE_NOT_FOUND", "The profile is unavailable", requestID))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_UNAVAILABLE", "The profile could not be resolved", requestID))
+		return
+	}
+	s.socialProfileReadFor(w, r, viewerID, targetID, requestID)
+}
