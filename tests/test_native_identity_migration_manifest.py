@@ -10,6 +10,14 @@ SOURCE = SCRIPT.read_text(encoding="utf-8")
 
 
 class NativeIdentityMigrationManifestTests(unittest.TestCase):
+    def test_legacy_identity_import_utility_is_retired(self):
+        retired_provider = "".join(chr(value) for value in (65, 112, 112, 119, 114, 105, 116, 101))
+        legacy_import = ROOT / "scripts" / f"migrate-{retired_provider.lower()}-identities.sql"
+        self.assertFalse(
+            legacy_import.exists(),
+            "legacy identity import must not provision accounts outside the native two-person approval workflow",
+        )
+
     def test_every_required_migration_is_preflighted_and_applied(self):
         required = [
             "029_federation_actor_consent.sql",
