@@ -44,6 +44,7 @@ jobs:
           python3 tests/test_media_feature_gate_wiring.py -v
           python3 tests/test_native_identity_migration_manifest.py -v
           python3 tests/test_instabox_b2_credentials.py -v
+          python3 tests/test_instabox_edge_proxy_secret.py -v
           python3 tests/test_instabox_image_digest_verification.py -v
           python3 tests/test_instabox_web_image_release_wiring.py -v
       - name: Compile watchdog safety module
@@ -64,6 +65,7 @@ jobs:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
+      TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
       CLOUDFLARE_EMAIL_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -72,6 +74,13 @@ jobs:
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
+      - name: Validate edge proxy shared credential
+        shell: bash
+        run: |
+          if [[ ! "${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+            echo "::error::Missing or invalid TESTAGRAM_EDGE_PROXY_SHARED_TOKEN production secret (expected 64 hexadecimal characters)."
+            exit 1
+          fi
       - name: Resolve and start the InstaBox machine
         id: machine
         shell: bash
@@ -336,6 +345,7 @@ jobs:
           TESTAGRAM_TERMS_VERSION: ${{ vars.TESTAGRAM_TERMS_VERSION || '2026-11-11' }}
           TESTAGRAM_PRIVACY_VERSION: ${{ vars.TESTAGRAM_PRIVACY_VERSION || '2026-11-11' }}
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
+          TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
           CLOUDFLARE_EMAIL_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
