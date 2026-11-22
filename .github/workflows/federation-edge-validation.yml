@@ -37,9 +37,13 @@ jobs:
           test "$(grep -Fc '@activitypub path /.well-known/webfinger* /.well-known/nodeinfo* /nodeinfo/* /users/* /inbox /outbox /objects/*' deploy/self-hosted/Caddyfile)" -eq 2
           # Require both the direct HTTPS apex and InstaBox :8443 matchers to cover the full protocol surface.
           grep -Fq '/inbox /outbox /objects/*' deploy/self-hosted/Caddyfile
-          grep -Fq 'reverse_proxy federation-api:8081' deploy/self-hosted/Caddyfile
+          test "$(grep -Fc 'respond "Federation is disabled until locked G3 protocol acceptance passes." 503' deploy/self-hosted/Caddyfile)" -eq 2
+          if grep -Fq 'reverse_proxy federation-api:8081' deploy/self-hosted/Caddyfile; then
+            echo "::error::Public Federation proxy must remain disabled until G3 acceptance."
+            exit 1
+          fi
           grep -Fq 'redir https://www.testagram.site{uri} 308' deploy/self-hosted/Caddyfile
-          echo "Apex ActivityPub routing and www frontend preservation: PASS"
+          echo "Apex ActivityPub paths fail closed until G3; www frontend preservation: PASS"
       - name: Integration-test API edge token gate and upstream header stripping
         env:
           EDGE_PROXY_SHARED_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -112,6 +116,13 @@ jobs:
             .forwarded_proto == "https" and
             .edge_token == null
           ' >/dev/null
+
+          for path in /.well-known/webfinger?resource=acct%3Atestagram%40testagram.site /inbox; do
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --connect-timeout 2 --max-time 10 \
+              -H 'Host: testagram.site' "http://127.0.0.1:18443$path")"
+            [[ "$status" == "503" ]] || { echo "::error::Public Federation route $path returned $status, expected 503 until G3 acceptance."; exit 1; }
+          done
 
           for token in "" "incorrect"; do
             status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \

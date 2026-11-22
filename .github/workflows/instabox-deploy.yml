@@ -637,9 +637,9 @@ jobs:
           root_status="$(curl -sS --connect-timeout 5 --max-time 20 -D /tmp/apex-root.headers -o /dev/null -w '%{http_code}' "$url/" || true)"
           if [[ "$root_status" != "308" ]] || ! grep -Fqi 'https://www.testagram.site' /tmp/apex-root.headers; then echo "::error::Apex root did not redirect to www (HTTP $root_status)."; cat /tmp/apex-root.headers; exit 1; fi
           webfinger_status="$(curl -sS --connect-timeout 5 --max-time 20 -o /tmp/apex-webfinger.json -w '%{http_code}' "$url/.well-known/webfinger?resource=acct:nonexistent-probe@invalid.testagram.site" || true)"
-          case "$webfinger_status" in 200|400|404) ;; *) echo "::error::Apex WebFinger did not reach Federation safely (HTTP $webfinger_status)."; cat /tmp/apex-webfinger.json 2>/dev/null || true; exit 1 ;; esac
+          case "$webfinger_status" in 503) ;; *) echo "::error::Apex WebFinger must remain closed pending G3 (expected HTTP 503, got $webfinger_status)."; cat /tmp/apex-webfinger.json 2>/dev/null || true; exit 1 ;; esac
           echo "apex_url=$url" >> "$GITHUB_OUTPUT"
-          echo "Apex Caddy ingress passed health, www redirect and WebFinger checks: $url"
+          echo "Apex Caddy ingress passed health, www redirect and G3-closed WebFinger gate: $url"
 
       - name: Configure public CDN URL and restart Backend and Go CDN
         shell: bash
@@ -714,7 +714,7 @@ jobs:
         run: |
           echo "Backend, Go CDN and apex Caddy origins passed direct health/readiness checks."
           echo "Run the CDN repository canonical Cloudflare routing workflow with API, Go CDN and apex origins from this deployment summary."
-          echo "The apex origin serves ActivityPub/WebFinger and redirects ordinary web traffic to www.testagram.site; Backend readiness remains private."
+          echo "The apex origin keeps ActivityPub/WebFinger fail-closed until G3 acceptance and redirects ordinary web traffic to www.testagram.site; Backend readiness remains private."
 
       - name: Deployment summary
         if: always()
@@ -726,6 +726,6 @@ jobs:
           echo "- API URL: ${{ steps.publish.outputs.api_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Go CDN URL: ${{ steps.publish_cdn.outputs.cdn_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Apex federation edge URL: ${{ steps.publish_apex.outputs.apex_url || 'not published' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Apex edge: port 8443; ActivityPub/WebFinger proxy and canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Apex edge: port 8443; ActivityPub/WebFinger return 503 until G3 acceptance; canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend and Go CDN: public /healthz; private /readyz and /metrics on Docker-only port 8082" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"

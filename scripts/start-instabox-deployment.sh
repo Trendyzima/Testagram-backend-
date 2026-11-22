@@ -518,13 +518,13 @@ FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
 FEDERATION_BACKEND_INTERNAL_TOKEN=$FEDERATION_BACKEND_INTERNAL_TOKEN
 FEDERATION_DATABASE_NAME=testagram_federation
 FEDERATION_DATABASE_URL=$FEDERATION_DATABASE_URL
-FEDERATION_INBOX_ACCEPT_ENABLED=true
+FEDERATION_INBOX_ACCEPT_ENABLED=false
 FEDERATION_PUBLIC_BASE_URL=https://testagram.site
 FEDERATION_INSTANCE_DOMAIN=testagram.site
 FEDERATION_SERVICE_ACTOR_USERNAME=testagram
-FEDERATION_DELIVERY_WORKER_ENABLED=true
-FEDERATION_OUTBOX_POLLER_ENABLED=true
-FEDERATION_INBOX_WORKER_ENABLED=true
+FEDERATION_DELIVERY_WORKER_ENABLED=false
+FEDERATION_OUTBOX_POLLER_ENABLED=false
+FEDERATION_INBOX_WORKER_ENABLED=false
 VIDEO_SIGNING_SECRET=$(openssl rand -hex 32)
 VIDEO_ACCOUNT_QUOTA_BYTES=21474836480
 VIDEO_MIN_FREE_BYTES=2147483648
@@ -589,10 +589,10 @@ write_dc_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 write_dc_env_value FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 write_dc_env_value FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 write_dc_env_value ALGORITHM_INTERNAL_TOKEN "$ALGORITHM_INTERNAL_TOKEN"
-write_dc_env_value FEDERATION_DELIVERY_WORKER_ENABLED true
-write_dc_env_value FEDERATION_OUTBOX_POLLER_ENABLED true
-write_dc_env_value FEDERATION_INBOX_WORKER_ENABLED true
-write_dc_env_value FEDERATION_INBOX_ACCEPT_ENABLED true
+write_dc_env_value FEDERATION_DELIVERY_WORKER_ENABLED false
+write_dc_env_value FEDERATION_OUTBOX_POLLER_ENABLED false
+write_dc_env_value FEDERATION_INBOX_WORKER_ENABLED false
+write_dc_env_value FEDERATION_INBOX_ACCEPT_ENABLED false
 # Existing Data Centre .env files must receive the reviewed immutable image pins too.
 write_dc_env_value TESTAGRAM_ALGORITHM_IMAGE "$TESTAGRAM_ALGORITHM_IMAGE"
 write_dc_env_value TESTAGRAM_FEDERATION_IMAGE "$TESTAGRAM_FEDERATION_IMAGE"
@@ -771,12 +771,12 @@ if [[ "$federation_ready" != "true" ]]; then
   exit 1
 fi
 federation_worker_status="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" exec -T api wget -qO- --header="Authorization: Bearer $FEDERATION_INTERNAL_TOKEN" http://federation-api:8081/internal/v1/worker-status)"
-if ! jq -e '.workers.delivery_worker == true and .workers.outbox_poller == true and .workers.inbox_worker == true and .workers.inbox_accept == true' <<<"$federation_worker_status" >/dev/null; then
+if ! jq -e '.workers.delivery_worker == false and .workers.outbox_poller == false and .workers.inbox_worker == false and .workers.inbox_accept == false' <<<"$federation_worker_status" >/dev/null; then
   echo "::error::Federation runtime did not report all four required worker/acceptance switches enabled."
   jq -c '{status, workers}' <<<"$federation_worker_status" || true
   exit 1
 fi
-echo "Verified authenticated Federation runtime status: outbound delivery, Backend outbox poller, signed inbox processor and inbound acceptance are active."
+echo "Verified authenticated Federation runtime status: delivery, outbox polling, inbox processing and inbound acceptance remain disabled pending locked G3 protocol acceptance."
 
 verify_running_image() {
   local service="$1" expected="$2" container actual_ref actual_image_id actual_digests
