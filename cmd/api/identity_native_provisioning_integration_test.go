@@ -172,8 +172,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `
-		INSERT INTO testagram_auth.native_sensitive_action_approvals(request_id,approver_user_id,decision,reason)
-		VALUES($1::uuid,$2::uuid,'approved','First independent account approval')
+		INSERT INTO testagram_auth.native_sensitive_action_approvals
+		  (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+		VALUES($1::uuid,$2::uuid,'approved','First independent account approval','ops.testagram.invalid',decode(repeat('11',32),'hex'))
 	`, requestID, approverOne); err != nil {
 		t.Fatal(err)
 	}
@@ -216,8 +217,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := approvalTx.Exec(ctx, `
-		INSERT INTO testagram_auth.native_sensitive_action_approvals(request_id,approver_user_id,decision,reason)
-		VALUES($1::uuid,$2::uuid,'approved','Second independent account approval')
+		INSERT INTO testagram_auth.native_sensitive_action_approvals
+		  (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+		VALUES($1::uuid,$2::uuid,'approved','Second independent account approval','ops.testagram.invalid',decode(repeat('22',32),'hex'))
 	`, requestID, approverTwo); err != nil {
 		_ = approvalTx.Rollback(ctx)
 		t.Fatal(err)
