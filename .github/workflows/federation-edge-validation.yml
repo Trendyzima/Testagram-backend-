@@ -78,7 +78,7 @@ jobs:
           HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
           PY
 
-          docker run -d --name testagram-edge-api --network "$network" \
+          docker run -d --name testagram-edge-api --network "$network" --network-alias api \
             -v "$RUNNER_TEMP/mock-api.py:/mock-api.py:ro" \
             python:3.12-alpine python /mock-api.py
           docker run -d --name testagram-edge-caddy --network "$network" \
