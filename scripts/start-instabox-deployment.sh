@@ -197,7 +197,7 @@ write_env_value() {
 }
 # The edge proxy token must match the Cloudflare API Worker credential. Never
 # generate a replacement here: a mismatch would make the canonical API route fail closed.
-write_env_value EDGE_PROXY_SHARED_TOKEN "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN"
+write_env_value EDGE_PROXY_SHARED_TOKEN "$EDGE_PROXY_SHARED_TOKEN"
 if [[ -n "$DEPLOY_WEB_IMAGE" ]]; then write_env_value TESTAGRAM_WEB_IMAGE "$DEPLOY_WEB_IMAGE"; fi
 # Preserve Data Centre-only provider inputs before the Backend .env is scrubbed.
 DC_B2_S3_ENDPOINT="${B2_S3_ENDPOINT:-}"

@@ -22,6 +22,8 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         self.assertIn('[[ ! "${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[A-Fa-f0-9]{64}$ ]]', self.workflow)
         self.assertIn('--arg edge_proxy_token "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN"', self.script)
         self.assertIn("EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token", self.script)
+        self.assertIn('write_env_value EDGE_PROXY_SHARED_TOKEN "$EDGE_PROXY_SHARED_TOKEN"', self.script)
+        self.assertNotIn('write_env_value EDGE_PROXY_SHARED_TOKEN "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN"', self.script)
         self.assertNotIn("ensure_random_secret EDGE_PROXY_SHARED_TOKEN", self.script)
         self.assertNotIn('EDGE_PROXY_SHARED_TOKEN="$(openssl rand', self.script)
 
