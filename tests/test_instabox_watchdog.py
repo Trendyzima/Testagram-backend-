@@ -406,7 +406,10 @@ class WatchdogTests(unittest.TestCase):
         self.assertNotIn("TESTAGRAM_READINESS_URL", workflow)
         self.assertNotIn("/readyz", workflow)
         self.assertNotIn("8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech", workflow)
-        self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'true'", workflow)
+        self.assertIn("vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'false'", workflow)
+        self.assertNotIn('  schedule:', workflow)
+        self.assertNotIn('*/5 * * * *', workflow)
+        self.assertIn('operator-dispatched only', workflow)
         self.assertIn("github.event_name == 'workflow_dispatch' && inputs.dry_run", workflow)
         self.assertIn("pull_request:", workflow)
 
