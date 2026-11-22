@@ -2325,11 +2325,6 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: bash tests/test-social-platform-product-foundation.sh
- -count=1 -v
-      - name: Stop isolated PostgreSQL
-        if: always()
-        run: docker stop testagram-local-product-ci || true
-
   independent-auth-schema-integration:
     name: Independent authentication schema integration
     runs-on: ubuntu-latest
