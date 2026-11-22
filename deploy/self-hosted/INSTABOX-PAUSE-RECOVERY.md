@@ -19,7 +19,13 @@ Official references:
 - https://instabox.sh/docs/idle-suspend
 - https://instabox.sh/docs/api/ports
 
-## 2. Confirm the machine state and endpoint path
+## 2. Existing external watchdog: Free-plan-safe policy
+
+The repository previously contained a five-minute scheduled watchdog that probed the public API and defaulted automatic provider resume/start actions to enabled. That behavior is not appropriate for this Free-plan machine: scheduled public probes can act as artificial keepalive traffic, and scheduled pause/resume cycling can defeat the provider's idle/max-run controls.
+
+The watchdog workflow is now operator-dispatched only. Its automatic lifecycle recovery switch defaults to `false`; a human operator must explicitly authorize a recovery run. For ordinary idle pause, rely on InstaBox native wake-on-request from genuine Testagram user traffic. Keep the separate read-only machine metadata workflow manual-only. Do not add a cron schedule or periodic public health probe to keep the Free machine awake.
+
+## 3. Confirm the machine state and endpoint path
 
 From an authenticated operator workstation:
 
@@ -34,7 +40,7 @@ Confirm the machine named `testagramdb` is idle-paused rather than manually paus
 
 Verify the published port configuration in the InstaBox dashboard/CLI. Confirm public HTTPS traffic reaches Caddy and only Caddy. Never expose internal data-plane ports.
 
-## 3. Public-port exposure: verified Testagram mapping
+## 4. Public-port exposure: verified Testagram mapping
 
 The dashboard configuration supplied for `testagramdb` lists public HTTPS ports 8080, 8081, 8443 and 9000. Cross-checking the repository's actual `deploy/self-hosted/docker-compose.yml` and `Caddyfile` establishes these roles:
 
@@ -51,7 +57,7 @@ Do not unpublish 8080/8081 until the 8443 + Cloudflare path has passed the accep
 
 This is an operator-side dashboard change; this PR does not and cannot alter InstaBox published-port settings.
 
-## 4. Verify persistent storage before manual recovery
+## 5. Verify persistent storage before manual recovery
 
 If native wake-on-request does not restore the machine, connect after a supported resume/start operation and verify the existing PostgreSQL volume before starting or recreating containers.
 
@@ -64,7 +70,7 @@ Run from the repository root, adjusting only for the deployment's established ch
 
 **Stop and escalate** if the PostgreSQL data volume is missing, unexpectedly empty, detached, or replaced. Never run `docker compose down -v`, remove volumes, reinitialize PostgreSQL, or restore a snapshot over the live database as routine recovery.
 
-## 4. Ordered service recovery
+## 6. Ordered service recovery
 
 Inspect the existing deployment first:
 
@@ -98,7 +104,7 @@ curl --fail --show-error --silent https://api.testagram.site/readyz
 
 A running process is not enough: readiness and public-origin probes must pass.
 
-## 5. Post-resume integrity and work reconciliation
+## 7. Post-resume integrity and work reconciliation
 
 Before declaring recovery complete:
 
@@ -111,7 +117,7 @@ Before declaring recovery complete:
 
 Do not run unreviewed SQL updates against ledger, outbox, or migration tables during recovery.
 
-## 6. Escalation conditions
+## 8. Escalation conditions
 
 Stop automated recovery and escalate if:
 
@@ -122,7 +128,7 @@ Stop automated recovery and escalate if:
 - migrations fail unexpectedly, backups are missing/stale, or duplicate financial/outbox effects are suspected;
 - the machine repeatedly pauses/stops or the provider reports an incident.
 
-## 7. Production eligibility
+## 9. Production eligibility
 
 Wake-on-request improves cold-start behavior; it does not provide continuous availability or an uptime SLA. Free-plan runtime and maximum-run limits still apply. Production must move to a paid InstaBox tier with idle auto-suspend disabled or another explicitly approved always-on host, with external monitoring, encrypted off-machine backups, restore drills, and measured RPO/RTO.
 
