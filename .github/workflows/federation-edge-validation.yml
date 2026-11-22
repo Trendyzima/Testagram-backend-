@@ -26,10 +26,11 @@ jobs:
           MEDIA_DOMAIN: media.testagram.site
           ADMIN_DOMAIN: ops.testagram.site
           ACME_EMAIL: ci@example.invalid
+          EDGE_PROXY_SHARED_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         run: |
           set -euo pipefail
           docker run --rm \
-            -e API_DOMAIN -e MEDIA_DOMAIN -e ADMIN_DOMAIN -e ACME_EMAIL \
+            -e API_DOMAIN -e MEDIA_DOMAIN -e ADMIN_DOMAIN -e ACME_EMAIL -e EDGE_PROXY_SHARED_TOKEN \
             -v "$PWD/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           grep -Fq 'testagram.site {' deploy/self-hosted/Caddyfile
