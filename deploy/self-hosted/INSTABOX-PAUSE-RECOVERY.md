@@ -23,7 +23,7 @@ Official references:
 
 The repository previously contained a five-minute scheduled watchdog that probed the public API and defaulted automatic provider resume/start actions to enabled. That behavior is not appropriate for this Free-plan machine: scheduled public probes can act as artificial keepalive traffic, and scheduled pause/resume cycling can defeat the provider's idle/max-run controls.
 
-The watchdog workflow is now operator-dispatched only. Its automatic lifecycle recovery switch defaults to `false`; a human operator must explicitly authorize a recovery run. For ordinary idle pause, rely on InstaBox native wake-on-request from genuine Testagram user traffic. Keep the separate read-only machine metadata workflow manual-only. Do not add a cron schedule or periodic public health probe to keep the Free machine awake.
+The watchdog workflow is now operator-dispatched only. Its automatic lifecycle recovery switch defaults to `false`; a human operator must explicitly authorize a recovery run. For ordinary idle pause, rely on InstaBox native wake-on-request from genuine Testagram user traffic. Keep the separate read-only machine metadata workflow manual-only. Do not add a cron schedule or periodic public health probe to keep the Free machine awake. The Flutter repository also had 15-minute schedules for the public domain/ActivityPub smoke test and the TV health monitor; Flutter PR [#121](https://github.com/Trendyzima/testagram-flutter-client-/pull/121) removes those unattended triggers and adds CI assertions. Keep both checks available for deliberate manual dispatch.
 
 ## 3. Confirm the machine state and endpoint path
 
