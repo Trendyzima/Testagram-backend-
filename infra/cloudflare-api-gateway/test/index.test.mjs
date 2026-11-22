@@ -40,7 +40,7 @@ test("forwards API path, query, auth, body and idempotency without trusting clie
       body: '{"text":"hello"}',
     });
 
-    const response = await gateway.fetch(request, { APP_ORIGIN });
+    const response = await gateway.fetch(request, { APP_ORIGIN, EDGE_PROXY_SHARED_TOKEN: "a".repeat(64) });
     assert.equal(response.status, 201);
     assert.equal(await response.text(), '{"ok":true}');
     assert.equal(upstreamRequest.url, APP_ORIGIN + "/api/posts?visibility=public");
@@ -65,7 +65,7 @@ test("does not cache health or API reads and preserves Backend status codes", as
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response('{"ok":true}', { status: 401 });
   try {
-    const response = await gateway.fetch(apiRequest("/healthz"), { APP_ORIGIN });
+    const response = await gateway.fetch(apiRequest("/healthz"), { APP_ORIGIN, EDGE_PROXY_SHARED_TOKEN: "a".repeat(64) });
     assert.equal(response.status, 401);
     assert.equal(response.headers.get("cache-control"), "no-store");
   } finally {
@@ -83,6 +83,7 @@ test("rejects a non-InstaBox or non-HTTPS origin before making an upstream reque
   try {
     const response = await gateway.fetch(apiRequest("/healthz"), {
       APP_ORIGIN: "https://attacker.example",
+      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
     });
     assert.equal(response.status, 503);
     assert.equal((await response.json()).error.code, "api_origin_misconfigured");
@@ -93,7 +94,7 @@ test("rejects a non-InstaBox or non-HTTPS origin before making an upstream reque
 });
 
 test("rejects requests for another hostname", async () => {
-  const response = await gateway.fetch(new Request("https://evil.example/api"), { APP_ORIGIN });
+  const response = await gateway.fetch(new Request("https://evil.example/api"), { APP_ORIGIN, EDGE_PROXY_SHARED_TOKEN: "a".repeat(64) });
   assert.equal(response.status, 421);
 });
 
@@ -103,7 +104,7 @@ test("returns a bounded 503 without leaking upstream exception details", async (
     throw new Error("private origin detail");
   };
   try {
-    const response = await gateway.fetch(apiRequest("/api/feed/home"), { APP_ORIGIN });
+    const response = await gateway.fetch(apiRequest("/api/feed/home"), { APP_ORIGIN, EDGE_PROXY_SHARED_TOKEN: "a".repeat(64) });
     assert.equal(response.status, 503);
     assert.equal(response.headers.get("retry-after"), "2");
     assert.equal((await response.text()).includes("private origin detail"), false);
