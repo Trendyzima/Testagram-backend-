@@ -114,6 +114,10 @@ func (s *service) socialProfileResolveByUsername(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_UNAVAILABLE", "The profile could not be resolved", requestID))
+		return
+	}
 	var input socialProfileResolveRequest
 	if err := decodeMediaJSON(w, r, &input); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PROFILE_USERNAME", "A valid profile username is required", requestID))
