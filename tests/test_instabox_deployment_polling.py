@@ -12,6 +12,7 @@ class InstaBoxDeploymentPollingTests(unittest.TestCase):
         self.assertIn('2>"$RUNNER_TEMP/instabox-poll-curl.err"', step)
         self.assertIn("InstaBox control plane is temporarily unreachable", step)
         self.assertIn("sleep 25", step)
+        self.assertIn("seq 1 60", step)
         self.assertIn("continue", step)
 
     def test_non_execution_responses_are_retried_but_real_remote_exit_is_fatal(self):
