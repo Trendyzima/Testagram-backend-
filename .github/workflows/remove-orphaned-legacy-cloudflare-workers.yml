@@ -3,8 +3,13 @@ name: Remove orphaned legacy Cloudflare Workers
 on:
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: Inspect every candidate and report eligibility without deleting anything.
+        required: true
+        type: boolean
+        default: true
       confirm_remove_orphaned_workers:
-        description: Delete only the explicitly listed legacy Workers after live route, schedule, service-binding and source checks pass.
+        description: Delete only explicitly listed legacy Workers after route, custom-domain, workers.dev, schedule, service-binding, replacement-health and source checks pass.
         required: true
         type: boolean
         default: false
@@ -17,7 +22,7 @@ concurrency:
 
 jobs:
   cleanup:
-    if: inputs.confirm_remove_orphaned_workers == true
+    if: inputs.dry_run == true || inputs.confirm_remove_orphaned_workers == true
     name: Guard and remove unreferenced legacy Workers
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -26,10 +31,16 @@ jobs:
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLEANUP_DRY_RUN: ${{ inputs.dry_run }}
+          CONFIRM_REMOVE_ORPHANED_WORKERS: ${{ inputs.confirm_remove_orphaned_workers }}
         run: |
           set -euo pipefail
           set +x
           [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing existing CLOUDFLARE_API_TOKEN secret."; exit 1; }
+          if [[ "${CLEANUP_DRY_RUN}" != "true" && "${CONFIRM_REMOVE_ORPHANED_WORKERS}" != "true" ]]; then
+            echo "::error::Destructive cleanup requires dry_run=false and explicit confirmation."
+            exit 1
+          fi
 
           API="https://api.cloudflare.com/client/v4"
           tmp="$(mktemp -d)"
@@ -51,11 +62,11 @@ jobs:
               --connect-timeout 10 --max-time 45 -X DELETE \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               -H "Accept: application/json" "$API$path")"
-            [[ "$status" == "200" || "$status" == "202" ]] || {
+            if [[ "$status" != "200" && "$status" != "202" ]]; then
               echo "::error::Cloudflare DELETE failed (HTTP $status): $path"
               jq -r '(.errors // [])[]? | .message // "Cloudflare API error"' "$output" >&2 || true
               return 1
-            }
+            fi
             jq -e '.success == true' "$output" >/dev/null
           }
 
@@ -66,6 +77,7 @@ jobs:
           }
 
           : > "$tmp/zones.tsv"
+          : > "$tmp/routes.tsv"
           page=1
           while :; do
             cf_get "/zones?per_page=50&page=$page" "$tmp/zones-$page.json"
@@ -75,38 +87,66 @@ jobs:
             page=$((page + 1))
           done
 
-          : > "$tmp/scripts.txt"
-          while IFS=$'\t' read -r zone_id zone_name; do
+          testagram_zone_id="$(awk -F '\t' '$2=="testagram.site" {print $1; exit}' "$tmp/zones.tsv")"
+          account_id="$(awk -F '\t' '$2=="testagram.site" {print $3; exit}' "$tmp/zones.tsv")"
+          [[ -n "$testagram_zone_id" && -n "$account_id" ]] || {
+            echo "::error::The active testagram.site zone or its account could not be resolved."
+            exit 1
+          }
+
+          while IFS=$'\t' read -r zone_id zone_name _zone_account; do
             [[ -z "$zone_id" ]] && continue
             cf_get "/zones/$zone_id/workers/routes" "$tmp/routes-$zone_id.json"
             jq -r '.result[]? | [.pattern, (.script // "")] | @tsv' "$tmp/routes-$zone_id.json" >> "$tmp/routes.tsv"
           done < "$tmp/zones.tsv"
 
-          account_id="$(awk -F '\t' '$2=="testagram.site" {print $1; exit}' "$tmp/zones.tsv")"
-          [[ -n "$account_id" ]] || { echo "::error::The testagram.site zone was not found."; exit 1; }
-          account_id="$(jq -r --arg zone "$account_id" '.result[]? | select(.id == $zone) | .account.id // empty' "$tmp/zones-1.json" | head -n 1)"
-          [[ -n "$account_id" ]] || { echo "::error::Could not resolve the Testagram Cloudflare account."; exit 1; }
+          # Enumerate every script and every custom-domain binding. Zone routes,
+          # custom domains and workers.dev subdomains are separate public entry
+          # points; none can be inferred from the others.
+          : > "$tmp/scripts.txt"
+          page=1
+          while :; do
+            cf_get "/accounts/$account_id/workers/scripts?per_page=100&page=$page" "$tmp/scripts-$page.json"
+            jq -r '.result[]?.id // empty' "$tmp/scripts-$page.json" >> "$tmp/scripts.txt"
+            pages="$(jq -r '.result_info.total_pages // 1' "$tmp/scripts-$page.json")"
+            [[ "$page" -ge "$pages" ]] && break
+            page=$((page + 1))
+          done
 
-          cf_get "/accounts/$account_id/workers/scripts" "$tmp/scripts.json"
-          jq -r '.result[]?.id // empty' "$tmp/scripts.json" > "$tmp/scripts.txt"
+          : > "$tmp/domains.tsv"
+          page=1
+          while :; do
+            cf_get "/accounts/$account_id/workers/domains?per_page=100&page=$page" "$tmp/domains-$page.json"
+            jq -r '.result[]? | [(.hostname // ""), (.service // ""), (.environment // ""), ((.enabled // false)|tostring), ((.previews_enabled // false)|tostring)] | @tsv' "$tmp/domains-$page.json" >> "$tmp/domains.tsv"
+            pages="$(jq -r '.result_info.total_pages // 1' "$tmp/domains-$page.json")"
+            [[ "$page" -ge "$pages" ]] && break
+            page=$((page + 1))
+          done
 
-          # These candidates were observed with no zone routes, no Cron triggers,
-          # and no service bindings in the read-only audit. Re-check every condition
-          # immediately before deletion. Active web/CDN Workers are intentionally
-          # excluded and must be cut over separately.
+          # Only these explicitly named legacy scripts are candidates. Active
+          # web/CDN Workers are intentionally excluded and must be cut over
+          # separately. Every candidate is rechecked immediately before DELETE.
           candidates=(
-            "testagram-api"
-            "testagram-heartbeat"
-            "testagram-federation"
-            "xclone-9b4dz1-9b4dz1-8936-20260809"
+            "testagram-api|supabase|sb-project-ref"
+            "testagram-heartbeat|supabase|sb-project-ref"
+            "testagram-federation|supabase|sb-project-ref|xclone"
+            "xclone-9b4dz1-9b4dz1-8936-20260809|xclone"
           )
 
           echo "## Cloudflare orphan cleanup" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${CLEANUP_DRY_RUN}" == "true" ]]; then
+            echo "- Mode: dry-run; no Worker scripts will be deleted." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Mode: destructive cleanup; explicit confirmation was supplied." >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "- Only explicitly named legacy Workers are considered." >> "$GITHUB_STEP_SUMMARY"
-          echo "- Every candidate is rechecked for routes, Cron triggers, service bindings and legacy source markers." >> "$GITHUB_STEP_SUMMARY"
-          echo "- testagram-web and testagram-cdn are not deletion candidates because they still have live routes/triggers." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Every candidate is rechecked for zone routes, custom domains, workers.dev/preview URLs, Cron, service bindings, consumers and legacy source markers." >> "$GITHUB_STEP_SUMMARY"
+          echo "- testagram-api additionally requires exactly one enabled, non-preview api.testagram.site binding to testagram-cdn and a successful live Backend health response." >> "$GITHUB_STEP_SUMMARY"
+          echo "- testagram-web and testagram-cdn are not deletion candidates." >> "$GITHUB_STEP_SUMMARY"
 
-          for worker in "${candidates[@]}"; do
+          for item in "${candidates[@]}"; do
+            worker="${item%%|*}"
+            marker="${item#*|}"
             if ! grep -Fxq "$worker" "$tmp/scripts.txt"; then
               echo "- $worker: already absent; no action." >> "$GITHUB_STEP_SUMMARY"
               continue
@@ -117,6 +157,34 @@ jobs:
               exit 1
             fi
 
+            if awk -F '\t' -v w="$worker" '$2==w {found=1} END {exit !found}' "$tmp/domains.tsv"; then
+              echo "::error::$worker still owns a Worker custom domain; refusing deletion."
+              exit 1
+            fi
+
+            cf_get "/accounts/$account_id/workers/scripts/$worker/subdomain" "$tmp/target-subdomain.json"
+            workers_dev_enabled="$(jq -r '.result.enabled // "unknown"' "$tmp/target-subdomain.json")"
+            preview_urls_enabled="$(jq -r '.result.previews_enabled // "unknown"' "$tmp/target-subdomain.json")"
+            if [[ "$workers_dev_enabled" != "false" || "$preview_urls_enabled" != "false" ]]; then
+              echo "::error::$worker still has a public workers.dev or preview URL (or its state is unknown); refusing deletion."
+              exit 1
+            fi
+
+            if [[ "$worker" == "testagram-api" ]]; then
+              api_domain_count="$(awk -F '\t' '$1=="api.testagram.site" {count++} END {print count+0}' "$tmp/domains.tsv")"
+              canonical_api_domain_count="$(awk -F '\t' '$1=="api.testagram.site" && $2=="testagram-cdn" && $4=="true" && $5=="false" {count++} END {print count+0}' "$tmp/domains.tsv")"
+              [[ "$api_domain_count" == "1" && "$canonical_api_domain_count" == "1" ]] || {
+                echo "::error::The canonical API custom domain is not uniquely attached to testagram-cdn; refusing legacy API Worker deletion."
+                exit 1
+              }
+              api_health_status="$(curl --silent --show-error --connect-timeout 10 --max-time 25 \
+                --output "$tmp/api-health.json" --write-out '%{http_code}' https://api.testagram.site/healthz || true)"
+              if [[ "$api_health_status" != "200" ]] || ! jq -e '.ok == true and .service == "testagram-api"' "$tmp/api-health.json" >/dev/null; then
+                echo "::error::The canonical Backend health endpoint is not healthy through api.testagram.site; refusing legacy API Worker deletion."
+                exit 1
+              fi
+            fi
+
             cf_get "/accounts/$account_id/workers/scripts/$worker/schedules" "$tmp/schedules.json"
             if [[ "$(jq -r '.result.schedules // [] | length' "$tmp/schedules.json")" != "0" ]]; then
               echo "::error::$worker still has Cron triggers; refusing deletion."
@@ -124,8 +192,8 @@ jobs:
             fi
 
             cf_get "/accounts/$account_id/workers/scripts/$worker/settings" "$tmp/target-settings.json"
-            if [[ "$(jq -r '.result.bindings // [] | map(select(.type == "service")) | length' "$tmp/target-settings.json")" != "0" ]]; then
-              echo "::error::$worker has service bindings; refusing deletion."
+            if [[ "$(jq -r '.result.bindings // [] | map(select(.type == "service" or .type == "workflow")) | length' "$tmp/target-settings.json")" != "0" ]]; then
+              echo "::error::$worker has service/workflow bindings; refusing deletion."
               exit 1
             fi
 
@@ -135,12 +203,17 @@ jobs:
               exit 1
             fi
 
-            # Check all other scripts for service bindings targeting this candidate.
+            # Check every other script for service bindings targeting this candidate.
             while IFS= read -r other; do
               [[ -z "$other" || "$other" == "$worker" ]] && continue
               cf_get "/accounts/$account_id/workers/scripts/$other/settings" "$tmp/other-settings.json"
-              if jq -e --arg target "$worker" '.result.bindings // [] | any(.type == "service" and .service == $target)' "$tmp/other-settings.json" >/dev/null; then
-                echo "::error::$worker is referenced by service binding in $other; refusing deletion."
+              if jq -e --arg target "$worker" '.result.bindings // [] | any((.type == "service" and .service == $target) or (.type == "workflow" and .workflow_name == $target))' "$tmp/other-settings.json" >/dev/null; then
+                echo "::error::$worker is referenced by service/workflow binding in $other; refusing deletion."
+                exit 1
+              fi
+              cf_get "/accounts/$account_id/workers/scripts/$other/script-settings" "$tmp/other-script-settings.json"
+              if jq -e --arg target "$worker" '.result.tail_consumers // [] | any(.service == $target)' "$tmp/other-script-settings.json" >/dev/null; then
+                echo "::error::$worker is referenced as a tail consumer by $other; refusing deletion."
                 exit 1
               fi
             done < "$tmp/scripts.txt"
@@ -148,15 +221,31 @@ jobs:
             curl --silent --show-error --fail --connect-timeout 10 --max-time 45 \
               -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "$API/accounts/$account_id/workers/scripts/$worker/content/v2" -o "$tmp/source"
-            if [[ "$worker" == xclone-* ]]; then
-              :
-            elif ! grep -Eiq 'supabase|sb-project-ref' "$tmp/source"; then
-              echo "::error::$worker no longer contains a legacy Supabase marker; refusing deletion."
+            source_marker_found="false"
+            if grep -Eiq "$marker" "$tmp/source"; then
+              source_marker_found="true"
+            fi
+            if [[ "$worker" == "testagram-api" ]]; then
+              legacy_binding_count="$(jq -r '.result.bindings // [] | map(select((.name // "") | test("^(SUPABASE_|SB_PROJECT_REF)"; "i"))) | length' "$tmp/target-settings.json")"
+              if [[ "$source_marker_found" != "true" && "$legacy_binding_count" == "0" ]]; then
+                echo "::error::$worker has neither the expected legacy source marker nor a legacy Supabase binding; refusing deletion."
+                exit 1
+              fi
+            elif [[ "$source_marker_found" != "true" ]]; then
+              echo "::error::$worker source no longer matches the expected legacy marker; refusing deletion."
               exit 1
             fi
 
-            cf_delete "/accounts/$account_id/workers/scripts/$worker" "$tmp/delete.json"
-            echo "- $worker: deleted after all safety guards passed." >> "$GITHUB_STEP_SUMMARY"
+            if [[ "${CLEANUP_DRY_RUN}" == "true" ]]; then
+              echo "- $worker: all safety guards passed; eligible in dry-run; no deletion performed." >> "$GITHUB_STEP_SUMMARY"
+            else
+              [[ "${CONFIRM_REMOVE_ORPHANED_WORKERS}" == "true" ]] || {
+                echo "::error::Explicit cleanup confirmation is missing; refusing deletion."
+                exit 1
+              }
+              cf_delete "/accounts/$account_id/workers/scripts/$worker" "$tmp/delete.json"
+              echo "- $worker: deleted after all safety guards passed." >> "$GITHUB_STEP_SUMMARY"
+            fi
           done
 
           echo "Cleanup finished. No DNS records, Worker routes, Pages domains, R2 buckets or account settings were modified." >> "$GITHUB_STEP_SUMMARY"
