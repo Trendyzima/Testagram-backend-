@@ -36,7 +36,7 @@ If it is stopped rather than paused, inspect the machine state and use the docum
 Connect to the resumed machine and move to the checked-out Backend deployment directory. Confirm the expected persistent PostgreSQL volume is present and mounted before starting or recreating containers.
 
 ```sh
-docker compose --env-file .env -f deploy/self-hosted/docker-compose.yml ps
+docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml ps
 docker volume ls
 ```
 
