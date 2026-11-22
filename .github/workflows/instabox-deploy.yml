@@ -321,22 +321,19 @@ jobs:
             '
           # R2 does not implement S3 GetBucketPolicy. Use Cloudflare's native
           # public-access controls and verify both public access surfaces.
-          # Build the request body as a real JSON file (not shell-escaped inline text).
-          # Fail closed if required identifiers are absent or the payload is not valid JSON.
+          # Use Cloudflare's documented JSON request form for the managed r2.dev domain.
+          # Keep the body literal and explicit; this avoids an intermediate payload-file encoding path.
           : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
           : "${R2_IDENTITY_BUCKET:?R2_IDENTITY_BUCKET is required}"
           : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
           r2_managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/managed"
-          managed_payload="$RUNNER_TEMP/r2-managed-disable-payload.json"
           managed_response="$RUNNER_TEMP/r2-managed-disable.json"
-          jq -cn '{enabled:false}' > "$managed_payload"
-          jq -e '.enabled == false' "$managed_payload" >/dev/null
           managed_status="$(curl -sS --connect-timeout 5 --max-time 20 \
             -o "$managed_response" -w '%{http_code}' \
             -X PUT \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H 'Content-Type: application/json' \
-            --data-binary "@$managed_payload" \
+            --data-raw '{"enabled":false}' \
             "$r2_managed_url")"
           if [[ "$managed_status" != "200" ]] ||
              ! jq -e '.success == true and .result.enabled == false' "$managed_response" >/dev/null; then
