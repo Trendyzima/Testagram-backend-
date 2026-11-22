@@ -52,14 +52,14 @@ fi
 read -r -d '' REMOTE_COMMAND <<'REMOTE_OUTER' || true
 set -euo pipefail
 # Preserve the approved image digest across the detached InstaBox exec process.
-export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"
+# The image digest is embedded in DEPLOY_WEB_IMAGE inside REMOTE_SCRIPT.
 ROOT=/data/home/testagram
 mkdir -p "$ROOT/repos"
 cat > "$ROOT/deploy.sh" <<'REMOTE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT=/data/home/testagram
-DEPLOY_WEB_IMAGE="${TESTAGRAM_WEB_IMAGE:-}"
+DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"
 REPOS="$ROOT/repos"
 BACKEND="$REPOS/backend"
 DATACENTRE="$REPOS/data-centre"
@@ -985,6 +985,10 @@ echo "REMOTE_DEPLOY_STARTED"
 REMOTE_OUTER
 # Embed the already-validated digest before passing the command to InstaBox.
 REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"
+if ! grep -Fq "DEPLOY_WEB_IMAGE=\"$TESTAGRAM_WEB_IMAGE\"" <<<"$REMOTE_COMMAND"; then
+  echo "::error::Validated Flutter digest was not embedded in the remote deployment script."
+  exit 1
+fi
 
 if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then
   b2_endpoint="${B2_S3_ENDPOINT:-}" b2_region="${B2_S3_REGION:-}" b2_bucket="${B2_S3_BUCKET:-}"
