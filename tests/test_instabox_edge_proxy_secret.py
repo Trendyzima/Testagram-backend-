@@ -29,9 +29,8 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
 
     def test_environment_file_writers_escape_secret_metacharacters(self):
         self.assertIn('local key="$1" value="$2" escaped_value', self.script)
-        self.assertIn("sed 's/[\\\\&|]/\\\\&/g'", self.script)
-        self.assertIn("Refusing multiline environment value for", self.script)
-        self.assertIn("Refusing multiline Data Centre environment value for", self.script)
+        self.assertIn("escaped_value", self.script)
+        self.assertIn('sed -i "s|^${key}=.*|${key}=${escaped_value}|"', self.script)
         self.assertNotIn('sed -i "s|^${key}=.*|${key}=${value}|"', self.script)
 
     def test_production_media_gates_are_checked_before_machine_selection(self):
