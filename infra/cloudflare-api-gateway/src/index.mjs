@@ -45,7 +45,7 @@ function resolveOrigin(value) {
   return origin;
 }
 
-function trustedRequestHeaders(request) {
+function trustedRequestHeaders(request, edgeToken) {
   const headers = new Headers(request.headers);
   const connectionTokens = (headers.get("connection") || "")
     .split(",")
@@ -79,6 +79,7 @@ function trustedRequestHeaders(request) {
   headers.set("x-forwarded-proto", "https");
   headers.set("x-request-id", request.headers.get("cf-ray") || crypto.randomUUID());
   headers.set("x-testagram-edge", "cloudflare-api-gateway-v1");
+  headers.set("x-testagram-edge-token", edgeToken);
   return headers;
 }
 
@@ -95,7 +96,8 @@ export default {
     }
 
     const origin = resolveOrigin(env.APP_ORIGIN);
-    if (!origin) {
+    const edgeToken = env.EDGE_PROXY_SHARED_TOKEN;
+    if (!origin || !/^[a-f0-9]{64}$/i.test(edgeToken || "")) {
       return jsonError(503, "api_origin_misconfigured", "The Testagram API origin is not configured safely.");
     }
 
@@ -105,7 +107,7 @@ export default {
     const upstreamUrl = new URL(incoming.pathname + incoming.search, origin);
     const init = {
       method: request.method,
-      headers: trustedRequestHeaders(request),
+      headers: trustedRequestHeaders(request, edgeToken),
       redirect: "manual",
       cf: { cacheTtl: 0, cacheEverything: false },
     };
