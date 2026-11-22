@@ -83,7 +83,8 @@ jobs:
             echo "::error::Missing or invalid TESTAGRAM_EDGE_PROXY_SHARED_TOKEN production secret (expected 64 hexadecimal characters)."
             exit 1
           fi
-      - name: Verify production media feature gates
+      - name: Validate independent production media feature gates
+        id: media-gates
         env:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
@@ -95,11 +96,19 @@ jobs:
           }
           early_dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
           early_fresh_gate="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
-          if [[ "$early_dc_media_enabled" != "true" || "$early_fresh_gate" != "true" ]]; then
-            echo "::error::Production media gates are not enabled. Set DATA_CENTRE_MEDIA_ENABLED=true and FRESH_MEDIA_ENABLED=true as variables in the GitHub production environment."
+          for flag in "$early_dc_media_enabled" "$early_fresh_gate"; do
+            [[ "$flag" == true || "$flag" == false ]] || { echo "::error::Media feature gates must be true or false."; exit 1; }
+          done
+          if [[ "$early_dc_media_enabled" != "$early_fresh_gate" ]]; then
+            echo "::error::DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must match; refusing a partial media profile."
             exit 1
           fi
-          echo "Verified both required production media feature gates are enabled."
+          echo "media_enabled=$early_dc_media_enabled" >> "$GITHUB_OUTPUT"
+          if [[ "$early_dc_media_enabled" == true ]]; then
+            echo "Private media profile explicitly enabled; dedicated provider provisioning will run."
+          else
+            echo "Core-only deployment selected. Private media provisioning is skipped and identity registration remains fail-closed."
+          fi
 
       - name: Resolve and start the InstaBox machine
         id: machine
@@ -236,6 +245,7 @@ jobs:
           echo "machine_id=$machine_id" >> "$GITHUB_OUTPUT"
           echo "Verified intended InstaBox machine '$EXPECTED_MACHINE_NAME' is running and ready."
       - name: Ensure Data Centre R2 media and metadata buckets exist
+        if: steps.media-gates.outputs.media_enabled == 'true'
         id: r2-media-buckets
         env:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
@@ -255,10 +265,7 @@ jobs:
           normalize_flag() { printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]'; }
           dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
           fresh_gate_enabled="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
-          if [[ "$dc_media_enabled" != true || "$fresh_gate_enabled" != true ]]; then
-            echo "::error::Private media provisioning is blocked: DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must both be true GitHub Environment variables (production). Received DATA_CENTRE_MEDIA_ENABLED=$dc_media_enabled, FRESH_MEDIA_ENABLED=$fresh_gate_enabled."
-            exit 1
-          fi
+          [[ "$dc_media_enabled" == true && "$fresh_gate_enabled" == true ]] || { echo "::error::Internal workflow error: R2 provisioning ran without both media gates."; exit 1; }
           [[ -n "$R2_ENDPOINT" && -n "$R2_ACCESS_KEY_ID" && -n "$R2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing R2 S3 endpoint and key pair are required."; exit 1; }
           [[ "$R2_MEDIA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 media bucket name."; exit 1; }
           [[ "$R2_METADATA_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid R2 metadata bucket name."; exit 1; }
@@ -389,6 +396,7 @@ jobs:
           echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
 
       - name: Provision dedicated private B2 identity-evidence bucket
+        if: steps.media-gates.outputs.media_enabled == 'true'
         env:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
@@ -415,10 +423,7 @@ jobs:
           fi
           dc_media_enabled="$(normalize_flag "$DATA_CENTRE_MEDIA_ENABLED")"
           fresh_gate_enabled="$(normalize_flag "$FRESH_MEDIA_ENABLED")"
-          if [[ "$dc_media_enabled" != "true" || "$fresh_gate_enabled" != "true" ]]; then
-            echo "::error::B2 identity-evidence provisioning is blocked: DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must both be true GitHub Environment variables (production). Received DATA_CENTRE_MEDIA_ENABLED=$dc_media_enabled, FRESH_MEDIA_ENABLED=$fresh_gate_enabled."
-            exit 1
-          fi
+          [[ "$dc_media_enabled" == "true" && "$fresh_gate_enabled" == "true" ]] || { echo "::error::Internal workflow error: B2 provisioning ran without both media gates."; exit 1; }
           [[ -n "$B2_ENDPOINT" && -n "$B2_REGION" && -n "$B2_ACCESS_KEY_ID" && -n "$B2_SECRET_ACCESS_KEY" ]] || { echo "::error::Existing B2 endpoint, region and access key pair are required for the private identity-evidence bucket."; exit 1; }
           [[ "$B2_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::Invalid B2 identity-evidence bucket name."; exit 1; }
           [[ -n "$B2_MEDIA_BUCKET" && "$B2_BUCKET" != "$B2_MEDIA_BUCKET" && "$B2_BUCKET" != "testagram-production-backups" ]] || { echo "::error::Identity evidence must use a dedicated bucket, separate from media and backups."; exit 1; }

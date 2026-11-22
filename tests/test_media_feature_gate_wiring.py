@@ -17,7 +17,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         cls.env_example = (ROOT / "deploy/self-hosted/.env.example").read_text()
 
     def test_r2_bucket_provisioning_uses_the_same_normalized_media_gates_as_remote_deploy(self):
-        self.assertNotIn("if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'", self.workflow)
+        self.assertIn("if: steps.media-gates.outputs.media_enabled == 'true'", self.workflow)
         self.assertIn('DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || \'false\' }}', self.workflow)
         self.assertIn('FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || \'false\' }}', self.workflow)
         self.assertIn('normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}"', self.workflow)
@@ -40,7 +40,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         start = self.workflow.index("Provision dedicated private B2 identity-evidence bucket")
         end = self.workflow.index("Start deployment on the machine", start)
         step = self.workflow[start:end]
-        self.assertNotIn("if: ${{ vars.DATA_CENTRE_MEDIA_ENABLED", step)
+        self.assertIn("if: steps.media-gates.outputs.media_enabled == 'true'", step)
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", step)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", step)
         self.assertIn("normalize_flag", step)
@@ -50,8 +50,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_workflow_local_fresh_media_gate_name_does_not_shadow_step_environment(self):
         self.assertEqual(self.workflow.count('fresh_gate_enabled="$(normalize_flag'), 2)
         self.assertNotIn('fresh_media_enabled="$(normalize_flag', self.workflow)
-        self.assertIn('if [[ "$dc_media_enabled" != true || "$fresh_gate_enabled" != true ]]', self.workflow)
-        self.assertIn('if [[ "$dc_media_enabled" != "true" || "$fresh_gate_enabled" != "true" ]]', self.workflow)
+        self.assertIn('Internal workflow error: R2 provisioning ran without both media gates.', self.workflow)
+        self.assertIn('Internal workflow error: B2 provisioning ran without both media gates.', self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
 
     def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
@@ -104,7 +104,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", self.deployer)
         self.assertIn('normalize_boolean FRESH_MEDIA_ENABLED false', self.deployer)
         self.assertIn('normalize_boolean DATA_CENTRE_MEDIA_ENABLED false', self.deployer)
-        self.assertIn("Identity registration requires the private Data Centre media profile", self.deployer)
+        self.assertIn("identity registration remains fail-closed", self.deployer)
+        self.assertIn("Core service deployment may continue.", self.deployer)
         self.assertIn("Identity registration requires TESTAGRAM_TERMS_VERSION", self.deployer)
         self.assertIn("Identity registration requires TESTAGRAM_PRIVACY_VERSION", self.deployer)
         self.assertIn('write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"', self.deployer)

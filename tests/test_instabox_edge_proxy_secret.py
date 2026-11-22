@@ -34,14 +34,16 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         self.assertNotIn('sed -i "s|^${key}=.*|${key}=${value}|"', self.script)
 
     def test_production_media_gates_are_checked_before_machine_selection(self):
-        gate_step = self.workflow.index("      - name: Verify production media feature gates")
+        gate_step = self.workflow.index("      - name: Validate independent production media feature gates")
         machine_step = self.workflow.index("      - name: Resolve and start the InstaBox machine")
         self.assertLess(gate_step, machine_step)
         gate = self.workflow[gate_step:machine_step]
         self.assertIn("vars.DATA_CENTRE_MEDIA_ENABLED || 'false'", gate)
         self.assertIn("vars.FRESH_MEDIA_ENABLED || 'false'", gate)
-        self.assertIn('[[ "$early_dc_media_enabled" != "true" || "$early_fresh_gate" != "true" ]]', gate)
-        self.assertIn("GitHub production environment", gate)
+        self.assertIn('[[ "$early_dc_media_enabled" != "$early_fresh_gate" ]]', gate)
+        self.assertIn('echo "media_enabled=$early_dc_media_enabled" >> "$GITHUB_OUTPUT"', gate)
+        self.assertIn("Core-only deployment selected.", gate)
+        self.assertNotIn("exit 1", gate.split("if [[ \"$early_dc_media_enabled\" == true ]]; then", 1)[1])
 
     def test_machine_selection_is_pinned_to_the_intended_machine_name(self):
         start = self.workflow.index("      - name: Resolve and start the InstaBox machine")
