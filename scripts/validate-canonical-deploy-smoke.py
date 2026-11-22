@@ -38,14 +38,13 @@ assert "Canonical hostname verification handoff" in workflow
 assert "canonical Cloudflare routing workflow with API, Go CDN and apex origins" in workflow
 assert "steps.publish_apex.outputs.apex_url" in workflow
 assert "testagram-apex-edge" in workflow
-assert "Apex Caddy ingress passed health, www redirect and WebFinger checks" in workflow
+assert "Apex Caddy ingress passed health, www redirect and G3-closed WebFinger gate" in workflow
 
 assert ":8443 {" in caddy
 assert "handle /_testagram/edge-health {" in caddy
 assert 'respond `{"ok":true,"service":"testagram-apex-edge"}` 200' in caddy
-assert "reverse_proxy federation-api:8081" in caddy
-assert "header_up Host testagram.site" in caddy
-assert "header_up X-Forwarded-Host testagram.site" in caddy
+assert caddy.count('respond "Federation is disabled until locked G3 protocol acceptance passes." 503') == 2
+assert "reverse_proxy federation-api:8081" not in caddy
 
 print(
     "Backend origin smoke contract passed: Backend readiness is checked privately; "
