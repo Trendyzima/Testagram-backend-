@@ -2,15 +2,22 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
@@ -36,11 +43,16 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		id   string
 		role string
 	}{
-		{evidenceReviewerOne, "administrator"},
-		{evidenceReviewerTwo, "administrator"},
+		{evidenceReviewerOne, "identity_reviewer"},
+		{evidenceReviewerTwo, "identity_reviewer"},
 		{approverOne, "administrator"},
 		{approverTwo, "administrator"},
 	}
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "ops.example.test")
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://ops.example.test")
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-admin-webauthn-readiness-key-", 2))
+	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", strings.Repeat("testagram-admin-readiness-token-", 2))
+	admin := testApp(t)
 	for i, person := range staff {
 		email := fmt.Sprintf("identity-review-staff-%d-%s@example.test", i, person.id[:8])
 		username := fmt.Sprintf("reviewstaff_%d_%s", i, person.id[:8])
@@ -56,6 +68,149 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 			VALUES($1::uuid,$2,$1::uuid)`, person.id, person.role); err != nil {
 			t.Fatalf("grant native staff role: %v", err)
 		}
+
+		if _, err := conn.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
+			VALUES('ops.example.test',$1::uuid,decode(md5($1::text),'hex'))
+		`, person.id); err != nil {
+			t.Fatalf("insert staff WebAuthn user: %v", err)
+		}
+		credentialID := []byte("credential-" + person.id)
+		encryptedCredential, err := admin.encryptStaffCredential(&webauthn.Credential{
+			ID: credentialID,
+			PublicKey: []byte("test-public-key"),
+		})
+		if err != nil {
+			t.Fatalf("encrypt staff WebAuthn credential fixture: %v", err)
+		}
+		if _, err := conn.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_webauthn_credentials
+			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
+			VALUES('ops.example.test',$1::uuid,$2,$3,TRUE,FALSE)
+		`, person.id, credentialID, encryptedCredential); err != nil {
+			t.Fatalf("insert verified staff WebAuthn credential: %v", err)
+		}
+	}
+
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer health.Close()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open Admin Console readiness pool: %v", err)
+	}
+	defer pool.Close()
+	admin.database = pool
+	admin.apiHealthURL = health.URL
+	admin.client = health.Client()
+	readiness := admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
+		t.Fatalf("Admin Console rejected complete PostgreSQL WebAuthn readiness: %#v", readiness)
+	}
+
+	// A valid MFA elevation is accepted only while the exact authenticator
+	// used for the assertion remains active in PostgreSQL.
+	var reviewerEmail, nativeSessionID string
+	if err := conn.QueryRow(ctx, "SELECT email FROM testagram_auth.identities WHERE user_id=$1::uuid", evidenceReviewerOne).Scan(&reviewerEmail); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&nativeSessionID); err != nil {
+		t.Fatal(err)
+	}
+	nowUnix := time.Now().UTC().Unix()
+	accessClaims := nativeElevationClaims{
+		Subject: evidenceReviewerOne, Email: reviewerEmail, Role: "authenticated",
+		Issuer: "testagram-auth", Audience: "testagram-api",
+		IssuedAt: nowUnix - 60, ExpiresAt: nowUnix + 600,
+		TokenVersion: 1, SessionID: nativeSessionID,
+	}
+	accessHeader, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
+	accessPayload, _ := json.Marshal(accessClaims)
+	accessUnsigned := base64.RawURLEncoding.EncodeToString(accessHeader) + "." + base64.RawURLEncoding.EncodeToString(accessPayload)
+	accessMAC := hmac.New(sha256.New, []byte(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	_, _ = accessMAC.Write([]byte(accessUnsigned))
+	accessToken := accessUnsigned + "." + base64.RawURLEncoding.EncodeToString(accessMAC.Sum(nil))
+	reviewerCredentialID := []byte("credential-" + evidenceReviewerOne)
+	elevatedToken, _, err := admin.mintStaffElevation(authUser{ID: evidenceReviewerOne}, accessToken, reviewerCredentialID)
+	if err != nil {
+		t.Fatalf("mint test MFA elevation: %v", err)
+	}
+	stepUpSession := session{AccessToken: accessToken, ElevatedToken: elevatedToken}
+	stepUpResponse := httptest.NewRecorder()
+	if !admin.requireRecentStepUp(stepUpResponse, stepUpSession) {
+		t.Fatalf("Admin Console rejected active credential-bound MFA elevation: status=%d body=%s", stepUpResponse.Code, stepUpResponse.Body.String())
+	}
+	if _, err := conn.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_credentials
+		SET revoked_at=now()
+		WHERE user_id=$1::uuid AND rpid='ops.example.test' AND credential_id=$2
+	`, evidenceReviewerOne, reviewerCredentialID); err != nil {
+		t.Fatal(err)
+	}
+	stepUpResponse = httptest.NewRecorder()
+	if admin.requireRecentStepUp(stepUpResponse, stepUpSession) {
+		t.Fatal("Admin Console accepted MFA elevation after its WebAuthn credential was revoked")
+	}
+	if _, err := conn.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_credentials
+		SET revoked_at=NULL
+		WHERE user_id=$1::uuid AND rpid='ops.example.test' AND credential_id=$2
+	`, evidenceReviewerOne, reviewerCredentialID); err != nil {
+		t.Fatal(err)
+	}
+	// Dual-role staff must not satisfy both independent reviewer and approver
+	// groups, even when four credentialed staff accounts exist.
+	if _, err := conn.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by)
+		VALUES($1::uuid,'administrator',$2::uuid)
+	`, evidenceReviewerOne, approverOne); err != nil {
+		t.Fatalf("add overlapping staff role fixture: %v", err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); ready {
+		t.Fatalf("Admin Console counted a dual-role staff member in both independent groups: %#v", readiness)
+	}
+	if _, err := conn.Exec(ctx, `
+		DELETE FROM testagram_auth.staff_role_grants
+		WHERE user_id=$1::uuid AND role='administrator'
+	`, evidenceReviewerOne); err != nil {
+		t.Fatalf("remove overlapping staff role fixture: %v", err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
+		t.Fatalf("Admin Console did not recover after removing overlapping role: %#v", readiness)
+	}
+	readinessRequest := httptest.NewRequest(http.MethodGet, "/internal/webauthn/readiness", nil)
+	readinessRequest.Header.Set("Authorization", "Bearer "+os.Getenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN"))
+	readinessResponse := httptest.NewRecorder()
+	admin.handleInternalWebAuthnReadiness(readinessResponse, readinessRequest)
+	if readinessResponse.Code != http.StatusOK || !strings.Contains(readinessResponse.Body.String(), `"identity_review_ready":true`) {
+		t.Fatalf("Admin Console did not attest ready state: status=%d body=%s", readinessResponse.Code, readinessResponse.Body.String())
+	}
+	if _, err := conn.Exec(ctx, "UPDATE testagram_auth.staff_webauthn_credentials SET revoked_at=now() WHERE user_id=$1::uuid", approverTwo); err != nil {
+		t.Fatal(err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); ready {
+		t.Fatalf("Admin Console remained ready after an approver credential was revoked: %#v", readiness)
+	}
+	// Restore the credential after the negative-readiness assertion. The
+	// following approval-flow fixture must model two currently eligible
+	// approvers; leaving this credential revoked would correctly make the
+	// database approval guard reject the second decision.
+	if _, err := conn.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_credentials
+		SET revoked_at=NULL
+		WHERE user_id=$1::uuid AND rpid='ops.example.test'
+		  AND credential_id=$2 AND user_verified=TRUE AND clone_warning=FALSE
+	`, approverTwo, []byte("credential-"+approverTwo)); err != nil {
+		t.Fatalf("restore second approver credential after readiness negative test: %v", err)
+	}
+	readiness = admin.staffWebAuthnReadiness(ctx)
+	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
+		t.Fatalf("Admin Console did not recover after restoring the second approver credential: %#v", readiness)
 	}
 
 	var applicationID, requestID string
@@ -79,7 +234,17 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal review snapshot: %v", err)
 	}
-	digest := sha256.Sum256(rawPayload)
+	// Match the production request path: canonicalize through a generic JSON
+	// object so the digest is stable across PostgreSQL JSONB key ordering.
+	var payloadObject map[string]any
+	if err := json.Unmarshal(rawPayload, &payloadObject); err != nil {
+		t.Fatalf("decode review snapshot for canonical digest: %v", err)
+	}
+	canonicalPayload, err := json.Marshal(payloadObject)
+	if err != nil {
+		t.Fatalf("canonicalize review snapshot: %v", err)
+	}
+	digest := sha256.Sum256(canonicalPayload)
 
 	_, err = conn.Exec(ctx, `
 		INSERT INTO testagram_auth.native_sensitive_action_requests
@@ -90,6 +255,40 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	`, requestID, applicationID, string(rawPayload), hex.EncodeToString(digest[:]))
 	if err != nil {
 		t.Fatalf("insert native identity-pipeline request: %v", err)
+	}
+
+	// The application must refuse to record approval against a payload whose
+	// immutable digest does not match the JSONB snapshot read back from PostgreSQL.
+	var badDigestRequestID string
+	if err := conn.QueryRow(ctx, `
+		INSERT INTO testagram_auth.native_sensitive_action_requests
+		  (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256)
+		VALUES ('security.change',$1::uuid,'payload-digest-negative','Reject a mismatched immutable payload digest',
+		        '{"immutable":true}'::jsonb,repeat('f',64))
+		RETURNING id::text
+	`, evidenceReviewerOne).Scan(&badDigestRequestID); err != nil {
+		t.Fatalf("insert mismatched-digest request fixture: %v", err)
+	}
+	digestTx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin mismatched-digest decision: %v", err)
+	}
+	if _, _, _, err := recordSensitiveActionDecision(ctx, digestTx, badDigestRequestID, "security.change",
+		evidenceReviewerOne, approverOne, "ops.example.test", []byte("credential-"+approverOne),
+		"approved", "Reject a mismatched payload digest"); err == nil || !strings.Contains(err.Error(), "payload digest") {
+		_ = digestTx.Rollback(ctx)
+		t.Fatalf("mismatched payload digest decision error=%v; expected digest rejection", err)
+	}
+	_ = digestTx.Rollback(ctx)
+	var badDigestApprovalCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid
+	`, badDigestRequestID).Scan(&badDigestApprovalCount); err != nil {
+		t.Fatalf("count rejected mismatched-digest approvals: %v", err)
+	}
+	if badDigestApprovalCount != 0 {
+		t.Fatalf("mismatched payload digest produced %d approval rows; want zero", badDigestApprovalCount)
 	}
 
 	_, err = conn.Exec(ctx, `
@@ -165,7 +364,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin evidence-reviewer rejection transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", evidenceReviewerOne, "approved", "Evidence reviewer cannot approve account"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", evidenceReviewerOne, "ops.example.test", []byte("credential-"+evidenceReviewerOne), "approved", "Evidence reviewer cannot approve account"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("evidence reviewer was allowed to approve account activation")
 	}
@@ -175,7 +374,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin first account-approval transaction: %v", err)
 	}
-	state, applicationState, approvalCount, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "approved", "First independent account approval")
+	state, applicationState, approvalCount, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "ops.example.test", []byte("credential-"+approverOne), "approved", "First independent account approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("record first two-person decision: %v", err)
@@ -192,7 +391,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin duplicate account-approval transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "approved", "Duplicate account approval"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "ops.example.test", []byte("credential-"+approverOne), "approved", "Duplicate account approval"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("same approver was counted twice")
 	}
@@ -202,7 +401,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin second account-approval transaction: %v", err)
 	}
-	state, applicationState, approvalCount, err = recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverTwo, "approved", "Second independent account approval")
+	state, applicationState, approvalCount, err = recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverTwo, "ops.example.test", []byte("credential-"+approverTwo), "approved", "Second independent account approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("record second two-person decision and provisioning grant: %v", err)
@@ -213,6 +412,24 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit second account approval: %v", err)
+	}
+	var credentialBoundApprovals int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*)
+		FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid
+		  AND webauthn_rpid='ops.example.test'
+		  AND (
+		    (approver_user_id=$2::uuid AND webauthn_credential_id=$4)
+		    OR
+		    (approver_user_id=$3::uuid AND webauthn_credential_id=$5)
+		  )
+	`, requestID, approverOne, approverTwo,
+		[]byte("credential-"+approverOne), []byte("credential-"+approverTwo)).Scan(&credentialBoundApprovals); err != nil {
+		t.Fatalf("verify exact WebAuthn approval evidence: %v", err)
+	}
+	if credentialBoundApprovals != 2 {
+		t.Fatalf("exact credential-bound approvals=%d; want 2", credentialBoundApprovals)
 	}
 
 	var finalStatus, requestStatus string
@@ -259,7 +476,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin expired approval transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, expiredRequestID, "identity.approve", "", approverOne, "approved", "Expired approval must be rejected"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, expiredRequestID, "identity.approve", "", approverOne, "ops.example.test", []byte("credential-"+approverOne), "approved", "Expired approval must be rejected"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("expired identity approval request was accepted")
 	}

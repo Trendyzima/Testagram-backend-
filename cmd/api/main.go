@@ -26,9 +26,9 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/datacentreclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/federationoutbox"
-	"github.com/Trendyzima/Testagram-backend-/internal/freshapi"
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
+	moderationpkg "github.com/Trendyzima/Testagram-backend-/internal/moderation"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5"
@@ -55,7 +55,7 @@ type upstreamMetric struct {
 type service struct {
 	db                        *pgxpool.Pool
 	authEmailSender           func(context.Context, string, string, string) error
-	moderation                freshapi.ContentModeration
+	moderation                moderationpkg.ContentModeration
 	metricsMu                 sync.Mutex
 	routeMetrics              map[string]*requestMetric
 	capabilityMetrics         map[string]*requestMetric
@@ -74,18 +74,19 @@ type service struct {
 	mediaIntentFactory        *media.IntentFactory
 	dataCentreMedia           *datacentreclient.Client
 	identityEvidenceMedia     identityEvidenceMediaClient
-	// Set true only in code after real staff WebAuthn enrollment, verification, recovery and replay protection are implemented.
-	identityReviewWebAuthnReady bool
-	freshMediaEnabled           bool
-	cdnMediaAssertions          *mediaassertion.Issuer
-	cdnMediaBaseURL             string
-	cdnOriginAuthToken          string
-	cdnPurger                   *cdnPurger
-	freshMediaInternalToken     string
-	virtualStorage              *virtualstorage.Manager
-	mediaReplicator             *virtualstorage.Replicator
-	algorithm                   *algorithmclient.Client
-	replicationReceiver         http.Handler
+	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
+	identityReviewWebAuthnReady         bool
+	identityReviewWebAuthnPrerequisites func(context.Context) bool
+	freshMediaEnabled                   bool
+	cdnMediaAssertions                  *mediaassertion.Issuer
+	cdnMediaBaseURL                     string
+	cdnOriginAuthToken                  string
+	cdnPurger                           *cdnPurger
+	freshMediaInternalToken             string
+	virtualStorage                      *virtualstorage.Manager
+	mediaReplicator                     *virtualstorage.Replicator
+	algorithm                           *algorithmclient.Client
+	replicationReceiver                 http.Handler
 }
 
 type capabilityRequest struct {
@@ -920,7 +921,7 @@ func (s *service) capability(w http.ResponseWriter, r *http.Request) {
 	if body.Capability == "testagram.search.unified" && s.nativeUnifiedSearch(w, r, id, body.Input) {
 		return
 	}
-	if s.nativeCommunicationCapability(w, r, id, body) {
+	if s.nativeCommunicationCapabilityHardened(w, r, id, body) {
 		return
 	}
 	if s.nativeMPesaCapability(w, r, id, body) {
@@ -1265,11 +1266,11 @@ func main() {
 	if federationBackendToken != "" && len(federationBackendToken) < 32 {
 		log.Fatal("FEDERATION_BACKEND_INTERNAL_TOKEN must contain at least 32 characters")
 	}
-	moderation := freshapi.ContentModeration(nil)
+	moderation := moderationpkg.ContentModeration(nil)
 	moderationKey := strings.TrimSpace(os.Getenv("ONSPACE_AI_API_KEY"))
 	if moderationKey != "" {
 		moderationBase := env("ONSPACE_AI_BASE_URL", "https://ai.onspace.ai/v1")
-		configured, moderationErr := freshapi.NewHTTPModerationService(moderationBase, moderationKey, nil)
+		configured, moderationErr := moderationpkg.NewHTTPModerationService(moderationBase, moderationKey, nil)
 		if moderationErr != nil {
 			log.Fatalf("configure social post moderation: %v", moderationErr)
 		}
@@ -1290,7 +1291,12 @@ func main() {
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
 		federationPublicBaseURL: federationPublicBaseURL, replicationReceiver: replicationReceiver,
 	}
-	log.Printf("Native identity application intake remains disabled until staff WebAuthn step-up is implemented and verified")
+	svc.identityReviewWebAuthnReady = strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED")), "true")
+	if svc.identityReviewWebAuthnReady {
+		log.Printf("Native identity review policy gate is enabled; each application request must pass live PostgreSQL and Admin Console WebAuthn readiness attestation")
+	} else {
+		log.Printf("Native identity application intake remains disabled by TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED policy gate")
+	}
 	internalAddr := env("INTERNAL_LISTEN_ADDR", ":8082")
 	server := &http.Server{
 		Addr: addr, Handler: svc.routes(),

@@ -11,9 +11,9 @@ This document separates the current mainline implementation from the deployed pr
 - Admin Console staff login uses native Backend sessions and an encrypted `testagram-staff` cookie. Staff role grants and an MFA-enrollment marker are checked. Current step-up is password re-authentication only; TOTP/passkey verification and staff onboarding remain incomplete and closed.
 - Data Centre user-aware video/notification routes verify the same native access JWT and query the live PostgreSQL session/account state. The Data Centre platform API uses a separate internal service token.
 
-## Legacy Appwrite account handling
+## Historical identity records
 
-Appwrite is retained only as a legacy account-reconciliation source while existing accounts are mapped. `scripts/migrate-appwrite-identities.sql` does not export/import Appwrite passwords, does not auto-link by email, and does not disable Appwrite. Reconciled accounts are marked password-reset-required and must complete native password reset before using native credentials. Appwrite bearer tokens are not accepted as a fallback by the current native Backend API source.
+Historical external-provider identity mappings and audit rows are retained under the restricted `testagram_identity.historical_external_*` namespace. The offline reconciliation tool is `scripts/archive/legacy-identity-provider-import.sql`; it requires explicit source-account-to-canonical-UUID mappings, does not import source passwords and never matches accounts by email alone. Reconciled accounts must complete native password reset before using Testagram credentials. Historical source identifiers are not accepted as runtime credentials, and the production API has no external-session fallback.
 
 ## Required deployment configuration
 

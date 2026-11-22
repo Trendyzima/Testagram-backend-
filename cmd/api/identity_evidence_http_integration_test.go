@@ -266,8 +266,72 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "true")
 	t.Setenv("TESTAGRAM_TERMS_VERSION", "terms-http-v1")
 	t.Setenv("TESTAGRAM_PRIVACY_VERSION", "privacy-http-v1")
-	// Exercise the evidence lifecycle after the separate staff WebAuthn release capability is accepted.
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager, replicator: replicator}, identityReviewWebAuthnReady: true}
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("testagram-evidence-readiness-key-", 2))
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", "admin.testagram.example")
+	t.Setenv("TESTAGRAM_WEBAUTHN_ORIGINS", "https://admin.testagram.example")
+	readinessToken := strings.Repeat("testagram-evidence-readiness-token-", 2)
+	t.Setenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN", readinessToken)
+	readinessServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+readinessToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"identity_review_ready":  true,
+			"credentialed_staff":     4,
+			"credentialed_reviewers": 2,
+			"credentialed_approvers": 2,
+		})
+	}))
+	defer readinessServer.Close()
+	t.Setenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL", readinessServer.URL)
+	for i := 0; i < 4; i++ {
+		var staffID string
+		if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&staffID); err != nil {
+			t.Fatal(err)
+		}
+		staffEmail := fmt.Sprintf("evidence-staff-%d-%s@example.test", i, staffID[:8])
+		staffUsername := fmt.Sprintf("evstaff_%d_%s", i, staffID[:8])
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
+			VALUES($1::uuid,$2,$3,'ci-only-invalid-password-hash',now())
+		`, staffID, staffEmail, staffUsername); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_principals(user_id,enabled,mfa_enrolled_at,enabled_at,enabled_by)
+			VALUES($1::uuid,TRUE,now(),now(),$1::uuid)
+		`, staffID); err != nil {
+			t.Fatal(err)
+		}
+		role := "identity_reviewer"
+		if i >= 2 {
+			role = "administrator"
+		}
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by)
+			VALUES($1::uuid,$2,$1::uuid)
+		`, staffID, role); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
+			VALUES($1,$2::uuid,decode(md5($2::text),'hex'))
+		`, "admin.testagram.example", staffID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_webauthn_credentials
+			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
+			VALUES($1,$2::uuid,decode(md5($2::text),'hex'),decode(md5($2::text||'credential'),'hex'),TRUE,FALSE)
+		`, "admin.testagram.example", staffID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// This test isolates the evidence-media lifecycle after the separate
+	// PostgreSQL/Admin Console readiness integration has passed. The registration
+	// HTTP journey exercises the real readiness gate without a test override.
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager, replicator: replicator}, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
 	router := svc.routes()
 
 	idempotencyKey, err := authRandomToken()

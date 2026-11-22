@@ -10,10 +10,126 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
+	"github.com/jackc/pgx/v5"
 )
+
+// identityReviewWebAuthnPrerequisitesReady is the Backend-side half of the
+// Admin Console readiness contract. It requires real, active, user-verified
+// credentials for at least four eligible staff, allowing two reviewers and two
+// approvers to be selected as disjoint pairs. Enrollment timestamps alone are insufficient.
+func identityReviewWebAuthnPrerequisitesReady(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}) bool {
+	if db == nil || len(strings.TrimSpace(env("TESTAGRAM_AUTH_JWT_SECRET", ""))) < 32 {
+		return false
+	}
+	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	origins := strings.FieldsFunc(os.Getenv("TESTAGRAM_WEBAUTHN_ORIGINS"), func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n'
+	})
+	if rpid == "" || len(origins) == 0 {
+		return false
+	}
+	for _, origin := range origins {
+		if !strings.HasPrefix(origin, "https://") &&
+			!(strings.HasPrefix(origin, "http://localhost") || strings.HasPrefix(origin, "http://127.0.0.1")) {
+			return false
+		}
+	}
+	var credentialedStaff, reviewers, approvers int
+	err := db.QueryRow(ctx, `WITH eligible_staff AS (
+		SELECT sp.user_id,
+		       bool_or(rg.role='identity_reviewer') AS is_reviewer,
+		       bool_or(rg.role IN ('owner','administrator')) AS is_approver
+		FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+		JOIN testagram_auth.staff_webauthn_credentials wc
+		  ON wc.user_id=sp.user_id AND wc.rpid=$1 AND wc.revoked_at IS NULL
+		   AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+		WHERE sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		  AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+		  AND rg.role IN ('owner','administrator','identity_reviewer')
+		GROUP BY sp.user_id
+	)
+	SELECT count(*) FILTER (WHERE is_reviewer OR is_approver),
+	       count(*) FILTER (WHERE is_reviewer AND NOT is_approver),
+	       count(*) FILTER (WHERE is_approver AND NOT is_reviewer)
+	FROM eligible_staff`, rpid).Scan(&credentialedStaff, &reviewers, &approvers)
+	if err != nil || credentialedStaff < 4 || reviewers < 2 || approvers < 2 {
+		return false
+	}
+	// Require a live attestation from the Admin Console process itself. This
+	// verifies its RP configuration, encryption key, schema privileges and
+	// credential store before the API accepts identity applications.
+	readinessToken := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_READINESS_TOKEN"))
+	if len(readinessToken) < 32 {
+		return false
+	}
+	expectedRPFingerprint := nativeauth.WebAuthnConfigurationFingerprint(rpid, origins)
+	if expectedRPFingerprint == "" {
+		return false
+	}
+	readinessURL := strings.TrimSpace(os.Getenv("TESTAGRAM_ADMIN_CONSOLE_READINESS_URL"))
+	if readinessURL == "" {
+		readinessURL = "http://admin-console:8090/internal/webauthn/readiness"
+	}
+	parsedURL, parseErr := url.Parse(readinessURL)
+	if parseErr != nil || parsedURL.Scheme != "http" ||
+		parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" ||
+		parsedURL.EscapedPath() != "/internal/webauthn/readiness" {
+		return false
+	}
+	// The readiness bearer is a shared service secret. Never forward it to an
+	// arbitrary URL from environment configuration: production may address
+	// only the private Docker service, while loopback is allowed for tests.
+	hostname := strings.ToLower(strings.TrimSuffix(parsedURL.Hostname(), "."))
+	privateAdminService := hostname == "admin-console" && parsedURL.Port() == "8090"
+	loopbackTest := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL")) != "" &&
+		(hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1") && parsedURL.Port() != ""
+	if !privateAdminService && !loopbackTest {
+		return false
+	}
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if reqErr != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+readinessToken)
+	client := &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, requestErr := client.Do(req)
+	if requestErr != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return false
+	}
+	var attestation struct {
+		IdentityReviewReady        bool   `json:"identity_review_ready"`
+		CredentialedStaff          int    `json:"credentialed_staff"`
+		CredentialedReviewers      int    `json:"credentialed_reviewers"`
+		CredentialedApprovers      int    `json:"credentialed_approvers"`
+		RPConfigurationFingerprint string `json:"rp_configuration_fingerprint"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&attestation) != nil {
+		return false
+	}
+	return attestation.IdentityReviewReady &&
+		attestation.CredentialedStaff >= 4 &&
+		attestation.CredentialedReviewers >= 2 &&
+		attestation.CredentialedApprovers >= 2 &&
+		attestation.RPConfigurationFingerprint == expectedRPFingerprint
+}
 
 type identityReviewDecisionInput struct {
 	Decision   string `json:"decision"`
@@ -47,7 +163,7 @@ func requireLiveIdentityReviewMFA(claims authClaims) error {
 	now := time.Now().Unix()
 	const maxAgeSeconds = int64(5 * 60)
 	const allowedFutureClockSkewSeconds = int64(60)
-	if claims.MFAAuthenticatedAt <= 0 ||
+	if claims.MFAAuthenticatedAt <= 0 || claims.MFAAuthenticatorID == "" ||
 		claims.MFAAuthenticatedAt > now+allowedFutureClockSkewSeconds ||
 		now-claims.MFAAuthenticatedAt > maxAgeSeconds {
 		return errors.New("fresh phishing-resistant MFA proof is not present; identity review remains disabled")
@@ -73,6 +189,11 @@ func (s *service) identityReviewer(r *http.Request) (nativeIdentityReviewer, int
 	if err != nil {
 		return nativeIdentityReviewer{}, status, errors.New("native staff session is invalid or expired")
 	}
+	credentialID, credentialErr := hex.DecodeString(claims.MFAAuthenticatorID)
+	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	if credentialErr != nil || len(credentialID) == 0 || rpid == "" {
+		return nativeIdentityReviewer{}, http.StatusUnauthorized, errors.New("fresh WebAuthn credential proof is missing")
+	}
 	var allowed bool
 	err = s.db.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -80,17 +201,20 @@ func (s *service) identityReviewer(r *http.Request) (nativeIdentityReviewer, int
 			FROM testagram_auth.staff_principals sp
 			JOIN testagram_auth.staff_role_grants rg
 			  ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+			JOIN testagram_auth.staff_webauthn_credentials wc
+			  ON wc.user_id=sp.user_id AND wc.rpid=$3 AND wc.credential_id=$2
+			 AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
 			WHERE sp.user_id=$1::uuid
 			  AND sp.enabled=TRUE
 			  AND sp.mfa_enrolled_at IS NOT NULL
-			  AND rg.role IN ('owner','administrator','identity_reviewer')
+			  AND rg.role = 'identity_reviewer'
 		)
-	`, claims.Subject).Scan(&allowed)
+	`, claims.Subject, credentialID, rpid).Scan(&allowed)
 	if err != nil {
 		return nativeIdentityReviewer{}, http.StatusServiceUnavailable, errors.New("native staff authorization is unavailable")
 	}
 	if !allowed {
-		return nativeIdentityReviewer{}, http.StatusForbidden, errors.New("enabled Testagram identity reviewer role and enrolled MFA are required")
+		return nativeIdentityReviewer{}, http.StatusForbidden, errors.New("enabled Testagram identity reviewer role and the exact active WebAuthn credential used for MFA are required")
 	}
 	if err := requireLiveIdentityReviewMFA(claims); err != nil {
 		return nativeIdentityReviewer{}, http.StatusServiceUnavailable, err

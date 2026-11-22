@@ -1,11 +1,13 @@
 package main
 
 import (
-	"fmt"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
-	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -45,25 +47,48 @@ func TestUnknownSensitiveActionIsRejected(t *testing.T) {
 }
 
 func TestRecentStepUpRequiresBackendSignedWebAuthnElevation(t *testing.T) {
- a:=testApp(t)
- t.Setenv("TESTAGRAM_AUTH_JWT_SECRET",strings.Repeat("s",48))
- user:=authUser{ID:"11111111-1111-4111-8111-111111111111",StaffRole:"owner"}
- now:=time.Now().UTC().Unix()
- accessClaims:=nativeElevationClaims{Subject:user.ID,Email:"owner@testagram.invalid",Role:"authenticated",Issuer:"testagram-auth",Audience:"testagram-api",IssuedAt:now-60,ExpiresAt:now+600,TokenVersion:3,SessionID:"33333333-3333-4333-8333-333333333333"}
- accessPayload,_:=json.Marshal(accessClaims)
- accessToken:="header."+base64.RawURLEncoding.EncodeToString(accessPayload)+".signature"
- token,_,err:=a.mintStaffElevation(user,accessToken);if err!=nil{t.Fatal(err)}
- validSession:=session{AccessToken:accessToken,ElevatedToken:token}
- other:=accessClaims;other.Subject="22222222-2222-4222-8222-222222222222"
- otherPayload,_:=json.Marshal(other)
- for _,tc:=range []struct{name string;s session;want bool}{
-  {"valid native elevated proof",validSession,true},
-  {"missing proof",session{AccessToken:accessToken},false},
-  {"tampered proof",session{AccessToken:accessToken,ElevatedToken:token+"x"},false},
-  {"proof bound to another identity",session{AccessToken:"header."+base64.RawURLEncoding.EncodeToString(otherPayload)+".signature",ElevatedToken:token},false},
- }{
-  t.Run(tc.name,func(t *testing.T){w:=httptest.NewRecorder();got:=a.requireRecentStepUp(w,tc.s);if got!=tc.want{t.Fatalf("requireRecentStepUp()=%v want %v; status=%d",got,tc.want,w.Code)}})
- }
+	a := testApp(t)
+	secret := strings.Repeat("s", 48)
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", secret)
+	user := authUser{ID: "11111111-1111-4111-8111-111111111111", StaffRole: "owner"}
+	now := time.Now().UTC().Unix()
+	accessClaims := nativeElevationClaims{
+		Subject: user.ID, Email: "owner@testagram.invalid", Role: "authenticated",
+		Issuer: "testagram-auth", Audience: "testagram-api", IssuedAt: now - 60,
+		ExpiresAt: now + 600, TokenVersion: 3, SessionID: "33333333-3333-4333-8333-333333333333",
+	}
+	accessPayload, _ := json.Marshal(accessClaims)
+	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
+	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(accessPayload)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(unsigned))
+	accessToken := unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	token, _, err := a.mintStaffElevation(user, accessToken, []byte("test-authenticator-id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	validSession := session{AccessToken: accessToken, ElevatedToken: token}
+	other := accessClaims
+	other.Subject = "22222222-2222-4222-8222-222222222222"
+	otherPayload, _ := json.Marshal(other)
+	for _, tc := range []struct {
+		name string
+		s    session
+		want bool
+	}{
+		{"valid native elevated proof", validSession, true},
+		{"missing proof", session{AccessToken: accessToken}, false},
+		{"tampered proof", session{AccessToken: accessToken, ElevatedToken: token + "x"}, false},
+		{"proof bound to another identity", session{AccessToken: "header." + base64.RawURLEncoding.EncodeToString(otherPayload) + ".signature", ElevatedToken: token}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateRecentStepUpToken(tc.s, []byte(secret), time.Now().UTC())
+			got := err == nil
+			if got != tc.want {
+				t.Fatalf("validateRecentStepUpToken() valid=%v want %v; err=%v", got, tc.want, err)
+			}
+		})
+	}
 }
 
 func TestNormalizeSensitiveDecision(t *testing.T) {
@@ -95,4 +120,34 @@ func TestServiceCredentialMatches(t *testing.T) {
 	if serviceCredentialMatches(strings.Repeat("0",64),key) { t.Fatal("incorrect service key was accepted") }
 	if serviceCredentialMatches(encoded,nil) { t.Fatal("missing configured service key was accepted") }
 	if serviceCredentialMatches(strings.Repeat("z",64),key) { t.Fatal("non-hex service key was accepted") }
+}
+
+func TestStaffPermissionMutationRemainsClosedUntilTwoPersonExecutorExists(t *testing.T) {
+	source, err := os.ReadFile("security.go")
+	if err != nil {
+		t.Fatalf("read staff security handlers: %v", err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (a *app) handleSetStaffPermission")
+	if start < 0 {
+		t.Fatal("staff permission handler is missing")
+	}
+	relativeEnd := strings.Index(text[start:], "\nfunc (a *app) handleStaffList")
+	if relativeEnd < 0 {
+		t.Fatal("could not isolate staff permission handler")
+	}
+	handler := text[start : start+relativeEnd]
+	if !strings.Contains(handler, "http.StatusNotImplemented") ||
+		!strings.Contains(handler, "two-person approval executor") {
+		t.Fatal("staff permission changes must remain explicitly closed until two-person execution exists")
+	}
+	for _, forbidden := range []string{
+		"native_staff_permission_overrides",
+		"INSERT INTO",
+		"UPDATE testagram_auth",
+	} {
+		if strings.Contains(handler, forbidden) {
+			t.Fatalf("staff permission handler must not mutate permissions directly; found %q", forbidden)
+		}
+	}
 }

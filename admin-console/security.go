@@ -87,31 +87,91 @@ func (a *app) requirePermission(w http.ResponseWriter, r *http.Request, permissi
 	if !allowed { writeJSON(w, http.StatusForbidden, map[string]string{"error":"Your staff account does not have permission for this action"}); return session{}, authUser{}, false }
 	return s, user, true
 }
-func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
-	parts:=strings.Split(s.ElevatedToken,".")
-	if len(parts)!=3 { writeJSON(w,401,map[string]string{"error":"A verified WebAuthn elevation is required"});return false }
-	secret:=[]byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
-	if len(secret)<32 { writeJSON(w,503,map[string]string{"error":"Native MFA signing key unavailable"});return false }
-	headerBytes,err:=base64.RawURLEncoding.DecodeString(parts[0]);var header struct{Algorithm string `json:"alg"`;Type string `json:"typ"`}
-	if err!=nil||json.Unmarshal(headerBytes,&header)!=nil||header.Algorithm!="HS256"||header.Type!="JWT" { writeJSON(w,401,map[string]string{"error":"Invalid MFA token header"});return false }
-	mac:=hmac.New(sha256.New,secret);_,_=mac.Write([]byte(parts[0]+"."+parts[1]))
-	sig,err:=base64.RawURLEncoding.DecodeString(parts[2])
-	if err!=nil||!hmac.Equal(sig,mac.Sum(nil)){writeJSON(w,401,map[string]string{"error":"Invalid MFA elevation signature"});return false}
-	payload,err:=base64.RawURLEncoding.DecodeString(parts[1]);var claims nativeElevationClaims
-	if err!=nil||json.Unmarshal(payload,&claims)!=nil {writeJSON(w,401,map[string]string{"error":"Invalid MFA elevation claims"});return false}
-	accessParts:=strings.Split(s.AccessToken,".");if len(accessParts)!=3{writeJSON(w,401,map[string]string{"error":"Native session binding unavailable"});return false}
-	accessPayload,e:=base64.RawURLEncoding.DecodeString(accessParts[1]);var native nativeElevationClaims
-	if e!=nil||json.Unmarshal(accessPayload,&native)!=nil {writeJSON(w,401,map[string]string{"error":"Native session binding unavailable"});return false}
-	now:=time.Now().UTC().Unix()
-	if claims.Issuer!="testagram-auth"||claims.Audience!="testagram-api"||claims.Role!="authenticated"||
-		claims.Subject==""||claims.Subject!=native.Subject||claims.SessionID==""||claims.SessionID!=native.SessionID||
-		claims.TokenVersion<1||claims.TokenVersion!=native.TokenVersion||
-		claims.IssuedAt<=0||claims.IssuedAt>now+60||claims.ExpiresAt<=now||claims.ExpiresAt<=claims.IssuedAt||
-		claims.ExpiresAt-claims.IssuedAt>300||claims.MFAAuthenticatedAt<=0||
-		claims.MFAAuthenticatedAt>now+60||now-claims.MFAAuthenticatedAt>300 {
-		writeJSON(w,401,map[string]string{"error":"Expired or invalid native MFA elevation"});return false
+func validateRecentStepUpToken(s session, secret []byte, now time.Time) (nativeElevationClaims, error) {
+	var claims nativeElevationClaims
+	parts := strings.Split(s.ElevatedToken, ".")
+	if len(parts) != 3 || len(secret) < 32 {
+		return claims, errors.New("a verified WebAuthn elevation is required")
 	}
-	return true
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	var header struct {
+		Algorithm string `json:"alg"`
+		Type      string `json:"typ"`
+	}
+	if err != nil || json.Unmarshal(headerBytes, &header) != nil || header.Algorithm != "HS256" || header.Type != "JWT" {
+		return claims, errors.New("invalid MFA token header")
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) {
+		return claims, errors.New("invalid MFA elevation signature")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || json.Unmarshal(payload, &claims) != nil {
+		return claims, errors.New("invalid MFA elevation claims")
+	}
+	accessParts := strings.Split(s.AccessToken, ".")
+	if len(accessParts) != 3 {
+		return claims, errors.New("native session binding unavailable")
+	}
+	accessPayload, err := base64.RawURLEncoding.DecodeString(accessParts[1])
+	var native nativeElevationClaims
+	if err != nil || json.Unmarshal(accessPayload, &native) != nil {
+		return claims, errors.New("native session binding unavailable")
+	}
+	nowUnix := now.UTC().Unix()
+	if claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" || claims.Role != "authenticated" ||
+		claims.Subject == "" || claims.Subject != native.Subject || claims.SessionID == "" || claims.SessionID != native.SessionID ||
+		claims.TokenVersion < 1 || claims.TokenVersion != native.TokenVersion ||
+		claims.IssuedAt <= 0 || claims.IssuedAt > nowUnix+60 || claims.ExpiresAt <= nowUnix || claims.ExpiresAt <= claims.IssuedAt ||
+		claims.ExpiresAt-claims.IssuedAt > 300 || claims.MFAAuthenticatedAt <= 0 || claims.MFAAuthenticatorID == "" ||
+		claims.MFAAuthenticatedAt > nowUnix+60 || nowUnix-claims.MFAAuthenticatedAt > 300 {
+		return claims, errors.New("expired or invalid native MFA elevation")
+	}
+	return claims, nil
+}
+
+func (a *app) requireRecentStepUpClaims(w http.ResponseWriter, s session) (nativeElevationClaims, bool) {
+	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	claims, err := validateRecentStepUpToken(s, secret, time.Now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return nativeElevationClaims{}, false
+	}
+	credentialID, err := hex.DecodeString(claims.MFAAuthenticatorID)
+	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	if err != nil || len(credentialID) == 0 || rpid == "" || a.database == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential bound to this elevation is unavailable"})
+		return nativeElevationClaims{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var active bool
+	err = a.database.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM testagram_auth.staff_principals sp
+			JOIN testagram_auth.staff_webauthn_credentials wc
+			  ON wc.user_id=sp.user_id AND wc.rpid=$2 AND wc.credential_id=$3
+			 AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+			WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
+		)
+	`, claims.Subject, rpid, credentialID).Scan(&active)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "WebAuthn credential status is unavailable"})
+		return nativeElevationClaims{}, false
+	}
+	if !active {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential used for MFA has been revoked or is no longer trusted"})
+		return nativeElevationClaims{}, false
+	}
+	return claims, true
+}
+
+func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
+	_, ok := a.requireRecentStepUpClaims(w, s)
+	return ok
 }
 
 func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request) {
@@ -309,15 +369,16 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	return nextStatus, nil
 }
 
-func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, decision, reason string) (string, string, int, error) {
+func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, webauthnRPID string, webauthnCredentialID []byte, decision, reason string) (string, string, int, error) {
 	var actionType, requesterID, requesterService, requestStatus, targetReference string
 	var payload []byte
+	var payloadDigest string
 	err := tx.QueryRow(ctx, `
-		SELECT action_type, COALESCE(requested_by_user_id::text,''), requested_by_service, status, target_reference, payload
+		SELECT action_type, COALESCE(requested_by_user_id::text,''), requested_by_service, status, target_reference, payload, payload_sha256
 		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 		FOR UPDATE
-	`, requestID).Scan(&actionType, &requesterID, &requesterService, &requestStatus, &targetReference, &payload)
+	`, requestID).Scan(&actionType, &requesterID, &requesterService, &requestStatus, &targetReference, &payload, &payloadDigest)
 	if err != nil || requestStatus != "pending" {
 		return "", "", 0, errors.New("approval request is missing, expired or no longer pending")
 	}
@@ -333,11 +394,27 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		return "", "", 0, errors.New("unsupported sensitive-action decision")
 	}
 
+	if strings.TrimSpace(webauthnRPID) == "" || len(webauthnCredentialID) < 1 {
+		return "", "", 0, errors.New("exact WebAuthn step-up credential is required")
+	}
+	var payloadValue any
+	if err := json.Unmarshal(payload, &payloadValue); err != nil {
+		return "", "", 0, errors.New("approval request payload is not valid JSON")
+	}
+	canonicalPayload, err := json.Marshal(payloadValue)
+	if err != nil {
+		return "", "", 0, errors.New("approval request payload cannot be canonicalized")
+	}
+	payloadHash := sha256.Sum256(canonicalPayload)
+	if !hmac.Equal([]byte(payloadDigest), []byte(hex.EncodeToString(payloadHash[:]))) {
+		return "", "", 0, errors.New("approval request payload digest does not match its immutable payload")
+	}
+
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_auth.native_sensitive_action_approvals
-		  (request_id, approver_user_id, decision, reason)
-		VALUES ($1::uuid, $2, $3, $4)
-	`, requestID, approverID, decision, reason); err != nil {
+		  (request_id, approver_user_id, decision, reason, webauthn_rpid, webauthn_credential_id)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+	`, requestID, approverID, decision, reason, webauthnRPID, webauthnCredentialID); err != nil {
 		return "", "", 0, errors.New("approver has already decided this request or the decision could not be recorded")
 	}
 
@@ -439,7 +516,18 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if !a.requireRecentStepUp(w, s) {
+	stepUpClaims, stepUpOK := a.requireRecentStepUpClaims(w, s)
+	if !stepUpOK {
+		return
+	}
+	if stepUpClaims.Subject != approver.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "WebAuthn elevation does not belong to the authenticated staff principal"})
+		return
+	}
+	webauthnCredentialID, credentialErr := hex.DecodeString(stepUpClaims.MFAAuthenticatorID)
+	webauthnRPID := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	if credentialErr != nil || len(webauthnCredentialID) < 16 || webauthnRPID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Exact WebAuthn authenticator evidence is unavailable"})
 		return
 	}
 	if allowed, rateErr := a.consumeAdminRateLimit(ctx, approver.ID, "sensitive-decision", 30, time.Hour); rateErr != nil {
@@ -461,7 +549,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	state, applicationState, count, err := recordSensitiveActionDecision(ctx, tx, id, action, requester, approver.ID, input.Decision, input.Reason)
+	state, applicationState, count, err := recordSensitiveActionDecision(ctx, tx, id, action, requester, approver.ID, webauthnRPID, webauthnCredentialID, input.Decision, input.Reason)
 	if err == nil {
 		err = tx.Commit(ctx)
 	}
@@ -540,46 +628,23 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 }
 
 
-type permissionGrantInput struct {
-	Permission string `json:"permission"`
-	Granted bool `json:"granted"`
-	Reason string `json:"reason"`
-}
-
 func (a *app) handleSetStaffPermission(w http.ResponseWriter, r *http.Request) {
-	s, actor, ok := a.requireStaff(w, r, "owner")
-	if !ok { return }
-	if !a.requireRecentStepUp(w,s) { return }
-	target:=r.PathValue("id")
-	if len(target)<1 || len(target)>36 { writeJSON(w,400,map[string]string{"error":"Invalid staff user ID"}); return }
-	var input permissionGrantInput
-	if !decodeBody(w,r,&input) { return }
-	input.Permission=strings.TrimSpace(input.Permission)
-	input.Reason=strings.TrimSpace(input.Reason)
-	if input.Permission=="" || len(input.Permission)>100 || len(input.Reason)<12 || len(input.Reason)>500 {
-		writeJSON(w,400,map[string]string{"error":"Permission and a reason of at least 12 characters are required"}); return
+	s, _, ok := a.requireStaff(w, r, "owner")
+	if !ok {
+		return
 	}
-	if input.Permission=="staff.manage" { writeJSON(w,403,map[string]string{"error":"Staff management remains reserved to the Master owner"}); return }
-	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
-	tx,err:=a.database.Begin(ctx)
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
-	defer func(){_ = tx.Rollback(context.Background())}()
-	var exists bool
-	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_principals WHERE user_id=$1::uuid AND enabled=TRUE AND mfa_enrolled_at IS NOT NULL)",target).Scan(&exists)
-	if err!=nil || !exists { writeJSON(w,404,map[string]string{"error":"Staff account not found"}); return }
-	err=tx.QueryRow(ctx,"SELECT EXISTS(SELECT 1 FROM testagram_auth.admin_permissions WHERE permission_key=$1)",input.Permission).Scan(&exists)
-	if err!=nil || !exists { writeJSON(w,400,map[string]string{"error":"Unknown permission"}); return }
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_staff_permission_overrides(user_id,permission_key,granted,reason,changed_by_user_id) VALUES($1::uuid,$2,$3,$4,$5::uuid) ON CONFLICT(user_id,permission_key) DO UPDATE SET granted=EXCLUDED.granted,reason=EXCLUDED.reason,changed_by_user_id=EXCLUDED.changed_by_user_id,created_at=now()",target,input.Permission,input.Granted,input.Reason,actor.ID)
-	if err==nil {
-		_,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,metadata) VALUES($1,'staff.permission_changed',$2,jsonb_build_object('permission',$3,'granted',$4,'reason',$5))",actor.ID,target,input.Permission,input.Granted,input.Reason)
+	if !a.requireRecentStepUp(w, s) {
+		return
 	}
-	if err==nil { err=tx.Commit(ctx) }
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely update staff permissions"}); return }
-	writeJSON(w,200,map[string]any{"ok":true,"user_id":target,"permission":input.Permission,"granted":input.Granted})
+
+	// The approval ledger currently records two-person decisions but does not
+	// atomically execute staff permission changes after the second approval.
+	// Keep this mutation closed rather than allowing a single owner to write
+	// the permission override table directly.
+	writeJSON(w, http.StatusNotImplemented, map[string]string{
+		"error": "Native staff permission changes remain disabled until a two-person approval executor atomically applies approved changes. No direct permission mutation is permitted.",
+	})
 }
-
-
-type staffRoleInput struct { Role string `json:"role"` }
 
 func (a *app) handleStaffList(w http.ResponseWriter,r *http.Request) {
 	s,_,ok:=a.requireStaff(w,r,"owner"); if !ok { return }

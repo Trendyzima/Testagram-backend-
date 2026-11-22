@@ -64,9 +64,15 @@ services:
       - ../../migrations/20261120_native_verification_decider.sql:/docker-entrypoint-initdb.d/056_native_verification_decider.sql:ro
       - ../../migrations/20261122_testagram_mail_outbox.sql:/docker-entrypoint-initdb.d/057_testagram_mail_outbox.sql:ro
       - ../../migrations/20261123_testagram_mail_outbox_runtime_role.sql:/docker-entrypoint-initdb.d/058_testagram_mail_outbox_runtime_role.sql:ro
+      - ../../migrations/20261120_native_identity_historical_account_archive.sql:/docker-entrypoint-initdb.d/058a_native_identity_historical_account_archive.sql:ro
+      - ../../migrations/20261120_native_identity_historical_staff_archive.sql:/docker-entrypoint-initdb.d/058b_native_identity_historical_staff_archive.sql:ro
+      - ../../migrations/20261120_native_identity_historical_admin_archive.sql:/docker-entrypoint-initdb.d/058c_native_identity_historical_admin_archive.sql:ro
+      - ../../migrations/20261120_native_identity_historical_attribution_archive.sql:/docker-entrypoint-initdb.d/058d_native_identity_historical_attribution_archive.sql:ro
       - ../../migrations/20261120_native_identity_approval_circuit.sql:/docker-entrypoint-initdb.d/059_native_identity_approval_circuit.sql:ro
       - ../../migrations/20261121_native_identity_intake_optional_fingerprint.sql:/docker-entrypoint-initdb.d/20261121_native_identity_intake_optional_fingerprint.sql:ro
       - ../../migrations/20261121_native_staff_webauthn.sql:/docker-entrypoint-initdb.d/060_native_staff_webauthn.sql:ro
+      - ../../migrations/061_native_sensitive_action_integrity.sql:/docker-entrypoint-initdb.d/061_native_sensitive_action_integrity.sql:ro
+      - ../../migrations/062_testagram_knowledge_engine.sql:/docker-entrypoint-initdb.d/062_testagram_knowledge_engine.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
@@ -155,6 +161,11 @@ services:
       INTERNAL_LISTEN_ADDR: ":8082"
       DATABASE_URL: postgres://${POSTGRES_USER:-testagram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-testagram}?sslmode=disable
       TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:-}
+      TESTAGRAM_WEBAUTHN_READINESS_TOKEN: ${TESTAGRAM_WEBAUTHN_READINESS_TOKEN:-}
+      TESTAGRAM_ADMIN_CONSOLE_READINESS_URL: ${TESTAGRAM_ADMIN_CONSOLE_READINESS_URL:-http://admin-console:8090/internal/webauthn/readiness}
+      TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: ${TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:-false}
+      TESTAGRAM_WEBAUTHN_RPID: ${TESTAGRAM_WEBAUTHN_RPID:-}
+      TESTAGRAM_WEBAUTHN_ORIGINS: ${TESTAGRAM_WEBAUTHN_ORIGINS:-}
       # Canonical API gate; unset/empty remains closed even if a client build exposes the form.
       AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
       AUTH_FROM_EMAIL: ${AUTH_FROM_EMAIL:-no-reply@testagram.site}
@@ -262,6 +273,7 @@ services:
       API_HEALTH_URL: http://api:8082/readyz
       BACKEND_INTERNAL_URL: http://api:8080
       TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set the same native JWT secret used by Backend}
+      TESTAGRAM_WEBAUTHN_READINESS_TOKEN: ${TESTAGRAM_WEBAUTHN_READINESS_TOKEN:-}
       TESTAGRAM_WEBAUTHN_RPID: ${TESTAGRAM_WEBAUTHN_RPID:-}
       TESTAGRAM_WEBAUTHN_ORIGINS: ${TESTAGRAM_WEBAUTHN_ORIGINS:-}
       TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED: ${TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:-false}

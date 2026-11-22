@@ -1,17 +1,12 @@
 # Media provider credential setup
 
-This guide covers the standard self-hosted Backend media path. Provider credentials belong to the Backend API runtime, not Flutter, Android/Linux nodes, or the Data Centre control-plane.
+This guide covers the only supported self-hosted Backend media path: the Testagram API in `cmd/api` with `deploy/self-hosted/docker-compose.yml`. Provider credentials belong to the Backend API runtime, not Flutter, Android/Linux nodes, or the Data Centre control-plane.
 
-## Choose the deployment path first
+Instabox VPS/MinIO is the primary store; Cloudflare R2 and Backblaze B2 are independent replicas. This path is controlled by `VIRTUAL_STORAGE_ENABLED` and `MEDIA_REPLICATION_ENABLED`.
 
-There are two distinct implementations in this repository:
+The Data Centre coordinates node placement and operations. It must not receive long-lived B2/R2 provider keys.
 
-1. **Standard self-hosted API** (`cmd/api` + `deploy/self-hosted/docker-compose.yml`): Instabox VPS/MinIO is the primary store; Cloudflare R2 and Backblaze B2 are independent replicas. This path uses the provider settings below and is controlled by `VIRTUAL_STORAGE_ENABLED` and `MEDIA_REPLICATION_ENABLED`.
-2. **Fresh Appwrite preview** (`cmd/fresh-api` + `vps/docker-compose.fresh.yml`): B2 and R2 are configured as a separate provider set using `B2_S3_BUCKET` and `CLOUDFLARE_R2_BUCKET`. It is a separate deployment path; do not mix its single-bucket names with the standard API's private/public bucket mappings. Keep `FRESH_MEDIA_ENABLED=false` until its own release gates pass.
-
-The Data Centre coordinates node placement and operations. It must not receive the long-lived B2/R2 provider keys.
-
-## Standard self-hosted API: GitHub Actions secrets
+## Backend GitHub Actions secrets
 
 Store the following in the **Backend** repository's Actions secrets if a GitHub Actions workflow needs them, and in the Backend runtime secret store for production runtime use.
 
@@ -26,7 +21,7 @@ Store the following in the **Backend** repository's Actions secrets if a GitHub 
 
 Do not place these in the Data Centre repository, Flutter build variables, mobile apps, public CI logs, or source files.
 
-## Standard self-hosted API: Actions variables / runtime configuration
+## Backend Actions variables / runtime configuration
 
 B2 endpoint and region are stored as repository **Secrets** to match the exact source used by both live smoke workflows and the production InstaBox deployment. The remaining non-sensitive bucket names and R2 endpoint/region are repository **Variables**.
 
@@ -73,7 +68,7 @@ After this PR is merged, run it from GitHub Actions → **Media provider credent
 
 ## Safe activation order
 
-1. Keep `MEDIA_REPLICATION_ENABLED=false` and `FRESH_MEDIA_ENABLED=false`.
+1. Keep `MEDIA_REPLICATION_ENABLED=false`.
 2. Configure and smoke-test the Instabox VPS/MinIO primary, B2 and R2 independently.
 3. Apply and verify the forward-only media replica ledger and outbox migrations on the canonical Backend PostgreSQL database.
 4. Run application-level upload, primary SHA-256 verification, R2/B2 streaming copy, destination read-back, retry, lease-expiry, dead-letter and reconciliation tests.
@@ -82,7 +77,3 @@ After this PR is merged, run it from GitHub Actions → **Media provider credent
 7. Only then enable `MEDIA_REPLICATION_ENABLED=true` in the Backend runtime and monitor replica health, outbox age, retries and dead letters.
 
 Retention and destructive lifecycle policies remain disabled/dry-run until a separately approved restore and deletion test passes.
-
-## Important distinction
-
-The fresh Appwrite preview uses `B2_S3_BUCKET` and `CLOUDFLARE_R2_BUCKET` (single bucket per provider) in its own `freshstorage.FromEnv` configuration. The standard self-hosted replication worker uses `B2_S3_PRIVATE_BUCKET`, `B2_S3_PUBLIC_BUCKET`, `CLOUDFLARE_R2_PRIVATE_BUCKET` and `CLOUDFLARE_R2_PUBLIC_BUCKET`. Keep the two contracts separate.

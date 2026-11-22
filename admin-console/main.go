@@ -184,6 +184,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/admin/webauthn/assertion/begin", a.handleStaffWebAuthnLoginBegin)
 	mux.HandleFunc("POST /api/admin/webauthn/assertion/finish", a.handleStaffWebAuthnLoginFinish)
 	mux.HandleFunc("GET /api/admin/webauthn/readiness", a.handleWebAuthnReadiness)
+	mux.HandleFunc("GET /internal/webauthn/readiness", a.handleInternalWebAuthnReadiness)
 	mux.HandleFunc("GET /api/admin/staff", a.handleStaffList)
 	mux.HandleFunc("PUT /api/admin/staff/{id}/role", a.handleStaffRoleChange)
 	mux.HandleFunc("DELETE /api/admin/staff/{id}", a.handleStaffRevoke)
