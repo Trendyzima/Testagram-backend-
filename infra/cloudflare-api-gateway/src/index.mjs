@@ -1,5 +1,5 @@
 const API_HOST = "api.testagram.site";
-const EXPECTED_ORIGIN_HOST = "8443-agq4me2xgrgx5ge52ts437tqea.instabox.tech";
+const EXPECTED_ORIGIN_HOST = "8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech";
 const HOP_BY_HOP_HEADERS = [
   "connection",
   "keep-alive",
