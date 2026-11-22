@@ -157,8 +157,8 @@ export async function validateGitHubWebhookRequest(request, secret) {
     return { ok: false, status: 400, error: "GitHub webhook payload has an invalid shape" };
   }
   const repository = payload.repository?.full_name;
-  if (repository && !TESTAGRAM_REPOSITORIES.has(repository)) {
-    return { ok: false, status: 403, error: "repository is outside the Testagram event allowlist" };
+  if (typeof repository !== "string" || !TESTAGRAM_REPOSITORIES.has(repository)) {
+    return { ok: false, status: 403, error: "repository is missing or outside the Testagram event allowlist" };
   }
   return { ok: true, deliveryId, eventType, payload };
 }
@@ -216,14 +216,10 @@ export function classifyGitHubFailure(eventType, payload, deliveryId) {
   } else {
     return { action: "ignored", reason: "event type is not monitored" };
   }
-  if (!["failure", "timed_out", "action_required", "error"].includes(conclusion)) {
+  if (!["failure", "timed_out", "action_required", "error", "cancelled", "startup_failure", "stale"].includes(conclusion)) {
     return { action: "ignored", reason: "event conclusion is not a failure" };
   }
   const isRelease = /deploy|release|production|publish/i.test(workflow);
-  const isCore = repository.includes("Testagram-backend-") ||
-    repository.includes("Testagram-data-centre-") ||
-    repository.includes("cdn-") ||
-    repository.includes("federated-content");
   return {
     action: "triage",
     deliveryId,
@@ -236,7 +232,7 @@ export function classifyGitHubFailure(eventType, payload, deliveryId) {
     headSha,
     branch,
     runId,
-    severity: isRelease && isCore ? "P1" : "P2",
+    severity: isRelease ? "P1" : "P2",
     automaticMutation: false,
     receivedAt: Date.now(),
   };
