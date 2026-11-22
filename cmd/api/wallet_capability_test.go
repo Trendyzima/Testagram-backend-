@@ -80,8 +80,8 @@ func TestMpesaTopupIdempotencyBindsOriginalPayload(t *testing.T) {
 		t.Fatal("same M-Pesa payload should be an idempotent retry")
 	}
 	tests := []struct {
-		name, amount, phone, currency string
-		requestedAmount float64
+		name, amount, phone, currency     string
+		requestedAmount                   float64
 		requestedPhone, requestedCurrency string
 	}{
 		{name: "different amount", amount: "500.00", phone: "254712345678", currency: "KES", requestedAmount: 501, requestedPhone: "254712345678", requestedCurrency: "KES"},
@@ -97,4 +97,3 @@ func TestMpesaTopupIdempotencyBindsOriginalPayload(t *testing.T) {
 		})
 	}
 }
-
