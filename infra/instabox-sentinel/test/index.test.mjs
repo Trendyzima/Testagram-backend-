@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { validateWebhookRequest, validateGitHubWebhookRequest, classifyGitHubFailure, reconcileStoppedEvent, verifyStartOperation, EventLedger } from "../src/index.mjs";
+import worker, { validateWebhookRequest, validateGitHubWebhookRequest, classifyGitHubFailure, reconcileStoppedEvent, verifyStartOperation, EventLedger } from "../src/index.mjs";
 
 const secretBytes = Buffer.from("test-only-webhook-signing-key");
 const secret = `whsec_${secretBytes.toString("base64")}`;
@@ -407,4 +407,51 @@ test("Durable Object records GitHub incident triage without taking production ac
   assert.equal(records.get("event:delivery-durable-123").status, "complete");
   assert.equal(records.get("event:delivery-durable-123").result.action, "triage");
   assert.equal(records.get("event:delivery-durable-123").result.automaticMutation, false);
+});
+
+
+test("GitHub webhook route durably queues a verified allowlisted failure and returns 202", async () => {
+  let queued = null;
+  const env = {
+    GITHUB_WEBHOOK_SECRET: githubSecret,
+    EVENT_LEDGER: {
+      idFromName: (name) => name,
+      get: (id) => ({
+        fetch: async (_url, init) => {
+          queued = { id, body: JSON.parse(init.body) };
+          return Response.json({ queued: true }, { status: 202 });
+        },
+      }),
+    },
+  };
+  const response = await worker.fetch(
+    signedGitHubRequest("workflow_run", failedBackendWorkflow, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12"),
+    env,
+  );
+  const body = await response.json();
+  assert.equal(response.status, 202);
+  assert.equal(body.action, "triage_queued");
+  assert.equal(body.organ, "Backend");
+  assert.equal(queued.id, "github:Trendyzima/Testagram-backend-");
+  assert.equal(queued.body.event.source, "github");
+  assert.equal(queued.body.event.incident.severity, "P1");
+});
+
+test("GitHub webhook route rejects invalid signatures before accessing the event ledger", async () => {
+  let ledgerAccessed = false;
+  const request = signedGitHubRequest("workflow_run", failedBackendWorkflow);
+  const tampered = new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify({ ...failedBackendWorkflow, action: "requested" }),
+  });
+  const response = await worker.fetch(tampered, {
+    GITHUB_WEBHOOK_SECRET: githubSecret,
+    EVENT_LEDGER: {
+      idFromName: () => "unused",
+      get: () => { ledgerAccessed = true; throw new Error("ledger must not be accessed"); },
+    },
+  });
+  assert.equal(response.status, 401);
+  assert.equal(ledgerAccessed, false);
 });
