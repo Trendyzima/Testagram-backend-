@@ -275,6 +275,7 @@ jobs:
             migrations/20261106_social_core.sql \
             migrations/20261107_federation_actor_consent.sql \
             migrations/20261108_communication_core.sql \
+            migrations/20261122_communication_media_encryption_truth.sql \
             migrations/20261108_testagram_polls.sql \
             migrations/20261109_threads_browsing_history.sql \
             migrations/20261109_thread_interactions.sql \
@@ -994,6 +995,7 @@ jobs:
             migrations/20261106_tv_health_postgres.sql \
             migrations/20261106_social_core.sql \
             migrations/20261108_communication_core.sql \
+            migrations/20261122_communication_media_encryption_truth.sql \
             migrations/20261110_native_media_post_links.sql \
             migrations/20261111_media_replica_ledger.sql \
             migrations/20261112_media_replication_outbox.sql; do
