@@ -394,7 +394,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		return "", "", 0, errors.New("unsupported sensitive-action decision")
 	}
 
-	if strings.TrimSpace(webauthnRPID) == "" || len(webauthnCredentialID) < 16 {
+	if strings.TrimSpace(webauthnRPID) == "" || len(webauthnCredentialID) < 1 {
 		return "", "", 0, errors.New("exact WebAuthn step-up credential is required")
 	}
 	var payloadValue any
