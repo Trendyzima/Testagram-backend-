@@ -84,8 +84,9 @@ The successful Cloudflare API audit (GitHub Actions run 44997378902) established
 
 - `api.testagram.site` has a proxied AAAA record with placeholder target `100::`.
 - The Testagram zone has no Worker route for `api.testagram.site/*`.
-- A legacy Worker named `testagram-api` exists, but it is not attached to the API hostname. Its `APP_ORIGIN` plain-text binding is `https://testagram.site` (the Pages frontend), not the Backend.
-- That legacy Worker has Supabase secret/plain-text bindings and source references, and its latest deployment is dated 2026-09-14. It must not be reattached as the production API gateway.
+- A second read-only audit of Worker Custom Domains found that `api.testagram.site` is an enabled Custom Domain owned by the legacy `testagram-api` Worker. The route-only audit had not captured this attachment.
+- Its `APP_ORIGIN` plain-text binding is `https://testagram.site` (the Pages frontend), not the Backend. It also has legacy Supabase secret/plain-text bindings and source references; its latest deployment is dated 2026-09-14.
+- Do not delete or detach this legacy Worker during the API cutover. Cloudflare supports a Worker Route in front of a Custom Domain. PR #445 preflights that the only existing Custom Domain owner is this known legacy Worker, then attaches the clean gateway route ahead of it. The gateway fetches the published InstaBox Caddy hostname directly, so it does not recurse into the legacy Custom Domain. Keep the old Worker/domain as a rollback artifact until post-cutover acceptance.
 - The `testagram.site` and `www.testagram.site` Pages domains are active. The media hostname is routed separately through R2/Worker paths.
 
 A separate clean API gateway is proposed in [Backend PR #445](undefined). It targets the operator-provided published port 8080 URL, has no Supabase/Xclone bindings, preserves auth and idempotency, removes spoofed forwarding headers, and disables caching. It is manual-deploy only; this PR has not changed Cloudflare production routing.
