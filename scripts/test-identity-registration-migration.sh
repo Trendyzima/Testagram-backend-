@@ -31,6 +31,7 @@ psql_clean() {
 psql_ci <<'SQL'
 CREATE ROLE testagram_app NOLOGIN;
 CREATE ROLE service_role NOLOGIN;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 SQL
 
 for migration in \
