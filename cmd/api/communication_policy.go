@@ -170,6 +170,34 @@ func (s *service) communicationWithConversationPolicy(w http.ResponseWriter, r *
 
 	// Keep account locks until the canonical operation has completed so a
 	// concurrent block cannot race a message send, read, reaction or call join.
+	if body.Capability == "testagram.calls.create" {
+		recorder := httptest.NewRecorder()
+		handled := s.nativeCommunicationCapability(recorder, r, requestID, body)
+		if !handled || recorder.Code < 200 || recorder.Code >= 300 {
+			copyCommunicationResponse(w, recorder)
+			return handled
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			copyCommunicationResponse(w, recorder)
+			return true
+		}
+		// Signaling authorization is not proof of end-to-end media encryption.
+		payload["e2ee_enabled"] = false
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			copyCommunicationResponse(w, recorder)
+			return true
+		}
+		for key, values := range recorder.Header() {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(recorder.Code)
+		_, _ = w.Write(encoded)
+		return true
+	}
 	return s.nativeCommunicationCapability(w, r, requestID, body)
 }
 
