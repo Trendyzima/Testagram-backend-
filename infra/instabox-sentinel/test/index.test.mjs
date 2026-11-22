@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { validateWebhookRequest, reconcileStoppedEvent, verifyStartOperation, EventLedger } from "../src/index.mjs";
+import { validateWebhookRequest, validateGitHubWebhookRequest, classifyGitHubFailure, reconcileStoppedEvent, verifyStartOperation, EventLedger } from "../src/index.mjs";
 
 const secretBytes = Buffer.from("test-only-webhook-signing-key");
 const secret = `whsec_${secretBytes.toString("base64")}`;
@@ -289,4 +289,122 @@ test("provider verification deadline fails closed", async () => {
     ),
     /ten-minute verification deadline/,
   );
+});
+
+
+const githubSecret = "test-only-github-webhook-secret-at-least-32";
+function signedGitHubRequest(eventType, payload, deliveryId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11") {
+  const body = JSON.stringify(payload);
+  const signature = createHmac("sha256", githubSecret).update(body).digest("hex");
+  return new Request("https://sentinel.test/webhooks/github", {
+    method: "POST",
+    headers: {
+      "x-github-event": eventType,
+      "x-github-delivery": deliveryId,
+      "x-hub-signature-256": `sha256=${signature}`,
+      "content-type": "application/json",
+    },
+    body,
+  });
+}
+
+const failedBackendWorkflow = {
+  action: "completed",
+  repository: { full_name: "Trendyzima/Testagram-backend-" },
+  workflow: { name: "Deploy Backend Production" },
+  workflow_run: {
+    id: 12345,
+    name: "Deploy Backend Production",
+    conclusion: "failure",
+    head_sha: "abc123",
+    head_branch: "main",
+    html_url: "https://github.com/Trendyzima/Testagram-backend-/actions/runs/12345",
+  },
+};
+
+test("accepts correctly signed GitHub failure webhook for an approved Testagram repository", async () => {
+  const result = await validateGitHubWebhookRequest(
+    signedGitHubRequest("workflow_run", failedBackendWorkflow),
+    githubSecret,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.eventType, "workflow_run");
+  assert.equal(result.payload.repository.full_name, "Trendyzima/Testagram-backend-");
+});
+
+test("rejects a tampered GitHub webhook body", async () => {
+  const request = signedGitHubRequest("workflow_run", failedBackendWorkflow);
+  const tampered = new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify({ ...failedBackendWorkflow, action: "requested" }),
+  });
+  const result = await validateGitHubWebhookRequest(tampered, githubSecret);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 401);
+});
+
+test("rejects GitHub webhooks from repositories outside the Testagram allowlist", async () => {
+  const result = await validateGitHubWebhookRequest(
+    signedGitHubRequest("workflow_run", {
+      ...failedBackendWorkflow,
+      repository: { full_name: "attacker/other-project" },
+    }),
+    githubSecret,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 403);
+});
+
+test("classifies production deployment failures as P1 without authorizing mutations", () => {
+  const result = classifyGitHubFailure("workflow_run", failedBackendWorkflow, "delivery-123");
+  assert.equal(result.action, "triage");
+  assert.equal(result.organ, "Backend");
+  assert.equal(result.severity, "P1");
+  assert.equal(result.automaticMutation, false);
+  assert.equal(result.runUrl, failedBackendWorkflow.workflow_run.html_url);
+});
+
+test("classifies non-production feature CI failures as P2 and ignores successful runs", () => {
+  const featureFailure = {
+    ...failedBackendWorkflow,
+    repository: { full_name: "Trendyzima/testagram-flutter-client-" },
+    workflow: { name: "Flutter Unit Tests" },
+    workflow_run: { ...failedBackendWorkflow.workflow_run, name: "Flutter Unit Tests", conclusion: "failure" },
+  };
+  const failure = classifyGitHubFailure("workflow_run", featureFailure, "delivery-456");
+  assert.equal(failure.action, "triage");
+  assert.equal(failure.organ, "Flutter Client");
+  assert.equal(failure.severity, "P2");
+  const success = classifyGitHubFailure("workflow_run", {
+    ...featureFailure,
+    workflow_run: { ...featureFailure.workflow_run, conclusion: "success" },
+  }, "delivery-789");
+  assert.equal(success.action, "ignored");
+});
+
+test("Durable Object records GitHub incident triage without taking production action", async () => {
+  const incident = classifyGitHubFailure("workflow_run", failedBackendWorkflow, "delivery-durable-123");
+  const records = new Map([["event:delivery-durable-123", {
+    status: "pending",
+    deliveryId: "delivery-durable-123",
+    event: { source: "github", incident },
+    attempts: 0,
+    updatedAt: now,
+  }]]);
+  const state = {
+    storage: {
+      get: async (key) => records.get(key),
+      put: async (key, value) => records.set(key, value),
+      setAlarm: async () => {},
+      list: async () => records,
+      delete: async (key) => records.delete(key),
+    },
+    blockConcurrencyWhile: async (callback) => callback(),
+  };
+  const ledger = new EventLedger(state, {});
+  await ledger.alarm();
+  assert.equal(records.get("event:delivery-durable-123").status, "complete");
+  assert.equal(records.get("event:delivery-durable-123").result.action, "triage");
+  assert.equal(records.get("event:delivery-durable-123").result.automaticMutation, false);
 });
