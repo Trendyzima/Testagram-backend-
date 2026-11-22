@@ -97,7 +97,7 @@ jobs:
             exit 1
           fi
 
-          echo "Cloudflare cutover preflight passed: active zone, proxied DNS, no enabled custom-domain owner, and no conflicting Worker route." >> "$GITHUB_STEP_SUMMARY"
+          echo "Cloudflare cutover preflight passed: active zone, proxied DNS, no custom-domain owner, and no conflicting Worker route." >> "$GITHUB_STEP_SUMMARY"
       - name: Deploy Worker and attach api.testagram.site route
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
