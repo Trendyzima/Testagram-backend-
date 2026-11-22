@@ -20,7 +20,7 @@ func (s *service) nativeCommunicationCapabilityHardened(w http.ResponseWriter, r
 		"testagram.messages.list", "testagram.messages.send_encrypted",
 		"testagram.messages.edit_encrypted", "testagram.messages.mark_read",
 		"testagram.messages.react", "testagram.messages.attach",
-		"testagram.calls.create", "testagram.calls.join",
+		"testagram.calls.create", "testagram.calls.join", "testagram.calls.end",
 		"testagram.calls.list", "testagram.calls.get":
 		return s.communicationWithConversationPolicy(w, r, requestID, body)
 	default:
@@ -186,7 +186,7 @@ func communicationResolveConversationID(ctx context.Context, q communicationQuer
 		return stringValue("conversation_id"), nil
 	case "testagram.media.token":
 		return communicationConversationForCall(ctx, q, stringValue("room_id"))
-	case "testagram.calls.get", "testagram.calls.join":
+	case "testagram.calls.get", "testagram.calls.join", "testagram.calls.end":
 		return communicationConversationForCall(ctx, q, stringValue("call_id"))
 	case "testagram.messages.edit_encrypted", "testagram.messages.mark_read",
 		"testagram.messages.react", "testagram.messages.attach":
