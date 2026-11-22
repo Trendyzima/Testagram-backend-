@@ -26,8 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Syntax check
@@ -43,8 +43,8 @@ jobs:
     timeout-minutes: 10
     environment: production
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: Deploy Worker and attach api.testagram.site route
@@ -54,3 +54,34 @@ jobs:
           set -euo pipefail
           test -n "${CLOUDFLARE_API_TOKEN:-}"
           npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
+      - name: Verify canonical API ingress after deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          # These are deliberate, one-time GET probes after an operator-approved
+          # deployment. They may wake an idle-paused InstaBox machine.
+          success=false
+          for delay in 0 2 4 8 16; do
+            if [[ "$delay" != "0" ]]; then sleep "$delay"; fi
+            health_status="$(curl --silent --show-error --output "$tmp/health.json" --write-out '%{http_code}' --connect-timeout 10 --max-time 35 https://api.testagram.site/healthz || true)"
+            search_status="$(curl --silent --show-error --output "$tmp/search.json" --write-out '%{http_code}' --connect-timeout 10 --max-time 35 'https://api.testagram.site/api/search?q=testagram' || true)"
+            feed_status="$(curl --silent --show-error --output "$tmp/feed.json" --write-out '%{http_code}' --connect-timeout 10 --max-time 35 https://api.testagram.site/api/feed/home || true)"
+
+            if [[ "$health_status" == "200" ]] &&
+               jq -e '.ok == true and .service == "testagram-api"' "$tmp/health.json" >/dev/null &&
+               [[ "$search_status" == "200" ]] &&
+               [[ "$feed_status" == "401" ]]; then
+              success=true
+              break
+            fi
+          done
+
+          [[ "$success" == "true" ]] || {
+            echo "::error::Canonical API ingress acceptance failed. Expected health=200, search=200, unauthenticated feed=401. No write request was replayed."
+            echo "Observed statuses: health=$health_status search=$search_status feed=$feed_status"
+            exit 1
+          }
+          echo "Canonical API ingress passed: health=200, search=200, unauthenticated feed=401." >> "$GITHUB_STEP_SUMMARY"
