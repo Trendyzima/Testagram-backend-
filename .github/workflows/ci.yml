@@ -612,6 +612,7 @@ jobs:
           MINIO_ROOT_USER: ci-only-minio-user
           MINIO_ROOT_PASSWORD: ci-only-minio-password-not-for-production
           ACME_EMAIL: ci-only@example.invalid
+          EDGE_PROXY_SHARED_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           DATABASE_URL: postgres://testagram:ci-only-password-not-for-production@db:5432/testagram?sslmode=disable
           TESTAGRAM_AUTH_JWT_SECRET: ci-only-native-auth-jwt-secret-not-for-production-32
           VPS_INTERNAL_TOKEN: ci-only-vps-token-not-for-production
