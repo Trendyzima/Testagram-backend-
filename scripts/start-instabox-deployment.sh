@@ -3,6 +3,8 @@ API="https://api.instabox.sh"
 MACHINE_ID="${MACHINE_ID:?machine output is required}"
 AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
+TESTAGRAM_EDGE_PROXY_SHARED_TOKEN="${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}"
+[[ "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_EDGE_PROXY_SHARED_TOKEN must be a configured 32-byte hexadecimal secret shared with the Cloudflare API Worker."; exit 1; }
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
 for key in CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY; do
@@ -193,6 +195,9 @@ write_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$BASE_ENV"
   fi
 }
+# The edge proxy token must match the Cloudflare API Worker credential. Never
+# generate a replacement here: a mismatch would make the canonical API route fail closed.
+write_env_value EDGE_PROXY_SHARED_TOKEN "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN"
 if [[ -n "$DEPLOY_WEB_IMAGE" ]]; then write_env_value TESTAGRAM_WEB_IMAGE "$DEPLOY_WEB_IMAGE"; fi
 # Preserve Data Centre-only provider inputs before the Backend .env is scrubbed.
 DC_B2_S3_ENDPOINT="${B2_S3_ENDPOINT:-}"
@@ -986,6 +991,7 @@ payload="$(jq -nc \
   --arg auth_from_email "$AUTH_FROM_EMAIL" \
   --arg mail_encryption_key "$TESTAGRAM_MAIL_ENCRYPTION_KEY" \
   --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
+  --arg edge_proxy_token "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" \
   --arg media_enabled "$DATA_CENTRE_MEDIA_ENABLED" \
   --arg media_replication_enabled "$MEDIA_REPLICATION_ENABLED" \
   --arg fresh_media_enabled "$FRESH_MEDIA_ENABLED" \
@@ -1004,7 +1010,7 @@ payload="$(jq -nc \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
   --arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}" \
-  '{cmd:$cmd,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,CLOUDFLARE_EMAIL_ACCOUNT_ID:$cloudflare_email_account_id,CLOUDFLARE_EMAIL_API_TOKEN:$cloudflare_email_api_token,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,CLOUDFLARE_EMAIL_ACCOUNT_ID:$cloudflare_email_account_id,CLOUDFLARE_EMAIL_API_TOKEN:$cloudflare_email_api_token,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \

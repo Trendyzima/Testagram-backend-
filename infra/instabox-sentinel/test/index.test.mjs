@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { validateWebhookRequest, reconcileStoppedEvent, EventLedger } from "../src/index.mjs";
+import worker, { validateWebhookRequest, validateGitHubWebhookRequest, classifyGitHubFailure, reconcileStoppedEvent, verifyStartOperation, EventLedger } from "../src/index.mjs";
 
 const secretBytes = Buffer.from("test-only-webhook-signing-key");
 const secret = `whsec_${secretBytes.toString("base64")}`;
@@ -89,6 +89,7 @@ async function withMockInstaBox(machine, callback) {
     calls.push({ method: init.method || "GET", path: url.pathname, headers: new Headers(init.headers) });
     if (url.pathname === "/v1/machines") return Response.json({ machines: [{ id: "machine-123", name: "testagramdb" }], nextCursor: null });
     if (url.pathname === "/v1/machines/machine-123" && (init.method || "GET") === "GET") return Response.json({ machine });
+    if (url.pathname === "/v1/operations/op-123" && (init.method || "GET") === "GET") return Response.json({ operation: { id: "op-123", state: "queued" } });
     if (url.pathname === "/v1/machines/machine-123/start" && init.method === "POST") return Response.json({ operation: { id: "op-123", state: "queued" } }, { status: 202 });
     throw new Error("Unexpected mocked InstaBox request: " + (init.method || "GET") + " " + url.pathname);
   };
@@ -201,4 +202,379 @@ test("re-acknowledges pending duplicate deliveries without resetting their retry
   assert.equal(response.status, 202);
   assert.equal(records.get("event:evt_pending_123").attempts, 3);
   assert.ok(Number.isFinite(alarmAt));
+});
+
+
+test("provider operation pending is not treated as completed recovery", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/operations/op-123") return Response.json({ operation: { id: "op-123", state: "running" } });
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    const result = await verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 5_000,
+    );
+    assert.equal(result.done, false);
+    assert.equal(result.state, "running");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("provider success is not accepted until an independent machine read confirms running", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/operations/op-123") return Response.json({ operation: { id: "op-123", state: "succeeded" } });
+    if (url.pathname === "/v1/machines/machine-123") return Response.json({ machine: {
+      id: "machine-123", name: "testagramdb", state: "running", desiredState: "running",
+    } });
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    const result = await verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 5_000,
+    );
+    assert.equal(result.done, true);
+    assert.equal(result.result.providerState, "running");
+    assert.equal(result.result.machineId, "machine-123");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Durable Object retains starting state until provider lifecycle verification passes", async () => {
+  const records = new Map([["event:evt_verify_123", {
+    status: "pending", deliveryId: "evt_verify_123", event: stoppedEvent, attempts: 0, updatedAt: now,
+  }]]);
+  let alarmAt = null;
+  const state = {
+    storage: {
+      get: async (key) => records.get(key),
+      put: async (key, value) => records.set(key, value),
+      setAlarm: async (value) => { alarmAt = value; },
+      list: async () => records,
+      delete: async (key) => records.delete(key),
+    },
+    blockConcurrencyWhile: async (callback) => callback(),
+  };
+  await withMockInstaBox({
+    id: "machine-123", name: "testagramdb", state: "stopped", desiredState: "running", operationId: null,
+  }, async (calls) => {
+    const ledger = new EventLedger(state, { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" });
+    await ledger.alarm();
+    const record = records.get("event:evt_verify_123");
+    assert.equal(record.status, "starting");
+    assert.equal(record.operationId, "op-123");
+    assert.equal(calls.filter((call) => call.path.endsWith("/start")).length, 1);
+    assert.ok(Number.isFinite(alarmAt));
+    await ledger.alarm();
+    assert.equal(records.get("event:evt_verify_123").status, "starting");
+    assert.equal(calls.filter((call) => call.path.endsWith("/start")).length, 1);
+  });
+});
+
+test("synchronous provider start is not accepted when operator desiredState is stopped", async () => {
+  const originalFetch = globalThis.fetch;
+  let machineReads = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/machines") {
+      return Response.json({ machines: [{ id: "machine-123", name: "testagramdb" }], nextCursor: null });
+    }
+    if (url.pathname === "/v1/machines/machine-123" && (init.method || "GET") === "GET") {
+      machineReads += 1;
+      if (machineReads === 1) {
+        return Response.json({ machine: {
+          id: "machine-123", name: "testagramdb", state: "stopped", desiredState: "running", operationId: null,
+        } });
+      }
+      return Response.json({ machine: {
+        id: "machine-123", name: "testagramdb", state: "running", desiredState: "stopped", operationId: null,
+      } });
+    }
+    if (url.pathname === "/v1/machines/machine-123/start" && init.method === "POST") {
+      return Response.json({ accepted: true }, { status: 202 });
+    }
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    await assert.rejects(
+      reconcileStoppedEvent(
+        { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+        stoppedEvent,
+        "evt_operator_stop_after_start",
+      ),
+      /did not confirm running/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("asynchronous provider success remains pending if desiredState changes to stopped", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/operations/op-123") {
+      return Response.json({ operation: { id: "op-123", state: "succeeded" } });
+    }
+    if (url.pathname === "/v1/machines/machine-123") {
+      return Response.json({ machine: {
+        id: "machine-123", name: "testagramdb", state: "running", desiredState: "stopped",
+      } });
+    }
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    const result = await verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 5_000,
+    );
+    assert.equal(result.done, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("provider verification deadline fails closed", async () => {
+  await assert.rejects(
+    verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 10 * 60_000 + 1,
+    ),
+    /ten-minute verification deadline/,
+  );
+});
+
+
+const githubSecret = "test-only-github-webhook-secret-at-least-32";
+function signedGitHubRequest(eventType, payload, deliveryId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11") {
+  const body = JSON.stringify(payload);
+  const signature = createHmac("sha256", githubSecret).update(body).digest("hex");
+  return new Request("https://sentinel.test/webhooks/github", {
+    method: "POST",
+    headers: {
+      "x-github-event": eventType,
+      "x-github-delivery": deliveryId,
+      "x-hub-signature-256": `sha256=${signature}`,
+      "content-type": "application/json",
+    },
+    body,
+  });
+}
+
+const failedBackendWorkflow = {
+  action: "completed",
+  repository: { full_name: "Trendyzima/Testagram-backend-" },
+  workflow: { name: "Deploy Backend Production" },
+  workflow_run: {
+    id: 12345,
+    name: "Deploy Backend Production",
+    conclusion: "failure",
+    head_sha: "abc123",
+    head_branch: "main",
+    html_url: "https://github.com/Trendyzima/Testagram-backend-/actions/runs/12345",
+  },
+};
+
+test("accepts correctly signed GitHub failure webhook for an approved Testagram repository", async () => {
+  const result = await validateGitHubWebhookRequest(
+    signedGitHubRequest("workflow_run", failedBackendWorkflow),
+    githubSecret,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.eventType, "workflow_run");
+  assert.equal(result.payload.repository.full_name, "Trendyzima/Testagram-backend-");
+});
+
+test("rejects a tampered GitHub webhook body", async () => {
+  const request = signedGitHubRequest("workflow_run", failedBackendWorkflow);
+  const tampered = new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify({ ...failedBackendWorkflow, action: "requested" }),
+  });
+  const result = await validateGitHubWebhookRequest(tampered, githubSecret);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 401);
+});
+
+test("rejects GitHub webhooks from repositories outside the Testagram allowlist", async () => {
+  const result = await validateGitHubWebhookRequest(
+    signedGitHubRequest("workflow_run", {
+      ...failedBackendWorkflow,
+      repository: { full_name: "attacker/other-project" },
+    }),
+    githubSecret,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 403);
+});
+
+test("classifies production deployment failures as P1 without authorizing mutations", () => {
+  const result = classifyGitHubFailure("workflow_run", failedBackendWorkflow, "delivery-123");
+  assert.equal(result.action, "triage");
+  assert.equal(result.organ, "Backend");
+  assert.equal(result.severity, "P1");
+  assert.equal(result.automaticMutation, false);
+  assert.equal(result.runUrl, failedBackendWorkflow.workflow_run.html_url);
+});
+
+test("rejects GitHub payloads with no repository identity", async () => {
+  const payload = { ...failedBackendWorkflow };
+  delete payload.repository;
+  const result = await validateGitHubWebhookRequest(
+    signedGitHubRequest("workflow_run", payload),
+    githubSecret,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 403);
+});
+
+test("classifies cancelled production releases for every organ as P1", () => {
+  const payload = {
+    ...failedBackendWorkflow,
+    repository: { full_name: "Trendyzima/testagram-flutter-client-" },
+    workflow: { name: "Flutter Production Release" },
+    workflow_run: {
+      ...failedBackendWorkflow.workflow_run,
+      conclusion: "cancelled",
+      name: "Flutter Production Release",
+    },
+  };
+  const result = classifyGitHubFailure("workflow_run", payload, "delivery-cancelled-release");
+  assert.equal(result.action, "triage");
+  assert.equal(result.organ, "Flutter Client");
+  assert.equal(result.severity, "P1");
+  assert.equal(result.conclusion, "cancelled");
+});
+
+test("classifies non-production feature CI failures as P2 and ignores successful runs", () => {
+  const featureFailure = {
+    ...failedBackendWorkflow,
+    repository: { full_name: "Trendyzima/testagram-flutter-client-" },
+    workflow: { name: "Flutter Unit Tests" },
+    workflow_run: { ...failedBackendWorkflow.workflow_run, name: "Flutter Unit Tests", conclusion: "failure" },
+  };
+  const failure = classifyGitHubFailure("workflow_run", featureFailure, "delivery-456");
+  assert.equal(failure.action, "triage");
+  assert.equal(failure.organ, "Flutter Client");
+  assert.equal(failure.severity, "P2");
+  const success = classifyGitHubFailure("workflow_run", {
+    ...featureFailure,
+    workflow_run: { ...featureFailure.workflow_run, conclusion: "success" },
+  }, "delivery-789");
+  assert.equal(success.action, "ignored");
+});
+
+test("Durable Object records GitHub incident triage without taking production action", async () => {
+  const incident = classifyGitHubFailure("workflow_run", failedBackendWorkflow, "delivery-durable-123");
+  const records = new Map([["event:delivery-durable-123", {
+    status: "pending",
+    deliveryId: "delivery-durable-123",
+    event: { source: "github", incident },
+    attempts: 0,
+    updatedAt: now,
+  }]]);
+  const state = {
+    storage: {
+      get: async (key) => records.get(key),
+      put: async (key, value) => records.set(key, value),
+      setAlarm: async () => {},
+      list: async () => records,
+      delete: async (key) => records.delete(key),
+    },
+    blockConcurrencyWhile: async (callback) => callback(),
+  };
+  const ledger = new EventLedger(state, {});
+  await ledger.alarm();
+  assert.equal(records.get("event:delivery-durable-123").status, "complete");
+  assert.equal(records.get("event:delivery-durable-123").result.action, "triage");
+  assert.equal(records.get("event:delivery-durable-123").result.automaticMutation, false);
+});
+
+
+test("GitHub webhook route durably queues a verified allowlisted failure and returns 202", async () => {
+  let queued = null;
+  const env = {
+    GITHUB_WEBHOOK_SECRET: githubSecret,
+    EVENT_LEDGER: {
+      idFromName: (name) => name,
+      get: (id) => ({
+        fetch: async (_url, init) => {
+          queued = { id, body: JSON.parse(init.body) };
+          return Response.json({ queued: true }, { status: 202 });
+        },
+      }),
+    },
+  };
+  const response = await worker.fetch(
+    signedGitHubRequest("workflow_run", failedBackendWorkflow, "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a12"),
+    env,
+  );
+  const body = await response.json();
+  assert.equal(response.status, 202);
+  assert.equal(body.action, "triage_queued");
+  assert.equal(body.organ, "Backend");
+  assert.equal(queued.id, "github:Trendyzima/Testagram-backend-");
+  assert.equal(queued.body.event.source, "github");
+  assert.equal(queued.body.event.incident.severity, "P1");
+});
+
+test("GitHub webhook route rejects invalid signatures before accessing the event ledger", async () => {
+  let ledgerAccessed = false;
+  const request = signedGitHubRequest("workflow_run", failedBackendWorkflow);
+  const tampered = new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify({ ...failedBackendWorkflow, action: "requested" }),
+  });
+  const response = await worker.fetch(tampered, {
+    GITHUB_WEBHOOK_SECRET: githubSecret,
+    EVENT_LEDGER: {
+      idFromName: () => "unused",
+      get: () => { ledgerAccessed = true; throw new Error("ledger must not be accessed"); },
+    },
+  });
+  assert.equal(response.status, 401);
+  assert.equal(ledgerAccessed, false);
+});
+
+
+test("classifies failed check runs and deployment statuses for their owning organs", () => {
+  const check = classifyGitHubFailure("check_run", {
+    action: "completed",
+    repository: { full_name: "Trendyzima/federated-content" },
+    check_run: {
+      id: 456,
+      name: "Federation contract checks",
+      conclusion: "failure",
+      head_sha: "fed123",
+      html_url: "https://github.com/Trendyzima/federated-content/runs/456",
+    },
+  }, "delivery-check-123");
+  assert.equal(check.action, "triage");
+  assert.equal(check.organ, "Federation");
+  assert.equal(check.severity, "P2");
+
+  const deployment = classifyGitHubFailure("deployment_status", {
+    repository: { full_name: "Trendyzima/cdn-" },
+    deployment: { id: 789, environment: "production", sha: "cdn123" },
+    deployment_status: {
+      state: "failure",
+      target_url: "https://github.com/Trendyzima/cdn-/deployments/789",
+    },
+  }, "delivery-deploy-123");
+  assert.equal(deployment.action, "triage");
+  assert.equal(deployment.organ, "CDN");
+  assert.equal(deployment.severity, "P1");
 });

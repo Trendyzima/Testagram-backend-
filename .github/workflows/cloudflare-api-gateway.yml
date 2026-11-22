@@ -1,0 +1,149 @@
+name: Test and deploy Testagram API edge gateway
+
+on:
+  pull_request:
+    paths:
+      - "infra/cloudflare-api-gateway/**"
+      - ".github/workflows/cloudflare-api-gateway.yml"
+  workflow_dispatch:
+    inputs:
+      confirm_production_deploy:
+        description: Deploy the API hostname route to Cloudflare production.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-cloudflare-api-edge
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test API edge proxy contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Syntax check
+        run: node --check infra/cloudflare-api-gateway/src/index.mjs
+      - name: Unit tests
+        run: node --test infra/cloudflare-api-gateway/test/index.test.mjs
+      - name: Build Worker bundle without deploying
+        run: npx --yes wrangler@4 deploy --dry-run --outdir "${RUNNER_TEMP}/testagram-api-edge-build" --config infra/cloudflare-api-gateway/wrangler.toml
+
+  deploy:
+    name: Deploy production API hostname route
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Verify DNS, Worker custom domains and route ownership before cutover
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          API="https://api.cloudflare.com/client/v4"
+          ACCOUNT_ID="77dbe7a859196105dc84fbb6b7094019"
+          ZONE_NAME="testagram.site"
+          HOSTNAME="api.testagram.site"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::Missing scoped Cloudflare deployment token."; exit 1; }
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Accept: application/json")
+
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+            "$API/zones?name=$ZONE_NAME&status=active" -o "$tmp/zone.json"
+          jq -e '.success == true' "$tmp/zone.json" >/dev/null || { echo "::error::Cloudflare zone lookup failed."; exit 1; }
+          zone_id="$(jq -er --arg name "$ZONE_NAME" '.result[] | select(.name == $name and .status == "active") | .id' "$tmp/zone.json" | head -n 1)"
+          [[ -n "$zone_id" ]] || { echo "::error::Active Testagram zone was not found."; exit 1; }
+
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+            "$API/zones/$zone_id/dns_records?name=$HOSTNAME" -o "$tmp/dns.json"
+          jq -e '.success == true' "$tmp/dns.json" >/dev/null || { echo "::error::Cloudflare DNS lookup failed."; exit 1; }
+          jq -e --arg name "$HOSTNAME" '.result | any(.name == $name and .proxied == true and (.type == "A" or .type == "AAAA"))' "$tmp/dns.json" >/dev/null || {
+            echo "::error::api.testagram.site must have a proxied A/AAAA DNS record before a Worker route can serve it."
+            exit 1
+          }
+
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+            "$API/accounts/$ACCOUNT_ID/workers/domains?hostname=$HOSTNAME" -o "$tmp/domains.json"
+          jq -e '.success == true' "$tmp/domains.json" >/dev/null || { echo "::error::Cloudflare Worker custom-domain lookup failed."; exit 1; }
+          domain_count="$(jq -r --arg host "$HOSTNAME" '[.result[]? | select(.hostname == $host)] | length' "$tmp/domains.json")"
+          if [[ "$domain_count" -gt 1 ]]; then
+            echo "::error::Multiple Worker Custom Domains claim api.testagram.site. Resolve the duplicate ownership before cutover."
+            exit 1
+          fi
+          if [[ "$domain_count" == "1" ]] &&
+             ! jq -e --arg host "$HOSTNAME" '
+               .result | any(.hostname == $host and .service == "testagram-api" and .zone_name == "testagram.site")
+             ' "$tmp/domains.json" >/dev/null; then
+            echo "::error::An unexpected Worker Custom Domain owns api.testagram.site. Only the known legacy testagram-api owner may be shadowed by the new route."
+            exit 1
+          fi
+
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+            "$API/zones/$zone_id/workers/routes" -o "$tmp/routes.json"
+          jq -e '.success == true' "$tmp/routes.json" >/dev/null || { echo "::error::Cloudflare Worker route lookup failed."; exit 1; }
+          if jq -e --arg pattern "$HOSTNAME/*" '
+            .result | any(.pattern == $pattern and (.script // "") != "testagram-api-edge")
+          ' "$tmp/routes.json" >/dev/null; then
+            echo "::error::A different Worker already owns api.testagram.site/*. Refusing to overwrite its route."
+            exit 1
+          fi
+
+          echo "Cloudflare cutover preflight passed: active zone, proxied DNS, only the known legacy testagram-api custom-domain owner (if present), and no conflicting Worker route." >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy Worker and attach api.testagram.site route
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
+          EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Account.Workers Scripts:Edit scoped to account 77dbe7a859196105dc84fbb6b7094019, plus Zone.Workers Routes:Edit, Zone:Read and DNS:Read scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
+          if [[ ! "${EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_EDGE_PROXY_SHARED_TOKEN as exactly 32 random bytes encoded in 64 hexadecimal characters; it must match EDGE_PROXY_SHARED_TOKEN in the InstaBox Caddy .env."; exit 1; fi
+          npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
+          printf '%s' "$EDGE_PROXY_SHARED_TOKEN" | npx --yes wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
+      - name: Verify canonical API ingress after deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+
+          # These are deliberate, one-time GET probes after an operator-approved
+          # deployment. They may wake an idle-paused InstaBox machine.
+          success=false
+          for delay in 0 2 4 8 16; do
+            if [[ "$delay" != "0" ]]; then sleep "$delay"; fi
+            health_status="$(curl --silent --show-error --output "$tmp/health.json" --write-out '%{http_code}' --connect-timeout 10 --max-time 35 https://api.testagram.site/healthz || true)"
+            search_status="$(curl --silent --show-error --output "$tmp/search.json" --write-out '%{http_code}' --connect-timeout 10 --max-time 35 'https://api.testagram.site/api/search?q=testagram' || true)"
+            feed_status="$(curl --silent --show-error --output "$tmp/feed.json" --write-out '%{http_code}' --connect-timeout 10 --max-time 35 https://api.testagram.site/api/feed/home || true)"
+
+            if [[ "$health_status" == "200" ]] &&
+               jq -e '.ok == true and .service == "testagram-api"' "$tmp/health.json" >/dev/null &&
+               [[ "$search_status" == "200" ]] &&
+               [[ "$feed_status" == "401" ]]; then
+              success=true
+              break
+            fi
+          done
+
+          [[ "$success" == "true" ]] || {
+            echo "::error::Canonical API ingress acceptance failed. Expected health=200, search=200, unauthenticated feed=401. No write request was replayed."
+            echo "Observed statuses: health=$health_status search=$search_status feed=$feed_status"
+            exit 1
+          }
+          echo "Canonical API ingress passed: health=200, search=200, unauthenticated feed=401." >> "$GITHUB_STEP_SUMMARY"
