@@ -98,6 +98,20 @@ testagram.site {
   handle /_testagram/edge-health {
     respond `{"ok":true,"service":"testagram-apex-edge"}` 200
   }
+  # Only the dedicated Cloudflare API Worker knows the shared edge token.
+  # Do not route API traffic based on a spoofable Host/forwarding header alone.
+  @api_edge {
+    header X-Forwarded-Host api.testagram.site
+    header X-Testagram-Edge-Token {$EDGE_PROXY_SHARED_TOKEN}
+  }
+  handle @api_edge {
+    reverse_proxy api:8080 {
+      header_up Host api.testagram.site
+      header_up X-Forwarded-Host api.testagram.site
+      header_up X-Forwarded-Proto https
+      header_up -X-Testagram-Edge-Token
+    }
+  }
   # The Worker strips untrusted forwarding headers and sets this value
   # from the incoming public hostname. The web origin shares this edge listener.
   @www_frontend header X-Forwarded-Host www.testagram.site
