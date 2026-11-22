@@ -346,6 +346,7 @@ services:
       MEDIA_DOMAIN: ${MEDIA_DOMAIN:-media.testagram.site}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-ops.testagram.site}
       ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+      EDGE_PROXY_SHARED_TOKEN: ${EDGE_PROXY_SHARED_TOKEN:?Set EDGE_PROXY_SHARED_TOKEN in .env}
     ports:
       - "80:80"
       - "443:443"
