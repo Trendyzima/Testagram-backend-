@@ -101,11 +101,10 @@ func TestMpesaTopupIdempotencyBindsOriginalPayload(t *testing.T) {
 	}
 }
 
-
 func TestValidMpesaStatusReferences(t *testing.T) {
 	tests := []struct {
 		name, checkout, key string
-		want bool
+		want                bool
 	}{
 		{name: "no reference", want: false},
 		{name: "checkout only", checkout: "ws_CO_123456789", want: true},
