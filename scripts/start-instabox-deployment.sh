@@ -502,9 +502,9 @@ mkdir -p "$DATACENTRE/backend"
 FEDERATION_DATABASE_URL=""
 # Pin the exact immutable GHCR manifest digests produced by the latest
 # successful main-branch image workflows in their owning repositories.
-TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8"
-# Federation NodeInfo 2.1 release built from merged source 78e83a411afc8b9f46c687875b3cfd6db6d071b6.
-TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e"
+TESTAGRAM_ALGORITHM_IMAGE="ghcr.io/trendyzima/testagram-feed@sha256:736af67af0b3dfe0c6fc798890730af325a25c0fa4f1d5bd91677e0dd4553c7b"
+# Federation release built from latest successful main source cbd9f2587f8d7ce0703c4123c9c2a9bd76bb51ca.
+TESTAGRAM_FEDERATION_IMAGE="ghcr.io/trendyzima/testagram-federation@sha256:c3e4b34d1d1e5c77fcf9fae34a7eb5cfcc8f52b56325f05d14a9b45fc4799e38"
 if [[ ! -f "$DC_ENV" ]]; then
   cat > "$DC_ENV" <<EOF
 DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
