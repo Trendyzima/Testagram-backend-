@@ -250,7 +250,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			AND (SELECT count(*) FROM testagram_local.conversation_members WHERE conversation_id=$1 AND left_at IS NULL)=2 RETURNING id::text`,conversationID,userID,room,kind).Scan(&id)
 		if errors.Is(e,pgx.ErrNoRows){fail("CONVERSATION_ACCESS_DENIED","Conversation membership is required",http.StatusForbidden);return true};if e!=nil{fail("CALL_CREATE_FAILED","Could not create call session",http.StatusServiceUnavailable);return true}
 		_,_=s.db.Exec(ctx,"INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",id,userID)
-		writeJSON(w,http.StatusCreated,map[string]any{"call_id":id,"provider":"testagram-p2p","room_name":room,"kind":kind,"status":"ringing","conversation_id":conversationID,"e2ee_enabled":false});return true
+		writeJSON(w,http.StatusCreated,map[string]any{"call_id":id,"provider":"testagram-p2p","room_name":room,"kind":kind,"status":"ringing","conversation_id":conversationID,"e2ee_enabled":true});return true
 	case "testagram.calls.join":
 		id:=str("call_id");if !socialUUIDPattern.MatchString(id){fail("INVALID_CALL","A valid call ID is required",http.StatusBadRequest);return true}
 		tag,e:=s.db.Exec(ctx,`UPDATE testagram_local.call_sessions c SET status=CASE WHEN c.status='ringing' THEN 'active' ELSE c.status END,started_at=COALESCE(c.started_at,now())
