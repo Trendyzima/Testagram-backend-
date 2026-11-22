@@ -455,3 +455,33 @@ test("GitHub webhook route rejects invalid signatures before accessing the event
   assert.equal(response.status, 401);
   assert.equal(ledgerAccessed, false);
 });
+
+
+test("classifies failed check runs and deployment statuses for their owning organs", () => {
+  const check = classifyGitHubFailure("check_run", {
+    action: "completed",
+    repository: { full_name: "Trendyzima/federated-content" },
+    check_run: {
+      id: 456,
+      name: "Federation contract checks",
+      conclusion: "failure",
+      head_sha: "fed123",
+      html_url: "https://github.com/Trendyzima/federated-content/runs/456",
+    },
+  }, "delivery-check-123");
+  assert.equal(check.action, "triage");
+  assert.equal(check.organ, "Federation");
+  assert.equal(check.severity, "P2");
+
+  const deployment = classifyGitHubFailure("deployment_status", {
+    repository: { full_name: "Trendyzima/cdn-" },
+    deployment: { id: 789, environment: "production", sha: "cdn123" },
+    deployment_status: {
+      state: "failure",
+      target_url: "https://github.com/Trendyzima/cdn-/deployments/789",
+    },
+  }, "delivery-deploy-123");
+  assert.equal(deployment.action, "triage");
+  assert.equal(deployment.organ, "CDN");
+  assert.equal(deployment.severity, "P1");
+});
