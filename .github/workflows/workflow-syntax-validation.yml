@@ -20,3 +20,10 @@ jobs:
           cache: true
       - name: Lint every workflow
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -color -ignore 'SC2034' -ignore 'SC2016' -ignore 'SC2129'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test Cloudflare API gateway contract
+        run: |
+          node --check infra/cloudflare-api-gateway/src/index.mjs
+          node --test infra/cloudflare-api-gateway/test/index.test.mjs
