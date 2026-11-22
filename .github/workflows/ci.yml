@@ -35,6 +35,10 @@ jobs:
           cache: true
       - name: Validate production deployment shell syntax
         run: bash -n scripts/start-instabox-deployment.sh deploy/self-hosted/apply-native-identity-migrations.sh tests/test-native-staff-webauthn-migration.sh
+      - name: Test detached InstaBox deployment handoff and log polling
+        run: |
+          python3 tests/test_instabox_web_image_release_wiring.py -v
+          python3 tests/test_instabox_deployment_polling.py -v
       - name: Verify native identity migration manifest
         run: python3 tests/test_native_identity_migration_manifest.py
       - name: Enforce retired identity provider absence from runtime and deployment
@@ -785,7 +789,9 @@ jobs:
           if '--force-recreate algorithm federation-api' not in deploy:
               raise SystemExit("Deployment must recreate services after updating immutable image pins")
           assert 'DEPLOY_WEB_IMAGE="${TESTAGRAM_WEB_IMAGE:-}"' in deploy_script, "deployment must receive the workflow-selected Flutter web release"
-          assert 'TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-$(read_env_value TESTAGRAM_WEB_IMAGE)}"' in deploy_script, "deployment must preserve the approved Flutter web digest or its prior immutable pin"
+          assert 'TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"' in deploy_script, "deployment must use only the workflow-selected Flutter digest"
+          assert 'export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script and 'REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"' in deploy_script, "deployment must embed the approved digest into the detached remote process"
+          assert 'TESTAGRAM_WEB_IMAGE" =~ ^ghcr' in deploy_script and '@sha256:[a-f0-9]{64}$' in deploy_script, "deployment must reject missing or mutable Flutter image references"
           assert "Flutter web release must be supplied as an immutable GHCR digest" in deploy_script, "deployment must reject mutable Flutter web tags"
           assert "sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b" not in deploy_script, "deployment must not overwrite the current Flutter release with a historical digest"
           if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy or "RepoDigests" not in deploy or "Flutter web container is not running the exact reviewed image digest" not in deploy:

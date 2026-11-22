@@ -15,8 +15,11 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
 
     def test_deployment_preserves_the_workflow_selected_digest(self):
         deploy = DEPLOY.read_text(encoding="utf-8")
-        self.assertIn('TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-$(read_env_value TESTAGRAM_WEB_IMAGE)}"', deploy)
+        self.assertIn('TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"', deploy)
         self.assertIn("Flutter web release must be supplied as an immutable GHCR digest", deploy)
+        self.assertIn('export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
+        self.assertIn('REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"', deploy)
+        self.assertIn('TESTAGRAM_WEB_IMAGE" =~ ^ghcr\\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$', deploy)
         self.assertNotIn("sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b", deploy)
 
     def test_web_image_is_forwarded_to_remote_and_pinned_by_digest(self):
