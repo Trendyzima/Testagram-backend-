@@ -51,11 +51,11 @@ The dashboard configuration supplied for `testagramdb` lists public HTTPS ports 
 | 8443 | Caddy `:8443` listener | Intended public edge ingress |
 | 9000 | MinIO object-storage host bind `127.0.0.1:9000:9000` | **Critical: direct object-storage API exposure; not the CDN** |
 
-**Required operator action in InstaBox dashboard:** unpublish port 9000 immediately after confirming no separately approved external S3 client depends on this endpoint. Then verify Cloudflare and all Testagram hostnames route through the 8443 edge listener before unpublishing 8080 and 8081. Keep the internal Docker services and their loopback bindings; do not remove or recreate containers as part of this change. Never publish 9000/9001, PostgreSQL 5432, MinIO console 9001, Prometheus 9090, Grafana 3000, or internal service ports.
+**Critical operator action:** unpublish port 9000 in the InstaBox dashboard after checking the Data Centre deployment for any explicitly approved external S3 client. The current Backend Compose configuration uses `object-storage:9000` on the private Docker network; it does not require public MinIO ingress. Do not change the internal MinIO service or loopback mapping when removing the InstaBox public port. Never publish 9000/9001, PostgreSQL 5432, MinIO console 9001, Prometheus 9090, Grafana 3000, or internal service ports.
 
-Do not unpublish 8080/8081 until the 8443 + Cloudflare path has passed the acceptance checks below. After unpublishing, verify that the four old direct URLs no longer serve application responses and that the canonical API, media and web hostnames still work through the edge. If an S3 integration legitimately needs remote access, use a dedicated authenticated private path or approved storage-provider endpoint, not the public MinIO admin/data port.
+**Do not unpublish 8080 or 8081 yet.** The current Caddy `:8443` listener routes the www frontend and ActivityPub paths, then redirects other requests to www; it does not currently reverse-proxy the API or media CDN. The API and CDN public ports may therefore be the active Cloudflare origins. First run the existing read-only Cloudflare domain/Worker audit and verify the exact DNS records, Worker routes, origin hostnames, and port mapping. Only after that evidence exists should we implement a tested edge consolidation (if desired) and remove 8080/8081. Blindly unpublishing either could take the API or media delivery offline.
 
-This is an operator-side dashboard change; this PR does not and cannot alter InstaBox published-port settings.
+The public 8080/8081 origins still need a security review: confirm Cloudflare proxy/origin restrictions, TLS behavior, rate limits, trusted client-IP handling, and that no internal-only route is reachable. This PR does not change InstaBox published-port settings, Cloudflare DNS, or Worker configuration.
 
 ## 5. Verify persistent storage before manual recovery
 
