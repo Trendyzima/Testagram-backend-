@@ -57,8 +57,8 @@ jobs:
           set -euo pipefail
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Workers Scripts:Edit and Workers Routes:Edit scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
           if [[ ! "${EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_EDGE_PROXY_SHARED_TOKEN as exactly 32 random bytes encoded in 64 hexadecimal characters; it must match EDGE_PROXY_SHARED_TOKEN in the InstaBox Caddy .env."; exit 1; fi
-          printf '%s' "$EDGE_PROXY_SHARED_TOKEN" | npx --yes wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
           npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
+          printf '%s' "$EDGE_PROXY_SHARED_TOKEN" | npx --yes wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
       - name: Verify canonical API ingress after deployment
         shell: bash
         run: |
