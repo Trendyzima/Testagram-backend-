@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { validateWebhookRequest, reconcileStoppedEvent, EventLedger } from "../src/index.mjs";
+import { validateWebhookRequest, reconcileStoppedEvent, verifyStartOperation, EventLedger } from "../src/index.mjs";
 
 const secretBytes = Buffer.from("test-only-webhook-signing-key");
 const secret = `whsec_${secretBytes.toString("base64")}`;
@@ -89,6 +89,7 @@ async function withMockInstaBox(machine, callback) {
     calls.push({ method: init.method || "GET", path: url.pathname, headers: new Headers(init.headers) });
     if (url.pathname === "/v1/machines") return Response.json({ machines: [{ id: "machine-123", name: "testagramdb" }], nextCursor: null });
     if (url.pathname === "/v1/machines/machine-123" && (init.method || "GET") === "GET") return Response.json({ machine });
+    if (url.pathname === "/v1/operations/op-123" && (init.method || "GET") === "GET") return Response.json({ operation: { id: "op-123", state: "queued" } });
     if (url.pathname === "/v1/machines/machine-123/start" && init.method === "POST") return Response.json({ operation: { id: "op-123", state: "queued" } }, { status: 202 });
     throw new Error("Unexpected mocked InstaBox request: " + (init.method || "GET") + " " + url.pathname);
   };
@@ -201,4 +202,91 @@ test("re-acknowledges pending duplicate deliveries without resetting their retry
   assert.equal(response.status, 202);
   assert.equal(records.get("event:evt_pending_123").attempts, 3);
   assert.ok(Number.isFinite(alarmAt));
+});
+
+
+test("provider operation pending is not treated as completed recovery", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/operations/op-123") return Response.json({ operation: { id: "op-123", state: "running" } });
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    const result = await verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 5_000,
+    );
+    assert.equal(result.done, false);
+    assert.equal(result.state, "running");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("provider success is not accepted until an independent machine read confirms running", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/operations/op-123") return Response.json({ operation: { id: "op-123", state: "succeeded" } });
+    if (url.pathname === "/v1/machines/machine-123") return Response.json({ machine: {
+      id: "machine-123", name: "testagramdb", state: "running", desiredState: "running",
+    } });
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    const result = await verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 5_000,
+    );
+    assert.equal(result.done, true);
+    assert.equal(result.result.providerState, "running");
+    assert.equal(result.result.machineId, "machine-123");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Durable Object retains starting state until provider lifecycle verification passes", async () => {
+  const records = new Map([["event:evt_verify_123", {
+    status: "pending", deliveryId: "evt_verify_123", event: stoppedEvent, attempts: 0, updatedAt: now,
+  }]]);
+  let alarmAt = null;
+  const state = {
+    storage: {
+      get: async (key) => records.get(key),
+      put: async (key, value) => records.set(key, value),
+      setAlarm: async (value) => { alarmAt = value; },
+      list: async () => records,
+      delete: async (key) => records.delete(key),
+    },
+    blockConcurrencyWhile: async (callback) => callback(),
+  };
+  await withMockInstaBox({
+    id: "machine-123", name: "testagramdb", state: "stopped", desiredState: "running", operationId: null,
+  }, async (calls) => {
+    const ledger = new EventLedger(state, { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" });
+    await ledger.alarm();
+    const record = records.get("event:evt_verify_123");
+    assert.equal(record.status, "starting");
+    assert.equal(record.operationId, "op-123");
+    assert.equal(calls.filter((call) => call.path.endsWith("/start")).length, 1);
+    assert.ok(Number.isFinite(alarmAt));
+    await ledger.alarm();
+    assert.equal(records.get("event:evt_verify_123").status, "starting");
+    assert.equal(calls.filter((call) => call.path.endsWith("/start")).length, 1);
+  });
+});
+
+test("provider verification deadline fails closed", async () => {
+  await assert.rejects(
+    verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 10 * 60_000 + 1,
+    ),
+    /ten-minute verification deadline/,
+  );
 });
