@@ -6,12 +6,6 @@ on:
       - ".github/workflows/instabox-vps-watchdog.yml"
       - "scripts/instabox_watchdog.py"
       - "tests/test_instabox_watchdog.py"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/instabox-vps-watchdog.yml"
-      - "scripts/instabox_watchdog.py"
-      - "tests/test_instabox_watchdog.py"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -41,7 +35,7 @@ jobs:
   watchdog:
     name: Check and recover Testagram VPS
     needs: validate
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
