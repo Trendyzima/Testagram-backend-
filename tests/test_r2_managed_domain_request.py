@@ -9,7 +9,7 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/instabox-dep
 class R2ManagedDomainRequestTests(unittest.TestCase):
     def test_disable_request_is_generated_validated_and_sent_as_json_bytes(self):
         source = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("jq -cn '{enabled:false}' | tr -d '\\\\n' > \"$managed_request\"", source)
+        self.assertIn("jq -cn '{enabled:false}' | tr -d '\012' > \"$managed_request\"", source)
         self.assertIn("jq -e 'type == \"object\" and .enabled == false and (keys == [\"enabled\"])' \"$managed_request\"", source)
         self.assertIn("-H 'Content-Type: application/json'", source)
         self.assertIn("--data-binary \"@$managed_request\"", source)
