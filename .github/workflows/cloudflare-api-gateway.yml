@@ -79,7 +79,7 @@ jobs:
 
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
             "$API/accounts/$ACCOUNT_ID/workers/domains?hostname=$HOSTNAME" -o "$tmp/domains.json"
-          if jq -e --arg host "$HOSTNAME" '.result | any(.hostname == $host and .enabled == true)' "$tmp/domains.json" >/dev/null; then
+          if jq -e --arg host "$HOSTNAME" '.result | any(.hostname == $host)' "$tmp/domains.json" >/dev/null; then
             echo "::error::A Worker Custom Domain already owns api.testagram.site. Resolve that ownership before attaching a Worker route."
             exit 1
           fi
@@ -100,7 +100,7 @@ jobs:
           EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Workers Scripts:Edit, Workers Routes:Edit and Zone:Read scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Workers Scripts:Edit, Workers Routes:Edit, Zone:Read and DNS:Read scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
           if [[ ! "${EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_EDGE_PROXY_SHARED_TOKEN as exactly 32 random bytes encoded in 64 hexadecimal characters; it must match EDGE_PROXY_SHARED_TOKEN in the InstaBox Caddy .env."; exit 1; fi
           npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
           printf '%s' "$EDGE_PROXY_SHARED_TOKEN" | npx --yes wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
