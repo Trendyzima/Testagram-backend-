@@ -34,6 +34,8 @@ jobs:
         run: node --check infra/cloudflare-api-gateway/src/index.mjs
       - name: Unit tests
         run: node --test infra/cloudflare-api-gateway/test/index.test.mjs
+      - name: Build Worker bundle without deploying
+        run: npx --yes wrangler@4 deploy --dry-run --outdir "${RUNNER_TEMP}/testagram-api-edge-build" --config infra/cloudflare-api-gateway/wrangler.toml
 
   deploy:
     name: Deploy production API hostname route
