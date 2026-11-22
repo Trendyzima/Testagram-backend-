@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,5 +47,19 @@ func TestSocialInteractionAvatarURLUsesPublicMediaBase(t *testing.T) {
 	want := "https://cdn.testagram.site/media/avatars/account/profile.png"
 	if got != want {
 		t.Fatalf("publicMediaURL() = %q, want %q", got, want)
+	}
+}
+
+
+func TestValidSocialUsername(t *testing.T) {
+	for _, value := range []string{"testagram", "Trendz_01", "a.b", "user.name"} {
+		if !validSocialUsername(value) {
+			t.Errorf("expected username %q to be accepted", value)
+		}
+	}
+	for _, value := range []string{"", "a", "@user", "bad name", "user/name", "user?x", strings.Repeat("a", 31)} {
+		if validSocialUsername(value) {
+			t.Errorf("expected username %q to be rejected", value)
+		}
 	}
 }
