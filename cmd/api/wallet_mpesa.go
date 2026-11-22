@@ -118,6 +118,16 @@ func mpesaTopupRequestMatches(existingAmount, existingPhone, existingCurrency st
 		strings.EqualFold(strings.TrimSpace(existingCurrency), requestedCurrency)
 }
 
+func validMpesaStatusReferences(checkoutRequestID, idempotencyKey string) bool {
+	if checkoutRequestID == "" && idempotencyKey == "" {
+		return false
+	}
+	if len(checkoutRequestID) > 128 {
+		return false
+	}
+	return idempotencyKey == "" || (len(idempotencyKey) >= 8 && len(idempotencyKey) <= 128)
+}
+
 func (s *service) nativeMPesaCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
 	name := strings.TrimSpace(body.Capability)
 	switch name {
@@ -151,13 +161,13 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter, r *http.Request, 
 	case "testagram.wallet.mpesa.status":
 		checkout := str("checkout_request_id")
 		key := str("idempotency_key")
-		if (checkout == "" && key == "") || len(checkout) > 128 || len(key) > 128 {
+		if !validMpesaStatusReferences(checkout, key) {
 			fail("INVALID_TOPUP_REFERENCE", "A checkout request ID or idempotency key is required", http.StatusBadRequest)
 			return true
 		}
 		var state, receipt, amount, walletAmount, currency, storedCheckout string
 		var created time.Time
-		err := s.db.QueryRow(ctx, `SELECT status,COALESCE(receipt_number,''),amount_kes::text,wallet_amount::text,wallet_currency,created_at,COALESCE(checkout_request_id,'') FROM testagram_local.wallet_topups WHERE user_id=$1 AND (($2<>'' AND checkout_request_id=$2) OR ($3<>'' AND idempotency_key=$3)) ORDER BY created_at DESC LIMIT 1`, userID, checkout, key).Scan(&state, &receipt, &amount, &walletAmount, &currency, &created, &storedCheckout)
+		err := s.db.QueryRow(ctx, `SELECT status,COALESCE(receipt_number,''),amount_kes::text,wallet_amount::text,wallet_currency,created_at,COALESCE(checkout_request_id,'') FROM testagram_local.wallet_topups WHERE user_id=$1 AND ($2='' OR checkout_request_id=$2) AND ($3='' OR idempotency_key=$3) ORDER BY created_at DESC LIMIT 1`, userID, checkout, key).Scan(&state, &receipt, &amount, &walletAmount, &currency, &created, &storedCheckout)
 		if err != nil {
 			fail("TOPUP_NOT_FOUND", "M-Pesa top-up was not found", http.StatusNotFound)
 			return true
