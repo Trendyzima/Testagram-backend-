@@ -37,6 +37,7 @@ Use the dashboard/CLI delivery test and confirm a valid test delivery receives H
 - Keep the existing five-minute GitHub watchdog enabled as the fallback.
 - Check InstaBox webhook delivery history and Cloudflare Worker logs after initial registration.
 - A provider/API failure is retried by the Durable Object alarm; repeated failures remain visible in Worker logs and InstaBox delivery history.
+- A start request is not recorded as recovered when it is merely accepted: the Durable Object polls the exact InstaBox operation and then independently reads the exact machine until `state=running` and `desiredState=running` are confirmed. Pending operations remain `starting`; operation failures, identity mismatches and a ten-minute verification timeout fail closed and remain visible in logs.
 - To disable event-driven recovery, disable/delete the InstaBox webhook endpoint. The GitHub watchdog remains independent.
 - Health check: `GET /healthz`.
 
