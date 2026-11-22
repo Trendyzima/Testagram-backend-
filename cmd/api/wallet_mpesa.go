@@ -67,6 +67,17 @@ func normalizeMpesaPhone(raw string)(string,bool){
 
 func mpesaTimestamp() string { return time.Now().In(time.FixedZone("EAT",3*60*60)).Format("20060102150405") }
 
+
+func mpesaTopupRequestMatches(existingAmount, existingPhone, existingCurrency string, requestedAmount float64, requestedPhone, requestedCurrency string) bool {
+	storedAmount, err := strconv.ParseFloat(strings.TrimSpace(existingAmount), 64)
+	if err != nil {
+		return false
+	}
+	return storedAmount == requestedAmount &&
+		strings.TrimSpace(existingPhone) == requestedPhone &&
+		strings.EqualFold(strings.TrimSpace(existingCurrency), requestedCurrency)
+}
+
 func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,requestID string,body capabilityRequest) bool {
 	name:=strings.TrimSpace(body.Capability)
 	switch name {case "testagram.wallet.mpesa.stk_push","testagram.wallet.mpesa.status":default:return false}
@@ -104,8 +115,10 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 			VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(user_id,idempotency_key) DO NOTHING
 			RETURNING id::text,request_reference,status,checkout_request_id`,userID,amount,walletAmount,walletCurrency,fxRate,phone,key,reference).Scan(&topupID,&requestReference,&state,&checkout)
 		if err==pgx.ErrNoRows{
-			err=s.db.QueryRow(ctx,"SELECT id::text,request_reference,status,checkout_request_id FROM testagram_local.wallet_topups WHERE user_id=$1 AND idempotency_key=$2",userID,key).Scan(&topupID,&requestReference,&state,&checkout)
+			var existingAmount, existingPhone, existingCurrency string
+			err=s.db.QueryRow(ctx,"SELECT id::text,request_reference,status,checkout_request_id,amount_kes::text,phone_e164,wallet_currency FROM testagram_local.wallet_topups WHERE user_id=$1 AND idempotency_key=$2",userID,key).Scan(&topupID,&requestReference,&state,&checkout,&existingAmount,&existingPhone,&existingCurrency)
 			if err!=nil{fail("TOPUP_IDEMPOTENCY_FAILED","Could not recover the prior M-Pesa request",http.StatusServiceUnavailable);return true}
+			if !mpesaTopupRequestMatches(existingAmount,existingPhone,existingCurrency,amount,phone,walletCurrency){fail("IDEMPOTENCY_CONFLICT","This idempotency key belongs to a different M-Pesa top-up request",http.StatusConflict);return true}
 			if checkout!=nil&&*checkout!=""{writeJSON(w,http.StatusOK,map[string]any{"status":state,"checkout_request_id":*checkout,"request_reference":requestReference,"duplicate":true});return true}
 			fail("TOPUP_RECONCILIATION_PENDING","This M-Pesa request is still being reconciled. Do not submit it again.",http.StatusConflict);return true
 		}
