@@ -1328,8 +1328,8 @@ jobs:
           BEGIN
             BEGIN
               INSERT INTO testagram_auth.native_sensitive_action_approvals
-                (request_id,approver_user_id,decision,reason)
-              SELECT id,'123e4567-e89b-42d3-a456-426614174001','approved','Requester cannot approve own action'
+                (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+              SELECT id,'123e4567-e89b-42d3-a456-426614174001','approved','Requester cannot approve own action','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174001','sha256')
               FROM testagram_auth.native_sensitive_action_requests
               WHERE target_reference='ci-release-001';
             EXCEPTION WHEN OTHERS THEN
@@ -1347,8 +1347,8 @@ jobs:
           BEGIN
             BEGIN
               INSERT INTO testagram_auth.native_sensitive_action_approvals
-                (request_id,approver_user_id,decision,reason)
-              SELECT id,'123e4567-e89b-42d3-a456-426614174004','approved','Uncredentialed staff must not approve'
+                (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+              SELECT id,'123e4567-e89b-42d3-a456-426614174004','approved','Uncredentialed staff must not approve','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174004','sha256')
               FROM testagram_auth.native_sensitive_action_requests
               WHERE target_reference='ci-release-001';
             EXCEPTION WHEN OTHERS THEN
@@ -1386,8 +1386,8 @@ jobs:
             END IF;
           END $immutable$;
           INSERT INTO testagram_auth.native_sensitive_action_approvals
-            (request_id,approver_user_id,decision,reason)
-          SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Independent reviewer approves CI request'
+            (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+          SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Independent reviewer approves CI request','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174002','sha256')
           FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001';
           DO $premature_approval$
           DECLARE blocked BOOLEAN := FALSE;
@@ -1407,8 +1407,8 @@ jobs:
             END IF;
           END $premature_approval$;
           INSERT INTO testagram_auth.native_sensitive_action_approvals
-            (request_id,approver_user_id,decision,reason)
-          SELECT id,'123e4567-e89b-42d3-a456-426614174003','approved','Second distinct reviewer approves CI request'
+            (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+          SELECT id,'123e4567-e89b-42d3-a456-426614174003','approved','Second distinct reviewer approves CI request','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174003','sha256')
           FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-release-001';
           UPDATE testagram_auth.staff_webauthn_credentials SET revoked_at=now()
           WHERE user_id='123e4567-e89b-42d3-a456-426614174003';
@@ -1460,8 +1460,8 @@ jobs:
           BEGIN
             BEGIN
               INSERT INTO testagram_auth.native_sensitive_action_approvals
-                (request_id,approver_user_id,decision,reason)
-              SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Expired request must reject approval'
+                (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+              SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Expired request must reject approval','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174002','sha256')
               FROM testagram_auth.native_sensitive_action_requests
               WHERE target_reference='ci-expired-001';
             EXCEPTION WHEN OTHERS THEN
@@ -1491,16 +1491,16 @@ jobs:
           VALUES
             ('security.change','123e4567-e89b-42d3-a456-426614174001','ci-replay-001','CI validates approval replay rejection','{}'::jsonb,repeat('d',64));
           INSERT INTO testagram_auth.native_sensitive_action_approvals
-            (request_id,approver_user_id,decision,reason)
-          SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','First approval decision'
+            (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+          SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','First approval decision','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174002','sha256')
           FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-replay-001';
           DO $approval_replay$
           DECLARE blocked BOOLEAN := FALSE;
           BEGIN
             BEGIN
               INSERT INTO testagram_auth.native_sensitive_action_approvals
-                (request_id,approver_user_id,decision,reason)
-              SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Replay must be rejected'
+                (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+              SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Replay must be rejected','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174002','sha256')
               FROM testagram_auth.native_sensitive_action_requests WHERE target_reference='ci-replay-001';
             EXCEPTION WHEN unique_violation THEN
               blocked := TRUE;
@@ -1610,10 +1610,11 @@ jobs:
           request_id="$(docker exec testagram-admin-security-ci psql -U postgres -Atqc "INSERT INTO testagram_auth.native_sensitive_action_requests (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256) VALUES ('security.change','123e4567-e89b-42d3-a456-426614174001','ci-concurrent-001','CI validates concurrent approval and revocation serialization','{}'::jsonb,repeat('e',64)) RETURNING id")"
           test -n "$request_id"
           docker exec -i testagram-admin-security-ci psql -U postgres -v request_id="$request_id" <<'SQL'
-          INSERT INTO testagram_auth.native_sensitive_action_approvals(request_id,approver_user_id,decision,reason)
+          INSERT INTO testagram_auth.native_sensitive_action_approvals
+            (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
           VALUES
-            (:'request_id'::uuid,'123e4567-e89b-42d3-a456-426614174002','approved','Concurrent test first approver'),
-            (:'request_id'::uuid,'123e4567-e89b-42d3-a456-426614174003','approved','Concurrent test second approver');
+            (:'request_id'::uuid,'123e4567-e89b-42d3-a456-426614174002','approved','Concurrent test first approver','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174002','sha256')),
+            (:'request_id'::uuid,'123e4567-e89b-42d3-a456-426614174003','approved','Concurrent test second approver','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174003','sha256'));
           SQL
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 >/tmp/approval-lock.log 2>&1 <<SQL &
           BEGIN;
