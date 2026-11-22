@@ -60,7 +60,7 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         start = self.workflow.index("r2_managed_url=")
         end = self.workflow.index("managed_check_status=", start)
         request = self.workflow[start:end]
-        self.assertIn("jq -cn '{enabled:false}' > \"$managed_request\"", request)
+        self.assertIn(r'''jq -cn '{enabled:false}' | head -c 17 > "$managed_request"''', request)
         self.assertIn("--data-binary \"@$managed_request\"", request)
         self.assertIn("-H 'Content-Type: application/json'", request)
         self.assertIn("result.enabled == false", self.workflow)
