@@ -320,7 +320,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin evidence-reviewer rejection transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", evidenceReviewerOne, "approved", "Evidence reviewer cannot approve account"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", evidenceReviewerOne, "ops.example.test", []byte("credential-"+evidenceReviewerOne), "approved", "Evidence reviewer cannot approve account"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("evidence reviewer was allowed to approve account activation")
 	}
@@ -330,7 +330,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin first account-approval transaction: %v", err)
 	}
-	state, applicationState, approvalCount, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "approved", "First independent account approval")
+	state, applicationState, approvalCount, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "ops.example.test", []byte("credential-"+approverOne), "approved", "First independent account approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("record first two-person decision: %v", err)
@@ -347,7 +347,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin duplicate account-approval transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "approved", "Duplicate account approval"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverOne, "ops.example.test", []byte("credential-"+approverOne), "approved", "Duplicate account approval"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("same approver was counted twice")
 	}
@@ -357,7 +357,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin second account-approval transaction: %v", err)
 	}
-	state, applicationState, approvalCount, err = recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverTwo, "approved", "Second independent account approval")
+	state, applicationState, approvalCount, err = recordSensitiveActionDecision(ctx, tx, requestID, "identity.approve", "", approverTwo, "ops.example.test", []byte("credential-"+approverTwo), "approved", "Second independent account approval")
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("record second two-person decision and provisioning grant: %v", err)
@@ -414,7 +414,7 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin expired approval transaction: %v", err)
 	}
-	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, expiredRequestID, "identity.approve", "", approverOne, "approved", "Expired approval must be rejected"); err == nil {
+	if _, _, _, err := recordSensitiveActionDecision(ctx, tx, expiredRequestID, "identity.approve", "", approverOne, "ops.example.test", []byte("credential-"+approverOne), "approved", "Expired approval must be rejected"); err == nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal("expired identity approval request was accepted")
 	}
