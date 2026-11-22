@@ -7,9 +7,18 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github" / "workflows" / "cloudflare-api-gateway.yml").read_text(encoding="utf-8")
 WRANGLER = (ROOT / "infra" / "cloudflare-api-gateway" / "wrangler.toml").read_text(encoding="utf-8")
+WORKER_SOURCE = (ROOT / "infra" / "cloudflare-api-gateway" / "src" / "index.mjs").read_text(encoding="utf-8")
 
 
 class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
+    def test_api_gateway_targets_backend_api_origin_not_apex_caddy(self):
+        expected = "8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech"
+        apex = "8443-agq4me2xgrgx5ge52ts437tqea.instabox.tech"
+        self.assertIn(expected, WRANGLER)
+        self.assertNotIn(apex, WRANGLER)
+        self.assertIn(expected, WORKER_SOURCE)
+        self.assertNotIn(apex, WORKER_SOURCE)
+
     def test_worker_is_not_publicly_routed_by_wrangler_before_secret_install(self):
         self.assertIn("workers_dev = false", WRANGLER)
         self.assertNotIn("routes =", WRANGLER)
