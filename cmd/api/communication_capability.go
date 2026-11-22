@@ -564,10 +564,18 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			return true
 		}
 		room := newCallRoom()
+		tx, e := s.db.Begin(ctx)
+		if e != nil {
+			fail("CALL_CREATE_FAILED", "Could not begin call creation", http.StatusServiceUnavailable)
+			return true
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
 		var id string
-		e := s.db.QueryRow(ctx, `INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind)
-			SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)
-			AND (SELECT count(*) FROM testagram_local.conversation_members WHERE conversation_id=$1 AND left_at IS NULL)=2 RETURNING id::text`, conversationID, userID, room, kind).Scan(&id)
+		e = tx.QueryRow(ctx, `INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind,e2ee_enabled)
+			SELECT $1,$2,$3,$4,FALSE
+			WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)
+			AND (SELECT count(*) FROM testagram_local.conversation_members WHERE conversation_id=$1 AND left_at IS NULL)=2
+			RETURNING id::text`, conversationID, userID, room, kind).Scan(&id)
 		if errors.Is(e, pgx.ErrNoRows) {
 			fail("CONVERSATION_ACCESS_DENIED", "Conversation membership is required", http.StatusForbidden)
 			return true
@@ -576,8 +584,15 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			fail("CALL_CREATE_FAILED", "Could not create call session", http.StatusServiceUnavailable)
 			return true
 		}
-		_, _ = s.db.Exec(ctx, "INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING", id, userID)
-		writeJSON(w, http.StatusCreated, map[string]any{"call_id": id, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": "ringing", "conversation_id": conversationID, "e2ee_enabled": true})
+		if _, e = tx.Exec(ctx, "INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2)", id, userID); e != nil {
+			fail("CALL_CREATE_FAILED", "Could not register the call creator", http.StatusServiceUnavailable)
+			return true
+		}
+		if e = tx.Commit(ctx); e != nil {
+			fail("CALL_CREATE_FAILED", "Could not commit call creation", http.StatusServiceUnavailable)
+			return true
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"call_id": id, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": "ringing", "conversation_id": conversationID, "e2ee_enabled": false})
 		return true
 	case "testagram.calls.join":
 		id := str("call_id")
@@ -585,19 +600,58 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			fail("INVALID_CALL", "A valid call ID is required", http.StatusBadRequest)
 			return true
 		}
-		tag, e := s.db.Exec(ctx, `UPDATE testagram_local.call_sessions c SET status=CASE WHEN c.status='ringing' THEN 'active' ELSE c.status END,started_at=COALESCE(c.started_at,now())
-			WHERE c.id=$1 AND c.status IN ('ringing','active') AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)
-			AND (EXISTS(SELECT 1 FROM testagram_local.call_participants mine WHERE mine.call_id=c.id AND mine.user_id=$2 AND mine.left_at IS NULL)
-				OR (SELECT count(*) FROM testagram_local.call_participants active WHERE active.call_id=c.id AND active.left_at IS NULL)<2)`, id, userID)
+		tx, e := s.db.Begin(ctx)
 		if e != nil {
-			fail("CALL_JOIN_FAILED", "Could not join call", http.StatusServiceUnavailable)
+			fail("CALL_JOIN_FAILED", "Could not begin call join", http.StatusServiceUnavailable)
 			return true
 		}
-		if tag.RowsAffected() != 1 {
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		var callStatus string
+		err := tx.QueryRow(ctx, "SELECT status FROM testagram_local.call_sessions WHERE id=$1 FOR UPDATE", id).Scan(&callStatus)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && callStatus != "ringing" && callStatus != "active") {
 			fail("CALL_NOT_AVAILABLE", "Call is unavailable or access is denied", http.StatusNotFound)
 			return true
 		}
-		_, _ = s.db.Exec(ctx, "INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2) ON CONFLICT(call_id,user_id) DO UPDATE SET joined_at=now(),left_at=NULL", id, userID)
+		if err != nil {
+			fail("CALL_JOIN_FAILED", "Could not lock call session", http.StatusServiceUnavailable)
+			return true
+		}
+		var member, alreadyJoined bool
+		if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_local.conversation_members cm JOIN testagram_local.call_sessions c ON c.conversation_id=cm.conversation_id WHERE c.id=$1 AND cm.user_id=$2 AND cm.left_at IS NULL)", id, userID).Scan(&member); err != nil {
+			fail("CALL_JOIN_FAILED", "Could not verify conversation membership", http.StatusServiceUnavailable)
+			return true
+		}
+		if !member {
+			fail("CALL_NOT_AVAILABLE", "Call is unavailable or access is denied", http.StatusNotFound)
+			return true
+		}
+		if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM testagram_local.call_participants WHERE call_id=$1 AND user_id=$2 AND left_at IS NULL)", id, userID).Scan(&alreadyJoined); err != nil {
+			fail("CALL_JOIN_FAILED", "Could not verify call participation", http.StatusServiceUnavailable)
+			return true
+		}
+		if !alreadyJoined {
+			var activeParticipants int
+			if err = tx.QueryRow(ctx, "SELECT count(*) FROM testagram_local.call_participants WHERE call_id=$1 AND left_at IS NULL", id).Scan(&activeParticipants); err != nil {
+				fail("CALL_JOIN_FAILED", "Could not verify call capacity", http.StatusServiceUnavailable)
+				return true
+			}
+			if activeParticipants >= 2 {
+				fail("CALL_FULL", "This call already has its maximum two participants", http.StatusConflict)
+				return true
+			}
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2) ON CONFLICT(call_id,user_id) DO UPDATE SET joined_at=now(),left_at=NULL", id, userID); err != nil {
+			fail("CALL_JOIN_FAILED", "Could not register call participant", http.StatusServiceUnavailable)
+			return true
+		}
+		if _, err = tx.Exec(ctx, "UPDATE testagram_local.call_sessions SET status='active',started_at=COALESCE(started_at,now()) WHERE id=$1", id); err != nil {
+			fail("CALL_JOIN_FAILED", "Could not activate call session", http.StatusServiceUnavailable)
+			return true
+		}
+		if err = tx.Commit(ctx); err != nil {
+			fail("CALL_JOIN_FAILED", "Could not commit call join", http.StatusServiceUnavailable)
+			return true
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"call_id": id, "joined": true})
 		return true
 	case "testagram.calls.end":
@@ -606,17 +660,52 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			fail("INVALID_CALL", "A valid call ID is required", http.StatusBadRequest)
 			return true
 		}
-		tag, e := s.db.Exec(ctx, `UPDATE testagram_local.call_sessions c SET status='ended',ended_at=COALESCE(ended_at,now())
-			WHERE c.id=$1 AND (c.created_by=$2 OR EXISTS(SELECT 1 FROM testagram_local.call_participants cp WHERE cp.call_id=c.id AND cp.user_id=$2))`, id, userID)
+		tx, e := s.db.Begin(ctx)
 		if e != nil {
-			fail("CALL_END_FAILED", "Could not end call", http.StatusServiceUnavailable)
+			fail("CALL_END_FAILED", "Could not begin call termination", http.StatusServiceUnavailable)
 			return true
 		}
-		if tag.RowsAffected() != 1 {
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		var conversationID string
+		err := tx.QueryRow(ctx, "SELECT conversation_id::text FROM testagram_local.call_sessions WHERE id=$1 FOR UPDATE", id).Scan(&conversationID)
+		if errors.Is(err, pgx.ErrNoRows) {
 			fail("CALL_NOT_FOUND", "Call was not found or access is denied", http.StatusNotFound)
 			return true
 		}
-		_, _ = s.db.Exec(ctx, "UPDATE testagram_local.call_participants SET left_at=COALESCE(left_at,now()) WHERE call_id=$1 AND user_id=$2", id, userID)
+		if err != nil {
+			fail("CALL_END_FAILED", "Could not lock call session", http.StatusServiceUnavailable)
+			return true
+		}
+		var authorized bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM testagram_local.call_sessions c
+			JOIN testagram_local.conversation_members cm ON cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL
+			WHERE c.id=$1 AND (
+				c.created_by=$2 OR EXISTS(
+					SELECT 1 FROM testagram_local.call_participants cp
+					WHERE cp.call_id=c.id AND cp.user_id=$2 AND cp.left_at IS NULL
+				)
+			)
+		)`, id, userID).Scan(&authorized); err != nil {
+			fail("CALL_END_FAILED", "Could not verify active call participation", http.StatusServiceUnavailable)
+			return true
+		}
+		if !authorized {
+			fail("CALL_NOT_FOUND", "Call was not found or access is denied", http.StatusNotFound)
+			return true
+		}
+		if _, err = tx.Exec(ctx, "UPDATE testagram_local.call_sessions SET status='ended',ended_at=COALESCE(ended_at,now()) WHERE id=$1 AND status IN ('ringing','active')", id); err != nil {
+			fail("CALL_END_FAILED", "Could not end call session", http.StatusServiceUnavailable)
+			return true
+		}
+		if _, err = tx.Exec(ctx, "UPDATE testagram_local.call_participants SET left_at=COALESCE(left_at,now()) WHERE call_id=$1 AND user_id=$2 AND left_at IS NULL", id, userID); err != nil {
+			fail("CALL_END_FAILED", "Could not close call participation", http.StatusServiceUnavailable)
+			return true
+		}
+		if err = tx.Commit(ctx); err != nil {
+			fail("CALL_END_FAILED", "Could not commit call termination", http.StatusServiceUnavailable)
+			return true
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"call_id": id, "ended": true})
 		return true
 	}
