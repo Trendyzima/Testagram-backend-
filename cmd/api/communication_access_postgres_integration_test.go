@@ -31,7 +31,7 @@ func TestCommunicationRecipientAndBlockPolicyPostgresIntegration(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	suffix := fmt.Sprintf("%09d", time.Now().UnixNano()%1_000_000_000)
 	insertAccount := func(username string, protected, discoverable bool) string {
 		t.Helper()
 		var id string
