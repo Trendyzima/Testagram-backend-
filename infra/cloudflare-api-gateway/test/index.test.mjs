@@ -113,6 +113,7 @@ test("returns a bounded 503 without leaking upstream exception details", async (
     const response = await gateway.fetch(apiRequest("/api/feed/home"), { APP_ORIGIN, EDGE_PROXY_SHARED_TOKEN: "a".repeat(64) });
     assert.equal(response.status, 503);
     assert.equal(response.headers.get("retry-after"), "2");
+    assert.equal(response.headers.get("x-testagram-recovery"), "attempted");
     assert.equal((await response.text()).includes("private origin detail"), false);
   } finally {
     globalThis.fetch = originalFetch;
