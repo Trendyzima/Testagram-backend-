@@ -65,6 +65,13 @@ REPOS="$ROOT/repos"
 BACKEND="$REPOS/backend"
 DATACENTRE="$REPOS/data-centre"
 mkdir -p "$REPOS" "$ROOT/storage/media"
+# The Data Centre video worker runs as the unprivileged 65532:65532 identity.
+# Bind mounts hide image-layer ownership, so provision the host-backed media
+# root explicitly before Compose starts the worker. Keep this scoped to the
+# dedicated media tree; never relax permissions on the VPS storage parent.
+sudo install -d -o 65532 -g 65532 -m 0770 "$ROOT/storage/media"
+sudo chown -R 65532:65532 "$ROOT/storage/media"
+sudo chmod 0770 "$ROOT/storage/media"
 
 trap 'code=$?; echo "DEPLOY_EXIT=$code"; if [[ "$code" -ne 0 ]]; then echo "Deployment stopped at line $LINENO"; fi' EXIT
 
