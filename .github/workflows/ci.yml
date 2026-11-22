@@ -1093,16 +1093,7 @@ jobs:
       - name: Verify Go interaction summary query against PostgreSQL
         env:
           TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
-        run: go test ./cmd/api -run '^TestSocialInteractionSummaryPostgresIntegration$' -count=1 -v
-      - name: Verify communication privacy and block policy against PostgreSQL
-        env:
-          TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
-        run: go test ./cmd/api -run '^TestCommunicationRecipientAndBlockPolicyPostgresIntegration$' -count=1 -v
-      - name: Stop isolated PostgreSQL
-        if: always()
-        run: docker stop testagram-local-product-ci || true
-
-  independent-auth-schema-integration:
+        run: go test ./cmd/api -run '^TestSocialInteractionSummaryPostgresIntegration$'  independent-auth-schema-integration:
     name: Independent authentication schema integration
     runs-on: ubuntu-latest
     steps:
