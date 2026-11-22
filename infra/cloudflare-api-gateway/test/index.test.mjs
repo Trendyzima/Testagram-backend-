@@ -1,0 +1,113 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import gateway from "../src/index.mjs";
+
+const APP_ORIGIN = "https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech";
+
+function apiRequest(path, init = {}) {
+  return new Request("https://api.testagram.site" + path, init);
+}
+
+test("forwards API path, query, auth, body and idempotency without trusting client forwarding headers", async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamRequest;
+
+  globalThis.fetch = async (request) => {
+    upstreamRequest = request;
+    return new Response('{"ok":true}', {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const request = apiRequest("/api/posts?visibility=public", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-token",
+        "content-type": "application/json",
+        "idempotency-key": "post-create-123",
+        "cf-connecting-ip": "198.51.100.24",
+        "cf-ray": "test-ray-123",
+        "x-forwarded-for": "203.0.113.9",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "http",
+        "x-real-ip": "203.0.113.9",
+        forwarded: "for=203.0.113.9;host=attacker.example",
+        connection: "keep-alive, x-remove-me",
+        "x-remove-me": "untrusted",
+      },
+      body: '{"text":"hello"}',
+    });
+
+    const response = await gateway.fetch(request, { APP_ORIGIN });
+    assert.equal(response.status, 201);
+    assert.equal(await response.text(), '{"ok":true}');
+    assert.equal(upstreamRequest.url, APP_ORIGIN + "/api/posts?visibility=public");
+    assert.equal(upstreamRequest.method, "POST");
+    assert.equal(await upstreamRequest.text(), '{"text":"hello"}');
+    assert.equal(upstreamRequest.headers.get("authorization"), "Bearer test-token");
+    assert.equal(upstreamRequest.headers.get("idempotency-key"), "post-create-123");
+    assert.equal(upstreamRequest.headers.get("x-forwarded-for"), "198.51.100.24");
+    assert.equal(upstreamRequest.headers.get("x-real-ip"), "198.51.100.24");
+    assert.equal(upstreamRequest.headers.get("x-forwarded-host"), "api.testagram.site");
+    assert.equal(upstreamRequest.headers.get("x-forwarded-proto"), "https");
+    assert.equal(upstreamRequest.headers.get("forwarded"), null);
+    assert.equal(upstreamRequest.headers.get("x-remove-me"), null);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("x-testagram-edge"), "cloudflare-api-gateway-v1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not cache health or API reads and preserves Backend status codes", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{"ok":true}', { status: 401 });
+  try {
+    const response = await gateway.fetch(apiRequest("/healthz"), { APP_ORIGIN });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects a non-InstaBox or non-HTTPS origin before making an upstream request", async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    throw new Error("must not be called");
+  };
+  try {
+    const response = await gateway.fetch(apiRequest("/healthz"), {
+      APP_ORIGIN: "https://attacker.example",
+    });
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).error.code, "api_origin_misconfigured");
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects requests for another hostname", async () => {
+  const response = await gateway.fetch(new Request("https://evil.example/api"), { APP_ORIGIN });
+  assert.equal(response.status, 421);
+});
+
+test("returns a bounded 503 without leaking upstream exception details", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("private origin detail");
+  };
+  try {
+    const response = await gateway.fetch(apiRequest("/api/feed/home"), { APP_ORIGIN });
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("retry-after"), "2");
+    assert.equal((await response.text()).includes("private origin detail"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
