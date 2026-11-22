@@ -62,6 +62,9 @@ func (s *service) nativeSocialCapability(w http.ResponseWriter, r *http.Request,
 		d = dispatch{method:http.MethodPost,path:"/api/social/follow-requests/"+userID+"/accept",handler:s.socialAcceptFollowRequest,pathValues:map[string]string{"follower_id":userID}}
 	case "testagram.follow_requests.reject":
 		d = dispatch{method:http.MethodPost,path:"/api/social/follow-requests/"+userID+"/reject",handler:s.socialRejectFollowRequest,pathValues:map[string]string{"follower_id":userID}}
+	case "testagram.social.profile.resolve":
+		username, _ := body.Input["username"].(string)
+		d = dispatch{method:http.MethodPost,path:"/api/social/profiles/resolve",handler:s.socialProfileResolveByUsername,payload:map[string]any{"username":username}}
 	default:
 		return false
 	}
