@@ -52,6 +52,7 @@ test("forwards API path, query, auth, body and idempotency without trusting clie
     assert.equal(upstreamRequest.headers.get("x-real-ip"), "198.51.100.24");
     assert.equal(upstreamRequest.headers.get("x-forwarded-host"), "api.testagram.site");
     assert.equal(upstreamRequest.headers.get("x-forwarded-proto"), "https");
+    assert.equal(upstreamRequest.headers.get("x-testagram-edge-token"), "a".repeat(64));
     assert.equal(upstreamRequest.headers.get("forwarded"), null);
     assert.equal(upstreamRequest.headers.get("x-remove-me"), null);
     assert.equal(response.headers.get("cache-control"), "no-store");
@@ -108,6 +109,29 @@ test("returns a bounded 503 without leaking upstream exception details", async (
     assert.equal(response.status, 503);
     assert.equal(response.headers.get("retry-after"), "2");
     assert.equal((await response.text()).includes("private origin detail"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+
+test("fails closed when the shared edge token is absent or malformed", async () => {
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    throw new Error("must not reach origin");
+  };
+  try {
+    for (const token of [undefined, "short", "z".repeat(64)]) {
+      const response = await gateway.fetch(apiRequest("/healthz"), {
+        APP_ORIGIN,
+        EDGE_PROXY_SHARED_TOKEN: token,
+      });
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).error.code, "api_origin_misconfigured");
+    }
+    assert.equal(called, false);
   } finally {
     globalThis.fetch = originalFetch;
   }
