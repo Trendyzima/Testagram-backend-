@@ -57,7 +57,28 @@ The dashboard configuration supplied for `testagramdb` lists public HTTPS ports 
 
 The public 8080/8081 origins still need a security review: confirm Cloudflare proxy/origin restrictions, TLS behavior, rate limits, trusted client-IP handling, and that no internal-only route is reachable. This PR does not change InstaBox published-port settings, Cloudflare DNS, or Worker configuration.
 
-## 5. Verify persistent storage before manual recovery
+## 5. Live public-ingress acceptance results (2026-11-22)
+
+A one-time read-only external check was performed against the dashboard's published URLs and canonical hostnames while the machine was running:
+
+| Probe | Observed result | Interpretation |
+|---|---|---|
+| Published 8080 `/healthz` | HTTP 200, `testagram-api` | Backend process is reachable |
+| Published 8080 `/api/search?q=testagram` | HTTP 200, valid Backend JSON envelope | API handler is reachable on direct origin |
+| Published 8080 `/api/feed/home` | HTTP 401 | Expected unauthenticated response; route exists |
+| Published 8081 `/healthz` | HTTP 200, `testagram-cdn` | CDN process is reachable |
+| Published 8443 `/_testagram/edge-health` | HTTP 200, `testagram-apex-edge` | Caddy edge listener is reachable |
+| `media.testagram.site/healthz` | HTTP 200, CDN reports R2 | Canonical media hostname is healthy |
+| `www.testagram.site/flutter_bootstrap.js` | Asset returned | Flutter web bootstrap is reachable |
+| `api.testagram.site/healthz` | HTTP 404 | **Production API hostname is misrouted** |
+| `api.testagram.site/api/feed/home` | HTTP 404 | Canonical API path does not reach Backend |
+| `api.testagram.site/api/search?q=testagram` | HTTP 404 | Canonical API path does not reach Backend |
+
+This A/B result shows that the Backend itself is running, but the canonical API hostname is not reaching the same API surface. This is a production-blocking ingress defect, tracked in [Backend issue #444](https://github.com/Trendyzima/Testagram-backend-/issues/444). The next step is a read-only Cloudflare DNS/Worker audit of the API hostname, origin, port, host header and path rewrites. Do not change Flutter's canonical API base URL, point clients at the ephemeral InstaBox URL, or alter DNS/Worker configuration without an evidenced mapping and rollback plan.
+
+The public 9000 root and MinIO health-path fetches could not be reliably interpreted by the external content probe; the Compose mapping still identifies the published port as MinIO object storage. Treat the publication as an unnecessary public object-storage surface until the operator unpublishes it and verifies that no approved external S3 client depends on it.
+
+## 6. Verify persistent storage before manual recovery
 
 If native wake-on-request does not restore the machine, connect after a supported resume/start operation and verify the existing PostgreSQL volume before starting or recreating containers.
 
@@ -70,7 +91,7 @@ Run from the repository root, adjusting only for the deployment's established ch
 
 **Stop and escalate** if the PostgreSQL data volume is missing, unexpectedly empty, detached, or replaced. Never run `docker compose down -v`, remove volumes, reinitialize PostgreSQL, or restore a snapshot over the live database as routine recovery.
 
-## 6. Ordered service recovery
+## 7. Ordered service recovery
 
 Inspect the existing deployment first:
 
@@ -104,7 +125,7 @@ curl --fail --show-error --silent https://api.testagram.site/readyz
 
 A running process is not enough: readiness and public-origin probes must pass.
 
-## 7. Post-resume integrity and work reconciliation
+## 8. Post-resume integrity and work reconciliation
 
 Before declaring recovery complete:
 
@@ -117,7 +138,7 @@ Before declaring recovery complete:
 
 Do not run unreviewed SQL updates against ledger, outbox, or migration tables during recovery.
 
-## 8. Escalation conditions
+## 9. Escalation conditions
 
 Stop automated recovery and escalate if:
 
@@ -128,7 +149,7 @@ Stop automated recovery and escalate if:
 - migrations fail unexpectedly, backups are missing/stale, or duplicate financial/outbox effects are suspected;
 - the machine repeatedly pauses/stops or the provider reports an incident.
 
-## 9. Production eligibility
+## 10. Production eligibility
 
 Wake-on-request improves cold-start behavior; it does not provide continuous availability or an uptime SLA. Free-plan runtime and maximum-run limits still apply. Production must move to a paid InstaBox tier with idle auto-suspend disabled or another explicitly approved always-on host, with external monitoring, encrypted off-machine backups, restore drills, and measured RPO/RTO.
 
