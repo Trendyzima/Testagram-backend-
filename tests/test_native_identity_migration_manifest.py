@@ -281,6 +281,24 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("is_nullable='\\''YES'\\''", SOURCE)
         self.assertIn("identity_approval_token_requires_verified_evidence", SOURCE)
 
+    def test_schema_preflight_matches_archived_external_and_native_approval_schema(self):
+        for expected in (
+            "historical_external_sensitive_action_requests",
+            "historical_external_sensitive_action_approvals",
+            "historical_external_admin_security_audit",
+            "native_sensitive_action_approvals",
+            "native_admin_security_audit",
+            "native sensitive action approver_user_id",
+            "native admin audit actor_user_id",
+            "historical sensitive-action requests inaccessible to runtime",
+            "historical admin audit inaccessible to runtime",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, SOURCE)
+        self.assertNotIn("to_regclass('testagram_auth.sensitive_action_requests')", SOURCE)
+        self.assertNotIn("to_regclass('testagram_auth.sensitive_action_approvals')", SOURCE)
+        self.assertNotIn("to_regclass('testagram_auth.admin_security_audit')", SOURCE)
+
     def test_failed_schema_preflight_reports_named_acceptance_predicates(self):
         self.assertIn("schema_diagnostics()", SOURCE)
         self.assertIn("Failed schema acceptance predicates:", SOURCE)
