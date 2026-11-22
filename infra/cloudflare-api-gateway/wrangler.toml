@@ -8,4 +8,4 @@ routes = [
 ]
 
 [vars]
-APP_ORIGIN = "https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech"
+APP_ORIGIN = "https://8443-agq4me2xgrgx5ge52ts437tqea.instabox.tech"
