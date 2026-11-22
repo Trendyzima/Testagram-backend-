@@ -174,13 +174,80 @@ export async function reconcileStoppedEvent(env, event, deliveryId) {
     return { action: "ignored", reason: "machine already has an active lifecycle operation" };
   }
 
-  await instaboxRequest(env, `/v1/machines/${encodeURIComponent(machine.id)}/start`, {
+  const startResponse = await instaboxRequest(env, `/v1/machines/${encodeURIComponent(machine.id)}/start`, {
     method: "POST",
     body: {},
     // Stable across webhook retries; InstaBox deduplicates the lifecycle request.
     idempotencyKey: `testagram-sentinel-${deliveryId}`,
   });
-  return { action: "start_requested", machineId: machine.id, eventId: deliveryId };
+  const operation = unwrap(startResponse, "operation");
+  if (!operation?.id) {
+    // Some provider responses are synchronous. Accept them only after an
+    // independent machine read confirms the exact VPS is already running.
+    const finalSnapshot = unwrap(
+      await instaboxRequest(env, `/v1/machines/${encodeURIComponent(machine.id)}`),
+      "machine",
+    );
+    if (String(finalSnapshot.id) !== String(machine.id) ||
+        finalSnapshot.name !== (env.INSTABOX_MACHINE_NAME || "testagramdb") ||
+        finalSnapshot.state !== "running") {
+      throw new Error("InstaBox returned no operation ID and the independent machine read did not confirm running");
+    }
+    return { action: "started", machineId: machine.id, eventId: deliveryId, providerState: "running" };
+  }
+  return {
+    action: "start_requested",
+    machineId: machine.id,
+    eventId: deliveryId,
+    operationId: String(operation.id),
+  };
+}
+
+export async function verifyStartOperation(env, record, now = Date.now()) {
+  const startedAt = Number(record.startedAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) {
+    throw new Error("Recovery record is missing a valid operation start time");
+  }
+  if (now - startedAt > 10 * 60_000) {
+    throw new Error("InstaBox start operation exceeded the ten-minute verification deadline");
+  }
+  if (!record.operationId || !record.machineId) {
+    throw new Error("Recovery record is missing its provider operation or machine identity");
+  }
+  const operation = unwrap(
+    await instaboxRequest(env, `/v1/operations/${encodeURIComponent(record.operationId)}`),
+    "operation",
+  );
+  if (String(operation.id) !== String(record.operationId)) {
+    throw new Error("InstaBox returned a different lifecycle operation");
+  }
+  if (operation.state === "failed") {
+    throw new Error("InstaBox start operation failed");
+  }
+  if (operation.state !== "succeeded") {
+    return { done: false, state: String(operation.state || "unknown") };
+  }
+  const machine = unwrap(
+    await instaboxRequest(env, `/v1/machines/${encodeURIComponent(record.machineId)}`),
+    "machine",
+  );
+  if (String(machine.id) !== String(record.machineId) ||
+      machine.name !== (env.INSTABOX_MACHINE_NAME || "testagramdb")) {
+    throw new Error("Final machine identity did not match the configured Testagram VPS");
+  }
+  if (machine.state !== "running" || machine.desiredState !== "running") {
+    return { done: false, state: String(machine.state || "unknown") };
+  }
+  return {
+    done: true,
+    result: {
+      action: "started",
+      machineId: String(machine.id),
+      operationId: String(operation.id),
+      providerState: String(machine.state),
+      verifiedAt: now,
+    },
+  };
 }
 
 export class EventLedger {
@@ -228,36 +295,89 @@ export class EventLedger {
       const entries = await this.state.storage.list({ prefix: "event:" });
       let retryDelay = 0;
       for (const [key, record] of entries) {
-        if (record?.status !== "pending") {
+        if (record?.status !== "pending" && record?.status !== "starting") {
           if (record?.expiresAt && record.expiresAt < Date.now()) await this.state.storage.delete(key);
           continue;
         }
         try {
+          if (record.status === "starting") {
+            const verification = await verifyStartOperation(this.env, record);
+            if (!verification.done) {
+              retryDelay = Math.max(retryDelay, 5_000);
+              continue;
+            }
+            await this.state.storage.put(key, {
+              status: "complete",
+              deliveryId: record.deliveryId,
+              result: verification.result,
+              attempts: record.attempts || 0,
+              updatedAt: Date.now(),
+              expiresAt: Date.now() + EVENT_TTL_MS,
+            });
+            console.log("Testagram Sentinel independently verified VPS recovery", {
+              eventId: record.deliveryId,
+              machineId: verification.result.machineId,
+              operationId: verification.result.operationId,
+              providerState: verification.result.providerState,
+            });
+            continue;
+          }
+
           const result = await reconcileStoppedEvent(this.env, record.event, record.deliveryId);
-          await this.state.storage.put(key, {
-            status: "complete", deliveryId: record.deliveryId, result,
-            updatedAt: Date.now(), expiresAt: Date.now() + EVENT_TTL_MS,
-          });
+          if (result.action === "start_requested") {
+            await this.state.storage.put(key, {
+              ...record,
+              status: "starting",
+              machineId: result.machineId,
+              operationId: result.operationId,
+              startedAt: Date.now(),
+              attempts: 0,
+              updatedAt: Date.now(),
+            });
+            retryDelay = Math.max(retryDelay, 5_000);
+          } else {
+            await this.state.storage.put(key, {
+              status: "complete",
+              deliveryId: record.deliveryId,
+              result,
+              updatedAt: Date.now(),
+              expiresAt: Date.now() + EVENT_TTL_MS,
+            });
+          }
         } catch (error) {
           const attempts = (record.attempts || 0) + 1;
           const exhausted = attempts >= MAX_EVENT_ATTEMPTS;
           const message = error instanceof Error ? error.message : "unknown error";
           await this.state.storage.put(key, {
-            ...record, status: exhausted ? "failed" : "pending", attempts, lastError: message,
+            ...record,
+            status: exhausted ? "failed" : record.status,
+            attempts,
+            lastError: message,
             updatedAt: Date.now(),
           });
           if (exhausted) {
-            console.error("Testagram Sentinel stopped retrying an event after the retry limit", { eventId: record.deliveryId, attempts, error: message });
+            console.error("Testagram Sentinel stopped retrying an event after the retry limit", {
+              eventId: record.deliveryId,
+              attempts,
+              error: message,
+            });
           } else {
-            retryDelay = Math.max(retryDelay, Math.min(30 * 60_000, 30_000 * (2 ** (attempts - 1))));
-            console.warn("Testagram Sentinel provider retry failed", { eventId: record.deliveryId, attempts, error: message });
+            retryDelay = Math.max(
+              retryDelay,
+              Math.min(30 * 60_000, 30_000 * (2 ** (attempts - 1))),
+            );
+            console.warn("Testagram Sentinel recovery verification/provider call failed", {
+              eventId: record.deliveryId,
+              attempts,
+              phase: record.status,
+              error: message,
+            });
           }
         }
       }
       if (retryDelay) await this.state.storage.setAlarm(Date.now() + retryDelay);
     });
   }
-}
 
 export default {
   async fetch(request, env) {
