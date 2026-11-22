@@ -777,6 +777,24 @@ case "$overlay_status" in
     ;;
 esac
 
+# The video worker's dependency-aware Docker healthcheck proves both
+# PostgreSQL connectivity and writable access to the mounted media volume.
+# Do not accept a merely running container: that would hide missing readiness
+# checks and recreate the original permission regression.
+video_worker_container="$(sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps -q video-worker)"
+if [[ -z "$video_worker_container" ]]; then
+  echo "::error::Data Centre video worker container is missing after deployment."
+  exit 1
+fi
+video_worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$video_worker_container")"
+if [[ "$video_worker_health" != "healthy" ]]; then
+  echo "::error::Data Centre video worker readiness healthcheck did not report healthy (status: $video_worker_health)."
+  sudo docker inspect --format '{{json .State.Health}}' "$video_worker_container" || true
+  sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" logs --tail=120 video-worker || true
+  exit 1
+fi
+echo "Verified Data Centre video worker readiness: PostgreSQL connected and mounted media root writable."
+
 # The Federation container's healthcheck proves PostgreSQL and the private
 # Backend dependency are ready. Then ask it over the private Backend network
 # to report the four active worker/acceptance switches.
