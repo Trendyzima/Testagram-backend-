@@ -58,6 +58,28 @@ BEGIN
       RAISE EXCEPTION 'expired sensitive-action request cannot be approved';
     END IF;
 
+    -- Hold the approver identity, active role grant and WebAuthn credential
+    -- rows through commit. A concurrent disable/revoke must serialize either
+    -- before this eligibility check (and make it fail) or after approval.
+    PERFORM 1
+    FROM testagram_auth.native_sensitive_action_approvals a
+    JOIN testagram_auth.staff_principals sp ON sp.user_id=a.approver_user_id
+    JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+    JOIN testagram_auth.staff_role_grants rg
+      ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+    JOIN testagram_auth.staff_webauthn_credentials wc
+      ON wc.user_id=sp.user_id
+     AND wc.revoked_at IS NULL
+     AND wc.user_verified=TRUE
+     AND wc.clone_warning=FALSE
+    WHERE a.request_id=OLD.id
+      AND a.decision='approved'
+      AND sp.enabled=TRUE
+      AND sp.mfa_enrolled_at IS NOT NULL
+      AND i.disabled_at IS NULL
+      AND i.email_verified_at IS NOT NULL
+    FOR UPDATE OF sp,i,rg,wc;
+
     SELECT
       count(DISTINCT a.approver_user_id) FILTER (WHERE a.decision='approved'),
       count(DISTINCT a.approver_user_id) FILTER (
@@ -126,7 +148,6 @@ DECLARE
   v_requester UUID;
   v_status TEXT;
   v_expires_at TIMESTAMPTZ;
-  v_staff_eligible BOOLEAN;
 BEGIN
   SELECT requested_by_user_id,status,expires_at
     INTO v_requester,v_status,v_expires_at
@@ -142,25 +163,26 @@ BEGIN
     RAISE EXCEPTION 'requester cannot approve their own sensitive action';
   END IF;
 
-  SELECT EXISTS (
-    SELECT 1
-    FROM testagram_auth.staff_principals sp
-    JOIN testagram_auth.identities i ON i.user_id=sp.user_id
-    JOIN testagram_auth.staff_role_grants rg
-      ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-    JOIN testagram_auth.staff_webauthn_credentials wc
-      ON wc.user_id=sp.user_id
-     AND wc.revoked_at IS NULL
-     AND wc.user_verified=TRUE
-     AND wc.clone_warning=FALSE
-    WHERE sp.user_id=NEW.approver_user_id
-      AND sp.enabled=TRUE
-      AND sp.mfa_enrolled_at IS NOT NULL
-      AND i.disabled_at IS NULL
-      AND i.email_verified_at IS NOT NULL
-  ) INTO v_staff_eligible;
+  -- Serialize this insert with concurrent role, identity and credential
+  -- revocation. The parent request is already locked above; keep one lock order.
+  PERFORM 1
+  FROM testagram_auth.staff_principals sp
+  JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+  JOIN testagram_auth.staff_role_grants rg
+    ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+  JOIN testagram_auth.staff_webauthn_credentials wc
+    ON wc.user_id=sp.user_id
+   AND wc.revoked_at IS NULL
+   AND wc.user_verified=TRUE
+   AND wc.clone_warning=FALSE
+  WHERE sp.user_id=NEW.approver_user_id
+    AND sp.enabled=TRUE
+    AND sp.mfa_enrolled_at IS NOT NULL
+    AND i.disabled_at IS NULL
+    AND i.email_verified_at IS NOT NULL
+  FOR UPDATE OF sp,i,rg,wc;
 
-  IF NOT v_staff_eligible THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'approver is not an enabled, verified and MFA-enrolled native staff principal';
   END IF;
 
