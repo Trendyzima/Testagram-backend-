@@ -58,7 +58,8 @@ for migration in \
   migrations/20261120_native_identity_approval_circuit.sql \
   migrations/20261120_native_verification_decider.sql \
   migrations/20261121_native_identity_intake_optional_fingerprint.sql \
-  migrations/20261121_native_staff_webauthn.sql; do
+  migrations/20261121_native_staff_webauthn.sql \
+  migrations/061_native_sensitive_action_integrity.sql; do
   psql_ci < "$migration"
 done
 
@@ -91,6 +92,8 @@ psql_ci < migrations/20261120_native_identity_approval_circuit.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
 psql_ci < migrations/20261121_native_staff_webauthn.sql
+psql_ci < migrations/061_native_sensitive_action_integrity.sql
+psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
@@ -115,6 +118,12 @@ INSERT INTO testagram_auth.staff_role_grants(user_id,role,granted_by) VALUES
   ('123e4567-e89b-42d3-a456-426614174103','operations','123e4567-e89b-42d3-a456-426614174103'),
   ('123e4567-e89b-42d3-a456-426614174104','administrator','123e4567-e89b-42d3-a456-426614174103'),
   ('123e4567-e89b-42d3-a456-426614174105','administrator','123e4567-e89b-42d3-a456-426614174103');
+INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES
+  ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174104',digest('123e4567-e89b-42d3-a456-426614174104','sha256')),
+  ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174105',digest('123e4567-e89b-42d3-a456-426614174105','sha256'));
+INSERT INTO testagram_auth.staff_webauthn_credentials(rpid,user_id,credential_id,credential,user_verified,clone_warning) VALUES
+  ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174104',digest('credential:123e4567-e89b-42d3-a456-426614174104','sha256'),decode('04','hex'),TRUE,FALSE),
+  ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174105',digest('credential:123e4567-e89b-42d3-a456-426614174105','sha256'),decode('05','hex'),TRUE,FALSE);
 
 DO $registration$
 DECLARE
@@ -185,10 +194,10 @@ BEGIN
     (app_id,'123e4567-e89b-42d3-a456-426614174105','account_approval','approved','Second independent approval','account-audit-reference-0002');
 
   INSERT INTO testagram_auth.native_sensitive_action_approvals
-    (request_id,approver_user_id,decision,reason)
+    (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
   VALUES
-    (action_id,'123e4567-e89b-42d3-a456-426614174104','approved','First independent approval'),
-    (action_id,'123e4567-e89b-42d3-a456-426614174105','approved','Second independent approval');
+    (action_id,'123e4567-e89b-42d3-a456-426614174104','approved','First independent approval','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174104','sha256')),
+    (action_id,'123e4567-e89b-42d3-a456-426614174105','approved','Second independent approval','ops.testagram.invalid',digest('credential:123e4567-e89b-42d3-a456-426614174105','sha256'));
 
   UPDATE testagram_auth.native_sensitive_action_requests
   SET status='approved',decided_at=now()
