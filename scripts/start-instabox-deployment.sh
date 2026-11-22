@@ -51,15 +51,21 @@ fi
 
 read -r -d '' REMOTE_COMMAND <<'REMOTE_OUTER' || true
 set -euo pipefail
-# Preserve the approved image digest across the detached InstaBox exec process.
-# The image digest is embedded in DEPLOY_WEB_IMAGE inside REMOTE_SCRIPT.
+# Persist the approved image digest before launching the detached deployment.
 ROOT=/data/home/testagram
 mkdir -p "$ROOT/repos"
+printf '%s\n' 'DEPLOY_WEB_IMAGE=__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__' > "$ROOT/deploy-image.env"
+chmod 600 "$ROOT/deploy-image.env"
 cat > "$ROOT/deploy.sh" <<'REMOTE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT=/data/home/testagram
-DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"
+if [[ ! -s "$ROOT/deploy-image.env" ]]; then
+  echo "::error::Protected deployment image pin file is missing."
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$ROOT/deploy-image.env"
 REPOS="$ROOT/repos"
 BACKEND="$REPOS/backend"
 DATACENTRE="$REPOS/data-centre"
@@ -985,7 +991,7 @@ echo "REMOTE_DEPLOY_STARTED"
 REMOTE_OUTER
 # Embed the already-validated digest before passing the command to InstaBox.
 REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"
-if ! grep -Fq "DEPLOY_WEB_IMAGE=\"$TESTAGRAM_WEB_IMAGE\"" <<<"$REMOTE_COMMAND"; then
+if ! grep -Fq "DEPLOY_WEB_IMAGE=$TESTAGRAM_WEB_IMAGE" <<<"$REMOTE_COMMAND"; then
   echo "::error::Validated Flutter digest was not embedded in the remote deployment script."
   exit 1
 fi
