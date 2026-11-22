@@ -64,6 +64,7 @@ jobs:
     env:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+      INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
@@ -81,26 +82,54 @@ jobs:
             echo "::error::Missing or invalid TESTAGRAM_EDGE_PROXY_SHARED_TOKEN production secret (expected 64 hexadecimal characters)."
             exit 1
           fi
+      - name: Verify production media feature gates
+        env:
+          DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
+          FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalize_flag() {
+            printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]'
+          }
+          early_dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
+          early_fresh_gate="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
+          if [[ "$early_dc_media_enabled" != "true" || "$early_fresh_gate" != "true" ]]; then
+            echo "::error::Production media gates are not enabled. Set DATA_CENTRE_MEDIA_ENABLED=true and FRESH_MEDIA_ENABLED=true as variables in the GitHub production environment."
+            exit 1
+          fi
+          echo "Verified both required production media feature gates are enabled."
+
       - name: Resolve and start the InstaBox machine
         id: machine
         shell: bash
         run: |
           set -euo pipefail
           API="https://api.instabox.sh"
+          EXPECTED_MACHINE_NAME="${INSTABOX_MACHINE_NAME:-testagramdb}"
           if [[ -z "${INSTABOX_API_KEY:-}" ]]; then
             echo "::error::Missing TESTAGRAM_DB_API repository secret. Add the InstaBox API key there."
+            exit 1
+          fi
+          if [[ -z "$EXPECTED_MACHINE_NAME" ]]; then
+            echo "::error::INSTABOX_MACHINE_NAME must identify the intended Testagram machine."
             exit 1
           fi
 
           machines="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS \
             -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
+          if ! jq -e '.machines | type == "array"' <<<"$machines" >/dev/null; then
+            echo "::error::InstaBox machine inventory response is malformed."
+            exit 1
+          fi
+
           machine_id="${INSTABOX_MACHINE_ID:-}"
           if [[ -z "$machine_id" ]]; then
-            machine_id="$(jq -r '([.machines[] | select(.name == "testagram")][0].id) // (if (.machines | length) == 1 then .machines[0].id else "" end)' <<<"$machines")"
+            machine_id="$(jq -r --arg name "$EXPECTED_MACHINE_NAME" '([.machines[] | select(.name == $name)][0].id) // empty' <<<"$machines")"
           fi
 
           if [[ -z "$machine_id" && "$(jq '.machines | length' <<<"$machines")" == "0" ]]; then
-            body="$(jq -nc '{name:"testagram",templateId:"agent-browser",desiredState:"running",metadata:{app:"testagram",managedBy:"github-actions"}}')"
+            body="$(jq -nc --arg name "$EXPECTED_MACHINE_NAME" '{name:$name,templateId:"agent-browser",desiredState:"running",metadata:{app:"testagram",managedBy:"github-actions"}}')"
             created="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
               -H "X-API-Key: $INSTABOX_API_KEY" \
               -H "Idempotency-Key: testagram-create-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
@@ -112,26 +141,39 @@ jobs:
               jq -c '.error // .' <<<"$created"
               exit 1
             fi
+            creation_succeeded=false
             for attempt in $(seq 1 90); do
               operation="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/operations/$operation_id")"
-              state="$(jq -r '.state // empty' <<<"$operation")"
+              operation_state="$(jq -r '.state // empty' <<<"$operation")"
               machine_id="$(jq -r '.machineId // .machine.id // empty' <<<"$operation")"
-              if [[ "$state" == "succeeded" && -n "$machine_id" ]]; then break; fi
-              if [[ "$state" == "failed" ]]; then
+              if [[ "$operation_state" == "succeeded" && -n "$machine_id" ]]; then
+                creation_succeeded=true
+                break
+              fi
+              if [[ "$operation_state" == "failed" ]]; then
                 echo "::error::InstaBox machine creation failed."
                 jq -c '.error // .' <<<"$operation"
                 exit 1
               fi
               sleep 5
             done
+            if [[ "$creation_succeeded" != true ]]; then
+              echo "::error::Timed out waiting for InstaBox machine creation to succeed."
+              exit 1
+            fi
           fi
 
           if [[ -z "$machine_id" ]]; then
-            echo "::error::Could not safely select a machine. Name one machine 'testagram' or add INSTABOX_MACHINE_ID as a repository secret."
+            echo "::error::No InstaBox machine named '$EXPECTED_MACHINE_NAME' was found. Set INSTABOX_MACHINE_ID only if it identifies that exact machine."
             exit 1
           fi
 
           machine="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
+          actual_machine_name="$(jq -r '.name // empty' <<<"$machine")"
+          if [[ "$actual_machine_name" != "$EXPECTED_MACHINE_NAME" ]]; then
+            echo "::error::Refusing to deploy to machine '$actual_machine_name'; expected '$EXPECTED_MACHINE_NAME'. Check INSTABOX_MACHINE_ID and INSTABOX_MACHINE_NAME."
+            exit 1
+          fi
           state="$(jq -r '.state // empty' <<<"$machine")"
           if [[ "$state" != "running" ]]; then
             started="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
@@ -139,37 +181,59 @@ jobs:
               -H "Idempotency-Key: testagram-start-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
               -H "Content-Type: application/json" -d '{}' "$API/v1/machines/$machine_id/start")"
             operation_id="$(jq -r '.id // empty' <<<"$started")"
-            if [[ -n "$operation_id" ]]; then
-              for attempt in $(seq 1 90); do
-                operation="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/operations/$operation_id")"
-                state="$(jq -r '.state // empty' <<<"$operation")"
-                if [[ "$state" == "succeeded" ]]; then break; fi
-                if [[ "$state" == "failed" ]]; then
-                  echo "::error::InstaBox machine start failed."
-                  jq -c '.error // .' <<<"$operation"
-                  exit 1
-                fi
-                sleep 5
-              done
+            if [[ -z "$operation_id" ]]; then
+              echo "::error::InstaBox did not return a machine start operation."
+              jq -c '.error // .' <<<"$started"
+              exit 1
+            fi
+            start_succeeded=false
+            for attempt in $(seq 1 90); do
+              operation="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/operations/$operation_id")"
+              operation_state="$(jq -r '.state // empty' <<<"$operation")"
+              if [[ "$operation_state" == "succeeded" ]]; then
+                start_succeeded=true
+                break
+              fi
+              if [[ "$operation_state" == "failed" ]]; then
+                echo "::error::InstaBox machine start failed."
+                jq -c '.error // .' <<<"$operation"
+                exit 1
+              fi
+              sleep 5
+            done
+            if [[ "$start_succeeded" != true ]]; then
+              echo "::error::Timed out waiting for InstaBox machine start to succeed."
+              exit 1
             fi
           fi
 
+          ready=false
           for attempt in $(seq 1 60); do
             machine="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
+            actual_machine_name="$(jq -r '.name // empty' <<<"$machine")"
             state="$(jq -r '.state // empty' <<<"$machine")"
             ready="$(jq -r '.runtime.ready // false' <<<"$machine")"
+            if [[ "$actual_machine_name" != "$EXPECTED_MACHINE_NAME" ]]; then
+              echo "::error::InstaBox machine identity changed during readiness polling."
+              exit 1
+            fi
             if [[ "$state" == "running" && "$ready" == "true" ]]; then break; fi
             if [[ "$state" == "error" ]]; then
               echo "::error::InstaBox machine is in error state."
-              jq -c '{state, runtime, operationId}' <<<"$machine"
+              jq -c '{name, state, runtime, operationId}' <<<"$machine"
               exit 1
             fi
             sleep 5
           done
 
-          echo "machine_id=$machine_id" >> "$GITHUB_OUTPUT"
-          echo "InstaBox machine is ready."
+          if [[ "$state" != "running" || "$ready" != "true" ]]; then
+            echo "::error::InstaBox machine '$EXPECTED_MACHINE_NAME' did not become ready within 300 seconds; refusing deployment."
+            jq -c '{name, state, runtime, operationId}' <<<"$machine"
+            exit 1
+          fi
 
+          echo "machine_id=$machine_id" >> "$GITHUB_OUTPUT"
+          echo "Verified intended InstaBox machine '$EXPECTED_MACHINE_NAME' is running and ready."
       - name: Ensure Data Centre R2 media and metadata buckets exist
         id: r2-media-buckets
         env:
