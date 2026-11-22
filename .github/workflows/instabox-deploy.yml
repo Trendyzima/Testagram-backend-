@@ -331,10 +331,13 @@ jobs:
           r2_managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$R2_IDENTITY_BUCKET/domains/managed"
           managed_request="$RUNNER_TEMP/r2-managed-disable-request.json"
           managed_response="$RUNNER_TEMP/r2-managed-disable.json"
-          jq -cn '{enabled:false}' > "$managed_request"
+          # Cloudflare's managed-domain endpoint has rejected a valid JSON file
+          # with a trailing newline. Serialize the compact object without any
+          # trailing bytes, then verify both its exact size and parsed shape.
+          jq -cn '{enabled:false}' | tr -d '\\n' > "$managed_request"
           jq -e 'type == "object" and .enabled == false and (keys == ["enabled"])' "$managed_request" >/dev/null
           managed_request_bytes="$(wc -c < "$managed_request" | tr -d '[:space:]')"
-          [[ "$managed_request_bytes" -gt 0 ]] || { echo "::error::R2 managed-domain disable request body is empty."; exit 1; }
+          [[ "$managed_request_bytes" == "17" ]] || { echo "::error::R2 managed-domain JSON body must be exactly 17 bytes; got $managed_request_bytes."; exit 1; }
           echo "Sending validated R2 managed-domain JSON body ($managed_request_bytes bytes)."
           managed_status="$(curl -sS --connect-timeout 5 --max-time 20 \
             -o "$managed_response" -w '%{http_code}' \
