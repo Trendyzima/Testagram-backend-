@@ -86,7 +86,7 @@ jobs:
                   echo "#### DNS inventory: $zone_name"
                   echo "| Record | Type | Target (DNS content) | Proxied | TTL |"
                   echo "|---|---|---|---|---:|"
-                  jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + ((.content // "")|gsub("\\|";"\\\\|")) + " | " + ((.proxied // false)|tostring) + " | " + ((.ttl // 0)|tostring) + " |"' "$tmp/dns.json"
+                  jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + (if .type == "TXT" then "[TXT value omitted]" else ((.content // "")|gsub("\\|";"\\\\|")) end) + " | " + ((.proxied // false)|tostring) + " | " + ((.ttl // 0)|tostring) + " |"' "$tmp/dns.json"
                 } >> "$GITHUB_STEP_SUMMARY"
               fi
               if cf_get "/zones/$zone_id/workers/routes" "$tmp/routes.json"; then
