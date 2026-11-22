@@ -280,6 +280,70 @@ test("Durable Object retains starting state until provider lifecycle verificatio
   });
 });
 
+test("synchronous provider start is not accepted when operator desiredState is stopped", async () => {
+  const originalFetch = globalThis.fetch;
+  let machineReads = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/machines") {
+      return Response.json({ machines: [{ id: "machine-123", name: "testagramdb" }], nextCursor: null });
+    }
+    if (url.pathname === "/v1/machines/machine-123" && (init.method || "GET") === "GET") {
+      machineReads += 1;
+      if (machineReads === 1) {
+        return Response.json({ machine: {
+          id: "machine-123", name: "testagramdb", state: "stopped", desiredState: "running", operationId: null,
+        } });
+      }
+      return Response.json({ machine: {
+        id: "machine-123", name: "testagramdb", state: "running", desiredState: "stopped", operationId: null,
+      } });
+    }
+    if (url.pathname === "/v1/machines/machine-123/start" && init.method === "POST") {
+      return Response.json({ accepted: true }, { status: 202 });
+    }
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    await assert.rejects(
+      reconcileStoppedEvent(
+        { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+        stoppedEvent,
+        "evt_operator_stop_after_start",
+      ),
+      /did not confirm running/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("asynchronous provider success remains pending if desiredState changes to stopped", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/operations/op-123") {
+      return Response.json({ operation: { id: "op-123", state: "succeeded" } });
+    }
+    if (url.pathname === "/v1/machines/machine-123") {
+      return Response.json({ machine: {
+        id: "machine-123", name: "testagramdb", state: "running", desiredState: "stopped",
+      } });
+    }
+    throw new Error("Unexpected request: " + url.pathname);
+  };
+  try {
+    const result = await verifyStartOperation(
+      { INSTABOX_API_KEY: "unit-test-only", INSTABOX_MACHINE_NAME: "testagramdb" },
+      { operationId: "op-123", machineId: "machine-123", startedAt: now },
+      now + 5_000,
+    );
+    assert.equal(result.done, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("provider verification deadline fails closed", async () => {
   await assert.rejects(
     verifyStartOperation(
