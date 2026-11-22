@@ -788,10 +788,10 @@ jobs:
               raise SystemExit("Deployment must explicitly pull the pinned Algorithm and Federation images")
           if '--force-recreate algorithm federation-api' not in deploy:
               raise SystemExit("Deployment must recreate services after updating immutable image pins")
-          assert 'DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script, "deployment must embed the workflow-selected Flutter web release into the detached script"
+          assert 'export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script, "deployment must export the workflow-selected Flutter web release into the detached process"
           assert 'TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"' in deploy_script, "deployment must use only the workflow-selected Flutter digest"
-          assert 'DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script and 'REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"' in deploy_script, "deployment must embed the approved digest directly into the detached remote script"
-          assert 'grep -Fq "DEPLOY_WEB_IMAGE=' in deploy_script, "deployment must verify the exact digest is present before remote execution"
+          assert 'export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script and 'REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"' in deploy_script and 'DEPLOY_WEB_IMAGE="${TESTAGRAM_WEB_IMAGE:?' in deploy_script, "deployment must export the approved digest into the detached remote process"
+          assert 'grep -Fq "export TESTAGRAM_WEB_IMAGE=' in deploy_script, "deployment must verify the exact digest export before remote execution"
           assert 'TESTAGRAM_WEB_IMAGE" =~ ^ghcr' in deploy_script and '@sha256:[a-f0-9]{64}' in deploy_script, "deployment must reject missing or mutable Flutter image references"
           assert r'ghcr\\.io' not in deploy_script, "deployment must not contain a double-escaped GHCR host pattern"
           assert "Flutter web release must be supplied as an immutable GHCR digest" in deploy_script, "deployment must reject mutable Flutter web tags"
