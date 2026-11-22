@@ -1604,6 +1604,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The preceding permission-revocation fixture disables this principal;
+          # restore only this isolated CI fixture before testing lock ordering.
+          docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c "UPDATE testagram_auth.staff_principals SET enabled=TRUE WHERE user_id='123e4567-e89b-42d3-a456-426614174003'; UPDATE testagram_auth.staff_webauthn_credentials SET revoked_at=NULL WHERE user_id='123e4567-e89b-42d3-a456-426614174003';"
           request_id="$(docker exec testagram-admin-security-ci psql -U postgres -Atqc "INSERT INTO testagram_auth.native_sensitive_action_requests (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256) VALUES ('security.change','123e4567-e89b-42d3-a456-426614174001','ci-concurrent-001','CI validates concurrent approval and revocation serialization','{}'::jsonb,repeat('e',64)) RETURNING id")"
           test -n "$request_id"
           docker exec -i testagram-admin-security-ci psql -U postgres -v request_id="$request_id" <<'SQL'
