@@ -247,6 +247,40 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 		t.Fatalf("insert native identity-pipeline request: %v", err)
 	}
 
+	// The application must refuse to record approval against a payload whose
+	// immutable digest does not match the JSONB snapshot read back from PostgreSQL.
+	var badDigestRequestID string
+	if err := conn.QueryRow(ctx, `
+		INSERT INTO testagram_auth.native_sensitive_action_requests
+		  (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256)
+		VALUES ('security.change',$1::uuid,'payload-digest-negative','Reject a mismatched immutable payload digest',
+		        '{"immutable":true}'::jsonb,repeat('f',64))
+		RETURNING id::text
+	`, evidenceReviewerOne).Scan(&badDigestRequestID); err != nil {
+		t.Fatalf("insert mismatched-digest request fixture: %v", err)
+	}
+	digestTx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin mismatched-digest decision: %v", err)
+	}
+	if _, _, _, err := recordSensitiveActionDecision(ctx, digestTx, badDigestRequestID, "security.change",
+		evidenceReviewerOne, approverOne, "ops.example.test", []byte("credential-"+approverOne),
+		"approved", "Reject a mismatched payload digest"); err == nil || !strings.Contains(err.Error(), "payload digest") {
+		_ = digestTx.Rollback(ctx)
+		t.Fatalf("mismatched payload digest decision error=%v; expected digest rejection", err)
+	}
+	_ = digestTx.Rollback(ctx)
+	var badDigestApprovalCount int
+	if err := conn.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid
+	`, badDigestRequestID).Scan(&badDigestApprovalCount); err != nil {
+		t.Fatalf("count rejected mismatched-digest approvals: %v", err)
+	}
+	if badDigestApprovalCount != 0 {
+		t.Fatalf("mismatched payload digest produced %d approval rows; want zero", badDigestApprovalCount)
+	}
+
 	_, err = conn.Exec(ctx, `
 		INSERT INTO testagram_identity.identity_applications
 		  (id,email,username,display_name,adult_confirmed_at,adult_verified_at,
