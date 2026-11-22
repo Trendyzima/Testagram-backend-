@@ -60,11 +60,11 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         start = self.workflow.index("r2_managed_url=")
         end = self.workflow.index("managed_check_status=", start)
         request = self.workflow[start:end]
-        self.assertIn(r'''jq -cn '{enabled:false}' | head -c 17 > "$managed_request"''', request)
-        self.assertIn("--data-binary \"@$managed_request\"", request)
-        self.assertIn("-H 'Content-Type: application/json'", request)
+        self.assertIn('body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")', request)
+        self.assertIn("urllib.request.Request(", request)
+        self.assertIn('"Content-Type": "application/json"', request)
         self.assertIn("result.enabled == false", self.workflow)
-        self.assertNotIn("--data-raw", request)
+        self.assertIn('method="PUT"', request)
 
     def test_compose_and_caddy_consume_the_persisted_name(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")

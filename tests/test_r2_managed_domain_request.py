@@ -9,10 +9,10 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/instabox-dep
 class R2ManagedDomainRequestTests(unittest.TestCase):
     def test_disable_request_is_generated_validated_and_sent_as_json_bytes(self):
         source = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn(r'''jq -cn '{enabled:false}' | head -c 17 > "$managed_request"''', source)
-        self.assertIn("jq -e 'type == \"object\" and .enabled == false and (keys == [\"enabled\"])' \"$managed_request\"", source)
-        self.assertIn("-H 'Content-Type: application/json'", source)
-        self.assertIn("--data-binary \"@$managed_request\"", source)
+        self.assertIn('body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")', source)
+        self.assertIn("urllib.request.Request(", source)
+        self.assertIn('"Content-Type": "application/json"', source)
+        self.assertIn('method="PUT"', source)
         self.assertIn(".success == true and .result.enabled == false", source)
 
     def test_public_access_verification_remains_fail_closed(self):
@@ -23,3 +23,4 @@ class R2ManagedDomainRequestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
