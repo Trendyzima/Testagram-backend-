@@ -32,7 +32,7 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         gate = self.workflow[gate_step:machine_step]
         self.assertIn("vars.DATA_CENTRE_MEDIA_ENABLED || 'false'", gate)
         self.assertIn("vars.FRESH_MEDIA_ENABLED || 'false'", gate)
-        self.assertIn('[[ "$early_dc_media_enabled" != "true" || "$early_fresh_media_enabled" != "true" ]]', gate)
+        self.assertIn('[[ "$early_dc_media_enabled" != "true" || "$early_fresh_gate" != "true" ]]', gate)
         self.assertIn("GitHub production environment", gate)
 
     def test_machine_selection_is_pinned_to_the_intended_machine_name(self):
