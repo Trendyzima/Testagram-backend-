@@ -66,6 +66,20 @@ jobs:
             exit 0
           fi
 
+          # Bind the destructive action to the exact dashboard publication,
+          # not merely any future service that happens to use port 9000.
+          jq -e --arg expected_url "https://9000-agq4me2xgrgx5ge52ts437tqea.instabox.tech" '
+            .ports | any(
+              .port == 9000 and
+              .name == "testagram-media" and
+              .access == "public" and
+              (.url | startswith($expected_url))
+            )
+          ' "$ports" >/dev/null || {
+            echo "::error::Port 9000 does not match the reviewed public testagram-media publication; no change was attempted."
+            exit 1
+          }
+
           echo "## Testagram MinIO public-port review" >> "$GITHUB_STEP_SUMMARY"
           echo "- Machine identity: testagramdb (exact ID verified)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Port 9000 publication: present" >> "$GITHUB_STEP_SUMMARY"
