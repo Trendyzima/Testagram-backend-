@@ -133,4 +133,47 @@ RETURNING e2ee_enabled`, conversationID, sender, "testagram-ci-"+suffix).Scan(&c
 	if callMediaEncrypted {
 		t.Fatal("new call session must not claim media end-to-end encryption before a verified media lifecycle exists")
 	}
+	var messageID string
+	if err := tx.QueryRow(ctx, `
+INSERT INTO testagram_local.messages(conversation_id,sender_id,body)
+VALUES($1,$2,'') RETURNING id::text`, conversationID, sender).Scan(&messageID); err != nil {
+		t.Fatalf("insert message resolver fixture: %v", err)
+	}
+	var resolverCallID string
+	if err := tx.QueryRow(ctx, `
+INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind)
+VALUES($1,$2,$3,'voice') RETURNING id::text`, conversationID, sender, "resolver-room-"+suffix).Scan(&resolverCallID); err != nil {
+		t.Fatalf("insert call resolver fixture: %v", err)
+	}
+	resolverCases := []struct {
+		name    string
+		request capabilityRequest
+	}{
+		{
+			name: "message delete resolves conversation for block policy",
+			request: capabilityRequest{
+				Capability: "testagram.messages.delete",
+				Input:      map[string]any{"message_id": messageID},
+			},
+		},
+		{
+			name: "call end resolves conversation for block policy",
+			request: capabilityRequest{
+				Capability: "testagram.calls.end",
+				Input:      map[string]any{"call_id": resolverCallID},
+			},
+		},
+	}
+	for _, tc := range resolverCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved, err := communicationResolveConversationID(ctx, tx, tc.request)
+			if err != nil {
+				t.Fatalf("resolve conversation: %v", err)
+			}
+			if resolved != conversationID {
+				t.Fatalf("resolved conversation %q, want %q", resolved, conversationID)
+			}
+		})
+	}
+
 }
