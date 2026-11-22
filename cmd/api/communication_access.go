@@ -78,3 +78,28 @@ SELECT EXISTS(
 )`, userID, conversationID).Scan(&blocked)
 	return blocked, err
 }
+
+func lockCommunicationConversationAccounts(ctx context.Context, tx pgx.Tx, userID, conversationID string) error {
+	rows, err := tx.Query(ctx, `
+SELECT user_id::text
+FROM testagram_local.conversation_members
+WHERE conversation_id=$1 AND left_at IS NULL`, conversationID)
+	if err != nil {
+		return err
+	}
+	ids := []string{userID}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	return lockCommunicationAccounts(ctx, tx, ids...)
+}
