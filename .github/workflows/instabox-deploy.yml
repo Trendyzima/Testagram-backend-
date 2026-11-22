@@ -48,6 +48,7 @@ jobs:
           python3 tests/test_instabox_edge_proxy_secret.py -v
           python3 tests/test_instabox_image_digest_verification.py -v
           python3 tests/test_instabox_web_image_release_wiring.py -v
+          python3 tests/test_instabox_deployment_polling.py -v
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests
