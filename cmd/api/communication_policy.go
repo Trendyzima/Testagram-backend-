@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *service) nativeCommunicationCapabilityHardened(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
@@ -20,8 +23,9 @@ func (s *service) nativeCommunicationCapabilityHardened(w http.ResponseWriter, r
 		"testagram.messages.list", "testagram.messages.send_encrypted",
 		"testagram.messages.edit_encrypted", "testagram.messages.mark_read",
 		"testagram.messages.react", "testagram.messages.attach",
+		"testagram.messages.delete",
 		"testagram.calls.create", "testagram.calls.join",
-		"testagram.calls.list", "testagram.calls.get":
+		"testagram.calls.end", "testagram.calls.list", "testagram.calls.get":
 		return s.communicationWithConversationPolicy(w, r, requestID, body)
 	default:
 		return s.nativeCommunicationCapability(w, r, requestID, body)
@@ -53,16 +57,12 @@ func (s *service) communicationCreateWithPolicy(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if s.db.Stat().MaxConns() < 2 {
-		allowed, err := communicationRecipientAllowed(ctx, s.db, userID, recipientID)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("CONVERSATION_POLICY_UNAVAILABLE", "Could not verify recipient privacy and block policy", requestID))
-			return true
-		}
-		if !allowed {
-			writeJSON(w, http.StatusNotFound, errorBody("MEMBER_UNAVAILABLE", "This account is unavailable for a new conversation", requestID))
-			return true
-		}
-		return s.nativeCommunicationCapability(w, r, requestID, body)
+		writeJSON(w, http.StatusServiceUnavailable, errorBody(
+			"CONVERSATION_POLICY_UNAVAILABLE",
+			"Communication privacy checks require a transactional database connection",
+			requestID,
+		))
+		return true
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *service) communicationCreateWithPolicy(w http.ResponseWriter, r *http.R
 		return true
 	}
 
-	// Keep the ordered account locks while the original transactional handler
+	// Keep the ordered account locks while the canonical transactional handler
 	// creates or reuses the direct conversation. A concurrent block/follow
 	// mutation cannot slip between the policy check and conversation write.
 	return s.nativeCommunicationCapability(w, r, requestID, body)
@@ -117,25 +117,33 @@ func (s *service) communicationWithConversationPolicy(w http.ResponseWriter, r *
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	conversationID, err := communicationResolveConversationID(ctx, s.db, body)
-	if err != nil || !socialUUIDPattern.MatchString(conversationID) {
-		// Let the canonical handler return its established validation/not-found
-		// response when the referenced message, call or conversation is absent.
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Preserve the canonical handler's established not-found response
+			// for genuinely absent message/call resources.
+			return s.nativeCommunicationCapability(w, r, requestID, body)
+		}
+		writeJSON(w, http.StatusServiceUnavailable, errorBody(
+			"COMMUNICATION_POLICY_UNAVAILABLE",
+			"Could not resolve the conversation safety boundary",
+			requestID,
+		))
+		return true
+	}
+	if !socialUUIDPattern.MatchString(conversationID) {
+		// Invalid or absent identifiers are left to the canonical handler for
+		// its established validation/not-found response.
 		return s.nativeCommunicationCapability(w, r, requestID, body)
 	}
 
 	if s.db.Stat().MaxConns() < 2 {
-		blocked, err := communicationConversationBlocked(ctx, s.db, userID, conversationID)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("COMMUNICATION_POLICY_UNAVAILABLE", "Could not verify conversation safety", requestID))
-			return true
-		}
-		if blocked {
-			writeJSON(w, http.StatusForbidden, errorBody("CONVERSATION_ACCESS_DENIED", "A block prevents access to this conversation", requestID))
-			return true
-		}
-		return s.nativeCommunicationCapability(w, r, requestID, body)
+		writeJSON(w, http.StatusServiceUnavailable, errorBody(
+			"COMMUNICATION_POLICY_UNAVAILABLE",
+			"Communication privacy checks require a transactional database connection",
+			requestID,
+		))
+		return true
 	}
-
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody(
@@ -148,7 +156,12 @@ func (s *service) communicationWithConversationPolicy(w http.ResponseWriter, r *
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	if err := lockCommunicationConversationAccounts(ctx, tx, userID, conversationID); err != nil {
-		return s.nativeCommunicationCapability(w, r, requestID, body)
+		writeJSON(w, http.StatusServiceUnavailable, errorBody(
+			"COMMUNICATION_POLICY_UNAVAILABLE",
+			"Could not lock conversation participants for a safety check",
+			requestID,
+		))
+		return true
 	}
 	blocked, err := communicationConversationBlocked(ctx, tx, userID, conversationID)
 	if err != nil {
@@ -169,7 +182,8 @@ func (s *service) communicationWithConversationPolicy(w http.ResponseWriter, r *
 	}
 
 	// Keep account locks until the canonical operation has completed so a
-	// concurrent block cannot race a message send, read, reaction or call join.
+	// concurrent block cannot race a message send, read, reaction, delete,
+	// call join or call end.
 	if body.Capability == "testagram.calls.create" {
 		recorder := httptest.NewRecorder()
 		handled := s.nativeCommunicationCapability(recorder, r, requestID, body)
@@ -214,10 +228,10 @@ func communicationResolveConversationID(ctx context.Context, q communicationQuer
 		return stringValue("conversation_id"), nil
 	case "testagram.media.token":
 		return communicationConversationForCall(ctx, q, stringValue("room_id"))
-	case "testagram.calls.get", "testagram.calls.join":
+	case "testagram.calls.get", "testagram.calls.join", "testagram.calls.end":
 		return communicationConversationForCall(ctx, q, stringValue("call_id"))
 	case "testagram.messages.edit_encrypted", "testagram.messages.mark_read",
-		"testagram.messages.react", "testagram.messages.attach":
+		"testagram.messages.react", "testagram.messages.attach", "testagram.messages.delete":
 		return communicationConversationForMessage(ctx, q, stringValue("message_id"))
 	default:
 		return "", nil
