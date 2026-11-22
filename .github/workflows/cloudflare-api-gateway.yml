@@ -51,10 +51,10 @@ jobs:
           node-version: "22"
       - name: Deploy Worker and attach api.testagram.site route
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
         run: |
           set -euo pipefail
-          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Workers Scripts:Edit and Workers Routes:Edit scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
           npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
       - name: Verify canonical API ingress after deployment
         shell: bash
