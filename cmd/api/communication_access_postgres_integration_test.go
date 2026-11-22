@@ -72,13 +72,6 @@ VALUES($1,$2,'accepted')`, sender, protectedRecipient); err != nil {
 	}
 	assertAllowed("protected recipient with accepted follow", protectedRecipient, true)
 
-	if _, err := tx.Exec(ctx, `
-INSERT INTO testagram_local.blocks(blocker_id,blocked_id)
-VALUES($1,$2)`, publicRecipient, sender); err != nil {
-		t.Fatalf("insert reverse block fixture: %v", err)
-	}
-	assertAllowed("recipient blocked the sender", publicRecipient, false)
-
 	var conversationID string
 	if err := tx.QueryRow(ctx, `
 INSERT INTO testagram_local.conversations(kind,created_by)
@@ -97,8 +90,22 @@ VALUES($1,$2)`, conversationID, member); err != nil {
 	if err != nil {
 		t.Fatalf("check conversation before block: %v", err)
 	}
+	if blocked {
+		t.Fatal("conversation should be available before a block is created")
+	}
+
+	if _, err := tx.Exec(ctx, `
+INSERT INTO testagram_local.blocks(blocker_id,blocked_id)
+VALUES($1,$2)`, publicRecipient, sender); err != nil {
+		t.Fatalf("insert reverse block fixture: %v", err)
+	}
+	assertAllowed("recipient blocked the sender", publicRecipient, false)
+	blocked, err = communicationConversationBlocked(ctx, tx, sender, conversationID)
+	if err != nil {
+		t.Fatalf("check conversation after block: %v", err)
+	}
 	if !blocked {
-		t.Fatal("conversation should be blocked when the other member has blocked the sender")
+		t.Fatal("existing conversation should be blocked when the other member blocks the sender")
 	}
 
 	if err := lockCommunicationAccounts(ctx, tx, sender, publicRecipient); err != nil {
