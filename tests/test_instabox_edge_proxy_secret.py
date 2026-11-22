@@ -27,6 +27,13 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         self.assertNotIn("ensure_random_secret EDGE_PROXY_SHARED_TOKEN", self.script)
         self.assertNotIn('EDGE_PROXY_SHARED_TOKEN="$(openssl rand', self.script)
 
+    def test_environment_file_writers_escape_secret_metacharacters(self):
+        self.assertIn('local key="$1" value="$2" escaped_value', self.script)
+        self.assertIn("sed 's/[\\\\&|]/\\\\&/g'", self.script)
+        self.assertIn("Refusing multiline environment value for", self.script)
+        self.assertIn("Refusing multiline Data Centre environment value for", self.script)
+        self.assertNotIn('sed -i "s|^${key}=.*|${key}=${value}|"', self.script)
+
     def test_production_media_gates_are_checked_before_machine_selection(self):
         gate_step = self.workflow.index("      - name: Verify production media feature gates")
         machine_step = self.workflow.index("      - name: Resolve and start the InstaBox machine")
