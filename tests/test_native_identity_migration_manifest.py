@@ -37,6 +37,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "059_native_identity_approval_circuit.sql",
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
+            "061_native_sensitive_action_integrity.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -44,6 +45,50 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             with self.subTest(migration=name):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
+
+    def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
+        migration = "061_native_sensitive_action_integrity.sql"
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
+            compose,
+        )
+        self.assertIn(f"apply_migration {migration}", SOURCE)
+        sql = (ROOT / "migrations" / migration).read_text(encoding="utf-8")
+        self.assertIn("native_sensitive_action_request_immutable", sql)
+        self.assertIn("native_sensitive_action_approver_guard", sql)
+        self.assertIn("native_sensitive_action_approval_append_only", sql)
+        self.assertIn("native_sensitive_action_request_append_only", sql)
+        self.assertIn("native_sensitive_action_request_append_only", SOURCE)
+        self.assertIn("native sensitive-action approval decisions are append-only", sql)
+        self.assertIn("native sensitive-action request status transition is invalid or terminal", sql)
+        self.assertIn("completed approval decisions require a decision timestamp", sql)
+        self.assertIn("NEW.payload IS DISTINCT FROM OLD.payload", sql)
+        self.assertIn("NEW.payload_sha256 IS DISTINCT FROM OLD.payload_sha256", sql)
+        self.assertIn("v_status<>'pending'", sql)
+        self.assertIn("v_expires_at<=now()", sql)
+        self.assertIn("requester cannot approve their own sensitive action", sql)
+        self.assertIn("sp.enabled=TRUE", sql)
+        self.assertIn("sp.mfa_enrolled_at IS NOT NULL", sql)
+        self.assertIn("wc.revoked_at IS NULL", sql)
+        self.assertIn("wc.user_verified=TRUE", sql)
+        self.assertIn("wc.clone_warning=FALSE", sql)
+        self.assertIn("native sensitive-action approval quorum is incomplete", sql)
+        self.assertIn("FOR UPDATE OF sp,i,rg,wc", sql)
+        self.assertIn("webauthn_rpid", sql)
+        self.assertIn("webauthn_credential_id", sql)
+        self.assertIn("wc.rpid=a.webauthn_rpid", sql)
+        self.assertIn("wc.credential_id=a.webauthn_credential_id", sql)
+        self.assertIn("wc.credential_id=NEW.webauthn_credential_id", sql)
+        self.assertIn("approval must identify the exact WebAuthn credential used for step-up", sql)
+        self.assertIn("expired sensitive-action request cannot be approved", sql)
+        self.assertIn("approval request is missing, expired or no longer pending", sql)
+        self.assertIn("v_eligible_approved_count", sql)
+        self.assertIn("OLD.required_approvals", sql)
+        self.assertIn("NEW.status='approved'", sql)
+        self.assertIn("native sensitive-action requests are append-only", sql)
+        self.assertIn("native_sensitive_action_request_append_only", sql)
+        self.assertIn("native sensitive-action rejection decision is missing", sql)
 
     def test_archive_migrations_are_mounted_and_applied_in_order(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")

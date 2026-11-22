@@ -132,18 +132,18 @@ func validateRecentStepUpToken(s session, secret []byte, now time.Time) (nativeE
 	return claims, nil
 }
 
-func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
+func (a *app) requireRecentStepUpClaims(w http.ResponseWriter, s session) (nativeElevationClaims, bool) {
 	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
 	claims, err := validateRecentStepUpToken(s, secret, time.Now().UTC())
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
-		return false
+		return nativeElevationClaims{}, false
 	}
 	credentialID, err := hex.DecodeString(claims.MFAAuthenticatorID)
 	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
 	if err != nil || len(credentialID) == 0 || rpid == "" || a.database == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential bound to this elevation is unavailable"})
-		return false
+		return nativeElevationClaims{}, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -160,13 +160,18 @@ func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
 	`, claims.Subject, rpid, credentialID).Scan(&active)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "WebAuthn credential status is unavailable"})
-		return false
+		return nativeElevationClaims{}, false
 	}
 	if !active {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential used for MFA has been revoked or is no longer trusted"})
-		return false
+		return nativeElevationClaims{}, false
 	}
-	return true
+	return claims, true
+}
+
+func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
+	_, ok := a.requireRecentStepUpClaims(w, s)
+	return ok
 }
 
 func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request) {
@@ -364,15 +369,16 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	return nextStatus, nil
 }
 
-func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, decision, reason string) (string, string, int, error) {
+func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, webauthnRPID string, webauthnCredentialID []byte, decision, reason string) (string, string, int, error) {
 	var actionType, requesterID, requesterService, requestStatus, targetReference string
 	var payload []byte
+	var payloadDigest string
 	err := tx.QueryRow(ctx, `
-		SELECT action_type, COALESCE(requested_by_user_id::text,''), requested_by_service, status, target_reference, payload
+		SELECT action_type, COALESCE(requested_by_user_id::text,''), requested_by_service, status, target_reference, payload, payload_sha256
 		FROM testagram_auth.native_sensitive_action_requests
 		WHERE id=$1::uuid AND expires_at>now()
 		FOR UPDATE
-	`, requestID).Scan(&actionType, &requesterID, &requesterService, &requestStatus, &targetReference, &payload)
+	`, requestID).Scan(&actionType, &requesterID, &requesterService, &requestStatus, &targetReference, &payload, &payloadDigest)
 	if err != nil || requestStatus != "pending" {
 		return "", "", 0, errors.New("approval request is missing, expired or no longer pending")
 	}
@@ -388,11 +394,27 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		return "", "", 0, errors.New("unsupported sensitive-action decision")
 	}
 
+	if strings.TrimSpace(webauthnRPID) == "" || len(webauthnCredentialID) < 1 {
+		return "", "", 0, errors.New("exact WebAuthn step-up credential is required")
+	}
+	var payloadValue any
+	if err := json.Unmarshal(payload, &payloadValue); err != nil {
+		return "", "", 0, errors.New("approval request payload is not valid JSON")
+	}
+	canonicalPayload, err := json.Marshal(payloadValue)
+	if err != nil {
+		return "", "", 0, errors.New("approval request payload cannot be canonicalized")
+	}
+	payloadHash := sha256.Sum256(canonicalPayload)
+	if !hmac.Equal([]byte(payloadDigest), []byte(hex.EncodeToString(payloadHash[:]))) {
+		return "", "", 0, errors.New("approval request payload digest does not match its immutable payload")
+	}
+
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO testagram_auth.native_sensitive_action_approvals
-		  (request_id, approver_user_id, decision, reason)
-		VALUES ($1::uuid, $2, $3, $4)
-	`, requestID, approverID, decision, reason); err != nil {
+		  (request_id, approver_user_id, decision, reason, webauthn_rpid, webauthn_credential_id)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+	`, requestID, approverID, decision, reason, webauthnRPID, webauthnCredentialID); err != nil {
 		return "", "", 0, errors.New("approver has already decided this request or the decision could not be recorded")
 	}
 
@@ -494,7 +516,18 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if !a.requireRecentStepUp(w, s) {
+	stepUpClaims, stepUpOK := a.requireRecentStepUpClaims(w, s)
+	if !stepUpOK {
+		return
+	}
+	if stepUpClaims.Subject != approver.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "WebAuthn elevation does not belong to the authenticated staff principal"})
+		return
+	}
+	webauthnCredentialID, credentialErr := hex.DecodeString(stepUpClaims.MFAAuthenticatorID)
+	webauthnRPID := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	if credentialErr != nil || len(webauthnCredentialID) < 16 || webauthnRPID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Exact WebAuthn authenticator evidence is unavailable"})
 		return
 	}
 	if allowed, rateErr := a.consumeAdminRateLimit(ctx, approver.ID, "sensitive-decision", 30, time.Hour); rateErr != nil {
@@ -516,7 +549,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	state, applicationState, count, err := recordSensitiveActionDecision(ctx, tx, id, action, requester, approver.ID, input.Decision, input.Reason)
+	state, applicationState, count, err := recordSensitiveActionDecision(ctx, tx, id, action, requester, approver.ID, webauthnRPID, webauthnCredentialID, input.Decision, input.Reason)
 	if err == nil {
 		err = tx.Commit(ctx)
 	}
