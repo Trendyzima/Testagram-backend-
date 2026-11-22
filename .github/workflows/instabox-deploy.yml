@@ -84,6 +84,7 @@ jobs:
             exit 1
           fi
       - name: Validate independent production media feature gates
+        id: media-gates
         env:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
@@ -102,6 +103,7 @@ jobs:
             echo "::error::DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must match; refusing a partial media profile."
             exit 1
           fi
+          echo "media_enabled=$early_dc_media_enabled" >> "$GITHUB_OUTPUT"
           if [[ "$early_dc_media_enabled" == true ]]; then
             echo "Private media profile explicitly enabled; dedicated provider provisioning will run."
           else
@@ -243,7 +245,7 @@ jobs:
           echo "machine_id=$machine_id" >> "$GITHUB_OUTPUT"
           echo "Verified intended InstaBox machine '$EXPECTED_MACHINE_NAME' is running and ready."
       - name: Ensure Data Centre R2 media and metadata buckets exist
-        if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'
+        if: steps.media-gates.outputs.media_enabled == 'true'
         id: r2-media-buckets
         env:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
@@ -394,7 +396,7 @@ jobs:
           echo "metadata_bucket=$R2_METADATA_BUCKET" >> "$GITHUB_OUTPUT"
 
       - name: Provision dedicated private B2 identity-evidence bucket
-        if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'
+        if: steps.media-gates.outputs.media_enabled == 'true'
         env:
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
