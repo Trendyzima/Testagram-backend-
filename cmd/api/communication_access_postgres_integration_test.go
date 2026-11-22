@@ -108,6 +108,17 @@ VALUES($1,$2)`, publicRecipient, sender); err != nil {
 		t.Fatal("existing conversation should be blocked when the other member blocks the sender")
 	}
 
+	var mediaEncryptionEnabled bool
+	if err := tx.QueryRow(ctx, `
+INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind,status)
+VALUES($1,$2,$3,'voice','ringing')
+RETURNING e2ee_enabled`, conversationID, sender, "ci-room-"+suffix).Scan(&mediaEncryptionEnabled); err != nil {
+		t.Fatalf("insert call session fixture: %v", err)
+	}
+	if mediaEncryptionEnabled {
+		t.Fatal("call sessions must not claim media end-to-end encryption before a verified media-key lifecycle exists")
+	}
+
 	if err := lockCommunicationAccounts(ctx, tx, sender, publicRecipient); err != nil {
 		t.Fatalf("lock communication account pair: %v", err)
 	}
