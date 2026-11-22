@@ -1,0 +1,41 @@
+name: Knowledge engine PostgreSQL schema
+
+on:
+  pull_request:
+    branches: [main, 'native-auth/*', 'security/*']
+  push:
+    branches: ['feature/knowledge-engine-schema-*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: knowledge-engine-schema-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  knowledge-schema:
+    name: Q&A schema, integrity guards and migration replay
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Validate migration and operator script syntax
+        run: bash -n tests/test-knowledge-engine-migration.sh deploy/self-hosted/apply-knowledge-engine-migration.sh
+      - name: Apply and verify the Knowledge Engine migration twice
+        env:
+          DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: bash tests/test-knowledge-engine-migration.sh
