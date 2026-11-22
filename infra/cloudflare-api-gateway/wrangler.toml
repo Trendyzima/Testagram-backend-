@@ -1,0 +1,11 @@
+name = "testagram-api-edge"
+main = "src/index.mjs"
+compatibility_date = "2026-11-22"
+account_id = "77dbe7a859196105dc84fbb6b7094019"
+workers_dev = false
+routes = [
+  { pattern = "api.testagram.site/*", zone_name = "testagram.site" }
+]
+
+[vars]
+APP_ORIGIN = "https://8443-agq4me2xgrgx5ge52ts437tqea.instabox.tech"

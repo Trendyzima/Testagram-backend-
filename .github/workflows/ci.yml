@@ -614,6 +614,7 @@ jobs:
           MINIO_ROOT_USER: ci-only-minio-user
           MINIO_ROOT_PASSWORD: ci-only-minio-password-not-for-production
           ACME_EMAIL: ci-only@example.invalid
+          EDGE_PROXY_SHARED_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           DATABASE_URL: postgres://testagram:ci-only-password-not-for-production@db:5432/testagram?sslmode=disable
           TESTAGRAM_AUTH_JWT_SECRET: ci-only-native-auth-jwt-secret-not-for-production-32
           VPS_INTERNAL_TOKEN: ci-only-vps-token-not-for-production
@@ -637,6 +638,7 @@ jobs:
             -e API_DOMAIN=api.example.invalid \
             -e MEDIA_DOMAIN=media.example.invalid \
             -e ADMIN_DOMAIN=ops.example.invalid \
+            -e EDGE_PROXY_SHARED_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
             -v "$PWD/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           docker compose -f deploy/self-hosted/docker-compose.yml config --quiet
