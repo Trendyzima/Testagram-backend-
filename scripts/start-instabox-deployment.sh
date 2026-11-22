@@ -187,10 +187,12 @@ fi
 
 # Keep the two Federation directions independently keyed, including on existing VPS installs.
 read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
+# Escape provider-secret metacharacters before using sed to update .env values.
 write_env_value() {
-  local key="$1" value="$2"
+  local key="$1" value="$2" escaped_value
+  escaped_value="$(printf '%s' "$value" | sed 's/[\\&|]/\\&/g')"
   if grep -q "^${key}=" "$BASE_ENV"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$BASE_ENV"
+    sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$BASE_ENV"
   else
     printf '%s=%s\n' "$key" "$value" >> "$BASE_ENV"
   fi
@@ -536,9 +538,10 @@ EOF
 fi
 # Sync both independently generated credentials to the Data Centre overlay even when its .env already exists.
 write_dc_env_value() {
-  local key="$1" value="$2"
+  local key="$1" value="$2" escaped_value
+  escaped_value="$(printf '%s' "$value" | sed 's/[\\&|]/\\&/g')"
   if grep -q "^${key}=" "$DC_ENV"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$DC_ENV"
+    sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$DC_ENV"
   else
     printf '%s=%s\n' "$key" "$value" >> "$DC_ENV"
   fi
