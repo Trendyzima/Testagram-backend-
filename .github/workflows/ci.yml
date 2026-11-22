@@ -646,7 +646,7 @@ jobs:
           FEDERATION_INGRESS_TOKEN: ci-only-federation-ingress-token-not-for-production
           FEDERATION_BACKEND_INTERNAL_TOKEN: ci-only-federation-backend-token-not-for-production
           TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:e4c014a043b761d6f84b05d3973a3a6831522b863eef08685b7ca6db17f55ce9
-          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b
+          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:58017cbd5a7266653dab0f7df1877d852dc13ee25aab71f26245eb5a60d85a61
           CDN_ORIGIN_AUTH_TOKEN: ci-only-cdn-origin-token-not-for-production-32-chars
           CDN_MEDIA_ASSERTION_SECRET: ci-only-cdn-assertion-secret-not-for-production-32
           CDN_PURGE_TOKEN: ci-only-cdn-purge-token-not-for-production-32
@@ -793,6 +793,7 @@ jobs:
           assert 'DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script and 'REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"' in deploy_script, "deployment must embed the approved digest directly into the detached remote script"
           assert 'grep -Fq "DEPLOY_WEB_IMAGE=' in deploy_script, "deployment must verify the exact digest is present before remote execution"
           assert 'TESTAGRAM_WEB_IMAGE" =~ ^ghcr' in deploy_script and '@sha256:[a-f0-9]{64}' in deploy_script, "deployment must reject missing or mutable Flutter image references"
+          assert r'ghcr\\.io' not in deploy_script, "deployment must not contain a double-escaped GHCR host pattern"
           assert "Flutter web release must be supplied as an immutable GHCR digest" in deploy_script, "deployment must reject mutable Flutter web tags"
           assert "sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b" not in deploy_script, "deployment must not overwrite the current Flutter release with a historical digest"
           if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy or "RepoDigests" not in deploy or "Flutter web container is not running the exact reviewed image digest" not in deploy:
