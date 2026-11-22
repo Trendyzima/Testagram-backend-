@@ -50,7 +50,7 @@ For each repository, use **Settings → Webhooks → Add webhook** with:
 - Payload URL: `https://testagram.site/webhooks/github`
 - Content type: `application/json`
 - Secret: the same newly generated high-entropy secret stored as the Cloudflare Worker secret `GITHUB_WEBHOOK_SECRET`
-- Events: **Workflow runs**, **Check runs**, and **Deployments** (deployment status events).
+- Events: **Workflow runs** (`workflow_run`), **Check runs** (`check_run`), and **Deployment statuses** (`deployment_status`).
 
 Do not paste the secret into chat, a commit, an issue, or a repository variable. Configure the Worker secret with the approved Cloudflare deployment/admin process. Send a GitHub test delivery and verify HTTP 202 plus a corresponding structured Worker log before considering that repository connected.
 
