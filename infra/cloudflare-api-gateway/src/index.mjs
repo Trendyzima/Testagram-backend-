@@ -112,6 +112,9 @@ export default {
 
     if (request.method !== "GET" && request.method !== "HEAD") {
       init.body = request.body;
+      // Required by Node's Fetch implementation in the unit-test runtime;
+      // Workers accepts the same streaming request body semantics.
+      init.duplex = "half";
     }
 
     try {
