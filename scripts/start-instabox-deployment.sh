@@ -786,9 +786,17 @@ if [[ -z "$video_worker_container" ]]; then
   echo "::error::Data Centre video worker container is missing after deployment."
   exit 1
 fi
-video_worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$video_worker_container")"
+# Docker's configured 15s start_period plus 30s probe interval means
+# readiness is not necessarily available immediately after Compose returns.
+# Allow two minutes for the first successful dependency-aware probe.
+video_worker_health="missing"
+for attempt in $(seq 1 60); do
+  video_worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$video_worker_container")"
+  [[ "$video_worker_health" == "healthy" ]] && break
+  sleep 2
+done
 if [[ "$video_worker_health" != "healthy" ]]; then
-  echo "::error::Data Centre video worker readiness healthcheck did not report healthy (status: $video_worker_health)."
+  echo "::error::Data Centre video worker readiness healthcheck did not become healthy within 120 seconds (status: $video_worker_health)."
   sudo docker inspect --format '{{json .State.Health}}' "$video_worker_container" || true
   sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" logs --tail=120 video-worker || true
   exit 1
