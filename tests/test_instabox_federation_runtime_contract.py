@@ -33,7 +33,7 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
         self.assertIn('write_dc_env_value FEDERATION_INSTANCE_DOMAIN "testagram.site"', self.script)
         self.assertNotIn('FEDERATION_PUBLIC_BASE_URL=https://federation.testagram.site', self.script)
 
-    def test_existing_environment_syncs_algorithm_token_and_activates_workers(self):
+    def test_existing_environment_keeps_federation_workers_disabled_until_g3(self):
         self.assertIn('write_dc_env_value ALGORITHM_INTERNAL_TOKEN "$ALGORITHM_INTERNAL_TOKEN"', self.script)
         for flag in (
             "FEDERATION_DELIVERY_WORKER_ENABLED",
@@ -41,12 +41,17 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
             "FEDERATION_INBOX_WORKER_ENABLED",
             "FEDERATION_INBOX_ACCEPT_ENABLED",
         ):
-            self.assertIn(f"write_dc_env_value {flag} true", self.script)
+            self.assertIn(f"write_dc_env_value {flag} false", self.script)
         self.assertIn("/internal/v1/worker-status", self.script)
-        self.assertIn(".workers.delivery_worker == true", self.script)
-        self.assertIn(".workers.outbox_poller == true", self.script)
-        self.assertIn(".workers.inbox_worker == true", self.script)
-        self.assertIn(".workers.inbox_accept == true", self.script)
+        self.assertIn(".workers.delivery_worker == false", self.script)
+        self.assertIn(".workers.outbox_poller == false", self.script)
+        self.assertIn(".workers.inbox_worker == false", self.script)
+        self.assertIn(".workers.inbox_accept == false", self.script)
+
+    def test_public_activitypub_routes_stay_closed_until_g3(self):
+        caddy = (ROOT / "deploy/self-hosted/Caddyfile").read_text()
+        self.assertEqual(caddy.count('respond "Federation is disabled until locked G3 protocol acceptance passes." 503'), 2)
+        self.assertNotIn("reverse_proxy federation-api:8081", caddy)
 
     def test_algorithm_deployment_probe_sends_the_required_timestamp_and_feed_mode(self):
         probe = self.script.split("algorithm_response=", 1)[1].split("\n", 1)[0]
