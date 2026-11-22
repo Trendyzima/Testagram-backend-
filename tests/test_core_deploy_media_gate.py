@@ -23,7 +23,7 @@ class CoreDeploymentMediaGateTests(unittest.TestCase):
         self.assertIn('DC_MEDIA_PROFILE_ENABLED="${DATA_CENTRE_MEDIA_ENABLED:-false}"', SCRIPT)
 
     def test_provider_provisioning_is_conditional_on_both_explicit_gates(self):
-        condition = "if: vars.DATA_CENTRE_MEDIA_ENABLED == 'true' && vars.FRESH_MEDIA_ENABLED == 'true'"
+        condition = "if: steps.media-gates.outputs.media_enabled == 'true'"
         self.assertEqual(WORKFLOW.count(condition), 2)
         self.assertIn('echo "media_enabled=$early_dc_media_enabled" >> "$GITHUB_OUTPUT"', WORKFLOW)
         self.assertIn("Internal workflow error: R2 provisioning ran without both media gates.", WORKFLOW)
