@@ -92,11 +92,12 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 	fail:=func(code,msg string,status int){writeJSON(w,status,errorBody(code,msg,requestID))}
 	switch name {
 	case "testagram.wallet.mpesa.status":
-		checkout:=str("checkout_request_id");if checkout==""||len(checkout)>128{fail("INVALID_CHECKOUT_REQUEST","A valid checkout request ID is required",http.StatusBadRequest);return true}
-		var state,receipt,amount,walletAmount,currency string;var created time.Time
-		err:=s.db.QueryRow(ctx,`SELECT status,COALESCE(receipt_number,''),amount_kes::text,wallet_amount::text,wallet_currency,created_at FROM testagram_local.wallet_topups WHERE checkout_request_id=$1 AND user_id=$2`,checkout,userID).Scan(&state,&receipt,&amount,&walletAmount,&currency,&created)
+		checkout:=str("checkout_request_id");key:=str("idempotency_key")
+		if (checkout==""&&key=="")||len(checkout)>128||len(key)>128{fail("INVALID_TOPUP_REFERENCE","A checkout request ID or idempotency key is required",http.StatusBadRequest);return true}
+		var state,receipt,amount,walletAmount,currency,storedCheckout string;var created time.Time
+		err:=s.db.QueryRow(ctx,`SELECT status,COALESCE(receipt_number,''),amount_kes::text,wallet_amount::text,wallet_currency,created_at,COALESCE(checkout_request_id,'') FROM testagram_local.wallet_topups WHERE user_id=$1 AND (($2<>'' AND checkout_request_id=$2) OR ($3<>'' AND idempotency_key=$3)) ORDER BY created_at DESC LIMIT 1`,userID,checkout,key).Scan(&state,&receipt,&amount,&walletAmount,&currency,&created,&storedCheckout)
 		if err!=nil{fail("TOPUP_NOT_FOUND","M-Pesa top-up was not found",http.StatusNotFound);return true}
-		writeJSON(w,http.StatusOK,map[string]any{"status":state,"checkout_request_id":checkout,"receipt_number":receipt,"amount_kes":amount,"wallet_amount":walletAmount,"currency":strings.TrimSpace(currency),"created_at":created});return true
+		writeJSON(w,http.StatusOK,map[string]any{"status":state,"checkout_request_id":storedCheckout,"receipt_number":receipt,"amount_kes":amount,"wallet_amount":walletAmount,"currency":strings.TrimSpace(currency),"created_at":created});return true
 	case "testagram.wallet.mpesa.stk_push":
 		phone,ok:=normalizeMpesaPhone(str("phone"));if !ok{fail("INVALID_PHONE","Enter a valid Kenyan Safaricom number",http.StatusBadRequest);return true}
 		walletCurrency:=strings.ToUpper(str("currency"));if walletCurrency==""{walletCurrency="KES"};if walletCurrency!="KES"{fail("INVALID_CURRENCY","M-Pesa top-ups support KES only",http.StatusBadRequest);return true}
@@ -120,6 +121,7 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter,r *http.Request,re
 			if err!=nil{fail("TOPUP_IDEMPOTENCY_FAILED","Could not recover the prior M-Pesa request",http.StatusServiceUnavailable);return true}
 			if !mpesaTopupRequestMatches(existingAmount,existingPhone,existingCurrency,amount,phone,walletCurrency){fail("IDEMPOTENCY_CONFLICT","This idempotency key belongs to a different M-Pesa top-up request",http.StatusConflict);return true}
 			if checkout!=nil&&*checkout!=""{writeJSON(w,http.StatusOK,map[string]any{"status":state,"checkout_request_id":*checkout,"request_reference":requestReference,"duplicate":true});return true}
+			if state=="failed"{writeJSON(w,http.StatusOK,map[string]any{"status":"failed","checkout_request_id":"","request_reference":requestReference,"duplicate":true});return true}
 			fail("TOPUP_RECONCILIATION_PENDING","This M-Pesa request is still being reconciled. Do not submit it again.",http.StatusConflict);return true
 		}
 		if err!=nil{fail("TOPUP_CREATE_FAILED","Could not create M-Pesa top-up request",http.StatusServiceUnavailable);return true}
