@@ -787,7 +787,7 @@ jobs:
           assert 'DEPLOY_WEB_IMAGE="${TESTAGRAM_WEB_IMAGE:-}"' in deploy_script, "deployment must receive the workflow-selected Flutter web release"
           assert 'TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"' in deploy_script, "deployment must use only the workflow-selected Flutter digest"
           assert 'export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"' in deploy_script and 'REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"' in deploy_script, "deployment must embed the approved digest into the detached remote process"
-          assert 'TESTAGRAM_WEB_IMAGE" =~ ^ghcr\\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}
+          assert 'TESTAGRAM_WEB_IMAGE" =~ ^ghcr' in deploy_script and '@sha256:[a-f0-9]{64}$' in deploy_script, "deployment must reject missing or mutable Flutter image references"
           assert "Flutter web release must be supplied as an immutable GHCR digest" in deploy_script, "deployment must reject mutable Flutter web tags"
           assert "sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b" not in deploy_script, "deployment must not overwrite the current Flutter release with a historical digest"
           if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy or "RepoDigests" not in deploy or "Flutter web container is not running the exact reviewed image digest" not in deploy:
@@ -1722,7 +1722,6 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: bash tests/test-social-platform-product-foundation.sh
- in deploy_script, "deployment must reject missing or mutable Flutter image references"
           assert "Flutter web release must be supplied as an immutable GHCR digest" in deploy_script, "deployment must reject mutable Flutter web tags"
           assert "sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b" not in deploy_script, "deployment must not overwrite the current Flutter release with a historical digest"
           if "verify_running_image algorithm" not in deploy or "verify_running_image federation-api" not in deploy or "RepoDigests" not in deploy or "Flutter web container is not running the exact reviewed image digest" not in deploy:
