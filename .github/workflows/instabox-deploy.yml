@@ -48,6 +48,7 @@ jobs:
           python3 tests/test_instabox_edge_proxy_secret.py -v
           python3 tests/test_instabox_image_digest_verification.py -v
           python3 tests/test_instabox_web_image_release_wiring.py -v
+          python3 tests/test_instabox_deployment_polling.py -v
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests
@@ -501,13 +502,28 @@ jobs:
           cmd='ROOT=/data/home/testagram; tail -n 45 "$ROOT/deploy.log" 2>/dev/null || true'
           payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:60}')"
           for attempt in $(seq 1 90); do
-            result="$(curl -fsS -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
+            # InstaBox may briefly be unreachable while the machine starts.
+            # A failed log poll must not abort an otherwise running deployment.
+            if ! result="$(curl --silent --show-error --fail --connect-timeout 8 --max-time 20 \
+              -X POST -H "X-API-Key: $INSTABOX_API_KEY" \
               -H "Content-Type: application/json" -d "$payload" \
-              "$API/v1/machines/$MACHINE_ID/exec")"
+              "$API/v1/machines/$MACHINE_ID/exec" 2>"$RUNNER_TEMP/instabox-poll-curl.err")"; then
+              echo "::warning::InstaBox control plane is temporarily unreachable while polling deployment logs (attempt $attempt/90); retrying."
+              if [[ -s "$RUNNER_TEMP/instabox-poll-curl.err" ]]; then
+                sed -n '1,2p' "$RUNNER_TEMP/instabox-poll-curl.err"
+              fi
+              sleep 25
+              continue
+            fi
+            if ! jq -e 'type == "object" and has("exitCode")' <<<"$result" >/dev/null 2>&1; then
+              echo "::warning::InstaBox returned a non-execution response while polling deployment logs (attempt $attempt/90); retrying."
+              sleep 25
+              continue
+            fi
             exec_code="$(jq -r '.exitCode // 1' <<<"$result")"
             output="$(jq -r '.stdout // empty' <<<"$result")"
             if [[ "$exec_code" != "0" ]]; then
-              echo "::error::Could not read the remote deployment log."
+              echo "::error::Could not read the remote deployment log after a successful InstaBox API response."
               jq -r '.stderr // empty' <<<"$result"
               exit 1
             fi
