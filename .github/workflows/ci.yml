@@ -237,7 +237,12 @@ jobs:
             (:'request_id'::uuid,'123e4567-e89b-42d3-a456-426614174002','approved','Concurrent test first approver'),
             (:'request_id'::uuid,'123e4567-e89b-42d3-a456-426614174003','approved','Concurrent test second approver');
           SQL
-          docker exec testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 -c "BEGIN; UPDATE testagram_auth.native_sensitive_action_requests SET status='approved',decided_at=now() WHERE id='$request_id'::uuid; SELECT pg_sleep(4); COMMIT;" >/tmp/approval-lock.log 2>&1 &
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 >/tmp/approval-lock.log 2>&1 <<SQL &
+          BEGIN;
+          UPDATE testagram_auth.native_sensitive_action_requests SET status='approved',decided_at=now() WHERE id='$request_id'::uuid;
+          SELECT pg_sleep(4);
+          COMMIT;
+          SQL
           approval_pid=$!
           ready=false
           for attempt in $(seq 1 30); do
