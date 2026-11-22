@@ -34,7 +34,24 @@ Confirm the machine named `testagramdb` is idle-paused rather than manually paus
 
 Verify the published port configuration in the InstaBox dashboard/CLI. Confirm public HTTPS traffic reaches Caddy and only Caddy. Never expose internal data-plane ports.
 
-## 3. Verify persistent storage before manual recovery
+## 3. Public-port exposure: verified Testagram mapping
+
+The dashboard configuration supplied for `testagramdb` lists public HTTPS ports 8080, 8081, 8443 and 9000. Cross-checking the repository's actual `deploy/self-hosted/docker-compose.yml` and `Caddyfile` establishes these roles:
+
+| Published machine port | Compose listener | Assessment |
+|---|---|---|
+| 8080 | Backend API host bind `127.0.0.1:8080:8080` | Direct public API path; bypasses Caddy's edge policy |
+| 8081 | CDN host bind `127.0.0.1:8081:8081` | Direct public CDN path; bypasses Caddy's edge policy |
+| 8443 | Caddy `:8443` listener | Intended public edge ingress |
+| 9000 | MinIO object-storage host bind `127.0.0.1:9000:9000` | **Critical: direct object-storage API exposure; not the CDN** |
+
+**Required operator action in InstaBox dashboard:** unpublish port 9000 immediately after confirming no separately approved external S3 client depends on this endpoint. Then verify Cloudflare and all Testagram hostnames route through the 8443 edge listener before unpublishing 8080 and 8081. Keep the internal Docker services and their loopback bindings; do not remove or recreate containers as part of this change. Never publish 9000/9001, PostgreSQL 5432, MinIO console 9001, Prometheus 9090, Grafana 3000, or internal service ports.
+
+Do not unpublish 8080/8081 until the 8443 + Cloudflare path has passed the acceptance checks below. After unpublishing, verify that the four old direct URLs no longer serve application responses and that the canonical API, media and web hostnames still work through the edge. If an S3 integration legitimately needs remote access, use a dedicated authenticated private path or approved storage-provider endpoint, not the public MinIO admin/data port.
+
+This is an operator-side dashboard change; this PR does not and cannot alter InstaBox published-port settings.
+
+## 4. Verify persistent storage before manual recovery
 
 If native wake-on-request does not restore the machine, connect after a supported resume/start operation and verify the existing PostgreSQL volume before starting or recreating containers.
 
