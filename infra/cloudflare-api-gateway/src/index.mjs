@@ -1,4 +1,5 @@
 const API_HOST = "api.testagram.site";
+const EXPECTED_ORIGIN_HOST = "8443-agq4me2xgrgx5ge52ts437tqea.instabox.tech";
 const HOP_BY_HOP_HEADERS = [
   "connection",
   "keep-alive",
@@ -32,7 +33,7 @@ function resolveOrigin(value) {
 
   if (
     origin.protocol !== "https:" ||
-    !origin.hostname.endsWith(".instabox.tech") ||
+    origin.hostname !== EXPECTED_ORIGIN_HOST ||
     origin.username ||
     origin.password ||
     origin.pathname !== "/" ||
