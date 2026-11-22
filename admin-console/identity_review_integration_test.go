@@ -234,7 +234,17 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal review snapshot: %v", err)
 	}
-	digest := sha256.Sum256(rawPayload)
+	// Match the production request path: canonicalize through a generic JSON
+	// object so the digest is stable across PostgreSQL JSONB key ordering.
+	var payloadObject map[string]any
+	if err := json.Unmarshal(rawPayload, &payloadObject); err != nil {
+		t.Fatalf("decode review snapshot for canonical digest: %v", err)
+	}
+	canonicalPayload, err := json.Marshal(payloadObject)
+	if err != nil {
+		t.Fatalf("canonicalize review snapshot: %v", err)
+	}
+	digest := sha256.Sum256(canonicalPayload)
 
 	_, err = conn.Exec(ctx, `
 		INSERT INTO testagram_auth.native_sensitive_action_requests
