@@ -2,7 +2,7 @@ name: Knowledge engine PostgreSQL schema
 
 on:
   pull_request:
-    branches: [main, 'native-auth/*']
+    branches: [main, 'native-auth/*', 'security/*']
   push:
     branches: ['feature/knowledge-engine-schema-*']
 
