@@ -34,6 +34,8 @@ jobs:
         run: node --check infra/cloudflare-api-gateway/src/index.mjs
       - name: Unit tests
         run: node --test infra/cloudflare-api-gateway/test/index.test.mjs
+      - name: Verify production route and secret activation order
+        run: python3 tests/test_cloudflare_api_gateway_deployment_order.py -v
       - name: Build Worker bundle without deploying
         run: npx --yes wrangler@4 deploy --dry-run --outdir "${RUNNER_TEMP}/testagram-api-edge-build" --config infra/cloudflare-api-gateway/wrangler.toml
 
@@ -67,8 +69,12 @@ jobs:
 
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
             "$API/zones?name=$ZONE_NAME&status=active" -o "$tmp/zone.json"
-          jq -e '.success == true' "$tmp/zone.json" >/dev/null || { echo "::error::Cloudflare zone lookup failed."; exit 1; }
-          zone_id="$(jq -er --arg name "$ZONE_NAME" '.result[] | select(.name == $name and .status == "active") | .id' "$tmp/zone.json" | head -n 1)"
+          jq -e --arg name "$ZONE_NAME" --arg account "$ACCOUNT_ID" '
+            .success == true and (.result | length == 1) and
+            .result[0].name == $name and .result[0].status == "active" and
+            .result[0].account.id == $account
+          ' "$tmp/zone.json" >/dev/null || { echo "::error::Expected exactly one active testagram.site zone in the pinned Cloudflare account."; exit 1; }
+          zone_id="$(jq -er '.result[0].id' "$tmp/zone.json")"
           [[ -n "$zone_id" ]] || { echo "::error::Active Testagram zone was not found."; exit 1; }
 
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
@@ -98,10 +104,13 @@ jobs:
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
             "$API/zones/$zone_id/workers/routes" -o "$tmp/routes.json"
           jq -e '.success == true' "$tmp/routes.json" >/dev/null || { echo "::error::Cloudflare Worker route lookup failed."; exit 1; }
-          if jq -e --arg pattern "$HOSTNAME/*" '
-            .result | any(.pattern == $pattern and (.script // "") != "testagram-api-edge")
+          if jq -e --arg host "$HOSTNAME" --arg script "testagram-api-edge" '
+            .result | any(
+              ((.pattern == $host) or (.pattern | startswith($host + "/"))) and
+              (.script // "") != $script
+            )
           ' "$tmp/routes.json" >/dev/null; then
-            echo "::error::A different Worker already owns api.testagram.site/*. Refusing to overwrite its route."
+            echo "::error::A different Worker owns an api.testagram.site route. Refusing a partial or overlapping cutover."
             exit 1
           fi
 
@@ -114,8 +123,65 @@ jobs:
           set -euo pipefail
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Account.Workers Scripts:Edit scoped to account 77dbe7a859196105dc84fbb6b7094019, plus Zone.Workers Routes:Edit, Zone:Read and DNS:Read scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
           if [[ ! "${EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_EDGE_PROXY_SHARED_TOKEN as exactly 32 random bytes encoded in 64 hexadecimal characters; it must match EDGE_PROXY_SHARED_TOKEN in the InstaBox Caddy .env."; exit 1; fi
+          # wrangler.toml intentionally has no public route. Deploy the private
+          # Worker script first, then install its secret before exposing traffic.
           npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
           printf '%s' "$EDGE_PROXY_SHARED_TOKEN" | npx --yes wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
+
+          # Recheck route ownership to close the preflight-to-deploy race. The
+          # route is attached only after the secret is present, avoiding a
+          # public 503 window during first deployment.
+          API="https://api.cloudflare.com/client/v4"
+          ACCOUNT_ID="77dbe7a859196105dc84fbb6b7094019"
+          ZONE_NAME="testagram.site"
+          HOSTNAME="api.testagram.site"
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Accept: application/json")
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+            "$API/zones?name=$ZONE_NAME&status=active" -o "$RUNNER_TEMP/edge-zone.json"
+          jq -e --arg name "$ZONE_NAME" --arg account "$ACCOUNT_ID" '
+            .success == true and (.result | length == 1) and
+            .result[0].name == $name and .result[0].status == "active" and
+            .result[0].account.id == $account
+          ' "$RUNNER_TEMP/edge-zone.json" >/dev/null || { echo "::error::Cloudflare zone/account changed after preflight; refusing route attachment."; exit 1; }
+          zone_id="$(jq -er '.result[0].id' "$RUNNER_TEMP/edge-zone.json")"
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+            "$API/zones/$zone_id/workers/routes" -o "$RUNNER_TEMP/edge-routes.json"
+          jq -e '.success == true' "$RUNNER_TEMP/edge-routes.json" >/dev/null || { echo "::error::Could not re-read Worker routes before attachment."; exit 1; }
+          if jq -e --arg host "$HOSTNAME" --arg script "testagram-api-edge" '
+            .result | any(
+              ((.pattern == $host) or (.pattern | startswith($host + "/"))) and
+              (.script // "") != $script
+            )
+          ' "$RUNNER_TEMP/edge-routes.json" >/dev/null; then
+            echo "::error::An overlapping API route changed owner after preflight; refusing attachment."
+            exit 1
+          fi
+          route_count="$(jq -r --arg pattern "$HOSTNAME/*" --arg script "testagram-api-edge" '[.result[]? | select(.pattern == $pattern and .script == $script)] | length' "$RUNNER_TEMP/edge-routes.json")"
+          if [[ "$route_count" == "0" ]]; then
+            jq -nc --arg pattern "$HOSTNAME/*" --arg script "testagram-api-edge" '{pattern:$pattern,script:$script}' > "$RUNNER_TEMP/edge-route.json"
+            curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+              -H "Content-Type: application/json" -X POST \
+              --data-binary @"$RUNNER_TEMP/edge-route.json" \
+              "$API/zones/$zone_id/workers/routes" -o "$RUNNER_TEMP/edge-route-created.json"
+            jq -e --arg pattern "$HOSTNAME/*" --arg script "testagram-api-edge" \
+              '.success == true and .result.pattern == $pattern and .result.script == $script' \
+              "$RUNNER_TEMP/edge-route-created.json" >/dev/null || {
+                echo "::error::Cloudflare did not confirm ownership of the canonical API route."
+                exit 1
+              }
+          elif [[ "$route_count" != "1" ]]; then
+            echo "::error::Duplicate canonical API routes exist; refusing ambiguous ownership."
+            exit 1
+          fi
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
+            "$API/zones/$zone_id/workers/routes" -o "$RUNNER_TEMP/edge-routes-verified.json"
+          jq -e --arg pattern "$HOSTNAME/*" --arg script "testagram-api-edge" \
+            '.success == true and (.result | any(.pattern == $pattern and .script == $script))' \
+            "$RUNNER_TEMP/edge-routes-verified.json" >/dev/null || {
+              echo "::error::Canonical API route was not verified after attachment."
+              exit 1
+            }
+          echo "API edge secret installed before route attachment; canonical route ownership verified." >> "$GITHUB_STEP_SUMMARY"
       - name: Verify canonical API ingress after deployment
         shell: bash
         run: |
