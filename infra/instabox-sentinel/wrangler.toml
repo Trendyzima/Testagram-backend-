@@ -3,7 +3,8 @@ main = "src/index.mjs"
 compatibility_date = "2026-11-17"
 
 routes = [
-  { pattern = "testagram.site/webhooks/instabox", zone_name = "testagram.site" }
+  { pattern = "testagram.site/webhooks/instabox", zone_name = "testagram.site" },
+  { pattern = "testagram.site/webhooks/github", zone_name = "testagram.site" }
 ]
 
 workers_dev = true

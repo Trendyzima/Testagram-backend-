@@ -100,6 +100,144 @@ export async function validateWebhookRequest(request, secret, nowSeconds = Math.
   return { ok: true, event, deliveryId, rawBody };
 }
 
+
+const TESTAGRAM_REPOSITORIES = new Set([
+  "Trendyzima/testagram-flutter-client-",
+  "Trendyzima/Testagram-backend-",
+  "Trendyzima/Testagram-data-centre-",
+  "Trendyzima/cdn-",
+  "Trendyzima/federated-content",
+  "Trendyzima/the-algorithm",
+  "Trendyzima/testagram-api",
+]);
+
+export async function validateGitHubWebhookRequest(request, secret) {
+  if (!secret || secret.length < 32) {
+    return { ok: false, status: 503, error: "GitHub webhook verifier is not configured" };
+  }
+  const deliveryId = request.headers.get("x-github-delivery");
+  const eventType = request.headers.get("x-github-event");
+  const signature = request.headers.get("x-hub-signature-256");
+  if (!deliveryId || !eventType || !signature) {
+    return { ok: false, status: 400, error: "required GitHub webhook headers are missing" };
+  }
+  if (!/^[0-9a-f-]{16,80}$/i.test(deliveryId) || !/^[a-z_]{1,40}$/.test(eventType)) {
+    return { ok: false, status: 400, error: "GitHub webhook headers are malformed" };
+  }
+  if (!/^sha256=[0-9a-f]{64}$/i.test(signature)) {
+    return { ok: false, status: 400, error: "GitHub webhook signature header is malformed" };
+  }
+  const declaredLength = Number(request.headers.get("content-length") || 0);
+  if (Number.isFinite(declaredLength) && declaredLength > 1_048_576) {
+    return { ok: false, status: 413, error: "GitHub webhook body exceeds the size limit" };
+  }
+  const rawBytes = new Uint8Array(await request.arrayBuffer());
+  if (rawBytes.byteLength > 1_048_576) {
+    return { ok: false, status: 413, error: "GitHub webhook body exceeds the size limit" };
+  }
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign("HMAC", key, rawBytes));
+  const expected = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const supplied = signature.slice("sha256=".length).toLowerCase();
+  let mismatch = expected.length ^ supplied.length;
+  for (let index = 0; index < Math.min(expected.length, supplied.length); index += 1) {
+    mismatch |= expected.charCodeAt(index) ^ supplied.charCodeAt(index);
+  }
+  if (mismatch !== 0) return { ok: false, status: 401, error: "GitHub webhook signature verification failed" };
+
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(rawBytes));
+  } catch {
+    return { ok: false, status: 400, error: "GitHub webhook body is not valid JSON" };
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, status: 400, error: "GitHub webhook payload has an invalid shape" };
+  }
+  const repository = payload.repository?.full_name;
+  if (typeof repository !== "string" || !TESTAGRAM_REPOSITORIES.has(repository)) {
+    return { ok: false, status: 403, error: "repository is missing or outside the Testagram event allowlist" };
+  }
+  return { ok: true, deliveryId, eventType, payload };
+}
+
+export function classifyGitHubFailure(eventType, payload, deliveryId) {
+  const repository = payload?.repository?.full_name;
+  if (!TESTAGRAM_REPOSITORIES.has(repository)) {
+    return { action: "ignored", reason: "repository is outside the Testagram event allowlist" };
+  }
+  const organByRepository = {
+    "Trendyzima/testagram-flutter-client-": "Flutter Client",
+    "Trendyzima/Testagram-backend-": "Backend",
+    "Trendyzima/Testagram-data-centre-": "Data Centre",
+    "Trendyzima/cdn-": "CDN",
+    "Trendyzima/federated-content": "Federation",
+    "Trendyzima/the-algorithm": "Algorithm",
+    "Trendyzima/testagram-api": "API Contract Control Plane",
+  };
+  let conclusion = "";
+  let workflow = "";
+  let runUrl = "";
+  let headSha = "";
+  let branch = "";
+  let runId = "";
+  let action = "";
+  if (eventType === "workflow_run") {
+    action = payload.action || "";
+    const run = payload.workflow_run || {};
+    if (action !== "completed") return { action: "ignored", reason: "workflow run is not completed" };
+    conclusion = run.conclusion || "";
+    workflow = payload.workflow?.name || run.name || "unnamed workflow";
+    runUrl = run.html_url || "";
+    headSha = run.head_sha || "";
+    branch = run.head_branch || "";
+    runId = String(run.id || "");
+  } else if (eventType === "check_run") {
+    action = payload.action || "";
+    const check = payload.check_run || {};
+    if (action !== "completed") return { action: "ignored", reason: "check run is not completed" };
+    conclusion = check.conclusion || "";
+    workflow = check.name || "unnamed check";
+    runUrl = check.html_url || "";
+    headSha = check.head_sha || "";
+    branch = check.check_suite?.head_branch || "";
+    runId = String(check.id || "");
+  } else if (eventType === "deployment_status") {
+    const status = payload.deployment_status || {};
+    conclusion = status.state || "";
+    workflow = payload.deployment?.environment || "deployment";
+    runUrl = status.target_url || payload.deployment?.statuses_url || "";
+    headSha = payload.deployment?.sha || "";
+    branch = payload.deployment?.ref || "";
+    runId = String(payload.deployment?.id || "");
+    action = "deployment_status";
+  } else {
+    return { action: "ignored", reason: "event type is not monitored" };
+  }
+  if (!["failure", "timed_out", "action_required", "error", "cancelled", "startup_failure", "stale"].includes(conclusion)) {
+    return { action: "ignored", reason: "event conclusion is not a failure" };
+  }
+  const isRelease = /deploy|release|production|publish/i.test(workflow);
+  return {
+    action: "triage",
+    deliveryId,
+    repository,
+    organ: organByRepository[repository],
+    eventType,
+    conclusion,
+    workflow,
+    runUrl,
+    headSha,
+    branch,
+    runId,
+    severity: isRelease ? "P1" : "P2",
+    automaticMutation: false,
+    receivedAt: Date.now(),
+  };
+}
+
 function unwrap(payload, key) {
   if (key && payload?.[key] && typeof payload[key] === "object") return payload[key];
   if (payload?.data && typeof payload.data === "object") {
@@ -174,13 +312,81 @@ export async function reconcileStoppedEvent(env, event, deliveryId) {
     return { action: "ignored", reason: "machine already has an active lifecycle operation" };
   }
 
-  await instaboxRequest(env, `/v1/machines/${encodeURIComponent(machine.id)}/start`, {
+  const startResponse = await instaboxRequest(env, `/v1/machines/${encodeURIComponent(machine.id)}/start`, {
     method: "POST",
     body: {},
     // Stable across webhook retries; InstaBox deduplicates the lifecycle request.
     idempotencyKey: `testagram-sentinel-${deliveryId}`,
   });
-  return { action: "start_requested", machineId: machine.id, eventId: deliveryId };
+  const operation = unwrap(startResponse, "operation");
+  if (!operation?.id) {
+    // Some provider responses are synchronous. Accept them only after an
+    // independent machine read confirms the exact VPS is already running.
+    const finalSnapshot = unwrap(
+      await instaboxRequest(env, `/v1/machines/${encodeURIComponent(machine.id)}`),
+      "machine",
+    );
+    if (String(finalSnapshot.id) !== String(machine.id) ||
+        finalSnapshot.name !== (env.INSTABOX_MACHINE_NAME || "testagramdb") ||
+        finalSnapshot.state !== "running" ||
+        finalSnapshot.desiredState !== "running") {
+      throw new Error("InstaBox returned no operation ID and the independent machine read did not confirm running");
+    }
+    return { action: "started", machineId: machine.id, eventId: deliveryId, providerState: "running" };
+  }
+  return {
+    action: "start_requested",
+    machineId: machine.id,
+    eventId: deliveryId,
+    operationId: String(operation.id),
+  };
+}
+
+export async function verifyStartOperation(env, record, now = Date.now()) {
+  const startedAt = Number(record.startedAt);
+  if (!Number.isFinite(startedAt) || startedAt <= 0) {
+    throw new Error("Recovery record is missing a valid operation start time");
+  }
+  if (now - startedAt > 10 * 60_000) {
+    throw new Error("InstaBox start operation exceeded the ten-minute verification deadline");
+  }
+  if (!record.operationId || !record.machineId) {
+    throw new Error("Recovery record is missing its provider operation or machine identity");
+  }
+  const operation = unwrap(
+    await instaboxRequest(env, `/v1/operations/${encodeURIComponent(record.operationId)}`),
+    "operation",
+  );
+  if (String(operation.id) !== String(record.operationId)) {
+    throw new Error("InstaBox returned a different lifecycle operation");
+  }
+  if (operation.state === "failed") {
+    throw new Error("InstaBox start operation failed");
+  }
+  if (operation.state !== "succeeded") {
+    return { done: false, state: String(operation.state || "unknown") };
+  }
+  const machine = unwrap(
+    await instaboxRequest(env, `/v1/machines/${encodeURIComponent(record.machineId)}`),
+    "machine",
+  );
+  if (String(machine.id) !== String(record.machineId) ||
+      machine.name !== (env.INSTABOX_MACHINE_NAME || "testagramdb")) {
+    throw new Error("Final machine identity did not match the configured Testagram VPS");
+  }
+  if (machine.state !== "running" || machine.desiredState !== "running") {
+    return { done: false, state: String(machine.state || "unknown") };
+  }
+  return {
+    done: true,
+    result: {
+      action: "started",
+      machineId: String(machine.id),
+      operationId: String(operation.id),
+      providerState: String(machine.state),
+      verifiedAt: now,
+    },
+  };
 }
 
 export class EventLedger {
@@ -228,29 +434,106 @@ export class EventLedger {
       const entries = await this.state.storage.list({ prefix: "event:" });
       let retryDelay = 0;
       for (const [key, record] of entries) {
-        if (record?.status !== "pending") {
+        if (record?.status === "pending" && record.event?.source === "github") {
+          const incident = record.event.incident;
+          if (incident?.action === "triage") {
+            console.warn("Testagram reflex detected a GitHub organ failure; operator action remains approval-gated", {
+              severity: incident.severity,
+              organ: incident.organ,
+              repository: incident.repository,
+              workflow: incident.workflow,
+              conclusion: incident.conclusion,
+              runUrl: incident.runUrl,
+              headSha: incident.headSha,
+              deliveryId: record.deliveryId,
+            });
+          }
+          await this.state.storage.put(key, {
+            status: "complete",
+            deliveryId: record.deliveryId,
+            result: incident || { action: "ignored", reason: "GitHub event had no triage result" },
+            updatedAt: Date.now(),
+            expiresAt: Date.now() + EVENT_TTL_MS,
+          });
+          continue;
+        }
+        if (record?.status !== "pending" && record?.status !== "starting") {
           if (record?.expiresAt && record.expiresAt < Date.now()) await this.state.storage.delete(key);
           continue;
         }
         try {
+          if (record.status === "starting") {
+            const verification = await verifyStartOperation(this.env, record);
+            if (!verification.done) {
+              retryDelay = Math.max(retryDelay, 5_000);
+              continue;
+            }
+            await this.state.storage.put(key, {
+              status: "complete",
+              deliveryId: record.deliveryId,
+              result: verification.result,
+              attempts: record.attempts || 0,
+              updatedAt: Date.now(),
+              expiresAt: Date.now() + EVENT_TTL_MS,
+            });
+            console.log("Testagram Sentinel independently verified VPS recovery", {
+              eventId: record.deliveryId,
+              machineId: verification.result.machineId,
+              operationId: verification.result.operationId,
+              providerState: verification.result.providerState,
+            });
+            continue;
+          }
+
           const result = await reconcileStoppedEvent(this.env, record.event, record.deliveryId);
-          await this.state.storage.put(key, {
-            status: "complete", deliveryId: record.deliveryId, result,
-            updatedAt: Date.now(), expiresAt: Date.now() + EVENT_TTL_MS,
-          });
+          if (result.action === "start_requested") {
+            await this.state.storage.put(key, {
+              ...record,
+              status: "starting",
+              machineId: result.machineId,
+              operationId: result.operationId,
+              startedAt: Date.now(),
+              attempts: 0,
+              updatedAt: Date.now(),
+            });
+            retryDelay = Math.max(retryDelay, 5_000);
+          } else {
+            await this.state.storage.put(key, {
+              status: "complete",
+              deliveryId: record.deliveryId,
+              result,
+              updatedAt: Date.now(),
+              expiresAt: Date.now() + EVENT_TTL_MS,
+            });
+          }
         } catch (error) {
           const attempts = (record.attempts || 0) + 1;
           const exhausted = attempts >= MAX_EVENT_ATTEMPTS;
           const message = error instanceof Error ? error.message : "unknown error";
           await this.state.storage.put(key, {
-            ...record, status: exhausted ? "failed" : "pending", attempts, lastError: message,
+            ...record,
+            status: exhausted ? "failed" : record.status,
+            attempts,
+            lastError: message,
             updatedAt: Date.now(),
           });
           if (exhausted) {
-            console.error("Testagram Sentinel stopped retrying an event after the retry limit", { eventId: record.deliveryId, attempts, error: message });
+            console.error("Testagram Sentinel stopped retrying an event after the retry limit", {
+              eventId: record.deliveryId,
+              attempts,
+              error: message,
+            });
           } else {
-            retryDelay = Math.max(retryDelay, Math.min(30 * 60_000, 30_000 * (2 ** (attempts - 1))));
-            console.warn("Testagram Sentinel provider retry failed", { eventId: record.deliveryId, attempts, error: message });
+            retryDelay = Math.max(
+              retryDelay,
+              Math.min(30 * 60_000, 30_000 * (2 ** (attempts - 1))),
+            );
+            console.warn("Testagram Sentinel recovery verification/provider call failed", {
+              eventId: record.deliveryId,
+              attempts,
+              phase: record.status,
+              error: message,
+            });
           }
         }
       }
@@ -265,6 +548,38 @@ export default {
     if (request.method === "GET" && url.pathname === "/healthz") {
       return json({ service: "testagram-instabox-sentinel", status: "ok" });
     }
+    if (url.pathname === "/webhooks/github" && request.method === "POST") {
+      const verifiedGitHub = await validateGitHubWebhookRequest(request, env.GITHUB_WEBHOOK_SECRET);
+      if (!verifiedGitHub.ok) return json({ error: verifiedGitHub.error }, verifiedGitHub.status);
+      const incident = classifyGitHubFailure(verifiedGitHub.eventType, verifiedGitHub.payload, verifiedGitHub.deliveryId);
+      if (incident.action !== "triage") return json({ accepted: true, action: "ignored" }, 202);
+      const ledger = env.EVENT_LEDGER.get(env.EVENT_LEDGER.idFromName(`github:${incident.repository}`));
+      try {
+        const persisted = await ledger.fetch("https://ledger/process", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            deliveryId: verifiedGitHub.deliveryId,
+            event: { source: "github", incident },
+          }),
+        });
+        if (!persisted.ok) {
+          console.error("Testagram reflex could not persist a verified GitHub incident", {
+            deliveryId: verifiedGitHub.deliveryId,
+            status: persisted.status,
+          });
+          return json({ error: "GitHub incident could not be persisted" }, 503);
+        }
+        return json({ accepted: true, action: "triage_queued", severity: incident.severity, organ: incident.organ }, 202);
+      } catch (error) {
+        console.error("Testagram reflex GitHub event persistence failed", {
+          deliveryId: verifiedGitHub.deliveryId,
+          error: error instanceof Error ? error.message : "unknown error",
+        });
+        return json({ error: "GitHub incident could not be persisted" }, 503);
+      }
+    }
+
     if (url.pathname !== "/webhooks/instabox" || request.method !== "POST") {
       return json({ error: "not found" }, 404);
     }
