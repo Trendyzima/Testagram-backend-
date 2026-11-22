@@ -40,3 +40,86 @@ jobs:
           grep -Fq 'reverse_proxy federation-api:8081' deploy/self-hosted/Caddyfile
           grep -Fq 'redir https://www.testagram.site{uri} 308' deploy/self-hosted/Caddyfile
           echo "Apex ActivityPub routing and www frontend preservation: PASS"
+      - name: Integration-test API edge token gate and upstream header stripping
+        env:
+          EDGE_PROXY_SHARED_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: |
+          set -euo pipefail
+          network="testagram-edge-ci-$GITHUB_RUN_ID"
+          docker network create "$network"
+          cleanup() {
+            docker rm -f testagram-edge-caddy testagram-edge-api >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          cat > "$RUNNER_TEMP/mock-api.py" <<'PY'
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  payload = {
+                      "host": self.headers.get("Host"),
+                      "forwarded_host": self.headers.get("X-Forwarded-Host"),
+                      "forwarded_proto": self.headers.get("X-Forwarded-Proto"),
+                      "edge_token": self.headers.get("X-Testagram-Edge-Token"),
+                  }
+                  body = json.dumps(payload).encode()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def log_message(self, *_):
+                  pass
+
+          HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+          PY
+
+          docker run -d --name testagram-edge-api --network "$network" \
+            -v "$RUNNER_TEMP/mock-api.py:/mock-api.py:ro" \
+            python:3.12-alpine python /mock-api.py
+          docker run -d --name testagram-edge-caddy --network "$network" \
+            -p 18443:8443 \
+            -e API_DOMAIN=api.testagram.site \
+            -e MEDIA_DOMAIN=media.testagram.site \
+            -e ADMIN_DOMAIN=ops.testagram.site \
+            -e ACME_EMAIL=ci@example.invalid \
+            -e EDGE_PROXY_SHARED_TOKEN="$EDGE_PROXY_SHARED_TOKEN" \
+            -v "$PWD/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10-alpine caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --connect-timeout 1 --max-time 2 \
+              http://127.0.0.1:18443/_testagram/edge-health >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          [[ "$ready" == "true" ]] || { docker logs testagram-edge-caddy; exit 1; }
+
+          response="$(curl --silent --show-error --fail --connect-timeout 2 --max-time 10 \
+            -H 'X-Forwarded-Host: api.testagram.site' \
+            -H "X-Testagram-Edge-Token: $EDGE_PROXY_SHARED_TOKEN" \
+            http://127.0.0.1:18443/healthz)"
+          printf '%s' "$response" | jq -e '
+            .host == "api.testagram.site" and
+            .forwarded_host == "api.testagram.site" and
+            .forwarded_proto == "https" and
+            .edge_token == null
+          ' >/dev/null
+
+          for token in "" "incorrect"; do
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --connect-timeout 2 --max-time 10 \
+              -H 'X-Forwarded-Host: api.testagram.site' \
+              -H "X-Testagram-Edge-Token: $token" \
+              http://127.0.0.1:18443/healthz)"
+            [[ "$status" == "308" ]] || { echo "::error::Unauthenticated edge request returned $status, expected safe www redirect 308."; exit 1; }
+          done
+
+          echo "Caddy API edge integration passed: valid token routes to Backend and is stripped; absent/wrong token cannot reach Backend." >> "$GITHUB_STEP_SUMMARY"
