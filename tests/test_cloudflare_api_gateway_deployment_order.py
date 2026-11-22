@@ -13,14 +13,14 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
     def test_worker_is_not_publicly_routed_by_wrangler_before_secret_install(self):
         self.assertIn("workers_dev = false", WRANGLER)
         self.assertNotIn("routes =", WRANGLER)
-        deploy = WORKFLOW.index("wrangler deploy --config infra/cloudflare-api-gateway/wrangler.toml")
-        secret = WORKFLOW.index("wrangler secret put EDGE_PROXY_SHARED_TOKEN")
+        deploy = WORKFLOW.index("wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml")
+        secret = WORKFLOW.index("wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN")
         attach = WORKFLOW.index("API edge secret installed before route attachment")
         self.assertLess(deploy, secret)
         self.assertLess(secret, attach)
 
     def test_route_attachment_is_explicit_and_verified_after_secret(self):
-        secret = WORKFLOW.index("wrangler secret put EDGE_PROXY_SHARED_TOKEN")
+        secret = WORKFLOW.index("wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN")
         post = WORKFLOW.index("-X POST")
         verify = WORKFLOW.index("Canonical API route was not verified after attachment")
         self.assertLess(secret, post)
