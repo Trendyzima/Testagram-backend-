@@ -429,6 +429,35 @@ test("classifies production deployment failures as P1 without authorizing mutati
   assert.equal(result.runUrl, failedBackendWorkflow.workflow_run.html_url);
 });
 
+test("rejects GitHub payloads with no repository identity", async () => {
+  const payload = { ...failedBackendWorkflow };
+  delete payload.repository;
+  const result = await validateGitHubWebhookRequest(
+    signedGitHubRequest("workflow_run", payload),
+    githubSecret,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 403);
+});
+
+test("classifies cancelled production releases for every organ as P1", () => {
+  const payload = {
+    ...failedBackendWorkflow,
+    repository: { full_name: "Trendyzima/testagram-flutter-client-" },
+    workflow: { name: "Flutter Production Release" },
+    workflow_run: {
+      ...failedBackendWorkflow.workflow_run,
+      conclusion: "cancelled",
+      name: "Flutter Production Release",
+    },
+  };
+  const result = classifyGitHubFailure("workflow_run", payload, "delivery-cancelled-release");
+  assert.equal(result.action, "triage");
+  assert.equal(result.organ, "Flutter Client");
+  assert.equal(result.severity, "P1");
+  assert.equal(result.conclusion, "cancelled");
+});
+
 test("classifies non-production feature CI failures as P2 and ignores successful runs", () => {
   const featureFailure = {
     ...failedBackendWorkflow,
