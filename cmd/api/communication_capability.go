@@ -140,7 +140,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		conversationID:=str("conversation_id");if !socialUUIDPattern.MatchString(conversationID){fail("INVALID_CONVERSATION","A valid conversation ID is required",http.StatusBadRequest);return true}
 		limit:=intVal("limit",50,1,100);if limit<1{fail("INVALID_LIMIT","Limit must be between 1 and 100",http.StatusBadRequest);return true}
 		cursor:=str("cursor")
-		rows,e:=s.db.Query(ctx,`SELECT m.id::text,m.conversation_id::text,m.sender_id::text,m.body,m.created_at,m.edited_at,m.deleted_at,m.reply_to_message_id::text,m.shared_post_id::text,m.client_message_id,m.delivered_at,m.read_at,m.e2ee_enabled,COALESCE(m.e2ee_version,''),m.e2ee_epoch,COALESCE(m.ciphertext,''),COALESCE(m.nonce,''),COALESCE(m.aad,''),m.attachment_metadata,
+		rows,e:=s.db.Query(ctx,`SELECT m.id::text,m.conversation_id::text,m.sender_id::text,m.created_at,m.edited_at,m.deleted_at,m.reply_to_message_id::text,m.shared_post_id::text,m.client_message_id,m.delivered_at,m.read_at,m.e2ee_enabled,COALESCE(m.e2ee_version,''),m.e2ee_epoch,COALESCE(m.ciphertext,''),COALESCE(m.nonce,''),COALESCE(m.aad,''),m.attachment_metadata,
 			jsonb_build_object('id',a.user_id,'username',a.username,'display_name',a.display_name,'avatar_url',a.avatar_key)
 			FROM testagram_local.messages m JOIN testagram_local.conversation_members cm ON cm.conversation_id=m.conversation_id AND cm.user_id=$1 AND cm.left_at IS NULL
 			JOIN testagram_local.accounts a ON a.user_id=m.sender_id
@@ -148,10 +148,10 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			ORDER BY m.created_at DESC,m.id DESC LIMIT $4`,userID,conversationID,cursor,limit)
 		if e!=nil{fail("MESSAGES_LIST_FAILED","Could not load conversation messages",http.StatusServiceUnavailable);return true}
 		defer rows.Close();items:=make([]map[string]any,0)
-		for rows.Next(){var id,cid,sender,body,version,ciphertext,nonce,aad string;var created time.Time;var edited,deleted,delivered,read *time.Time;var reply,shared,client *string;var e2ee bool;var epoch *int64;var attachments,senderJSON []byte
-			if rows.Scan(&id,&cid,&sender,&body,&created,&edited,&deleted,&reply,&shared,&client,&delivered,&read,&e2ee,&version,&epoch,&ciphertext,&nonce,&aad,&attachments,&senderJSON)!=nil{fail("MESSAGES_LIST_FAILED","Could not read conversation messages",http.StatusServiceUnavailable);return true}
+		for rows.Next(){var id,cid,sender,version,ciphertext,nonce,aad string;var created time.Time;var edited,deleted,delivered,read *time.Time;var reply,shared,client *string;var e2ee bool;var epoch *int64;var attachments,senderJSON []byte
+			if rows.Scan(&id,&cid,&sender,&created,&edited,&deleted,&reply,&shared,&client,&delivered,&read,&e2ee,&version,&epoch,&ciphertext,&nonce,&aad,&attachments,&senderJSON)!=nil{fail("MESSAGES_LIST_FAILED","Could not read conversation messages",http.StatusServiceUnavailable);return true}
 			var attachmentValue any;var senderValue any;_ = json.Unmarshal(attachments,&attachmentValue);_ = json.Unmarshal(senderJSON,&senderValue)
-			items=append(items,map[string]any{"id":id,"conversation_id":cid,"sender_id":sender,"body":body,"created_at":created,"edited_at":edited,"deleted_at":deleted,"reply_to_message_id":reply,"shared_post_id":shared,"client_message_id":client,"delivered_at":delivered,"read_at":read,"e2ee_enabled":e2ee,"e2ee_version":version,"e2ee_epoch":epoch,"ciphertext":ciphertext,"nonce":nonce,"aad":aad,"attachment_metadata":attachmentValue,"sender":senderValue})
+			items=append(items,map[string]any{"id":id,"conversation_id":cid,"sender_id":sender,"created_at":created,"edited_at":edited,"deleted_at":deleted,"reply_to_message_id":reply,"shared_post_id":shared,"client_message_id":client,"delivered_at":delivered,"read_at":read,"e2ee_enabled":e2ee,"e2ee_version":version,"e2ee_epoch":epoch,"ciphertext":ciphertext,"nonce":nonce,"aad":aad,"attachment_metadata":attachmentValue,"sender":senderValue})
 		}
 		if rows.Err()!=nil{fail("MESSAGES_LIST_FAILED","Could not read conversation messages",http.StatusServiceUnavailable);return true}
 		writeJSON(w,http.StatusOK,map[string]any{"items":items,"next_cursor":nil});return true
