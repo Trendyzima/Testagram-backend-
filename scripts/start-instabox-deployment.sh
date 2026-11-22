@@ -331,7 +331,7 @@ write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
 # workflow. For a recovery run without an override, retain only the previously
 # pinned digest from .env; never replace it with a baked-in historical image.
 TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"
-if [[ ! "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
+if [[ ! "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
   echo "::error::Flutter web release must be supplied as an immutable GHCR digest."
   exit 1
 fi
