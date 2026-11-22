@@ -27,7 +27,9 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
     def test_compose_and_caddy_consume_the_persisted_name(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
         caddy = (ROOT / "deploy" / "self-hosted" / "Caddyfile").read_text(encoding="utf-8")
+        env_example = (ROOT / "deploy" / "self-hosted" / ".env.example").read_text(encoding="utf-8")
         self.assertIn("EDGE_PROXY_SHARED_TOKEN", compose)
+        self.assertIn("EDGE_PROXY_SHARED_TOKEN=", env_example)
         self.assertIn("{$EDGE_PROXY_SHARED_TOKEN}", caddy)
 
 
