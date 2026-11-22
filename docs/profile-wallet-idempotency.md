@@ -22,3 +22,5 @@ The Flutter client must persist the request key and exact payload before the net
 ## Operational boundary
 
 This document describes application contracts only. It does not authorize production routing changes, M-Pesa payout activation, or a production deployment. Staging acceptance must use isolated provider credentials and a non-production callback endpoint.
+
+CI acceptance note: the profile and wallet capability tests must run with `go test -race ./...`, `go vet ./...`, and `go build ./cmd/api`; the changed Go files must also pass `gofmt -l` with no output. A successful container publish or schema migration check is not a substitute for these application checks.
