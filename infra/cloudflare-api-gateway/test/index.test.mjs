@@ -82,12 +82,17 @@ test("rejects a non-InstaBox or non-HTTPS origin before making an upstream reque
     throw new Error("must not be called");
   };
   try {
-    const response = await gateway.fetch(apiRequest("/healthz"), {
-      APP_ORIGIN: "https://attacker.example",
-      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
-    });
-    assert.equal(response.status, 503);
-    assert.equal((await response.json()).error.code, "api_origin_misconfigured");
+    for (const origin of [
+      "https://attacker.example",
+      "https://9999-agq4me2xgrgx5ge52ts437tqea.instabox.tech",
+    ]) {
+      const response = await gateway.fetch(apiRequest("/healthz"), {
+        APP_ORIGIN: origin,
+        EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
+      });
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).error.code, "api_origin_misconfigured");
+    }
     assert.equal(called, false);
   } finally {
     globalThis.fetch = originalFetch;
