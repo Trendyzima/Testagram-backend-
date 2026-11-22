@@ -67,11 +67,13 @@ jobs:
 
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
             "$API/zones?name=$ZONE_NAME&status=active" -o "$tmp/zone.json"
+          jq -e '.success == true' "$tmp/zone.json" >/dev/null || { echo "::error::Cloudflare zone lookup failed."; exit 1; }
           zone_id="$(jq -er --arg name "$ZONE_NAME" '.result[] | select(.name == $name and .status == "active") | .id' "$tmp/zone.json" | head -n 1)"
           [[ -n "$zone_id" ]] || { echo "::error::Active Testagram zone was not found."; exit 1; }
 
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
             "$API/zones/$zone_id/dns_records?name=$HOSTNAME" -o "$tmp/dns.json"
+          jq -e '.success == true' "$tmp/dns.json" >/dev/null || { echo "::error::Cloudflare DNS lookup failed."; exit 1; }
           jq -e --arg name "$HOSTNAME" '.result | any(.name == $name and .proxied == true and (.type == "A" or .type == "AAAA"))' "$tmp/dns.json" >/dev/null || {
             echo "::error::api.testagram.site must have a proxied A/AAAA DNS record before a Worker route can serve it."
             exit 1
@@ -79,6 +81,7 @@ jobs:
 
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
             "$API/accounts/$ACCOUNT_ID/workers/domains?hostname=$HOSTNAME" -o "$tmp/domains.json"
+          jq -e '.success == true' "$tmp/domains.json" >/dev/null || { echo "::error::Cloudflare Worker custom-domain lookup failed."; exit 1; }
           if jq -e --arg host "$HOSTNAME" '.result | any(.hostname == $host)' "$tmp/domains.json" >/dev/null; then
             echo "::error::A Worker Custom Domain already owns api.testagram.site. Resolve that ownership before attaching a Worker route."
             exit 1
@@ -86,6 +89,7 @@ jobs:
 
           curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" \
             "$API/zones/$zone_id/workers/routes" -o "$tmp/routes.json"
+          jq -e '.success == true' "$tmp/routes.json" >/dev/null || { echo "::error::Cloudflare Worker route lookup failed."; exit 1; }
           if jq -e --arg pattern "$HOSTNAME/*" '
             .result | any(.pattern == $pattern and (.script // "") != "testagram-api-edge")
           ' "$tmp/routes.json" >/dev/null; then
