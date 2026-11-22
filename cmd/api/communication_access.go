@@ -79,6 +79,25 @@ SELECT EXISTS(
 	return blocked, err
 }
 
+// communicationCallEndAuthorized requires current conversation membership and
+// an active participant record (or the conversation creator). Historical
+// participant rows must not grant call-control access after leaving.
+func communicationCallEndAuthorized(ctx context.Context, q communicationQueryRower, callID, userID string) (bool, error) {
+	var authorized bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM testagram_local.call_sessions c
+		JOIN testagram_local.conversation_members cm
+		  ON cm.conversation_id=c.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL
+		WHERE c.id=$1 AND (
+		  c.created_by=$2 OR EXISTS(
+		    SELECT 1 FROM testagram_local.call_participants cp
+		    WHERE cp.call_id=c.id AND cp.user_id=$2 AND cp.left_at IS NULL
+		  )
+		)
+	)`, callID, userID).Scan(&authorized)
+	return authorized, err
+}
+
 func lockCommunicationConversationAccounts(ctx context.Context, tx pgx.Tx, userID, conversationID string) error {
 	rows, err := tx.Query(ctx, `
 SELECT user_id::text
