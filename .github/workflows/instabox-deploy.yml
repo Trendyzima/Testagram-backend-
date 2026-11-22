@@ -92,9 +92,9 @@ jobs:
           normalize_flag() {
             printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]'
           }
-          dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
-          fresh_media_enabled="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
-          if [[ "$dc_media_enabled" != "true" || "$fresh_media_enabled" != "true" ]]; then
+          early_dc_media_enabled="$(normalize_flag "${DATA_CENTRE_MEDIA_ENABLED:-false}")"
+          early_fresh_media_enabled="$(normalize_flag "${FRESH_MEDIA_ENABLED:-false}")"
+          if [[ "$early_dc_media_enabled" != "true" || "$early_fresh_media_enabled" != "true" ]]; then
             echo "::error::Production media gates are not enabled. Set DATA_CENTRE_MEDIA_ENABLED=true and FRESH_MEDIA_ENABLED=true as variables in the GitHub production environment."
             exit 1
           fi
