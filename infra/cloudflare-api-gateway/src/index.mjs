@@ -139,6 +139,7 @@ export default {
       // reconcile state before any retry.
       return jsonError(503, "api_origin_unavailable", "Testagram API is waking or temporarily unavailable.", {
         "retry-after": "2",
+        "x-testagram-recovery": "attempted",
       });
     }
   },
