@@ -84,9 +84,9 @@ jobs:
                 {
                   echo ""
                   echo "#### DNS inventory: $zone_name"
-                  echo "| Record | Type | Proxied |"
-                  echo "|---|---|---|"
-                  jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + ((.proxied // false)|tostring) + " |"' "$tmp/dns.json"
+                  echo "| Record | Type | Target (DNS content) | Proxied | TTL |"
+                  echo "|---|---|---|---|---:|"
+                  jq -r '.result[]? | "| " + (.name|gsub("\\|";"\\\\|")) + " | " + .type + " | " + (if .type == "TXT" then "[TXT value omitted]" else ((.content // "")|gsub("\\|";"\\\\|")) end) + " | " + ((.proxied // false)|tostring) + " | " + ((.ttl // 0)|tostring) + " |"' "$tmp/dns.json"
                 } >> "$GITHUB_STEP_SUMMARY"
               fi
               if cf_get "/zones/$zone_id/workers/routes" "$tmp/routes.json"; then
@@ -146,7 +146,11 @@ jobs:
                   has_supabase="no"; has_xclone="no"
                   grep -Eiq 'supabase|sb-project-ref' "$tmp/worker-source" && has_supabase="yes" || true
                   grep -Eiq 'xclone' "$tmp/worker-source" && has_xclone="yes" || true
-                  source_scan="supabase_refs=$has_supabase,xclone_refs=$has_xclone"
+                  origin_hosts="$(grep -Eo 'https?://[A-Za-z0-9._-]+' "$tmp/worker-source" | sed -E 's#^https?://##' | grep -E '(^|\.)instabox\.tech$|(^|\.)testagram\.site$' | sort -u | paste -sd, - || true)"
+                  app_origin="$(jq -r '.result.bindings[]? | select(.name == "APP_ORIGIN" and .type == "plain_text") | .text // empty' "$tmp/worker-settings.json" | head -n 1)"
+                  fetch_hosts="$(grep -Eo 'https?://[A-Za-z0-9._-]+' "$tmp/worker-source" | sed -E 's#^https?://##' | sort -u | paste -sd, - || true)"
+                  workers_dev="$(jq -r '.result.workers_dev // "unknown"' "$tmp/worker-settings.json")"
+                  source_scan="supabase_refs=$has_supabase,xclone_refs=$has_xclone,workers_dev=$workers_dev,app_origin=${app_origin:-unset},fetch_hosts=${fetch_hosts:-none}"
                 fi
                 printf '%s\n' "- Worker runtime inventory: $worker; workers_dev=$workers_dev; cron=$schedules; bindings=$bindings; tail_consumers=$tail_consumers; latest_deployments=$deployments; source_scan=$source_scan" >> "$GITHUB_STEP_SUMMARY"
               done < <(jq -r '.result[]?.id // empty' "$tmp/workers.json")
@@ -177,5 +181,5 @@ jobs:
           done < "$tmp/accounts.txt"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Audit completed. DNS record values/content and all credentials were intentionally excluded from the summary." >> "$GITHUB_STEP_SUMMARY"
+          echo "Audit completed. DNS targets and matching public origin hostnames are included for routing diagnosis; credentials and secret binding values are intentionally excluded." >> "$GITHUB_STEP_SUMMARY"
           cat "$GITHUB_STEP_SUMMARY"

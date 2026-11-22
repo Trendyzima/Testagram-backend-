@@ -6,14 +6,6 @@ on:
       - ".github/workflows/instabox-vps-watchdog.yml"
       - "scripts/instabox_watchdog.py"
       - "tests/test_instabox_watchdog.py"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/instabox-vps-watchdog.yml"
-      - "scripts/instabox_watchdog.py"
-      - "tests/test_instabox_watchdog.py"
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -43,7 +35,7 @@ jobs:
   watchdog:
     name: Check and recover Testagram VPS
     needs: validate
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -58,7 +50,8 @@ jobs:
       - name: Run external Instabox watchdog
         env:
           INSTABOX_WATCHDOG_API_KEY: ${{ secrets.INSTABOX_WATCHDOG_API_KEY || secrets.INSTABOX_API_KEY }}
-          WATCHDOG_AUTO_RECOVERY_ENABLED: ${{ vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'true' }}
+          # Free-plan idle pause is intentional. Never run scheduled public keepalive probes or auto-resume cycles.
+          WATCHDOG_AUTO_RECOVERY_ENABLED: ${{ vars.WATCHDOG_AUTO_RECOVERY_ENABLED || 'false' }}
           INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
           INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
           TESTAGRAM_HEALTH_URL: ${{ vars.TESTAGRAM_HEALTH_URL || 'https://api.testagram.site/healthz' }}
@@ -99,10 +92,10 @@ jobs:
             echo
             echo "- Provider: Instabox"
             echo "- Machine: configured through repository variable"
-            echo "- Schedule: every five minutes"
-            echo "- Recovery: start stopped VPS and resume suspended VPS; running VPS never receives a restart trigger"
-            echo "- Suspended VPS: request provider resume, verify provider state, then probe public API liveness"
-            echo "- Decision rule: provider running = liveness probes only/no restart; stopped or suspended = initiate recovery"
+            echo "- Schedule: disabled; free-plan idle pause must not be defeated by scheduled traffic"
+            echo "- Recovery: operator-dispatched only; automatic lifecycle recovery is opt-in and defaults off"
+            echo "- Idle-paused machines should wake on real user requests through InstaBox native wake-on-use"
+            echo "- No scheduled health pings, pause/resume cycling, or artificial activity"
             echo "- Only stopped/suspended provider states initiate lifecycle actions; three failed app probes are reported but never restart a running VPS"
             echo
             echo "See the run log for provider state and any recovery verification details."
