@@ -74,3 +74,27 @@ func TestValidWalletUsername(t *testing.T) {
 		}
 	}
 }
+
+func TestMpesaTopupIdempotencyBindsOriginalPayload(t *testing.T) {
+	if !mpesaTopupRequestMatches("500.00", "254712345678", "KES", 500, "254712345678", "KES") {
+		t.Fatal("same M-Pesa payload should be an idempotent retry")
+	}
+	tests := []struct {
+		name, amount, phone, currency string
+		requestedAmount float64
+		requestedPhone, requestedCurrency string
+	}{
+		{name: "different amount", amount: "500.00", phone: "254712345678", currency: "KES", requestedAmount: 501, requestedPhone: "254712345678", requestedCurrency: "KES"},
+		{name: "different phone", amount: "500.00", phone: "254712345678", currency: "KES", requestedAmount: 500, requestedPhone: "254711111111", requestedCurrency: "KES"},
+		{name: "different currency", amount: "500.00", phone: "254712345678", currency: "KES", requestedAmount: 500, requestedPhone: "254712345678", requestedCurrency: "USD"},
+		{name: "malformed stored amount", amount: "not-money", phone: "254712345678", currency: "KES", requestedAmount: 500, requestedPhone: "254712345678", requestedCurrency: "KES"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if mpesaTopupRequestMatches(tt.amount, tt.phone, tt.currency, tt.requestedAmount, tt.requestedPhone, tt.requestedCurrency) {
+				t.Fatal("different or malformed payload must not reuse an idempotency key")
+			}
+		})
+	}
+}
+
