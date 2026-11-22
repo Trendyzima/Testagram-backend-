@@ -52,6 +52,18 @@ func (s *service) communicationCreateWithPolicy(w http.ResponseWriter, r *http.R
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	if s.db.Stat().MaxConns() < 2 {
+		allowed, err := communicationRecipientAllowed(ctx, s.db, userID, recipientID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("CONVERSATION_POLICY_UNAVAILABLE", "Could not verify recipient privacy and block policy", requestID))
+			return true
+		}
+		if !allowed {
+			writeJSON(w, http.StatusNotFound, errorBody("MEMBER_UNAVAILABLE", "This account is unavailable for a new conversation", requestID))
+			return true
+		}
+		return s.nativeCommunicationCapability(w, r, requestID, body)
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody(
@@ -108,6 +120,19 @@ func (s *service) communicationWithConversationPolicy(w http.ResponseWriter, r *
 	if err != nil || !socialUUIDPattern.MatchString(conversationID) {
 		// Let the canonical handler return its established validation/not-found
 		// response when the referenced message, call or conversation is absent.
+		return s.nativeCommunicationCapability(w, r, requestID, body)
+	}
+
+	if s.db.Stat().MaxConns() < 2 {
+		blocked, err := communicationConversationBlocked(ctx, s.db, userID, conversationID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("COMMUNICATION_POLICY_UNAVAILABLE", "Could not verify conversation safety", requestID))
+			return true
+		}
+		if blocked {
+			writeJSON(w, http.StatusForbidden, errorBody("CONVERSATION_ACCESS_DENIED", "A block prevents access to this conversation", requestID))
+			return true
+		}
 		return s.nativeCommunicationCapability(w, r, requestID, body)
 	}
 
