@@ -320,8 +320,14 @@ FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
 write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
 TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:d0b1fa4c1cbd579c8674ba520566d39ca3b7be90132939d880753c17fe80b425"
 write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
-# Always deploy the reviewed immutable Flutter web manifest; never follow :main.
-TESTAGRAM_WEB_IMAGE="ghcr.io/trendyzima/testagram-web@sha256:aabdefce3c7d961e1cb3324b2c3cbfae69b02694212653f0555fd5e951da7a2b"
+# Preserve the exact immutable image selected by the protected deployment
+# workflow. For a recovery run without an override, retain only the previously
+# pinned digest from .env; never replace it with a baked-in historical image.
+TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-$(read_env_value TESTAGRAM_WEB_IMAGE)}"
+if [[ ! "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]]; then
+  echo "::error::Flutter web release must be supplied as an immutable GHCR digest."
+  exit 1
+fi
 write_env_value TESTAGRAM_WEB_IMAGE "$TESTAGRAM_WEB_IMAGE"
 if [[ -z "$(read_env_value CDN_MEDIA_BASE_URL)" ]]; then write_env_value CDN_MEDIA_BASE_URL "https://media.testagram.site"; fi
 CDN_MEDIA_BASE_URL="$(read_env_value CDN_MEDIA_BASE_URL)"
