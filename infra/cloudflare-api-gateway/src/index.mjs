@@ -128,6 +128,25 @@ export default {
       responseHeaders.set("x-testagram-edge", "cloudflare-api-gateway-v1");
       responseHeaders.delete("server");
 
+      // A published InstaBox port can answer 503 while an idle-paused
+      // machine is waking. Mark that response so clients can apply only their
+      // endpoint-specific safe retry policy. Normalize non-JSON gateway pages
+      // to the same machine-readable envelope used for fetch exceptions.
+      if (upstreamResponse.status === 503) {
+        responseHeaders.set("x-testagram-recovery", "attempted");
+        if (!responseHeaders.has("retry-after")) {
+          responseHeaders.set("retry-after", "2");
+        }
+        const contentType = responseHeaders.get("content-type") || "";
+        if (!contentType.toLowerCase().includes("json")) {
+          return jsonError(503, "api_origin_unavailable", "Testagram API is waking or temporarily unavailable.", {
+            "retry-after": responseHeaders.get("retry-after") || "2",
+            "x-testagram-recovery": "attempted",
+            "x-testagram-edge": "cloudflare-api-gateway-v1",
+          });
+        }
+      }
+
       return new Response(upstreamResponse.body, {
         status: upstreamResponse.status,
         statusText: upstreamResponse.statusText,
