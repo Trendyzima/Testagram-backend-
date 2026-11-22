@@ -2,6 +2,23 @@
 -- Request identity, target and payload are immutable after creation; every
 -- approval must come from a currently enabled, MFA-enrolled native staff user.
 BEGIN;
+-- Bind each approval to the exact WebAuthn authenticator and RP ID used for
+-- the step-up assertion. Existing rows remain historical evidence (NULL pair);
+-- new decisions are required to provide both values.
+ALTER TABLE testagram_auth.native_sensitive_action_approvals
+  ADD COLUMN IF NOT EXISTS webauthn_rpid TEXT,
+  ADD COLUMN IF NOT EXISTS webauthn_credential_id BYTEA;
+ALTER TABLE testagram_auth.native_sensitive_action_approvals
+  DROP CONSTRAINT IF EXISTS native_sensitive_action_approvals_webauthn_pair_check;
+ALTER TABLE testagram_auth.native_sensitive_action_approvals
+  ADD CONSTRAINT native_sensitive_action_approvals_webauthn_pair_check
+  CHECK (
+    (webauthn_rpid IS NULL AND webauthn_credential_id IS NULL)
+    OR
+    (webauthn_rpid IS NOT NULL AND length(trim(webauthn_rpid)) BETWEEN 1 AND 253
+     AND webauthn_credential_id IS NOT NULL
+     AND octet_length(webauthn_credential_id) BETWEEN 16 AND 1024)
+  );
 
 CREATE OR REPLACE FUNCTION testagram_auth.guard_native_sensitive_action_request_immutable()
 RETURNS trigger
@@ -69,6 +86,8 @@ BEGIN
       ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
     JOIN testagram_auth.staff_webauthn_credentials wc
       ON wc.user_id=sp.user_id
+     AND wc.rpid=a.webauthn_rpid
+     AND wc.credential_id=a.webauthn_credential_id
      AND wc.revoked_at IS NULL
      AND wc.user_verified=TRUE
      AND wc.clone_warning=FALSE
@@ -91,6 +110,8 @@ BEGIN
             ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
           JOIN testagram_auth.staff_webauthn_credentials wc
             ON wc.user_id=sp.user_id
+           AND wc.rpid=a.webauthn_rpid
+           AND wc.credential_id=a.webauthn_credential_id
            AND wc.revoked_at IS NULL
            AND wc.user_verified=TRUE
            AND wc.clone_warning=FALSE
@@ -163,6 +184,10 @@ BEGIN
     RAISE EXCEPTION 'requester cannot approve their own sensitive action';
   END IF;
 
+  IF NEW.webauthn_rpid IS NULL OR NEW.webauthn_credential_id IS NULL THEN
+    RAISE EXCEPTION 'approval must identify the exact WebAuthn credential used for step-up';
+  END IF;
+
   -- Serialize this insert with concurrent role, identity and credential
   -- revocation. The parent request is already locked above; keep one lock order.
   PERFORM 1
@@ -172,6 +197,8 @@ BEGIN
     ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
   JOIN testagram_auth.staff_webauthn_credentials wc
     ON wc.user_id=sp.user_id
+   AND wc.rpid=NEW.webauthn_rpid
+   AND wc.credential_id=NEW.webauthn_credential_id
    AND wc.revoked_at IS NULL
    AND wc.user_verified=TRUE
    AND wc.clone_warning=FALSE
