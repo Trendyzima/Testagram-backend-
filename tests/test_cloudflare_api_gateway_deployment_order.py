@@ -25,8 +25,9 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
         verify = WORKFLOW.index("Canonical API route was not verified after attachment")
         self.assertLess(secret, post)
         self.assertLess(post, verify)
-        self.assertIn('"pattern":"$HOSTNAME/*"', WORKFLOW)
-        self.assertIn('"script":"testagram-api-edge"', WORKFLOW)
+        self.assertIn('--arg pattern "$HOSTNAME/*"', WORKFLOW)
+        self.assertIn('--arg script "testagram-api-edge"', WORKFLOW)
+        self.assertIn("{pattern:$pattern,script:$script}", WORKFLOW)
 
     def test_preflight_fails_closed_on_any_overlapping_route_owned_by_another_worker(self):
         self.assertIn('startswith($host + "/")', WORKFLOW)
