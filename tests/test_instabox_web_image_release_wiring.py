@@ -20,7 +20,7 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         self.assertNotIn(r"ghcr\\.io", deploy)
         self.assertIn('export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
         self.assertIn('REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"', deploy)
-        self.assertIn('export TESTAGRAM_WEB_IMAGE="$TESTAGRAM_WEB_IMAGE"', deploy)
+        self.assertNotIn('export TESTAGRAM_WEB_IMAGE="$TESTAGRAM_WEB_IMAGE"', deploy)
         self.assertIn('DEPLOY_WEB_IMAGE="${TESTAGRAM_WEB_IMAGE:?TESTAGRAM_WEB_IMAGE was not forwarded into detached deployment}"', deploy)
         self.assertIn('if ! grep -Fq "export TESTAGRAM_WEB_IMAGE=', deploy)
         self.assertIn('TESTAGRAM_WEB_IMAGE" =~ ^ghcr', deploy)
