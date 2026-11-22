@@ -147,7 +147,10 @@ jobs:
                   grep -Eiq 'supabase|sb-project-ref' "$tmp/worker-source" && has_supabase="yes" || true
                   grep -Eiq 'xclone' "$tmp/worker-source" && has_xclone="yes" || true
                   origin_hosts="$(grep -Eo 'https?://[A-Za-z0-9._-]+' "$tmp/worker-source" | sed -E 's#^https?://##' | grep -E '(^|\.)instabox\.tech$|(^|\.)testagram\.site$' | sort -u | paste -sd, - || true)"
-                  source_scan="supabase_refs=$has_supabase,xclone_refs=$has_xclone,origin_hosts=${origin_hosts:-none}"
+                  app_origin="$(jq -r '.result.bindings[]? | select(.name == "APP_ORIGIN" and .type == "plain_text") | .text // empty' "$tmp/worker-settings.json" | head -n 1)"
+                  fetch_hosts="$(grep -Eo 'https?://[A-Za-z0-9._-]+' "$tmp/worker-source" | sed -E 's#^https?://##' | sort -u | paste -sd, - || true)"
+                  workers_dev="$(jq -r '.result.workers_dev // "unknown"' "$tmp/worker-settings.json")"
+                  source_scan="supabase_refs=$has_supabase,xclone_refs=$has_xclone,workers_dev=$workers_dev,app_origin=${app_origin:-unset},fetch_hosts=${fetch_hosts:-none}"
                 fi
                 printf '%s\n' "- Worker runtime inventory: $worker; workers_dev=$workers_dev; cron=$schedules; bindings=$bindings; tail_consumers=$tail_consumers; latest_deployments=$deployments; source_scan=$source_scan" >> "$GITHUB_STEP_SUMMARY"
               done < <(jq -r '.result[]?.id // empty' "$tmp/workers.json")
