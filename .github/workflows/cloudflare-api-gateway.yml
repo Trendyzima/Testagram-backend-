@@ -1,0 +1,56 @@
+name: Test and deploy Testagram API edge gateway
+
+on:
+  pull_request:
+    paths:
+      - "infra/cloudflare-api-gateway/**"
+      - ".github/workflows/cloudflare-api-gateway.yml"
+  workflow_dispatch:
+    inputs:
+      confirm_production_deploy:
+        description: Deploy the API hostname route to Cloudflare production.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-cloudflare-api-edge
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test API edge proxy contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax check
+        run: node --check infra/cloudflare-api-gateway/src/index.mjs
+      - name: Unit tests
+        run: node --test infra/cloudflare-api-gateway/test/index.test.mjs
+
+  deploy:
+    name: Deploy production API hostname route
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Deploy Worker and attach api.testagram.site route
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
