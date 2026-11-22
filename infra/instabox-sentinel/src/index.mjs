@@ -101,7 +101,6 @@ export async function validateWebhookRequest(request, secret, nowSeconds = Math.
 }
 
 
-const TESTAGRAM_REPOSITORY_ORG = "Trendyzima";
 const TESTAGRAM_REPOSITORIES = new Set([
   "Trendyzima/testagram-flutter-client-",
   "Trendyzima/Testagram-backend-",
