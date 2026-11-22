@@ -111,4 +111,15 @@ VALUES($1,$2)`, publicRecipient, sender); err != nil {
 	if err := lockCommunicationAccounts(ctx, tx, sender, publicRecipient); err != nil {
 		t.Fatalf("lock communication account pair: %v", err)
 	}
+
+	var callMediaEncrypted bool
+	if err := tx.QueryRow(ctx, `
+INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind)
+VALUES($1,$2,$3,'voice')
+RETURNING e2ee_enabled`, conversationID, sender, "testagram-ci-"+suffix).Scan(&callMediaEncrypted); err != nil {
+		t.Fatalf("insert call session fixture: %v", err)
+	}
+	if callMediaEncrypted {
+		t.Fatal("new call session must not claim media end-to-end encryption before a verified media lifecycle exists")
+	}
 }
