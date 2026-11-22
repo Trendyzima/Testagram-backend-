@@ -19,6 +19,8 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         self.assertIn("Flutter web release must be supplied as an immutable GHCR digest", deploy)
         self.assertNotIn('export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
         self.assertIn('REMOTE_COMMAND="${REMOTE_COMMAND//__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__/$TESTAGRAM_WEB_IMAGE}"', deploy)
+        self.assertIn('printf \'%s\\n\' \'DEPLOY_WEB_IMAGE=__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__\' > "$ROOT/deploy-image.env"', deploy)
+        self.assertIn('chmod 600 "$ROOT/deploy-image.env"', deploy)
         self.assertIn('if ! grep -Fq "DEPLOY_WEB_IMAGE=', deploy)
         self.assertIn('TESTAGRAM_WEB_IMAGE" =~ ^ghcr', deploy)
         self.assertIn('@sha256:[a-f0-9]{64}', deploy)
@@ -26,7 +28,7 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
 
     def test_web_image_is_forwarded_to_remote_and_pinned_by_digest(self):
         deploy = DEPLOY.read_text(encoding="utf-8")
-        self.assertIn('DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
+        self.assertIn('source "$ROOT/deploy-image.env"', deploy)
         self.assertIn('write_env_value TESTAGRAM_WEB_IMAGE "$DEPLOY_WEB_IMAGE"', deploy)
         self.assertIn('--arg web_image "$TESTAGRAM_WEB_IMAGE"', deploy)
         self.assertIn("TESTAGRAM_WEB_IMAGE:$web_image", deploy)
