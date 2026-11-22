@@ -29,7 +29,8 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
 
     def test_web_image_is_forwarded_to_remote_and_pinned_by_digest(self):
         deploy = DEPLOY.read_text(encoding="utf-8")
-        self.assertIn('DEPLOY_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
+        self.assertIn('DEPLOY_WEB_IMAGE="${TESTAGRAM_WEB_IMAGE:?TESTAGRAM_WEB_IMAGE was not forwarded into detached deployment}"', deploy)
+        self.assertIn('export TESTAGRAM_WEB_IMAGE="__TESTAGRAM_WEB_IMAGE_PLACEHOLDER__"', deploy)
         self.assertIn('write_env_value TESTAGRAM_WEB_IMAGE "$DEPLOY_WEB_IMAGE"', deploy)
         self.assertIn('--arg web_image "$TESTAGRAM_WEB_IMAGE"', deploy)
         self.assertIn("TESTAGRAM_WEB_IMAGE:$web_image", deploy)
