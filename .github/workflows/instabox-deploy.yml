@@ -334,7 +334,7 @@ jobs:
           # Cloudflare's managed-domain endpoint has rejected a valid JSON file
           # with a trailing newline. Serialize the compact object without any
           # trailing bytes, then verify both its exact size and parsed shape.
-          jq -cn '{enabled:false}' | tr -d '\\n' > "$managed_request"
+          jq -cn '{enabled:false}' | tr -d '\012' > "$managed_request"
           jq -e 'type == "object" and .enabled == false and (keys == ["enabled"])' "$managed_request" >/dev/null
           managed_request_bytes="$(wc -c < "$managed_request" | tr -d '[:space:]')"
           [[ "$managed_request_bytes" == "17" ]] || { echo "::error::R2 managed-domain JSON body must be exactly 17 bytes; got $managed_request_bytes."; exit 1; }
