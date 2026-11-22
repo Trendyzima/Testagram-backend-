@@ -176,4 +176,37 @@ VALUES($1,$2,$3,'voice') RETURNING id::text`, conversationID, sender, "resolver-
 		})
 	}
 
+	var callID string
+	if err := tx.QueryRow(ctx, `
+INSERT INTO testagram_local.call_sessions(conversation_id,created_by,room_name,kind,e2ee_enabled)
+VALUES($1,$2,$3,'voice',FALSE) RETURNING id::text`, conversationID, sender, "active-participant-"+suffix).Scan(&callID); err != nil {
+		t.Fatalf("insert call authorization fixture: %v", err)
+	}
+	for _, participant := range []string{sender, publicRecipient, hiddenRecipient} {
+		if _, err := tx.Exec(ctx, "INSERT INTO testagram_local.call_participants(call_id,user_id) VALUES($1,$2)", callID, participant); err != nil {
+			t.Fatalf("insert call participant %s: %v", participant, err)
+		}
+	}
+	assertCanEnd := func(name, userID string, want bool) {
+		t.Helper()
+		got, err := communicationCallEndAuthorized(ctx, tx, callID, userID)
+		if err != nil {
+			t.Fatalf("%s: call-end authorization query failed: %v", name, err)
+		}
+		if got != want {
+			t.Errorf("%s: authorized=%v, want %v", name, got, want)
+		}
+	}
+	assertCanEnd("active creator", sender, true)
+	assertCanEnd("active participant", publicRecipient, true)
+	assertCanEnd("participant without current conversation membership", hiddenRecipient, false)
+	if _, err := tx.Exec(ctx, "UPDATE testagram_local.call_participants SET left_at=now() WHERE call_id=$1 AND user_id=$2", callID, publicRecipient); err != nil {
+		t.Fatalf("mark participant as left: %v", err)
+	}
+	assertCanEnd("former participant", publicRecipient, false)
+	if _, err := tx.Exec(ctx, "UPDATE testagram_local.conversation_members SET left_at=now() WHERE conversation_id=$1 AND user_id=$2", conversationID, sender); err != nil {
+		t.Fatalf("remove creator from active conversation: %v", err)
+	}
+	assertCanEnd("creator no longer in active conversation", sender, false)
+
 }
