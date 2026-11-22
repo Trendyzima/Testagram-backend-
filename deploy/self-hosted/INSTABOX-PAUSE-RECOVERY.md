@@ -1,52 +1,55 @@
 # InstaBox machine-pause recovery runbook
 
-**Scope:** Testagram's current InstaBox Free machine, observed as `machine-paused`.
-**Purpose:** Restore service safely after the provider pauses the machine. This runbook does not keep a Free machine awake or bypass provider limits.
+**Scope:** Testagram's InstaBox Free machine, observed in the `machine-paused` state.
+**Purpose:** Recover safely after provider idle pause and use InstaBox's native wake-on-request behavior for real user traffic.
 
-## Important operating boundary
+## 1. Native wake-on-request: preferred path
 
-- InstaBox Free automatically pauses an idle machine. This is a provider lifecycle event, not a container crash.
-- Do not use scheduled pings, busy loops, activity leases, or repeated pause/resume cycles to evade the Free-plan limit.
-- `restart: unless-stopped` helps recover containers after the VM is running; it cannot resume a paused VM.
-- Treat the Free machine as development/staging only. Do not claim production availability until Testagram is on an approved always-on plan/host and external recovery tests pass.
+InstaBox now supports wake-on-use for a machine that paused itself due to inactivity: an inbound request to its published application endpoint can wake it automatically. A machine manually paused/stopped by an operator is a different lifecycle state and may require an explicit resume/start operation.
 
-## 1. Confirm the provider state
+- Keep Testagram's actual public app endpoints routed to the machine's supported published port(s).
+- The current self-hosted Compose stack exposes Caddy on ports 80, 443 and 8443; verify the InstaBox public-port publication maps the intended HTTPS ingress to the Caddy listener. Do not expose PostgreSQL, MinIO, Prometheus, Grafana or internal service ports.
+- Users' real requests (app open, login, feed read, post creation, messaging) should arrive through the normal Cloudflare -> published HTTPS origin path. The request itself is the wake trigger; do not generate artificial keep-alive traffic.
+- The first request may experience a cold-start delay or fail while the VM and containers resume. The client should show a bounded "Waking Testagram…" state and retry safe reads with exponential backoff and jitter.
+- Never blindly replay non-idempotent actions such as creating a post, sending a message, wallet transfers, M-Pesa top-ups, or purchases. These must carry stable idempotency keys and the Backend must return the prior result for duplicate submissions.
+- Do not create a second relay or external resume service unless native wake-on-request is unavailable for the actual published endpoint and the provider confirms an API-based wake integration is supported.
 
-From an operator workstation with the InstaBox CLI authenticated:
+Official references:
+- https://instabox.sh/blog/wake-on-use
+- https://instabox.sh/docs/idle-suspend
+- https://instabox.sh/docs/api/ports
+
+## 2. Confirm the machine state and endpoint path
+
+From an authenticated operator workstation:
 
 ```sh
 instabox usage
 instabox --help
 ```
 
-Confirm the machine named `testagramdb` is paused in the InstaBox dashboard/CLI. Check the InstaBox status page before treating a provider-wide incident as a local machine issue:
+Confirm the machine named `testagramdb` is idle-paused rather than manually paused, stopped, failed, or suspended by the provider. Check the provider status page if the machine or published endpoint remains unavailable:
 
 - https://status.instabox.sh
 
-If the machine is paused, resume it using the supported lifecycle operation:
+Verify the published port configuration in the InstaBox dashboard/CLI. Confirm public HTTPS traffic reaches Caddy and only Caddy. Never expose internal data-plane ports.
 
-```sh
-instabox resume testagramdb
-```
+## 3. Verify persistent storage before manual recovery
 
-If it is stopped rather than paused, inspect the machine state and use the documented `instabox start testagramdb` operation. Do not use `restart` as the first response to a normal pause.
-
-## 2. Verify persistent storage before application recovery
-
-Connect to the resumed machine and move to the checked-out Backend deployment directory. Confirm the expected persistent PostgreSQL volume is present and mounted before starting or recreating containers.
+If native wake-on-request does not restore the machine, connect after a supported resume/start operation and verify the existing PostgreSQL volume before starting or recreating containers.
 
 ```sh
 docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml ps
 docker volume ls
 ```
 
-Run these from the repository root. If the deployment uses a different working directory or Compose project name, use that deployment's established values; do not create a new empty volume.
+Run from the repository root, adjusting only for the deployment's established checkout path and Compose project. Do not create a new empty volume.
 
-**Stop and escalate** if the PostgreSQL data volume is missing, unexpectedly empty, detached, or replaced. Never run `docker compose down -v`, remove volumes, reinitialize PostgreSQL, or restore a snapshot over the live database as a routine recovery step.
+**Stop and escalate** if the PostgreSQL data volume is missing, unexpectedly empty, detached, or replaced. Never run `docker compose down -v`, remove volumes, reinitialize PostgreSQL, or restore a snapshot over the live database as routine recovery.
 
-## 3. Recover services in dependency order
+## 4. Ordered service recovery
 
-Use the deployment's existing Compose project and environment file. First inspect configuration and current state:
+Inspect the existing deployment first:
 
 ```sh
 docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml config --quiet
@@ -59,9 +62,9 @@ If containers are stopped but the persistent volume is verified, start the exist
 docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml up -d
 ```
 
-Do not add `--renew-anon-volumes`, `-V`, `down -v`, or destructive database initialization flags.
+Do not use `--renew-anon-volumes`, `-V`, `down -v`, or destructive database initialization flags.
 
-Inspect service logs and wait for PostgreSQL readiness before evaluating API readiness:
+Inspect database recovery and readiness:
 
 ```sh
 docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml logs --since=15m postgres
@@ -69,52 +72,44 @@ docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-c
 docker compose --env-file deploy/self-hosted/.env -f deploy/self-hosted/docker-compose.yml ps
 ```
 
-Then probe the public API from outside the machine (not from localhost alone):
+Probe from outside the machine:
 
 ```sh
 curl --fail --show-error --silent https://api.testagram.site/healthz
 curl --fail --show-error --silent https://api.testagram.site/readyz
 ```
 
-A process being `Up` is not sufficient. Readiness must pass, and the external probe must succeed.
+A running process is not enough: readiness and public-origin probes must pass.
 
-## 4. Post-resume integrity and queue checks
+## 5. Post-resume integrity and work reconciliation
 
 Before declaring recovery complete:
 
 1. Inspect PostgreSQL logs for crash recovery, WAL replay errors, corruption, read-only state, or failed checkpoints.
-2. Verify the latest successful off-machine backup and its integrity record. If no independently stored backup exists, record this as a production-blocking incident; do not assume an InstaBox snapshot is an independent backup.
-3. Inspect durable outbox/worker queues for expired leases and stuck in-progress jobs using each service's documented operator queries.
-4. Reconcile provider callbacks and payment records before retrying any wallet or M-Pesa operation. Never manually credit a wallet to compensate for a timeout.
-5. Verify Federation, Data Centre workers, media replication, CDN origin delivery and web/API smoke tests.
+2. Verify the latest successful encrypted off-machine backup and its integrity record. An InstaBox snapshot alone is not an independent backup.
+3. Inspect durable outboxes/workers for expired leases and stuck in-progress work using each service's reviewed operator queries.
+4. Reconcile payment-provider callbacks and wallet ledger state before retrying M-Pesa or wallet actions. Never manually credit a wallet to compensate for a timeout.
+5. Verify Federation, Data Centre workers, media replication, CDN origin delivery, and web/API end-to-end smoke tests.
 6. Record incident start/end, provider state, recovery actions, data checks, and any jobs requiring reconciliation.
 
 Do not run unreviewed SQL updates against ledger, outbox, or migration tables during recovery.
 
-## 5. Escalation conditions
+## 6. Escalation conditions
 
-Stop automated recovery and escalate to the database/operator owner if:
+Stop automated recovery and escalate if:
 
+- the machine is manually stopped/paused or in a failed state rather than idle-paused;
+- the published port does not wake the idle-paused machine;
 - the expected PostgreSQL volume is absent or has an unexpected identity;
 - PostgreSQL cannot complete crash recovery or reports corruption;
-- migrations are pending or failed unexpectedly;
-- backups are missing, stale, or fail verification;
-- duplicate payment, wallet-ledger, or outbox effects are suspected;
-- the machine repeatedly pauses/stops or InstaBox reports a platform incident.
+- migrations fail unexpectedly, backups are missing/stale, or duplicate financial/outbox effects are suspected;
+- the machine repeatedly pauses/stops or the provider reports an incident.
 
-## 6. Production exit criteria
+## 7. Production eligibility
 
-The Free plan's automatic pause cannot be disabled by Testagram software. Before serving production traffic:
+Wake-on-request improves cold-start behavior; it does not provide continuous availability or an uptime SLA. Free-plan runtime and maximum-run limits still apply. Production must move to a paid InstaBox tier with idle auto-suspend disabled or another explicitly approved always-on host, with external monitoring, encrypted off-machine backups, restore drills, and measured RPO/RTO.
 
-- upgrade to an InstaBox paid plan and explicitly set idle auto-suspend to `0` using the supported CLI/dashboard setting, or approve a separate always-on host;
-- verify billing limits and usage alerts;
-- configure external monitoring and alert delivery independent of this machine;
-- enable encrypted off-machine PostgreSQL backups and WAL/PITR where supported;
-- perform and record a restore drill;
-- demonstrate pause/resume and process-restart recovery without data loss or duplicate side effects;
-- publish measured RPO and RTO.
-
-A paid InstaBox machine is still a hosted microVM. Disabling idle pause does not itself establish dedicated physical hardware, high availability, or an uptime SLA.
+Do not use scheduled pings, busy loops, activity leases, or pause/resume cycling to evade Free-plan limits. A paid InstaBox machine is still a hosted microVM, not proof of dedicated physical hardware or high availability.
 
 ## Related tracking
 
