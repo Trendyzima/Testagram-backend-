@@ -17,7 +17,7 @@ ALTER TABLE testagram_auth.native_sensitive_action_approvals
     OR
     (webauthn_rpid IS NOT NULL AND length(trim(webauthn_rpid)) BETWEEN 1 AND 253
      AND webauthn_credential_id IS NOT NULL
-     AND octet_length(webauthn_credential_id) BETWEEN 16 AND 1024)
+     AND octet_length(webauthn_credential_id) BETWEEN 1 AND 1024)
   );
 
 CREATE OR REPLACE FUNCTION testagram_auth.guard_native_sensitive_action_request_immutable()
