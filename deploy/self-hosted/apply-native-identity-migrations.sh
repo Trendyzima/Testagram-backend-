@@ -26,9 +26,6 @@ WITH checks(check_name, ok) AS (VALUES
   ('historical_external_sensitive_action_requests table', to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NOT NULL),
   ('historical_external_sensitive_action_approvals table', to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NOT NULL),
   ('historical_external_admin_security_audit table', to_regclass('testagram_auth.historical_external_admin_security_audit') IS NOT NULL),
-        AND COALESCE((SELECT NOT has_table_privilege(oid,'\''testagram_auth.historical_external_sensitive_action_requests'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT NOT has_table_privilege(oid,'\''testagram_auth.historical_external_sensitive_action_approvals'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT NOT has_table_privilege(oid,'\''testagram_auth.historical_external_admin_security_audit'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
   ('historical sensitive-action requests inaccessible to runtime', COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_sensitive_action_requests','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('historical sensitive-action approvals inaccessible to runtime', COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_sensitive_action_approvals','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('historical admin audit inaccessible to runtime', COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_admin_security_audit','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
@@ -66,7 +63,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('native sensitive-action request immutability trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_requests') AND tgname='native_sensitive_action_request_immutable' AND NOT tgisinternal)),
   ('native sensitive-action request append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_requests') AND tgname='native_sensitive_action_request_append_only' AND NOT tgisinternal)),
   ('native sensitive-action approver guard trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals') AND tgname='native_sensitive_action_approver_guard' AND NOT tgisinternal)),
-  ('native approval WebAuthn RP and credential columns', (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_native_sensitive_action_approvals' AND column_name IN ('webauthn_rpid','webauthn_credential_id'))),
+  ('native approval WebAuthn RP and credential columns', (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_approvals' AND column_name IN ('webauthn_rpid','webauthn_credential_id'))),
   ('native sensitive-action approval append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals') AND tgname='native_sensitive_action_approval_append_only' AND NOT tgisinternal)),
   ('native_registration_provisioning table', to_regclass('testagram_identity.native_registration_provisioning') IS NOT NULL),
   ('testagram_mail.outbox table', to_regclass('testagram_mail.outbox') IS NOT NULL),
@@ -140,7 +137,7 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.staff_principals'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.staff_role_grants'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.native_staff_permission_overrides'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.historical_external_sensitive_action_requests'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
         AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\'' AND column_name='\''requested_by_service'\'')
         AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\'' AND column_name='\''review_stage'\'')
         AND EXISTS (
@@ -153,13 +150,13 @@ schema_ready() {
           WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\''
             AND column_name='\''review_stage'\''
         )
-        AND to_regclass('\''testagram_auth.historical_external_sensitive_action_approvals'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.historical_external_admin_security_audit'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
+        AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
         AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') AND tgname='\''native_sensitive_action_request_immutable'\'' AND NOT tgisinternal)
         AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') AND tgname='\''native_sensitive_action_request_append_only'\'' AND NOT tgisinternal)
         AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') AND tgname='\''native_sensitive_action_approver_guard'\'' AND NOT tgisinternal)
         AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') AND tgname='\''native_sensitive_action_approval_append_only'\'' AND NOT tgisinternal)
-         AND (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_native_sensitive_action_approvals'\'' AND column_name IN ('\''webauthn_rpid'\'','\''webauthn_credential_id'\''))
+         AND (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_approvals'\'' AND column_name IN ('\''webauthn_rpid'\'','\''webauthn_credential_id'\''))
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
         AND (
