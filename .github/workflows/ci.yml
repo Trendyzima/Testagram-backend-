@@ -1361,6 +1361,26 @@ jobs:
               RAISE EXCEPTION 'staff without an active verified WebAuthn credential was allowed to approve';
             END IF;
           END $uncredentialed_approval$;
+          DO $wrong_authenticator$
+          DECLARE blocked BOOLEAN := FALSE;
+          BEGIN
+            BEGIN
+              INSERT INTO testagram_auth.native_sensitive_action_approvals
+                (request_id,approver_user_id,decision,reason,webauthn_rpid,webauthn_credential_id)
+              SELECT id,'123e4567-e89b-42d3-a456-426614174002','approved','Wrong authenticator must be rejected',
+                     'ops.testagram.invalid',digest('not-the-registered-credential','sha256')
+              FROM testagram_auth.native_sensitive_action_requests
+              WHERE target_reference='ci-release-001';
+            EXCEPTION WHEN OTHERS THEN
+              IF SQLERRM NOT LIKE 'approver is not an enabled, verified and MFA-enrolled native staff principal%' THEN
+                RAISE;
+              END IF;
+              blocked := TRUE;
+            END;
+            IF NOT blocked THEN
+              RAISE EXCEPTION 'approval accepted an authenticator other than the exact registered WebAuthn credential';
+            END IF;
+          END $wrong_authenticator$;
           DO $immutable$
           DECLARE blocked BOOLEAN := FALSE;
           BEGIN
