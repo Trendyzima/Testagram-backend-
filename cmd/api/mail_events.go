@@ -29,6 +29,10 @@ type cloudflareDeliveryEvent struct {
 		Bounce struct {
 			Type string `json:"type"`
 		} `json:"bounce"`
+		Rejection struct {
+			Reason string `json:"reason"`
+			Party string `json:"party"`
+		} `json:"rejection"`
 	} `json:"payload"`
 }
 
@@ -95,11 +99,11 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO testagram_mail.delivery_events(
-			provider_event_id,provider_message_id,event_type,recipient_fingerprint,smtp_status_code,bounce_type
-		) VALUES($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''))
+			provider_event_id,provider_message_id,event_type,recipient_fingerprint,smtp_status_code,bounce_type,rejection_reason,rejection_party
+		) VALUES($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))
 		ON CONFLICT(provider_event_id) DO NOTHING
 	`, event.Payload.EventID, event.Payload.MessageID, event.Type, fingerprint,
-		event.Payload.Delivery.SMTPStatusCode, event.Payload.Bounce.Type)
+		event.Payload.Delivery.SMTPStatusCode, event.Payload.Bounce.Type, event.Payload.Rejection.Reason, event.Payload.Rejection.Party)
 	if err != nil {
 		http.Error(w, "event persistence failed", http.StatusServiceUnavailable)
 		return
@@ -164,7 +168,7 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 			       provider_event_id
 			FROM matched
 			WHERE event_type='cf.email.sending.message.complained'
-			   OR event_type='cf.email.sending.message.rejected'
+			   OR (event_type='cf.email.sending.message.rejected' AND (rejection_party='recipient' OR rejection_reason='spam'))
 			   OR (event_type='cf.email.sending.message.bounced' AND bounce_type='hard')
 			ON CONFLICT(recipient_fingerprint) DO NOTHING
 			RETURNING recipient_fingerprint
