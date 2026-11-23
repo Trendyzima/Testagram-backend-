@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -52,6 +54,8 @@ func (s *service) knowledgeTopics(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	limit := 30
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -75,7 +79,7 @@ func (s *service) knowledgeTopics(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	rows, err := s.db.Query(r.Context(), `
+	rows, err := s.db.Query(ctx, `
 SELECT t.id::text,t.slug,t.name,t.description,
        (SELECT count(*) FROM testagram_local.topic_follows tf JOIN testagram_local.accounts follower ON follower.user_id=tf.user_id WHERE tf.topic_id=t.id AND follower.account_status='active')::bigint,
        (SELECT count(*) FROM testagram_local.question_topics qt JOIN testagram_local.questions q ON q.id=qt.question_id JOIN testagram_local.accounts a ON a.user_id=q.author_id WHERE qt.topic_id=t.id AND `+knowledgeVisible+`)::bigint,
@@ -125,6 +129,8 @@ func (s *service) knowledgeTopicRead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	slug, valid := normalizeKnowledgeTopicSlug(r.PathValue("topic_slug"))
 	if !valid {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOPIC", "Topic slug is invalid", rid))
@@ -133,7 +139,7 @@ func (s *service) knowledgeTopicRead(w http.ResponseWriter, r *http.Request) {
 	var id, name, description string
 	var followers, questions int64
 	var following bool
-	err := s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(ctx, `
 SELECT t.id::text,t.name,t.description,
        (SELECT count(*) FROM testagram_local.topic_follows tf WHERE tf.topic_id=t.id)::bigint,
        (SELECT count(*) FROM testagram_local.question_topics qt JOIN testagram_local.questions q ON q.id=qt.question_id JOIN testagram_local.accounts a ON a.user_id=q.author_id WHERE qt.topic_id=t.id AND `+knowledgeVisible+`)::bigint,
@@ -156,6 +162,8 @@ func (s *service) knowledgeTopicFollow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	action := "knowledge-topic-follow"
 	if r.Method == http.MethodDelete {
 		action = "knowledge-topic-unfollow"
@@ -178,7 +186,7 @@ func (s *service) knowledgeTopicFollow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		_, err := s.db.Exec(r.Context(), `INSERT INTO testagram_local.topic_follows(user_id,topic_id) VALUES($1::uuid,$2::uuid) ON CONFLICT(user_id,topic_id) DO NOTHING`, uid, topicID)
+		_, err := s.db.Exec(ctx, `INSERT INTO testagram_local.topic_follows(user_id,topic_id) VALUES($1::uuid,$2::uuid) ON CONFLICT(user_id,topic_id) DO NOTHING`, uid, topicID)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("TOPIC_FOLLOW_FAILED", "Topic could not be followed", rid))
 			return
