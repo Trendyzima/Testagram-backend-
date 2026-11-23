@@ -391,13 +391,22 @@ WHERE p.deleted_at IS NULL
        AND ma.visibility='public'
        AND ma.content_type LIKE 'video/%'
   ))
-  AND ($9::uuid IS NULL OR EXISTS (
-      SELECT 1 FROM testagram_local.social_list_members lm
-      WHERE lm.list_id=$9::uuid AND lm.member_user_id=p.author_id
-  ))
   AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
+	if listID != "" {
+		// Keep the global feed independent of the optional Lists schema so an
+		// existing database remains healthy until the additive Lists migration
+		// is explicitly applied. The custom-feed branch is activated only after
+		// the List access check above has succeeded.
+		const cursorPredicate = "  AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))"
+		listPredicate := `  AND EXISTS (
+      SELECT 1 FROM testagram_local.social_list_members lm
+      WHERE lm.list_id=$9::uuid AND lm.member_user_id=p.author_id
+  )
+` + cursorPredicate
+		query = strings.Replace(query, cursorPredicate, listPredicate, 1)
+	}
 	var before any
 	var beforeID any
 	if !nativeSingleHomeFeedCursor(cursor) {
@@ -433,7 +442,11 @@ WHERE id=$1::uuid AND deleted_at IS NULL
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly, videoOnly, mediaOnly, discoverOnly, listIDArg)
+	queryArgs := []any{userID, before, beforeID, limit + 1, followingOnly, videoOnly, mediaOnly, discoverOnly}
+	if listIDArg != nil {
+		queryArgs = append(queryArgs, listIDArg)
+	}
+	rows, err := s.db.Query(queryCtx, query, queryArgs...)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
