@@ -6,6 +6,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -50,11 +53,19 @@ type queuedMail struct {
 	Subject   string `json:"subject"`
 	HTML      string `json:"html"`
 	Text      string `json:"text,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
 }
 
 var mailHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
+var mailAnchorPattern = regexp.MustCompile(`(?is)<a\\b[^>]*href=["\x27]([^"\x27]+)["\x27][^>]*>(.*?)</a>`)
 
 func mailPlainTextFromHTML(value string) string {
+	value = mailAnchorPattern.ReplaceAllStringFunc(value, func(anchor string) string {
+		parts := mailAnchorPattern.FindStringSubmatch(anchor)
+		if len(parts) != 3 { return anchor }
+		label := strings.TrimSpace(mailHTMLTagPattern.ReplaceAllString(parts[2], ""))
+		return label + " (" + htmlstd.UnescapeString(parts[1]) + ")"
+	})
 	value = strings.NewReplacer(
 		"<br>", "\n", "<br/>", "\n", "<br />", "\n",
 		"</p>", "\n", "</div>", "\n", "</li>", "\n", "</blockquote>", "\n",
@@ -146,11 +157,22 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 		preferenceID = *preferenceUserID
 		category = preferenceCategory
 	}
+	var headers map[string]string
+	if preferenceUserID != nil {
+		_, unsubscribeURL, err := createSocialUnsubscribeToken(ctx, executor, *preferenceUserID, preferenceCategory)
+		if err != nil { return err }
+		html += `<p style="margin-top:24px;color:#667085;font-size:13px">You can <a href="` + htmlstd.EscapeString(unsubscribeURL) + `">unsubscribe from this type of email</a> at any time.</p>`
+		headers = map[string]string{
+			"List-Unsubscribe": "<" + unsubscribeURL + ">",
+			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+		}
+	}
+	html = brandedTestagramMailHTML(subject, html)
 	aead, err := mailCipher()
 	if err != nil {
 		return err
 	}
-	payload, err := json.Marshal(queuedMail{Recipient: recipient, Subject: subject, HTML: html, Text: mailPlainTextFromHTML(html)})
+	payload, err := json.Marshal(queuedMail{Recipient: recipient, Subject: subject, HTML: html, Text: mailPlainTextFromHTML(html), Headers: headers})
 	if err != nil {
 		return err
 	}
@@ -179,6 +201,33 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 		VALUES($1,$2,'pending',now(),$3,$4,$5)
 	`, ciphertext, nonce, preferenceID, category, fingerprint)
 	return err
+}
+
+
+func brandedTestagramMailHTML(subject, content string) string {
+	baseURL := strings.TrimRight(env("AUTH_PUBLIC_BASE_URL", "https://testagram.site"), "/")
+	brandURL := htmlstd.EscapeString(baseURL)
+	preheader := htmlstd.EscapeString(strings.TrimSpace(subject))
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>` + preheader + `</title></head><body style="margin:0;padding:24px 12px;background:#f3f5f8;color:#182230;font-family:Arial,Helvetica,sans-serif;line-height:1.55"><span style="display:none!important;visibility:hidden;opacity:0;height:0;width:0;overflow:hidden">` + preheader + `</span><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e4e8ee;border-radius:12px"><tr><td style="padding:24px 28px 12px"><a href="` + brandURL + `" style="color:#155eef;text-decoration:none;font-size:22px;font-weight:700">Testagram</a></td></tr><tr><td style="padding:12px 28px 28px;font-size:16px">` + content + `</td></tr><tr><td style="padding:18px 28px;border-top:1px solid #e4e8ee;color:#667085;font-size:12px">You received this message from Testagram. <a href="` + brandURL + `" style="color:#155eef">Visit Testagram</a>.</td></tr></table></body></html>`
+}
+
+func createSocialUnsubscribeToken(ctx context.Context, executor mailQueueExecutor, userID, category string) (string, string, error) {
+	if executor == nil || strings.TrimSpace(userID) == "" ||
+		(category != "new_follower" && category != "new_post") {
+		return "", "", errors.New("invalid social unsubscribe token request")
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil { return "", "", err }
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	hash := sha256.Sum256(raw)
+	baseURL := strings.TrimRight(env("AUTH_PUBLIC_BASE_URL", "https://testagram.site"), "/")
+	unsubscribeURL := baseURL + "/api/email/unsubscribe?token=" + url.QueryEscape(token)
+	_, err := executor.Exec(ctx, `
+		INSERT INTO testagram_mail.social_unsubscribe_tokens(token_hash,user_id,preference_category,expires_at)
+		VALUES($1,$2::uuid,$3,now()+interval '365 days')
+	`, hash[:], userID, category)
+	if err != nil { return "", "", err }
+	return token, unsubscribeURL, nil
 }
 
 func (s *service) enqueueAuthEmail(ctx context.Context, recipient, subject, html string) error {
@@ -216,6 +265,7 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 	payload := map[string]any{
 		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
 	}
+	if len(message.Headers) > 0 { payload["headers"] = message.Headers }
 	if strings.TrimSpace(message.Text) != "" {
 		payload["text"] = message.Text
 	}
