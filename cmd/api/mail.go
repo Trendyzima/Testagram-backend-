@@ -250,6 +250,27 @@ func (s *service) runMailOutboxWorker(ctx context.Context) {
 	}
 }
 
+type mailConsentQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func socialMailConsentActive(ctx context.Context, queryer mailConsentQueryer, userID, category string) (bool, error) {
+	if userID == "" || (category != "new_follower" && category != "new_post") {
+		return false, nil
+	}
+	var active bool
+	err := queryer.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM testagram_local.email_notification_preferences p
+			WHERE p.user_id=$1::uuid AND (
+				($2='new_follower' AND p.new_follower_email_enabled=TRUE)
+				OR ($2='new_post' AND p.new_post_email_enabled=TRUE)
+			)
+		)
+	`, userID, category).Scan(&active)
+	return active, err
+}
+
 func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if s.db == nil {
 		return false, errors.New("mail database unavailable")
@@ -323,14 +344,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	// Re-check consent immediately before the provider call so queued social
 	// messages cannot be sent after a preference withdrawal.
 	if preferenceUserID != "" {
-		var consentActive bool
-		err := s.db.QueryRow(ctx, `SELECT EXISTS (
-			SELECT 1 FROM testagram_local.email_notification_preferences p
-			WHERE p.user_id=$1::uuid AND (
-				($2='new_follower' AND p.new_follower_email_enabled=TRUE)
-				OR ($2='new_post' AND p.new_post_email_enabled=TRUE)
-			)
-		)`, preferenceUserID, preferenceCategory).Scan(&consentActive)
+		consentActive, err := socialMailConsentActive(ctx, s.db, preferenceUserID, preferenceCategory)
 		if err != nil {
 			_ = s.failMail(ctx, id, attempt, "SOCIAL_EMAIL_CONSENT_LOOKUP_FAILED")
 			return true, err
