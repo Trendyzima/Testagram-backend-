@@ -39,6 +39,9 @@ func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
 	if status != "pending" {
 		t.Fatalf("new mail status = %q, want pending", status)
 	}
+	if preferenceUserID != nil || preferenceCategory != nil {
+		t.Fatal("transactional account email must not be tagged with social consent metadata")
+	}
 	if bytes.Contains(ciphertext, []byte(secretLink)) || bytes.Contains(ciphertext, []byte(recipient)) {
 		t.Fatal("mail recipient or one-time link was stored in plaintext")
 	}
