@@ -73,6 +73,10 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("verification_otp_attempts", SOURCE)
         self.assertIn("email_notification_preferences", SOURCE)
         self.assertIn("has_table_privilege", SOURCE)
+        consent_sql = (ROOT / "migrations" / consent).read_text(encoding="utf-8")
+        self.assertIn("preference_user_id", consent_sql)
+        self.assertIn("preference_category", consent_sql)
+        self.assertIn("CONSENT_WITHDRAWN", (ROOT / "cmd/api/social_email_notifications.go").read_text(encoding="utf-8"))
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
