@@ -185,7 +185,7 @@ export default {
         {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${env.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN}`,
+            "Authorization": `Bearer ${env.EDGE_PROXY_SHARED_TOKEN}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify(message.body),
