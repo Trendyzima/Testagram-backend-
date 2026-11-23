@@ -2349,7 +2349,6 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: bash tests/test-social-platform-product-foundation.sh
- -count=1 -v
       - name: Verify communication privacy and block policy against PostgreSQL
         env:
           TESTAGRAM_TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
