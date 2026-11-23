@@ -47,7 +47,7 @@ class TestSocialPlatformMigrationSafety(unittest.TestCase):
             "social_moderation_appeals",
         ):
             self.assertIn(f"CREATE TABLE IF NOT EXISTS testagram_local.{table}", migration)
-        self.assertNotRegex(migration, r"(?im)^\\s*DROP\\s+(TABLE|SCHEMA|DATABASE)")
+        self.assertNotRegex(migration, r"(?im)^\s*DROP\s+(TABLE|SCHEMA|DATABASE)")
 
     def test_operator_documentation_requires_the_backup_first_workflow(self):
         readme = README.read_text(encoding="utf-8")
