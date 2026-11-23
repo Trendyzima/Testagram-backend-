@@ -65,6 +65,7 @@ type TopicCandidate struct {
 	PostsCount       int64     `json:"postsCount"`
 	LastUsedAt       time.Time `json:"lastUsedAt"`
 	InterestAffinity float64   `json:"interestAffinity"`
+	Momentum         float64   `json:"momentum"`
 }
 
 type TopicRequest struct {
@@ -239,7 +240,9 @@ func (c *Client) RankTopics(ctx context.Context, input TopicRequest) (TopicsResp
 		if !topicTagPattern.MatchString(candidate.Tag) || candidate.PostsCount < 1 ||
 			candidate.PostsCount > 1_000_000_000 || candidate.LastUsedAt.IsZero() ||
 			math.IsNaN(candidate.InterestAffinity) || math.IsInf(candidate.InterestAffinity, 0) ||
-			candidate.InterestAffinity < 0 || candidate.InterestAffinity > 1 {
+			candidate.InterestAffinity < 0 || candidate.InterestAffinity > 1 ||
+			math.IsNaN(candidate.Momentum) || math.IsInf(candidate.Momentum, 0) ||
+			candidate.Momentum < 0 || candidate.Momentum > 1 {
 			return TopicsResponse{}, errors.New("algorithm request contains an invalid topic candidate")
 		}
 		if _, duplicate := allowed[candidate.Tag]; duplicate {

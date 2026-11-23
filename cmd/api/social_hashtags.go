@@ -256,7 +256,10 @@ func (s *service) socialTrendingHashtags(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(ctx, `
-SELECT lower(parts[1]) AS tag,count(DISTINCT p.id)::bigint AS posts_count,
+SELECT lower(parts[1]) AS tag,
+       count(DISTINCT p.id)::bigint AS posts_count,
+       (count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '24 hours'))::bigint AS recent_posts_count,
+       (count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '48 hours' AND p.created_at < now()-interval '24 hours'))::bigint AS previous_posts_count,
        max(p.created_at) AS last_used_at,
        COALESCE(bool_or(hf.user_id IS NOT NULL),false) AS is_following
 FROM testagram_local.posts p
@@ -270,7 +273,7 @@ WHERE p.deleted_at IS NULL
   AND NOT a.protected_account
   AND p.created_at >= now()-interval '7 days'
 GROUP BY lower(parts[1])
-ORDER BY count(DISTINCT p.id) DESC,max(p.created_at) DESC,lower(parts[1])
+ORDER BY posts_count DESC,last_used_at DESC,lower(parts[1])
 LIMIT 200`, nullableUUID(viewerID))
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be loaded", requestID))
@@ -282,10 +285,10 @@ LIMIT 200`, nullableUUID(viewerID))
 	topicFollowState := make(map[string]bool, 200)
 	for rows.Next() {
 		var tag string
-		var count int64
+		var count, recentCount, previousCount int64
 		var lastUsed time.Time
 		var isFollowing bool
-		if err := rows.Scan(&tag, &count, &lastUsed, &isFollowing); err != nil {
+		if err := rows.Scan(&tag, &count, &recentCount, &previousCount, &lastUsed, &isFollowing); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_HASHTAGS_FAILED", "Trending topics could not be decoded", requestID))
 			return
 		}
@@ -295,11 +298,14 @@ LIMIT 200`, nullableUUID(viewerID))
 		}
 		topicCandidates = append(topicCandidates, algorithmclient.TopicCandidate{
 			Tag: tag, PostsCount: count, LastUsedAt: lastUsed, InterestAffinity: affinity,
+			Momentum: trendMomentum(recentCount, previousCount),
 		})
 		topicFollowState[tag] = isFollowing
 		if len(fallbackItems) < limit {
 			fallbackItems = append(fallbackItems, map[string]any{
 				"tag": tag, "posts_count": count, "last_used_at": lastUsed.UTC().Format(time.RFC3339Nano), "is_following": isFollowing,
+				"momentum": trendMomentum(recentCount, previousCount),
+				"reasons":  trendReasons(trendMomentum(recentCount, previousCount)),
 			})
 		}
 	}
