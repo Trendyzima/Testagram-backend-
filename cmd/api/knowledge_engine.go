@@ -17,10 +17,10 @@ import (
 )
 
 type knowledgeQuestionInput struct {
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	Visibility string `json:"visibility"`
-	Language   string `json:"language"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	Visibility string   `json:"visibility"`
+	Language   string   `json:"language"`
 	TopicSlugs []string `json:"topic_slugs,omitempty"`
 }
 type knowledgeAnswerInput struct {
