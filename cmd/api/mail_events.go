@@ -152,7 +152,8 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 		),
 		matched AS (
 			UPDATE testagram_mail.outbox o
-			SET delivery_status=CASE
+			SET recipient_fingerprint=COALESCE(o.recipient_fingerprint,c.recipient_fingerprint),
+			delivery_status=CASE
 				WHEN o.delivery_status IN ('delivered','bounced','failed','rejected','complained')
 				 AND c.event_type <> 'cf.email.sending.message.complained' THEN o.delivery_status
 				ELSE CASE c.event_type
@@ -172,7 +173,7 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 			updated_at=now()
 			FROM candidates c
 			WHERE o.provider_message_id=c.provider_message_id
-			  AND o.recipient_fingerprint=c.recipient_fingerprint
+			  AND (o.recipient_fingerprint IS NULL OR o.recipient_fingerprint=c.recipient_fingerprint)
 			  
 			RETURNING c.id,c.provider_event_id,c.event_type,c.recipient_fingerprint,c.bounce_type,c.rejection_reason,c.rejection_party
 		),
