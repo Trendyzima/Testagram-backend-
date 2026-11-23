@@ -257,8 +257,8 @@ func (s *service) socialTrendingHashtags(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	rows, err := s.db.Query(ctx, `
 SELECT lower(parts[1]) AS tag,
-       count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '7 days')::bigint AS posts_count,
-       count(DISTINCT p.id) FILTER (WHERE p.created_at < now()-interval '7 days')::bigint AS previous_posts_count,
+       (count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '7 days'))::bigint AS posts_count,
+       (count(DISTINCT p.id) FILTER (WHERE p.created_at < now()-interval '7 days'))::bigint AS previous_posts_count,
        max(p.created_at) FILTER (WHERE p.created_at >= now()-interval '7 days') AS last_used_at,
        COALESCE(bool_or(hf.user_id IS NOT NULL),false) AS is_following
 FROM testagram_local.posts p
