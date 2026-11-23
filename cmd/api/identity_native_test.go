@@ -278,9 +278,9 @@ func TestNativeIdentityApplicationStatusUsesVerificationSessions(t *testing.T) {
 	}
 }
 
-func TestIdentityApplicationCreateDoesNotRequireStaffWebAuthnForIntake(t *testing.T) {
-	// Applicant intake must not depend on staff reviewer enrollment. The request
-	// must pass the former MFA gate and proceed to the independent storage gate.
+func TestIdentityApplicationCreateDoesNotBypassMissingStaffWebAuthn(t *testing.T) {
+	// Even a stale/true deployment variable cannot open intake while staff
+	// WebAuthn enrollment, verification, recovery and replay protection are absent.
 	t.Setenv("TESTAGRAM_IDENTITY_REGISTRATION_ENABLED", "true")
 
 	body := strings.NewReader(`{"email":"applicant@example.test","username":"applicant_01","display_name":"Test Applicant","adult_confirmed":true,"terms_accepted":true,"privacy_accepted":true}`)
@@ -292,14 +292,14 @@ func TestIdentityApplicationCreateDoesNotRequireStaffWebAuthnForIntake(t *testin
 	(&service{}).identityApplicationCreate(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("identity intake without configured storage status=%d body=%s; want storage readiness failure %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
+		t.Fatalf("identity intake without staff WebAuthn status=%d body=%s; want %d", rec.Code, rec.Body.String(), http.StatusServiceUnavailable)
 	}
 	var response map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("identity readiness response returned invalid JSON: %v", err)
 	}
 	apiError, ok := response["error"].(map[string]any)
-	if !ok || apiError["code"] != "IDENTITY_SERVICE_UNAVAILABLE" {
-		t.Fatalf("identity intake did not pass the staff MFA gate: error=%v; want IDENTITY_SERVICE_UNAVAILABLE storage gate", response["error"])
+	if !ok || apiError["code"] != "IDENTITY_REVIEW_MFA_UNAVAILABLE" {
+		t.Fatalf("identity readiness error=%v; want IDENTITY_REVIEW_MFA_UNAVAILABLE", response["error"])
 	}
 }
