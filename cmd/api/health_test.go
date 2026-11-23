@@ -70,6 +70,7 @@ func TestHealthIsCanonicalPublicProbeAndMatchesHealthz(t *testing.T) {
 }
 
 func TestEdgeRecoveryReadinessRequiresDedicatedBearerSecret(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("x", 32))
 	const token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	svc := &service{edgeRecoveryReadinessToken: token}
 	for _, tc := range []struct {
@@ -95,6 +96,21 @@ func TestEdgeRecoveryReadinessRequiresDedicatedBearerSecret(t *testing.T) {
 				t.Fatal("recovery readiness response must be no-store")
 			}
 		})
+	}
+}
+
+func TestEdgeRecoveryReadinessRequiresNativeAuthConfiguration(t *testing.T) {
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", "")
+	const token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	req := httptest.NewRequest(http.MethodGet, "/internal/edge/recovery-ready", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	(&service{edgeRecoveryReadinessToken: token}).routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness without native auth signing configuration status = %d, want 503", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "JWT") || strings.Contains(rec.Body.String(), "secret") {
+		t.Fatalf("readiness response leaked configuration details: %s", rec.Body.String())
 	}
 }
 
