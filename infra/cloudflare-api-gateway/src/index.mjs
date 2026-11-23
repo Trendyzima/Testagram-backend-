@@ -161,7 +161,7 @@ export default {
         "x-testagram-recovery": "attempted",
       });
     }
-  },,
+  },
 
   async queue(batch, env) {
     const origin = resolveOrigin(env.APP_ORIGIN);
