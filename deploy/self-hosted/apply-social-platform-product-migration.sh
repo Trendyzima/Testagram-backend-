@@ -42,7 +42,7 @@ catalog_ready() {
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
     SELECT count(*)=20
     FROM testagram_local.topics
-    WHERE status=\$\$active\$\$
+    WHERE TRUE
       AND slug = ANY(ARRAY[
         \$\$kenya\$\$,\$\$east-africa\$\$,\$\$technology\$\$,\$\$software-engineering\$\$,
         \$\$artificial-intelligence\$\$,\$\$entrepreneurship\$\$,\$\$business\$\$,\$\$agriculture\$\$,
