@@ -717,15 +717,25 @@ func (s *service) internalRoutes() http.Handler {
 			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 			defer cancel()
 			var mailPending, mailOldestPendingSeconds, mailSending, mailSent, mailDead, mailUncertain int64
+			var mailDelivered, mailDeferred, mailBounced, mailFailed, mailComplained, mailEventsPending int64
 			mailErr := s.db.QueryRow(ctx, `
 				SELECT count(*) FILTER (WHERE status='pending'),
 				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status='pending')))::bigint,0),
 				       count(*) FILTER (WHERE status='sending'),
 				       count(*) FILTER (WHERE status='sent'),
 				       count(*) FILTER (WHERE status='dead'),
-				       count(*) FILTER (WHERE status='uncertain')
+				       count(*) FILTER (WHERE status='uncertain'),
+				       count(*) FILTER (WHERE delivery_status='delivered'),
+				       count(*) FILTER (WHERE delivery_status='deferred'),
+				       count(*) FILTER (WHERE delivery_status='bounced'),
+				       count(*) FILTER (WHERE delivery_status='failed'),
+				       count(*) FILTER (WHERE delivery_status='complained')
 				FROM testagram_mail.outbox
-			`).Scan(&mailPending, &mailOldestPendingSeconds, &mailSending, &mailSent, &mailDead, &mailUncertain)
+			`).Scan(&mailPending, &mailOldestPendingSeconds, &mailSending, &mailSent, &mailDead, &mailUncertain,
+				&mailDelivered, &mailDeferred, &mailBounced, &mailFailed, &mailComplained)
+			if mailErr == nil {
+				mailErr = s.db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.delivery_events WHERE processed_at IS NULL").Scan(&mailEventsPending)
+			}
 			if mailErr == nil {
 				output.WriteString("testagram_mail_outbox_metrics_available 1\n")
 				fmt.Fprintf(&output, "testagram_mail_outbox_pending %d\n", mailPending)
@@ -734,6 +744,12 @@ func (s *service) internalRoutes() http.Handler {
 				fmt.Fprintf(&output, "testagram_mail_outbox_sent_total %d\n", mailSent)
 				fmt.Fprintf(&output, "testagram_mail_outbox_dead_total %d\n", mailDead)
 				fmt.Fprintf(&output, "testagram_mail_outbox_uncertain_total %d\n", mailUncertain)
+				fmt.Fprintf(&output, "testagram_mail_delivery_delivered_total %d\n", mailDelivered)
+				fmt.Fprintf(&output, "testagram_mail_delivery_deferred_total %d\n", mailDeferred)
+				fmt.Fprintf(&output, "testagram_mail_delivery_bounced_total %d\n", mailBounced)
+				fmt.Fprintf(&output, "testagram_mail_delivery_failed_total %d\n", mailFailed)
+				fmt.Fprintf(&output, "testagram_mail_delivery_complained_total %d\n", mailComplained)
+				fmt.Fprintf(&output, "testagram_mail_delivery_events_pending %d\n", mailEventsPending)
 			} else {
 				output.WriteString("testagram_mail_outbox_metrics_available 0\n")
 			}
