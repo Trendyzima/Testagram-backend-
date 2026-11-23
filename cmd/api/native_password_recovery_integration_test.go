@@ -184,7 +184,7 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 			t.Fatalf("invalid reset attempt %d status=%d body=%s", attempt+1, got.Code, got.Body.String())
 		}
 	}
-	if got := reset("invalid-recovery-capability-00000000000000000000000000000000", "NewRecoveryPassword-456!"); got.Code != http.StatusTooManyRequests {
+	if got := reset(invalidToken, "NewRecoveryPassword-456!"); got.Code != http.StatusTooManyRequests {
 		t.Fatalf("fourth attempt against one token status=%d body=%s; want rate limit", got.Code, got.Body.String())
 	}
 
