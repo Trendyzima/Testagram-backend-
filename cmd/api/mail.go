@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	htmlstd "html"
 	"io"
 	"log"
 	"net/http"
 	"net/mail"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -47,6 +49,18 @@ type queuedMail struct {
 	Recipient string `json:"recipient"`
 	Subject   string `json:"subject"`
 	HTML      string `json:"html"`
+	Text      string `json:"text,omitempty"`
+}
+
+var mailHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
+
+func mailPlainTextFromHTML(value string) string {
+	value = strings.NewReplacer(
+		"<br>", "\\n", "<br/>", "\\n", "<br />", "\\n",
+		"</p>", "\\n", "</div>", "\\n", "</li>", "\\n", "</blockquote>", "\\n",
+	).Replace(value)
+	value = mailHTMLTagPattern.ReplaceAllString(value, "")
+	return strings.TrimSpace(htmlstd.UnescapeString(value))
 }
 
 type cloudflareMailResponse struct {
@@ -136,7 +150,7 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 	if err != nil {
 		return err
 	}
-	payload, err := json.Marshal(queuedMail{Recipient: recipient, Subject: subject, HTML: html})
+	payload, err := json.Marshal(queuedMail{Recipient: recipient, Subject: subject, HTML: html, Text: mailPlainTextFromHTML(html)})
 	if err != nil {
 		return err
 	}
@@ -195,9 +209,13 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 	if client == nil {
 		return "", errors.New("Cloudflare Email Sending HTTP client unavailable")
 	}
-	body, err := json.Marshal(map[string]string{
+	payload := map[string]any{
 		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
-	})
+	}
+	if strings.TrimSpace(message.Text) != "" {
+		payload["text"] = message.Text
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
