@@ -129,7 +129,7 @@ AND (NOT $3::boolean OR q.author_id=$1)
 AND (NOT $4::boolean OR EXISTS(SELECT 1 FROM testagram_local.follows ff WHERE ff.follower_id=$1 AND ff.following_id=q.author_id AND ff.status='accepted'))
 AND ($5::timestamptz IS NULL OR (q.created_at,q.id)<($5::timestamptz,$6::uuid))
 AND ($8='' OR EXISTS(SELECT 1 FROM testagram_local.question_topics qtf JOIN testagram_local.topics tf ON tf.id=qtf.topic_id WHERE qtf.question_id=q.id AND tf.slug=$8 AND tf.status='active'))
-AND (NOT $9::boolean OR EXISTS(SELECT 1 FROM testagram_local.question_topics qtt JOIN testagram_local.topic_follows tff ON tff.topic_id=qtt.topic_id AND tff.user_id=$1 WHERE qtt.question_id=q.id))
+AND (NOT $9::boolean OR EXISTS(SELECT 1 FROM testagram_local.question_topics qtt JOIN testagram_local.topics qtopic ON qtopic.id=qtt.topic_id AND qtopic.status='active' JOIN testagram_local.topic_follows tff ON tff.topic_id=qtt.topic_id AND tff.user_id=$1 WHERE qtt.question_id=q.id))
 ORDER BY q.created_at DESC,q.id DESC LIMIT $7`, uid, status, mine, following, before, beforeID, limit+1, topicSlug, topicsFollowing)
 	if e != nil {
 		writeJSON(w, 503, errorBody("QUESTIONS_UNAVAILABLE", "Questions could not be loaded", rid))
