@@ -47,3 +47,34 @@ func TestNormalizeKnowledgeTopicSlugsRejectsInvalidAndExcessiveInput(t *testing.
 		t.Fatal("more than five topic slugs were accepted")
 	}
 }
+
+func TestQuestionTopicExtensionPreservesLegacyIdempotencyHashWithoutTopics(t *testing.T) {
+	legacy := struct {
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		Visibility string `json:"visibility"`
+		Language   string `json:"language"`
+	}{
+		Title: "How does PostgreSQL work?",
+		Body: "Explain MVCC.",
+		Visibility: "public",
+		Language: "en",
+	}
+	current := knowledgeQuestionInput{
+		Title: legacy.Title,
+		Body: legacy.Body,
+		Visibility: legacy.Visibility,
+		Language: legacy.Language,
+	}
+	oldHash, err := knowledgeHash(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newHash, err := knowledgeHash(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newHash != oldHash {
+		t.Fatal("adding optional topic tags must not invalidate retries for legacy questions")
+	}
+}
