@@ -68,3 +68,41 @@ func TestHealthIsCanonicalPublicProbeAndMatchesHealthz(t *testing.T) {
 		})
 	}
 }
+
+
+func TestEdgeRecoveryReadinessRequiresDedicatedBearerSecret(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	svc := &service{edgeRecoveryReadinessToken: token}
+	for _, tc := range []struct {
+		name string
+		authorization string
+		want int
+	}{
+		{name: "missing", want: http.StatusNotFound},
+		{name: "wrong", authorization: "Bearer wrong-token", want: http.StatusNotFound},
+		{name: "valid but database unavailable", authorization: "Bearer " + token, want: http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/internal/edge/recovery-ready", nil)
+			if tc.authorization != "" {
+				req.Header.Set("Authorization", tc.authorization)
+			}
+			rec := httptest.NewRecorder()
+			svc.routes().ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+			if rec.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("recovery readiness response must be no-store")
+			}
+		})
+	}
+}
+
+func TestEdgeRecoveryReadinessRemainsHiddenWithoutConfiguredSecret(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/internal/edge/recovery-ready", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unconfigured recovery readiness status = %d, want 404", rec.Code)
+	}
+}
