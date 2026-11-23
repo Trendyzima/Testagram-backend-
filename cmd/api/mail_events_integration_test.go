@@ -44,7 +44,7 @@ func TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *t
 			"metadata":map[string]any{"eventSchemaVersion":1},
 		})
 		req := httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(string(payload)))
-		req.Header.Set("Authorization", "Bearer ci-event-token")
+		req.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 		rec := httptest.NewRecorder()
 		svc.cloudflareMailEvent(rec, req)
 		return rec
