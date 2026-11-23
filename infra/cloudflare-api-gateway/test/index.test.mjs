@@ -213,7 +213,7 @@ test("forwards Cloudflare Email Sending Queue events to the pinned backend and a
     assert.equal(calls.length, 1);
     assert.equal(calls[0].input, APP_ORIGIN + "/internal/mail/events");
     assert.equal(calls[0].init.method, "POST");
-    assert.equal(calls[0].init.headers.Authorization, "Bearer " + "b".repeat(64));
+    assert.equal(calls[0].init.headers.Authorization, "Bearer " + "a".repeat(64));
     assert.equal(calls[0].init.headers["X-Testagram-Edge-Token"], "a".repeat(64));
     assert.deepEqual(JSON.parse(calls[0].init.body), body);
     assert.deepEqual(actions, ["ack"]);
@@ -245,7 +245,6 @@ test("retries Queue events on non-202 responses, transport errors and missing se
 
     await gateway.queue({ messages: [makeMessage("missing-secret")] }, {
       APP_ORIGIN,
-      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
     });
     assert.deepEqual(actions, [
       "server-error:retry",
