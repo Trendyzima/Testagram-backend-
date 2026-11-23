@@ -69,7 +69,6 @@ func TestHealthIsCanonicalPublicProbeAndMatchesHealthz(t *testing.T) {
 	}
 }
 
-
 func TestEdgeRecoveryReadinessRequiresDedicatedBearerSecret(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	svc := &service{edgeRecoveryReadinessToken: token}
