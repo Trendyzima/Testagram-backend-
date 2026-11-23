@@ -48,7 +48,7 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
 
     def test_route_attachment_is_explicit_and_verified_after_secret(self):
         secret = WORKFLOW.index("wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN")
-        post = WORKFLOW.index("-X POST")
+        post = WORKFLOW.index('--data-binary @"$RUNNER_TEMP/edge-route.json"')
         verify = WORKFLOW.index("Canonical API route was not verified after attachment")
         self.assertLess(secret, post)
         self.assertLess(post, verify)
