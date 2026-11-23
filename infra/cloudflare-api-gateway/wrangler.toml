@@ -8,3 +8,13 @@ workers_dev = false
 
 [vars]
 APP_ORIGIN = "https://8443-agq4me2xgrgx5ge52ts437tqea.instabox.tech"
+
+# Cloudflare Email Sending lifecycle events are delivered through Queues.
+# The primary queue is provisioned by the guarded deployment workflow; Wrangler
+# creates the dead-letter queue if it does not already exist.
+[[queues.consumers]]
+queue = "testagram-mail-delivery-events"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "testagram-mail-delivery-events-dlq"
