@@ -46,6 +46,42 @@ func (s *service) writeSocialEmailPreferences(w http.ResponseWriter, r *http.Req
 
 // socialEmailPreferences exposes the authenticated account owner's explicit
 // email opt-ins. Missing rows are deliberately treated as both preferences off.
+func upsertSocialEmailPreferences(ctx context.Context, tx pgx.Tx, userID string, input socialEmailPreferenceInput) error {
+	_, err := tx.Exec(ctx, `
+	INSERT INTO testagram_local.email_notification_preferences(
+		user_id,new_follower_email_enabled,new_post_email_enabled,consent_version,
+		new_follower_consent_at,new_follower_consent_withdrawn_at,
+		new_post_consent_at,new_post_consent_withdrawn_at,updated_at
+	)
+	VALUES(
+		$1,COALESCE($2,FALSE),COALESCE($3,FALSE),$4,
+		CASE WHEN COALESCE($2,FALSE) THEN now() END,NULL,
+		CASE WHEN COALESCE($3,FALSE) THEN now() END,NULL,now()
+	)
+	ON CONFLICT(user_id) DO UPDATE SET
+		new_follower_email_enabled=COALESCE($2,email_notification_preferences.new_follower_email_enabled),
+		new_post_email_enabled=COALESCE($3,email_notification_preferences.new_post_email_enabled),
+		new_follower_consent_at=CASE
+			WHEN $2 IS TRUE THEN now()
+			ELSE email_notification_preferences.new_follower_consent_at END,
+		new_follower_consent_withdrawn_at=CASE
+			WHEN $2 IS TRUE THEN NULL
+			WHEN $2 IS FALSE AND email_notification_preferences.new_follower_email_enabled IS TRUE THEN now()
+			ELSE email_notification_preferences.new_follower_consent_withdrawn_at END,
+		new_post_consent_at=CASE
+			WHEN $3 IS TRUE THEN now()
+			ELSE email_notification_preferences.new_post_consent_at END,
+		new_post_consent_withdrawn_at=CASE
+			WHEN $3 IS TRUE THEN NULL
+			WHEN $3 IS FALSE AND email_notification_preferences.new_post_email_enabled IS TRUE THEN now()
+			ELSE email_notification_preferences.new_post_consent_withdrawn_at END,
+		consent_version=CASE WHEN COALESCE($2,FALSE) OR COALESCE($3,FALSE)
+			THEN $4 ELSE email_notification_preferences.consent_version END,
+		updated_at=now()
+	`, userID, input.NewFollowerEmailEnabled, input.NewPostEmailEnabled, socialEmailConsentVersion)
+	return err
+}
+
 func (s *service) socialEmailPreferences(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
@@ -65,6 +101,9 @@ func (s *service) socialEmailPreferences(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_PREFERENCES_SAVE_FAILED", "Email preferences could not be saved", requestID))
 			return
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		err = upsertSocialEmailPreferences(r.Context(), tx, userID, input)return
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		_, err = tx.Exec(r.Context(), `
