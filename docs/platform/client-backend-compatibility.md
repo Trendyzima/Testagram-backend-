@@ -40,7 +40,7 @@ The Flutter client uses the configured HTTPS Testagram Backend origin for authen
 - Keep allowed browser origins, Backend API origin and public media origin aligned.
 - Fail closed when a required origin is missing or invalid; do not silently fall back to an unrelated hosted service.
 - Keep private service credentials and object-store secrets server-side. The client receives only Backend-issued, narrowly scoped upload/download instructions.
-- Do not introduce Supabase, Appwrite or another external identity/database service as a Testagram runtime dependency.
+- Do not add an external identity provider, hosted database or alternate account authority as a Testagram runtime dependency.
 
 ## Release acceptance tests
 
