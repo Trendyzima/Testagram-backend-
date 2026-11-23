@@ -168,6 +168,9 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 		}
 	}
 	html = brandedTestagramMailHTML(subject, html)
+	if len(html) > 256*1024 {
+		return errors.New("rendered mail content exceeds allowed bounds")
+	}
 	aead, err := mailCipher()
 	if err != nil {
 		return err
@@ -204,8 +207,17 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 }
 
 
-func brandedTestagramMailHTML(subject, content string) string {
+func testagramMailBaseURL() string {
 	baseURL := strings.TrimRight(env("AUTH_PUBLIC_BASE_URL", "https://testagram.site"), "/")
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return "https://testagram.site"
+	}
+	return baseURL
+}
+
+func brandedTestagramMailHTML(subject, content string) string {
+	baseURL := testagramMailBaseURL()
 	brandURL := htmlstd.EscapeString(baseURL)
 	preheader := htmlstd.EscapeString(strings.TrimSpace(subject))
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>` + preheader + `</title></head><body style="margin:0;padding:24px 12px;background:#f3f5f8;color:#182230;font-family:Arial,Helvetica,sans-serif;line-height:1.55"><span style="display:none!important;visibility:hidden;opacity:0;height:0;width:0;overflow:hidden">` + preheader + `</span><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e4e8ee;border-radius:12px"><tr><td style="padding:24px 28px 12px"><a href="` + brandURL + `" style="color:#155eef;text-decoration:none;font-size:22px;font-weight:700">Testagram</a></td></tr><tr><td style="padding:12px 28px 28px;font-size:16px">` + content + `</td></tr><tr><td style="padding:18px 28px;border-top:1px solid #e4e8ee;color:#667085;font-size:12px">You received this message from Testagram. <a href="` + brandURL + `" style="color:#155eef">Visit Testagram</a>.</td></tr></table></body></html>`
@@ -220,7 +232,7 @@ func createSocialUnsubscribeToken(ctx context.Context, executor mailQueueExecuto
 	if _, err := rand.Read(raw); err != nil { return "", "", err }
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256(raw)
-	baseURL := strings.TrimRight(env("AUTH_PUBLIC_BASE_URL", "https://testagram.site"), "/")
+	baseURL := testagramMailBaseURL()
 	unsubscribeURL := baseURL + "/api/email/unsubscribe?token=" + url.QueryEscape(token)
 	_, err := executor.Exec(ctx, `
 		INSERT INTO testagram_mail.social_unsubscribe_tokens(token_hash,user_id,preference_category,expires_at)
