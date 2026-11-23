@@ -226,6 +226,13 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 }
 
 func (s *service) runMailOutboxWorker(ctx context.Context) {
+	if strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID")) == "" ||
+		strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN")) == "" ||
+		strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL")) == "" {
+		log.Printf("mail outbox worker is idle: Cloudflare Email Sending configuration is incomplete")
+	} else if _, err := mailCipher(); err != nil {
+		log.Printf("mail outbox worker is idle: mail encryption key is unavailable")
+	}
 	ticker := time.NewTicker(mailWorkerInterval)
 	defer ticker.Stop()
 	for {
