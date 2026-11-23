@@ -71,7 +71,7 @@ class TestSocialPlatformMigrationSafety(unittest.TestCase):
         for slug in expected:
             self.assertIn(f"('{slug}'", migration)
         self.assertIn("ON CONFLICT (slug) DO NOTHING", migration)
-        self.assertNotRegex(migration, r"(?im)^\\s*DROP\\s+(TABLE|SCHEMA|DATABASE)")
+        self.assertNotRegex(migration, r"(?im)^\s*DROP\s+(TABLE|SCHEMA|DATABASE)")
 
     def test_operator_documentation_requires_the_backup_first_workflow(self):
         readme = README.read_text(encoding="utf-8")
