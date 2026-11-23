@@ -46,6 +46,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
             "061_native_sensitive_action_integrity.sql",
+            "20261124_testagram_email_verification_otp.sql",
+            "20261124_testagram_social_email_consent.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -53,6 +55,24 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             with self.subTest(migration=name):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
+
+    def test_email_otp_and_social_email_consent_migrations_are_mounted_and_verified(self):
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        otp = "20261124_testagram_email_verification_otp.sql"
+        consent = "20261124_testagram_social_email_consent.sql"
+        for migration in (otp, consent):
+            with self.subTest(migration=migration):
+                self.assertIn(
+                    f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
+                    compose,
+                )
+                self.assertIn(f"apply_migration {migration}", SOURCE)
+                self.assertIn(migration, SOURCE.split("for file in", 1)[1].split("; do", 1)[0])
+        self.assertIn("verification_otp_hash", SOURCE)
+        self.assertIn("verification_otp_expires_at", SOURCE)
+        self.assertIn("verification_otp_attempts", SOURCE)
+        self.assertIn("email_notification_preferences", SOURCE)
+        self.assertIn("has_table_privilege", SOURCE)
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
