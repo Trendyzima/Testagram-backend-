@@ -32,7 +32,6 @@ func TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *t
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.recipient_suppressions WHERE recipient_fingerprint=$1", fingerprint)
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", id)
 	}()
-	if _, err := db.Exec(ctx, "UPDATE testagram_mail.outbox SET provider_message_id='ci-mail-message' WHERE id=$1", id); err != nil { t.Fatal(err) }
 
 	send := func(eventID, kind string) *httptest.ResponseRecorder {
 		payload, _ := json.Marshal(map[string]any{
@@ -51,6 +50,11 @@ func TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *t
 		return rec
 	}
 	if got := send("ci-event-1","cf.email.sending.message.delivered"); got.Code != http.StatusAccepted { t.Fatalf("delivery event status=%d body=%s",got.Code,got.Body.String()) }
+	var processed bool
+	if err := db.QueryRow(ctx, "SELECT processed_at IS NOT NULL FROM testagram_mail.delivery_events WHERE provider_event_id='ci-event-1'").Scan(&processed); err != nil { t.Fatal(err) }
+	if processed { t.Fatal("early event was processed before the outbox provider message ID existed") }
+	if _, err := db.Exec(ctx, "UPDATE testagram_mail.outbox SET provider_message_id='ci-mail-message',available_at=now()-interval '10 years' WHERE id=$1", id); err != nil { t.Fatal(err) }
+	if err := svc.reconcileCloudflareMailEvents(ctx); err != nil { t.Fatal(err) }
 	var state string
 	if err := db.QueryRow(ctx,"SELECT delivery_status FROM testagram_mail.outbox WHERE id=$1",id).Scan(&state); err != nil { t.Fatal(err) }
 	if state!="delivered" { t.Fatalf("delivery state=%q",state) }
