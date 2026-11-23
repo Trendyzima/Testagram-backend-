@@ -60,14 +60,14 @@ VALUES(gen_random_uuid(),$1,$2) RETURNING user_id::text`,
 		{publicAuthorA, "public", "#" + tag + " " + word, "1 hour"},
 		{publicAuthorB, "public", "#" + tag + " " + word, "30 hours"},
 		{publicAuthorA, "private", "#private" + suffix + " privateword" + suffix, "1 hour"},
-		{protectedAuthor, "public", "#protected" + suffix + " protectedword" + suffix, time.Hour},
-		{publicAuthorA, "followers", "#followers" + suffix + " followersword" + suffix, time.Hour},
+		{protectedAuthor, "public", "#protected" + suffix + " protectedword" + suffix, "1 hour"},
+		{publicAuthorA, "followers", "#followers" + suffix + " followersword" + suffix, "1 hour"},
 	}
 	for _, post := range posts {
 		if _, err := tx.Exec(ctx, `
 INSERT INTO testagram_local.posts(author_id,text,visibility,created_at)
 VALUES($1,$2,$3,now()-$4::interval)`,
-			post.author, post.content, post.visibility, post.age.String()); err != nil {
+			post.author, post.content, post.visibility, post.age); err != nil {
 			t.Fatalf("insert trend fixture post: %v", err)
 		}
 	}
