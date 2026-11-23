@@ -7,6 +7,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github" / "workflows" / "cloudflare-api-gateway.yml").read_text(encoding="utf-8")
 WRANGLER = (ROOT / "infra" / "cloudflare-api-gateway" / "wrangler.toml").read_text(encoding="utf-8")
+CADDYFILE = (ROOT / "deploy" / "self-hosted" / "Caddyfile").read_text(encoding="utf-8")
+DEPLOYMENT = (ROOT / "scripts" / "start-instabox-deployment.sh").read_text(encoding="utf-8")
 
 
 class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
@@ -47,6 +49,13 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
         self.assertIn(".result[0].account.id == $account", WORKFLOW)
         self.assertIn("exactly one active testagram.site zone in the pinned Cloudflare account", WORKFLOW)
         self.assertIn("Cloudflare zone/account changed after preflight", WORKFLOW)
+
+    def test_caddy_api_ingress_uses_the_shared_token_not_proxy_rewritten_host_metadata(self):
+        self.assertIn("@api_edge header X-Testagram-Edge-Token {$EDGE_PROXY_SHARED_TOKEN}", CADDYFILE)
+        self.assertNotIn("header X-Forwarded-Host api.testagram.site", CADDYFILE)
+        self.assertIn("reverse_proxy api:8080", CADDYFILE)
+        self.assertIn("header_up -X-Testagram-Edge-Token", CADDYFILE)
+        self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" caddy EDGE_PROXY_SHARED_TOKEN "$EDGE_PROXY_SHARED_TOKEN"', DEPLOYMENT)
 
 
 if __name__ == "__main__":
