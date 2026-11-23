@@ -84,7 +84,7 @@ test("rejects a non-InstaBox or non-HTTPS origin before making an upstream reque
   try {
     for (const origin of [
       "https://attacker.example",
-      "https://8443-agq4me2xgrgx5ge52ts437tqea.instabox.tech",
+      "https://8080-agq4me2xgrgx5ge52ts437tqea.instabox.tech",
       "https://9999-agq4me2xgrgx5ge52ts437tqea.instabox.tech",
     ]) {
       const response = await gateway.fetch(apiRequest("/healthz"), {
