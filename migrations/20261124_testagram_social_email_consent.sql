@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS testagram_local.email_notification_preferences (
   user_id UUID PRIMARY KEY REFERENCES testagram_local.accounts(user_id) ON DELETE CASCADE,
   new_follower_email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   new_post_email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-  consent_version TEXT NOT NULL DEFAULT '2026-11-24-v1'
+  consent_version TEXT NOT NULL DEFAULT '2026-11-23-v1'
     CHECK (length(consent_version) BETWEEN 1 AND 32),
   new_follower_consent_at TIMESTAMPTZ,
   new_follower_consent_withdrawn_at TIMESTAMPTZ,
