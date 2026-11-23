@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/mail"
+	"net/mail"
 	"os"
 	"strings"
 	"time"
@@ -18,6 +19,10 @@ import (
 
 type cloudflareDeliveryEvent struct {
 	Type string `json:"type"`
+	Source struct {
+		Type string `json:"type"`
+		Domain string `json:"domain"`
+	} `json:"source"`
 	Payload struct {
 		EventID string `json:"eventId"`
 		MessageID string `json:"messageId"`
@@ -42,8 +47,10 @@ func mailRecipientFingerprint(recipient string) ([]byte, error) {
 	if err != nil || len(key) != 32 {
 		return nil, errors.New("mail encryption key unavailable")
 	}
+	parsed, err := mail.ParseAddress(recipient)
+	if err != nil { return nil, errors.New("invalid recipient address") }
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte(strings.ToLower(strings.TrimSpace(recipient))))
+	_, _ = mac.Write([]byte(strings.ToLower(strings.TrimSpace(parsed.Address))))
 	return mac.Sum(nil), nil
 }
 
@@ -57,7 +64,7 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	expected := strings.TrimSpace(os.Getenv("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN"))
 	provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if expected == "" || provided == "" || len(expected) != len(provided) ||
+	if len(expected) < 32 || provided == "" || len(expected) != len(provided) ||
 		subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -81,7 +88,11 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 		"cf.email.sending.message.rejected": true,
 		"cf.email.sending.message.complained": true,
 	}
-	if !allowed[event.Type] || strings.TrimSpace(event.Payload.EventID) == "" ||
+	sender, senderErr := mail.ParseAddress(os.Getenv("AUTH_FROM_EMAIL"))
+	senderParts := strings.Split(sender.Address, "@")
+	if senderErr != nil || len(senderParts) != 2 || event.Source.Type != "email.sending" ||
+		!strings.EqualFold(event.Source.Domain, senderParts[1]) ||
+		!allowed[event.Type] || strings.TrimSpace(event.Payload.EventID) == "" ||
 		strings.TrimSpace(event.Payload.MessageID) == "" || len(event.Payload.EventID) > 128 ||
 		len(event.Payload.MessageID) > 512 || len(event.Payload.Recipient) > 320 {
 		http.Error(w, "invalid event fields", http.StatusBadRequest)
