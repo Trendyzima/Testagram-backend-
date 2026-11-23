@@ -86,11 +86,12 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 		if got := r.Header.Get("Content-Type"); got != "application/json" {
 			t.Errorf("content type = %q, want application/json", got)
 		}
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		if body["to"] != "person@example.test" || body["from"] != "no-reply@testagram.site" ||
+		to, _ := body["to"].([]any)
+		if len(to) != 1 || to[0] != "person@example.test" || body["from"] != "no-reply@testagram.site" ||
 			body["subject"] != "Password reset" || body["html"] != "<p>Reset</p>" {
 			t.Errorf("unexpected Cloudflare request payload: %#v", body)
 		}
