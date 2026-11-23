@@ -159,9 +159,9 @@ func (s *service) socialPostCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if moderation.Action != "pass" {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"ok": false,
-			"data": moderation,
-			"error": map[string]string{"code": "CONTENT_REQUIRES_REVIEW", "message": moderation.Reason},
+			"ok":         false,
+			"data":       moderation,
+			"error":      map[string]string{"code": "CONTENT_REQUIRES_REVIEW", "message": moderation.Reason},
 			"request_id": requestID,
 		})
 		return
@@ -264,14 +264,14 @@ ON CONFLICT (recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ok": true,
 		"data": map[string]any{
-			"id": postID,
-			"author_id": userID,
-			"content": input.Content,
-			"visibility": input.Visibility,
-			"created_at": createdAt.UTC().Format(time.RFC3339Nano),
+			"id":                postID,
+			"author_id":         userID,
+			"content":           input.Content,
+			"visibility":        input.Visibility,
+			"created_at":        createdAt.UTC().Format(time.RFC3339Nano),
 			"idempotent_replay": false,
 		},
-		"error": nil,
+		"error":      nil,
 		"request_id": requestID,
 	})
 }
