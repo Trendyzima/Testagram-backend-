@@ -709,32 +709,36 @@ func (s *service) internalRoutes() http.Handler {
 				fmt.Fprintf(&output, "testagram_replication_inbox_stale_total %d\n", inboxStale)
 			}
 		}
-			var mailPending, mailOldestPendingSeconds, mailSending, mailSent, mailDead, mailUncertain int64
-			mailErr := s.db.QueryRow(ctx, `
-				SELECT count(*) FILTER (WHERE status='pending'),
-				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status='pending')))::bigint,0),
-				       count(*) FILTER (WHERE status='sending'),
-				       count(*) FILTER (WHERE status='sent'),
-				       count(*) FILTER (WHERE status='dead'),
-				       count(*) FILTER (WHERE status='uncertain')
-				FROM testagram_mail.outbox
-			`).Scan(&mailPending, &mailOldestPendingSeconds, &mailSending, &mailSent, &mailDead, &mailUncertain)
-			if mailErr == nil {
-				output.WriteString("testagram_mail_outbox_metrics_available 1\n")
-				fmt.Fprintf(&output, "testagram_mail_outbox_pending %d\n", mailPending)
-				fmt.Fprintf(&output, "testagram_mail_outbox_oldest_pending_seconds %d\n", mailOldestPendingSeconds)
-				fmt.Fprintf(&output, "testagram_mail_outbox_sending %d\n", mailSending)
-				fmt.Fprintf(&output, "testagram_mail_outbox_sent_total %d\n", mailSent)
-				fmt.Fprintf(&output, "testagram_mail_outbox_dead_total %d\n", mailDead)
-				fmt.Fprintf(&output, "testagram_mail_outbox_uncertain_total %d\n", mailUncertain)
-			} else {
-				output.WriteString("testagram_mail_outbox_metrics_available 0\n")
-			}
-			mailProviderReady := 0
-			if mailRuntimeConfigurationError() == nil {
-				mailProviderReady = 1
-			}
-			fmt.Fprintf(&output, "testagram_mail_provider_configured %d\n", mailProviderReady)
+		if s.db != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+			defer cancel()
+				var mailPending, mailOldestPendingSeconds, mailSending, mailSent, mailDead, mailUncertain int64
+				mailErr := s.db.QueryRow(ctx, `
+					SELECT count(*) FILTER (WHERE status='pending'),
+					       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status='pending')))::bigint,0),
+					       count(*) FILTER (WHERE status='sending'),
+					       count(*) FILTER (WHERE status='sent'),
+					       count(*) FILTER (WHERE status='dead'),
+					       count(*) FILTER (WHERE status='uncertain')
+					FROM testagram_mail.outbox
+				`).Scan(&mailPending, &mailOldestPendingSeconds, &mailSending, &mailSent, &mailDead, &mailUncertain)
+				if mailErr == nil {
+					output.WriteString("testagram_mail_outbox_metrics_available 1\n")
+					fmt.Fprintf(&output, "testagram_mail_outbox_pending %d\n", mailPending)
+					fmt.Fprintf(&output, "testagram_mail_outbox_oldest_pending_seconds %d\n", mailOldestPendingSeconds)
+					fmt.Fprintf(&output, "testagram_mail_outbox_sending %d\n", mailSending)
+					fmt.Fprintf(&output, "testagram_mail_outbox_sent_total %d\n", mailSent)
+					fmt.Fprintf(&output, "testagram_mail_outbox_dead_total %d\n", mailDead)
+					fmt.Fprintf(&output, "testagram_mail_outbox_uncertain_total %d\n", mailUncertain)
+				} else {
+					output.WriteString("testagram_mail_outbox_metrics_available 0\n")
+				}
+				mailProviderReady := 0
+				if mailRuntimeConfigurationError() == nil {
+					mailProviderReady = 1
+				}
+				fmt.Fprintf(&output, "testagram_mail_provider_configured %d\n", mailProviderReady)
+		}
 		_, _ = w.Write([]byte(output.String()))
 	})
 	mux.HandleFunc("GET /internal/v1/federation/readyz", s.federationInternalReady)
