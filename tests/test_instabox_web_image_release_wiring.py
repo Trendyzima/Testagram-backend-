@@ -31,6 +31,8 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         self.assertIn("sed -i 's/\\r$//' \"$env_file\"", deploy)
         self.assertLess(deploy.index('normalize_env_file "$BASE_ENV"'), deploy.index('source "$BASE_ENV"'))
         self.assertLess(deploy.index('normalize_env_file "$DC_ENV"'), deploy.index('source "$DC_ENV"'))
+        self.assertLess(deploy.rindex("sed -i"), deploy.rindex('source "$BASE_ENV"'))
+        self.assertLess(deploy.rindex("sed -i"), deploy.rindex('source "$DC_ENV"'))
 
     def test_deployment_preserves_the_workflow_selected_digest(self):
         deploy = DEPLOY.read_text(encoding="utf-8")
