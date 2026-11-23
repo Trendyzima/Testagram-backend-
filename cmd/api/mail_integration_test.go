@@ -262,6 +262,96 @@ func TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount(t *testing.T) {
 	}
 }
 
+
+func TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	actorID := "123e4567-e89b-42d3-a456-426614174181"
+	consentingID := "123e4567-e89b-42d3-a456-426614174182"
+	declinedID := "123e4567-e89b-42d3-a456-426614174183"
+	outboxIDs := []string{consentingID, declinedID}
+
+	cleanup := func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE preference_user_id=ANY($1::uuid[])", outboxIDs)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.email_notification_preferences WHERE user_id=ANY($1::uuid[])", outboxIDs)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.follows WHERE follower_id=ANY($1::uuid[]) OR following_id=ANY($1::uuid[])", []string{actorID, consentingID, declinedID})
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id=ANY($1::uuid[])", outboxIDs)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=ANY($1::uuid[])", []string{actorID, consentingID, declinedID})
+	}
+	cleanup()
+	defer cleanup()
+
+	_, err := db.Exec(ctx, `
+		INSERT INTO testagram_local.accounts(user_id,username,display_name)
+		VALUES
+		  ($1::uuid,'mailactor181','Mail Actor'),
+		  ($2::uuid,'mailfollower182','Consenting Follower'),
+		  ($3::uuid,'mailfollower183','Declined Follower')
+	`, actorID, consentingID, declinedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(ctx, `
+		INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
+		VALUES
+		  ($1::uuid,'consenting-follower@example.test','mailfollower182','test-hash',now()),
+		  ($2::uuid,'declined-follower@example.test','mailfollower183','test-hash',now())
+	`, consentingID, declinedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(ctx, `
+		INSERT INTO testagram_local.follows(follower_id,following_id,status)
+		VALUES ($1::uuid,$2::uuid,'accepted'),($3::uuid,$2::uuid,'accepted')
+	`, consentingID, actorID, declinedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(ctx, `
+		INSERT INTO testagram_local.email_notification_preferences(
+			user_id,new_follower_email_enabled,new_post_email_enabled,
+			new_follower_consent_at,new_post_consent_at
+		) VALUES ($1::uuid,TRUE,TRUE,now(),now())
+	`, consentingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enqueueFollowActivityEmail(ctx, tx, actorID, consentingID, "follow"); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := enqueueFollowActivityEmail(ctx, tx, actorID, declinedID, "follow"); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := enqueueNewPostActivityEmails(ctx, tx, actorID, "public", "A post for people who follow me"); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var followerMail, postMail, declinedMail int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE preference_category='new_follower'),
+		       count(*) FILTER (WHERE preference_category='new_post'),
+		       count(*) FILTER (WHERE preference_user_id=$2::uuid)
+		FROM testagram_mail.outbox
+		WHERE preference_user_id=$1::uuid OR preference_user_id=$2::uuid
+	`, consentingID, declinedID).Scan(&followerMail, &postMail, &declinedMail); err != nil {
+		t.Fatal(err)
+	}
+	if followerMail != 1 || postMail != 1 || declinedMail != 0 {
+		t.Fatalf("queued social email counts: follower=%d post=%d declined=%d; want 1,1,0", followerMail, postMail, declinedMail)
+	}
+}
+
 func TestMailOutboxInsertRollsBackWithCallerTransaction(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
