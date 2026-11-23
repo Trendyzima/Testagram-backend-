@@ -383,6 +383,39 @@ func socialMailConsentActive(ctx context.Context, queryer mailConsentQueryer, us
 	return active, err
 }
 
+func (s *service) cleanupMailOperationalRecords(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("mail database unavailable")
+	}
+	_, err := s.db.Exec(ctx, `
+		WITH expired AS (
+			SELECT id
+			FROM testagram_mail.delivery_events
+			WHERE processed_at < now() - interval '180 days'
+			ORDER BY processed_at,id
+			LIMIT 500
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM testagram_mail.delivery_events WHERE id IN (SELECT id FROM expired)
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+		WITH expired AS (
+			SELECT id
+			FROM testagram_mail.social_unsubscribe_tokens
+			WHERE expires_at < now() - interval '30 days'
+			   OR used_at < now() - interval '90 days'
+			ORDER BY COALESCE(used_at,expires_at),id
+			LIMIT 500
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM testagram_mail.social_unsubscribe_tokens WHERE id IN (SELECT id FROM expired)
+	`)
+	return err
+}
+
 func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if s.db == nil {
 		return false, errors.New("mail database unavailable")
@@ -391,6 +424,9 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	if err := s.reconcileCloudflareMailEvents(ctx); err != nil {
+		return false, err
+	}
+	if err := s.cleanupMailOperationalRecords(ctx); err != nil {
 		return false, err
 	}
 
