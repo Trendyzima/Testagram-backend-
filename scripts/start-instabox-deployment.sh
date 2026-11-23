@@ -21,7 +21,7 @@ done
 normalize_boolean() {
   local name="$1" default="$2" value
   value="${!name:-$default}"
-  value="$(printf '%s' "$value" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  value="$(printf '%s' "$value" | tr -d '\r\n')"
   case "$value" in
     true|false) printf -v "$name" '%s' "$value" ;;
     *) echo "::error::$name must be true or false (surrounding whitespace is ignored)."; exit 1 ;;
@@ -219,8 +219,8 @@ write_env_value() {
   # A literal carriage return in .env breaks shell parsing and aborts deployment.
   # .env values are single-line by contract, so strip both line-ending bytes
   # before escaping and writing them; never let a value inject another setting.
-  value="$(printf '%s' "$value" | tr -d '\\r\\n')"
-  escaped_value="$(printf '%s' "$value" | sed 's/[\\\\&|]/\\\\&/g')"
+  value="$(printf '%s' "$value" | tr -d '\r\n')"
+  escaped_value="$(printf '%s' "$value" | sed 's/[\\&|]/\\&/g')"
   if grep -q "^${key}=" "$BASE_ENV"; then
     sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$BASE_ENV"
   else
