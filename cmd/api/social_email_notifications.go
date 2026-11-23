@@ -165,7 +165,7 @@ func createFollowerPostNotifications(ctx context.Context, tx pgx.Tx, authorID, p
 }
 
 func enqueueNewPostActivityEmails(ctx context.Context, tx pgx.Tx, authorID, visibility, content string) error {
-	if visibility == "private" {
+	if visibility != "public" && visibility != "followers" {
 		return nil
 	}
 	var authorName string
