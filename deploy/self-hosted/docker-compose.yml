@@ -73,6 +73,7 @@ services:
       - ../../migrations/20261121_native_staff_webauthn.sql:/docker-entrypoint-initdb.d/060_native_staff_webauthn.sql:ro
       - ../../migrations/061_native_sensitive_action_integrity.sql:/docker-entrypoint-initdb.d/061_native_sensitive_action_integrity.sql:ro
       - ../../migrations/062_testagram_knowledge_engine.sql:/docker-entrypoint-initdb.d/062_testagram_knowledge_engine.sql:ro
+      - ../../migrations/20261120_social_platform_product_foundation.sql:/docker-entrypoint-initdb.d/063_testagram_social_platform_product_foundation.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-testagram} -d ${POSTGRES_DB:-testagram}"]
       interval: 5s
