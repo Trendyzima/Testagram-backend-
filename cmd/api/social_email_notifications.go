@@ -132,6 +132,29 @@ func enqueueFollowActivityEmail(ctx context.Context, tx pgx.Tx, actorID, recipie
 	return enqueueAuthEmailWith(ctx, tx, recipient, subject, body)
 }
 
+
+func createFollowerPostNotifications(ctx context.Context, tx pgx.Tx, authorID, postID, visibility string) error {
+	if visibility == "private" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,kind,payload,event_key)
+		SELECT f.follower_id,$1,$2,'post',jsonb_build_object('post_id',$2),
+		       'post:' || $2::text || ':' || f.follower_id::text
+		FROM testagram_local.follows f
+		JOIN testagram_local.accounts follower ON follower.user_id=f.follower_id
+		WHERE f.following_id=$1 AND f.status='accepted'
+		  AND f.follower_id<>$1 AND follower.account_status='active'
+		  AND NOT EXISTS (
+			SELECT 1 FROM testagram_local.blocks b
+			WHERE (b.blocker_id=$1 AND b.blocked_id=f.follower_id)
+			   OR (b.blocker_id=f.follower_id AND b.blocked_id=$1)
+		  )
+		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING
+	`, authorID, postID)
+	return err
+}
+
 func enqueueNewPostActivityEmails(ctx context.Context, tx pgx.Tx, authorID, visibility, content string) error {
 	if visibility == "private" {
 		return nil
