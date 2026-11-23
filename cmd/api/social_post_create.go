@@ -263,6 +263,14 @@ func (s *service) socialPostCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("MENTION_NOTIFICATION_FAILED", "Mention notifications could not be saved", requestID))
 		return
 	}
+	if err := createFollowerPostNotifications(r.Context(), tx, userID, postID, input.Visibility); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_NOTIFICATION_FAILED", "Follower notifications could not be saved", requestID))
+		return
+	}
+	if err := enqueueNewPostActivityEmails(r.Context(), tx, userID, input.Visibility, input.Content); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_EMAIL_NOTIFICATION_FAILED", "Consented follower email notifications could not be queued", requestID))
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_CREATE_FAILED", "Post could not be committed", requestID))
 		return
