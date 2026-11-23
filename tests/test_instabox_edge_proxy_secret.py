@@ -90,6 +90,8 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         caddy = (ROOT / "deploy" / "self-hosted" / "Caddyfile").read_text(encoding="utf-8")
         env_example = (ROOT / "deploy" / "self-hosted" / ".env.example").read_text(encoding="utf-8")
         self.assertIn("EDGE_PROXY_SHARED_TOKEN", compose)
+        self.assertIn("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN", compose)
+        self.assertIn("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN=REPLACE_WITH_A_SEPARATE_RANDOM_32_BYTE_HEX_SECRET", env_example)
         self.assertEqual(env_example.count("EDGE_PROXY_SHARED_TOKEN="), 1)
         self.assertIn("REPLACE_WITH_A_SEPARATE_RANDOM_32_BYTE_EDGE_TOKEN", env_example)
         self.assertIn("{$EDGE_PROXY_SHARED_TOKEN}", caddy)
