@@ -20,6 +20,22 @@ func TestMailPlainTextAlternativeStripsMarkupAndDecodesEntities(t *testing.T) {
 	}
 }
 
+func TestMailPlainTextPreservesUnsubscribeLinkDestination(t *testing.T) {
+	got := mailPlainTextFromHTML(`<p>Manage your settings: <a href="https://testagram.site/api/email/unsubscribe?token=abc">unsubscribe</a></p>`)
+	if !strings.Contains(got, "unsubscribe (https://testagram.site/api/email/unsubscribe?token=abc)") {
+		t.Fatalf("plain-text alternative lost unsubscribe destination: %q", got)
+	}
+}
+
+func TestBrandedMailShellEscapesSubjectAndIncludesAccessibleLayout(t *testing.T) {
+	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.site")
+	got := brandedTestagramMailHTML("<welcome>", "<p>Hello</p>")
+	if !strings.Contains(got, "&lt;welcome&gt;") || !strings.Contains(got, "role=\"presentation\"") ||
+		!strings.Contains(got, "lang=\"en\"") || !strings.Contains(got, "<p>Hello</p>") {
+		t.Fatalf("branded email shell is missing expected accessible structure: %s", got)
+	}
+}
+
 func TestMailCipherEncryptsAndDecrypts(t *testing.T) {
 	key := strings.Repeat("ab", 32)
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", key)
