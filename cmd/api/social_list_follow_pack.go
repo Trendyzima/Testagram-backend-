@@ -72,7 +72,7 @@ FOR SHARE`, listID).Scan(&ownerID, &visibility)
 		return
 	}
 
-	rows, err := tx.Query(ctx, `SELECT a.user_id::text,a.protected_account
+	rows, err := tx.Query(ctx, `SELECT a.user_id::text
 FROM testagram_local.social_list_members lm
 JOIN testagram_local.accounts a ON a.user_id=lm.member_user_id
 WHERE lm.list_id=$1::uuid
@@ -92,13 +92,12 @@ FOR SHARE OF lm`, listID, userID, limit)
 		return
 	}
 	type packMember struct {
-		id        string
-		protected bool
+		id string
 	}
 	members := make([]packMember, 0, limit)
 	for rows.Next() {
 		var member packMember
-		if err := rows.Scan(&member.id, &member.protected); err != nil {
+		if err := rows.Scan(&member.id); err != nil {
 			rows.Close()
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_FOLLOW_FAILED", "Starter Pack members could not be decoded", requestID))
 			return
@@ -117,32 +116,35 @@ FOR SHARE OF lm`, listID, userID, limit)
 	for _, member := range members {
 		lockIDs = append(lockIDs, member.id)
 	}
-	if len(members) > 0 {
-		lockedRows, lockErr := tx.Query(ctx, `SELECT user_id::text
+	lockedRows, lockErr := tx.Query(ctx, `SELECT user_id::text
 FROM testagram_local.accounts
 WHERE user_id=ANY($1::uuid[])
 ORDER BY user_id
 FOR UPDATE`, lockIDs)
-		if lockErr != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_FOLLOW_FAILED", "Starter Pack accounts could not be locked", requestID))
+	if lockErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_FOLLOW_FAILED", "Starter Pack accounts could not be locked", requestID))
+		return
+	}
+	locked := make(map[string]bool, len(lockIDs))
+	for lockedRows.Next() {
+		var id string
+		if scanErr := lockedRows.Scan(&id); scanErr != nil {
+			lockedRows.Close()
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_FOLLOW_FAILED", "Starter Pack account locks could not be read", requestID))
 			return
 		}
-		locked := make(map[string]bool, len(lockIDs))
-		for lockedRows.Next() {
-			var id string
-			if scanErr := lockedRows.Scan(&id); scanErr != nil {
-				lockedRows.Close()
-				writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_FOLLOW_FAILED", "Starter Pack account locks could not be read", requestID))
-				return
-			}
-			locked[id] = true
-		}
-		lockErr = lockedRows.Err()
-		lockedRows.Close()
-		if lockErr != nil || len(locked) != len(lockIDs) {
-			writeJSON(w, http.StatusConflict, errorBody("LIST_MEMBERS_CHANGED", "Starter Pack membership changed; refresh and try again", requestID))
-			return
-		}
+		locked[id] = true
+	}
+	lockErr = lockedRows.Err()
+	lockedRows.Close()
+	if lockErr != nil || len(locked) != len(lockIDs) {
+		writeJSON(w, http.StatusConflict, errorBody("LIST_MEMBERS_CHANGED", "Starter Pack membership changed; refresh and try again", requestID))
+		return
+	}
+	var requesterStatus string
+	if err := tx.QueryRow(ctx, `SELECT account_status FROM testagram_local.accounts WHERE user_id=$1::uuid`, userID).Scan(&requesterStatus); err != nil || requesterStatus != "active" {
+		writeJSON(w, http.StatusForbidden, errorBody("ACCOUNT_NOT_ACTIVE", "This account cannot perform social actions", requestID))
+		return
 	}
 
 	var followedCount, requestedCount, skippedCount int
