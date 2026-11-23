@@ -33,7 +33,8 @@ const knowledgeVisible = `
      WHERE f.follower_id=$1 AND f.following_id=q.author_id AND f.status='accepted')))
  AND NOT EXISTS (SELECT 1 FROM testagram_local.blocks b
    WHERE (b.blocker_id=$1 AND b.blocked_id=q.author_id)
-      OR (b.blocker_id=q.author_id AND b.blocked_id=$1))`
+      OR (b.blocker_id=q.author_id AND b.blocked_id=$1))
+ AND NOT EXISTS (SELECT 1 FROM testagram_local.mutes m WHERE m.muter_id=$1 AND m.muted_id=q.author_id)`
 
 func knowledgeHash(v any) (string,error) {
 	b,e:=json.Marshal(v); if e!=nil{return "",e}; h:=sha256.Sum256(b); return hex.EncodeToString(h[:]),nil
@@ -53,13 +54,15 @@ func (s *service) knowledgeQuestions(w http.ResponseWriter,r *http.Request) {
 	var before,beforeID any
 	if raw:=r.URL.Query().Get("before");raw!=""{c,e:=decodeSocialCursor(raw);if e!=nil{writeJSON(w,400,errorBody("INVALID_CURSOR","Cursor is invalid",rid));return};before,beforeID=c.CreatedAt,c.ID}
 	mine:=strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("mine")),"true")
+	following:=strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("following")),"true")
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
 	rows,e:=s.db.Query(ctx,`SELECT q.id::text,q.author_id::text,q.title,q.body,q.visibility,q.status,COALESCE(q.accepted_answer_id::text,''),q.created_at,q.updated_at,a.username,a.display_name,a.avatar_key,a.protected_account,(SELECT count(*) FROM testagram_local.answers x WHERE x.question_id=q.id AND x.deleted_at IS NULL)
 FROM testagram_local.questions q JOIN testagram_local.accounts a ON a.user_id=q.author_id
 WHERE `+knowledgeVisible+` AND ($2='all' OR q.status=$2)
 AND (NOT $3::boolean OR q.author_id=$1)
-AND ($4::timestamptz IS NULL OR (q.created_at,q.id)<($4::timestamptz,$5::uuid))
-ORDER BY q.created_at DESC,q.id DESC LIMIT $6`,uid,status,mine,before,beforeID,limit+1)
+AND (NOT $4::boolean OR EXISTS(SELECT 1 FROM testagram_local.follows ff WHERE ff.follower_id=$1 AND ff.following_id=q.author_id AND ff.status='accepted'))
+AND ($5::timestamptz IS NULL OR (q.created_at,q.id)<($5::timestamptz,$6::uuid))
+ORDER BY q.created_at DESC,q.id DESC LIMIT $7`,uid,status,mine,following,before,beforeID,limit+1)
 	if e!=nil{writeJSON(w,503,errorBody("QUESTIONS_UNAVAILABLE","Questions could not be loaded",rid));return};defer rows.Close()
 	items:=[]map[string]any{};var next socialCursor;more:=false
 	for rows.Next(){var id,author,title,body,vis,state,accepted,username,display,avatar string;var created,updated time.Time;var protected bool;var count int64
@@ -105,7 +108,7 @@ func (s *service) knowledgeQuestionRead(w http.ResponseWriter,r *http.Request) {
 	var qid,author,title,body,vis,state,accepted,username,display,avatar string;var created,updated time.Time;var protected bool
 	e:=s.db.QueryRow(r.Context(),`SELECT q.id::text,q.author_id::text,q.title,q.body,q.visibility,q.status,COALESCE(q.accepted_answer_id::text,''),q.created_at,q.updated_at,a.username,a.display_name,a.avatar_key,a.protected_account FROM testagram_local.questions q JOIN testagram_local.accounts a ON a.user_id=q.author_id WHERE q.id=$2 AND `+knowledgeVisible,uid,id).Scan(&qid,&author,&title,&body,&vis,&state,&accepted,&created,&updated,&username,&display,&avatar,&protected)
 	if errors.Is(e,pgx.ErrNoRows){writeJSON(w,404,errorBody("QUESTION_NOT_FOUND","Question not found",rid));return};if e!=nil{writeJSON(w,503,errorBody("QUESTION_READ_FAILED","Question could not be loaded",rid));return}
-	rows,e:=s.db.Query(r.Context(),`SELECT an.id::text,an.question_id::text,an.author_id::text,an.body,an.revision_number,an.created_at,an.updated_at,(an.id=q.accepted_answer_id),aa.username,aa.display_name,aa.avatar_key FROM testagram_local.answers an JOIN testagram_local.questions q ON q.id=an.question_id JOIN testagram_local.accounts aa ON aa.user_id=an.author_id WHERE an.question_id=$2 AND an.deleted_at IS NULL AND aa.account_status='active' AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=an.author_id) OR (b.blocker_id=an.author_id AND b.blocked_id=$1)) ORDER BY (an.id=q.accepted_answer_id) DESC,an.created_at,an.id`,uid,id)
+	rows,e:=s.db.Query(r.Context(),`SELECT an.id::text,an.question_id::text,an.author_id::text,an.body,an.revision_number,an.created_at,an.updated_at,(an.id=q.accepted_answer_id),aa.username,aa.display_name,aa.avatar_key FROM testagram_local.answers an JOIN testagram_local.questions q ON q.id=an.question_id JOIN testagram_local.accounts aa ON aa.user_id=an.author_id WHERE an.question_id=$2 AND an.deleted_at IS NULL AND aa.account_status='active' AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b WHERE (b.blocker_id=$1 AND b.blocked_id=an.author_id) OR (b.blocker_id=an.author_id AND b.blocked_id=$1)) AND NOT EXISTS(SELECT 1 FROM testagram_local.mutes m WHERE m.muter_id=$1 AND m.muted_id=an.author_id) ORDER BY (an.id=q.accepted_answer_id) DESC,an.created_at,an.id`,uid,id)
 	if e!=nil{writeJSON(w,503,errorBody("ANSWERS_UNAVAILABLE","Answers could not be loaded",rid));return};defer rows.Close()
 	answers:=[]map[string]any{};for rows.Next(){var aid,qid2,au,ab,ak,av,txt string;var rev int;var ac bool;var c,u time.Time
 		if e:=rows.Scan(&aid,&qid2,&au,&txt,&rev,&c,&u,&ac,&ab,&ak,&av);e!=nil{writeJSON(w,503,errorBody("ANSWERS_UNAVAILABLE","Answer data could not be decoded",rid));return}
