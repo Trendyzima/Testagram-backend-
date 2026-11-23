@@ -905,6 +905,10 @@ verify_container_env() {
   fi
   echo "Verified runtime environment: $service/$key (value redacted)."
 }
+# Verify Caddy received the same edge credential installed in the Worker.
+# This catches a stale container or Compose interpolation mismatch without
+# ever printing the secret.
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" caddy EDGE_PROXY_SHARED_TOKEN "$EDGE_PROXY_SHARED_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api FEDERATION_INTERNAL_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api CDN_ORIGIN_AUTH_TOKEN "$CDN_ORIGIN_AUTH_TOKEN"
