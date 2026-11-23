@@ -543,7 +543,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/hashtags/{tag}/follow", s.socialHashtagFollowState)
 	mux.HandleFunc("POST /api/hashtags/{tag}/follow", s.socialHashtagFollow)
 	mux.HandleFunc("DELETE /api/hashtags/{tag}/follow", s.socialHashtagUnfollow)
-	mux.HandleFunc("GET /api/search", s.searchAPI)
+	mux.HandleFunc("GET /api/search", s.advancedSearchAPI)
 	mux.HandleFunc("OPTIONS /api/knowledge/{path...}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/knowledge/topics", s.knowledgeTopics)
 	mux.HandleFunc("GET /api/knowledge/topics/{topic_slug}", s.knowledgeTopicRead)
