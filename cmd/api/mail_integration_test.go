@@ -25,9 +25,9 @@ func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
 	var id int64
 	var ciphertext, nonce []byte
 	var status string
-	var preferenceUserID, preferenceCategory *string
+	var preferenceUserID, preferenceCategory string
 	if err := db.QueryRow(ctx, `
-		SELECT id,payload_ciphertext,payload_nonce,status,preference_user_id::text,preference_category
+		SELECT id,payload_ciphertext,payload_nonce,status,COALESCE(preference_user_id::text,''),COALESCE(preference_category,'')
 		FROM testagram_mail.outbox
 		WHERE payload_ciphertext IS NOT NULL
 		ORDER BY id DESC LIMIT 1
@@ -39,7 +39,7 @@ func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
 	if status != "pending" {
 		t.Fatalf("new mail status = %q, want pending", status)
 	}
-	if preferenceUserID != nil || preferenceCategory != nil {
+	if preferenceUserID != "" || preferenceCategory != "" {
 		t.Fatal("transactional account email must not be tagged with social consent metadata")
 	}
 	if bytes.Contains(ciphertext, []byte(secretLink)) || bytes.Contains(ciphertext, []byte(recipient)) {
