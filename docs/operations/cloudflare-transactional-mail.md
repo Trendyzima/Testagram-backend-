@@ -92,6 +92,34 @@ A successful REST API response means Cloudflare accepted or queued the recipient
 - No production deployment or DNS change is part of the code pull request.
 
 
+## Queue health checks
+
+Run these read-only queries against the application PostgreSQL database during an operational review. They expose counts and age only; do not select encrypted payloads or recipient addresses for routine monitoring.
+
+```sql
+SELECT status, count(*) AS messages,
+       min(created_at) AS oldest_created_at,
+       max(attempts) AS highest_attempt_count
+FROM testagram_mail.outbox
+GROUP BY status
+ORDER BY status;
+
+SELECT count(*) AS pending_messages,
+       extract(epoch FROM (now() - min(created_at)))::bigint AS oldest_pending_age_seconds
+FROM testagram_mail.outbox
+WHERE status='pending';
+
+SELECT id, status, attempts, last_error_code, provider_message_id, updated_at
+FROM testagram_mail.outbox
+WHERE status IN ('dead','uncertain')
+ORDER BY updated_at DESC
+LIMIT 100;
+```
+
+Treat a growing pending age as a delivery-configuration or worker-capacity incident. Investigate dead rows by error code. Reconcile uncertain rows against Cloudflare Email Sending logs before any manual retry. Do not expose payload ciphertext, decrypted HTML, OTP values, password-reset links, or recipient addresses in tickets or logs.
+
+The worker logs a single startup warning when provider configuration or the encryption key is missing. That warning does not imply queued mail was sent; messages remain pending until the worker is correctly configured.
+
 ## Ambiguous provider outcomes
 
 A transport timeout, interrupted response, provider 5xx, malformed success response, missing provider message ID, or accepted response without a recipient outcome is not treated as a normal retryable failure. The outbox row moves to `uncertain`, retains its encrypted payload, and is excluded from automatic worker claims. Operators must reconcile the recipient and request against Cloudflare Email Sending logs before deciding whether to mark the row delivered or requeue it. Never blindly requeue an uncertain message: Cloudflare may already have accepted it.
