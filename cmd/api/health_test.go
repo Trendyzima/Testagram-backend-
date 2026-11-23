@@ -74,9 +74,9 @@ func TestEdgeRecoveryReadinessRequiresDedicatedBearerSecret(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	svc := &service{edgeRecoveryReadinessToken: token}
 	for _, tc := range []struct {
-		name string
+		name          string
 		authorization string
-		want int
+		want          int
 	}{
 		{name: "missing", want: http.StatusNotFound},
 		{name: "wrong", authorization: "Bearer wrong-token", want: http.StatusNotFound},
