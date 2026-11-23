@@ -9,10 +9,14 @@ CREATE TABLE IF NOT EXISTS testagram_local.email_notification_preferences (
   consent_version TEXT NOT NULL DEFAULT '2026-11-24-v1'
     CHECK (length(consent_version) BETWEEN 1 AND 32),
   new_follower_consent_at TIMESTAMPTZ,
+  new_follower_consent_withdrawn_at TIMESTAMPTZ,
   new_post_consent_at TIMESTAMPTZ,
+  new_post_consent_withdrawn_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK (new_follower_email_enabled = (new_follower_consent_at IS NOT NULL)),
-  CHECK (new_post_email_enabled = (new_post_consent_at IS NOT NULL))
+  CHECK (NOT new_follower_email_enabled OR (new_follower_consent_at IS NOT NULL AND new_follower_consent_withdrawn_at IS NULL)),
+  CHECK (new_follower_consent_withdrawn_at IS NULL OR new_follower_consent_at IS NOT NULL),
+  CHECK (NOT new_post_email_enabled OR (new_post_consent_at IS NOT NULL AND new_post_consent_withdrawn_at IS NULL)),
+  CHECK (new_post_consent_withdrawn_at IS NULL OR new_post_consent_at IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS testagram_local_email_preferences_followers
@@ -24,9 +28,11 @@ REVOKE ALL ON testagram_local.email_notification_preferences FROM PUBLIC;
 DO $grants$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+    GRANT USAGE ON SCHEMA testagram_local TO testagram_app;
     GRANT SELECT,INSERT,UPDATE ON testagram_local.email_notification_preferences TO testagram_app;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+    GRANT USAGE ON SCHEMA testagram_local TO service_role;
     GRANT SELECT,INSERT,UPDATE ON testagram_local.email_notification_preferences TO service_role;
   END IF;
 END;
