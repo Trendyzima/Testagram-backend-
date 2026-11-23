@@ -64,6 +64,26 @@ type cloudflareMailResponse struct {
 	} `json:"result"`
 }
 
+func mailRuntimeConfigurationError() error {
+	accountID := strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID"))
+	apiToken := strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN"))
+	from := strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL"))
+	if accountID == "" || apiToken == "" || from == "" {
+		return errors.New("Cloudflare Email Sending configuration is incomplete")
+	}
+	decoded, err := hex.DecodeString(accountID)
+	if err != nil || len(decoded) != 16 {
+		return errors.New("Cloudflare Email Sending account ID is invalid")
+	}
+	if _, err := mail.ParseAddress(from); err != nil {
+		return errors.New("Cloudflare Email Sending sender address is invalid")
+	}
+	if _, err := mailCipher(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func mailCipher() (cipher.AEAD, error) {
 	raw, err := hex.DecodeString(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_ENCRYPTION_KEY")))
 	if err != nil || len(raw) != 32 {
@@ -226,12 +246,8 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 }
 
 func (s *service) runMailOutboxWorker(ctx context.Context) {
-	if strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID")) == "" ||
-		strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN")) == "" ||
-		strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL")) == "" {
-		log.Printf("mail outbox worker is idle: Cloudflare Email Sending configuration is incomplete")
-	} else if _, err := mailCipher(); err != nil {
-		log.Printf("mail outbox worker is idle: mail encryption key is unavailable")
+	if err := mailRuntimeConfigurationError(); err != nil {
+		log.Printf("mail outbox worker is idle: %v", err)
 	}
 	ticker := time.NewTicker(mailWorkerInterval)
 	defer ticker.Stop()
@@ -282,12 +298,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if s.db == nil {
 		return false, errors.New("mail database unavailable")
 	}
-	if strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID")) == "" ||
-		strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN")) == "" ||
-		strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL")) == "" {
-		return false, nil
-	}
-	if _, err := mailCipher(); err != nil {
+	if err := mailRuntimeConfigurationError(); err != nil {
 		return false, nil
 	}
 
