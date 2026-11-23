@@ -63,7 +63,7 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	expected := strings.TrimSpace(os.Getenv("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN"))
+	expected := strings.TrimSpace(os.Getenv("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN"))
 	provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if len(expected) < 32 || provided == "" || len(expected) != len(provided) ||
 		subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
