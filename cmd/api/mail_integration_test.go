@@ -269,7 +269,6 @@ func TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers(t *testing.T) 
 	actorID := "123e4567-e89b-42d3-a456-426614174181"
 	consentingID := "123e4567-e89b-42d3-a456-426614174182"
 	declinedID := "123e4567-e89b-42d3-a456-426614174183"
-	outboxIDs := []string{consentingID, declinedID}
 
 	cleanup := func() {
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE preference_user_id IN ($1::uuid,$2::uuid)", consentingID, declinedID)
