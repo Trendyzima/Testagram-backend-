@@ -141,7 +141,7 @@ func (s *service) knowledgeTopicRead(w http.ResponseWriter, r *http.Request) {
 	var following bool
 	err := s.db.QueryRow(ctx, `
 SELECT t.id::text,t.name,t.description,
-       (SELECT count(*) FROM testagram_local.topic_follows tf WHERE tf.topic_id=t.id)::bigint,
+       (SELECT count(*) FROM testagram_local.topic_follows tf JOIN testagram_local.accounts follower ON follower.user_id=tf.user_id WHERE tf.topic_id=t.id AND follower.account_status='active')::bigint,
        (SELECT count(*) FROM testagram_local.question_topics qt JOIN testagram_local.questions q ON q.id=qt.question_id JOIN testagram_local.accounts a ON a.user_id=q.author_id WHERE qt.topic_id=t.id AND `+knowledgeVisible+`)::bigint,
        EXISTS(SELECT 1 FROM testagram_local.topic_follows mine WHERE mine.topic_id=t.id AND mine.user_id=$1::uuid)
 FROM testagram_local.topics t
