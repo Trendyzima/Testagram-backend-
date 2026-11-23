@@ -457,6 +457,13 @@ func (s *service) routes() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// PostgreSQL reachability alone is insufficient for a successful
+		// native sign-in. Do not announce application readiness while the
+		// signing capability required by the login/session routes is absent.
+		if len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))) < 32 {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
 		if s.db == nil {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
