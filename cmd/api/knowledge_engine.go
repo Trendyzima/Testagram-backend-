@@ -21,7 +21,7 @@ type knowledgeQuestionInput struct {
 	Body       string `json:"body"`
 	Visibility string `json:"visibility"`
 	Language   string `json:"language"`
-	TopicSlugs []string `json:"topic_slugs"`
+	TopicSlugs []string `json:"topic_slugs,omitempty"`
 }
 type knowledgeAnswerInput struct {
 	Body string `json:"body"`
