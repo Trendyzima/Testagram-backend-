@@ -96,10 +96,11 @@ testagram.site {
   }
   # Only the dedicated Cloudflare API Worker knows the shared edge token.
   # Do not route API traffic based on a spoofable Host/forwarding header alone.
-  @api_edge {
-    header X-Forwarded-Host api.testagram.site
-    header X-Testagram-Edge-Token {$EDGE_PROXY_SHARED_TOKEN}
-  }
+  # InstaBox's public-port proxy may rewrite X-Forwarded-Host to its
+  # generated origin hostname. The high-entropy shared token is the
+  # authoritative API ingress selector; the Worker itself enforces the
+  # public api.testagram.site hostname and supplies trusted forwarding data.
+  @api_edge header X-Testagram-Edge-Token {$EDGE_PROXY_SHARED_TOKEN}
   handle @api_edge {
     reverse_proxy api:8080 {
       header_up Host api.testagram.site
