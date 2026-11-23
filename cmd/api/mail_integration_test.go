@@ -272,11 +272,11 @@ func TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers(t *testing.T) 
 	outboxIDs := []string{consentingID, declinedID}
 
 	cleanup := func() {
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE preference_user_id=ANY($1::uuid[])", outboxIDs)
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.email_notification_preferences WHERE user_id=ANY($1::uuid[])", outboxIDs)
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.follows WHERE follower_id=ANY($1::uuid[]) OR following_id=ANY($1::uuid[])", []string{actorID, consentingID, declinedID})
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id=ANY($1::uuid[])", outboxIDs)
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=ANY($1::uuid[])", []string{actorID, consentingID, declinedID})
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE preference_user_id IN ($1::uuid,$2::uuid)", consentingID, declinedID)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.email_notification_preferences WHERE user_id IN ($1::uuid,$2::uuid)", consentingID, declinedID)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.follows WHERE follower_id IN ($1::uuid,$2::uuid,$3::uuid) OR following_id IN ($1::uuid,$2::uuid,$3::uuid)", actorID, consentingID, declinedID)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id IN ($1::uuid,$2::uuid)", consentingID, declinedID)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id IN ($1::uuid,$2::uuid,$3::uuid)", actorID, consentingID, declinedID)
 	}
 	cleanup()
 	defer cleanup()
