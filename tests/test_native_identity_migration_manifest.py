@@ -202,6 +202,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261120_native_identity_historical_staff_archive.sql",
             "20261120_native_identity_historical_admin_archive.sql",
             "20261120_native_identity_historical_attribution_archive.sql",
+            "20261124_testagram_email_verification_otp.sql",
+            "20261124_testagram_social_email_consent.sql",
         ):
             with self.subTest(migration=migration):
                 self.assertIn(migration, script)
