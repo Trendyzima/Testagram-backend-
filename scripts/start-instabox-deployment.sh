@@ -215,7 +215,12 @@ read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
 # Escape provider-secret metacharacters before using sed to update .env values.
 write_env_value() {
   local key="$1" value="$2" escaped_value
-  escaped_value="$(printf '%s' "$value" | sed 's/[\\&|]/\\&/g')"
+  # GitHub Actions variables/secrets can contain CRLF copied from terminals.
+  # A literal carriage return in .env breaks shell parsing and aborts deployment.
+  # .env values are single-line by contract, so strip both line-ending bytes
+  # before escaping and writing them; never let a value inject another setting.
+  value="$(printf '%s' "$value" | tr -d '\\r\\n')"
+  escaped_value="$(printf '%s' "$value" | sed 's/[\\\\&|]/\\\\&/g')"
   if grep -q "^${key}=" "$BASE_ENV"; then
     sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$BASE_ENV"
   else
