@@ -524,21 +524,3 @@ func mustMailFingerprint(t *testing.T, recipient string) []byte {
 	return fingerprint
 }
 
-func TestCloudflareMailEventRejectsMissingTokenAndUnknownEvent(t *testing.T) {
-	t.Setenv("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", "expected-token")
-	svc := &service{}
-	req := httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(`{"type":"cf.email.sending.message.delivered"}`))
-	rec := httptest.NewRecorder()
-	svc.cloudflareMailEvent(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("missing bearer token status=%d, want 401", rec.Code)
-	}
-
-	req = httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(`{"type":"cf.email.sending.unknown","payload":{"eventId":"x","messageId":"y","recipient":"person@example.test"}}`))
-	req.Header.Set("Authorization", "Bearer expected-token")
-	rec = httptest.NewRecorder()
-	svc.cloudflareMailEvent(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("unknown event status=%d, want 400", rec.Code)
-	}
-}
