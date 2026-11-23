@@ -185,3 +185,77 @@ test("fails closed when the shared edge token is absent or malformed", async () 
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("forwards Cloudflare Email Sending Queue events to the pinned backend and acknowledges only HTTP 202", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const actions = [];
+  globalThis.fetch = async (request) => {
+    calls.push(request);
+    return new Response("accepted", { status: 202 });
+  };
+  try {
+    const body = {
+      type: "cf.email.sending.message.delivered",
+      source: { type: "email.sending", domain: "testagram.site" },
+      payload: { eventId: "event-1", messageId: "message-1", recipient: "person@example.net" },
+    };
+    const message = {
+      body,
+      ack: () => actions.push("ack"),
+      retry: () => actions.push("retry"),
+    };
+    await gateway.queue({ messages: [message] }, {
+      APP_ORIGIN,
+      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
+      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: "b".repeat(64),
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, APP_ORIGIN + "/internal/mail/events");
+    assert.equal(calls[0].method, "POST");
+    assert.equal(calls[0].headers.get("authorization"), "Bearer " + "b".repeat(64));
+    assert.equal(calls[0].headers.get("x-testagram-edge-token"), "a".repeat(64));
+    assert.deepEqual(await calls[0].json(), body);
+    assert.deepEqual(actions, ["ack"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("retries Queue events on non-202 responses, transport errors and missing secrets", async () => {
+  const originalFetch = globalThis.fetch;
+  const actions = [];
+  const makeMessage = (name) => ({
+    body: { type: "cf.email.sending.message.failed", payload: { eventId: name } },
+    ack: () => actions.push(name + ":ack"),
+    retry: () => actions.push(name + ":retry"),
+  });
+  try {
+    globalThis.fetch = async () => new Response("unavailable", { status: 503 });
+    await gateway.queue({ messages: [makeMessage("server-error")] }, {
+      APP_ORIGIN,
+      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
+      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: "b".repeat(64),
+    });
+
+    globalThis.fetch = async () => { throw new Error("private origin detail"); };
+    await gateway.queue({ messages: [makeMessage("network-error")] }, {
+      APP_ORIGIN,
+      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
+      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: "b".repeat(64),
+    });
+
+    await gateway.queue({ messages: [makeMessage("missing-secret")] }, {
+      APP_ORIGIN,
+      EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
+    });
+    assert.deepEqual(actions, [
+      "server-error:retry",
+      "network-error:retry",
+      "missing-secret:retry",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
