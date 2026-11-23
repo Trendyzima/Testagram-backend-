@@ -46,7 +46,7 @@ Configure these values in the InstaBox deployment environment (never commit real
 | `CLOUDFLARE_EMAIL_API_TOKEN` | Runtime variable populated from the existing `CLOUDFLARE_API_TOKEN` GitHub secret; token needs Email Sending: Edit |
 | `AUTH_FROM_EMAIL` | `no-reply@testagram.site`, populated from the `TESTAGRAM_MAIL_FROM` GitHub variable |
 | `TESTAGRAM_MAIL_ENCRYPTION_KEY` | 32 random bytes encoded as 64 hexadecimal characters |
-| `TESTAGRAM_EDGE_PROXY_SHARED_TOKEN` | High-entropy secret of at least 32 characters shared only with the Cloudflare Queue consumer Worker |
+| `TESTAGRAM_EDGE_PROXY_SHARED_TOKEN` | High-entropy secret of at least 32 characters shared with the API runtime and the Cloudflare Queue consumer Worker |
 
 Generate the encryption key with:
 
