@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS testagram_mail.delivery_events (
   recipient_fingerprint BYTEA NOT NULL,
   smtp_status_code TEXT,
   bounce_type TEXT,
+  rejection_reason TEXT,
+  rejection_party TEXT,
   received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   processed_at TIMESTAMPTZ
 );
