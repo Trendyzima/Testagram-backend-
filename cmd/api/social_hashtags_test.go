@@ -73,3 +73,25 @@ func TestHashtagEndpointsFailClosedWithoutDatabase(t *testing.T) {
 		}
 	}
 }
+
+func TestSocialTopicMomentumRewardsAccelerationAndClamps(t *testing.T) {
+	cases := []struct {
+		name string
+		recent int64
+		previous int64
+		want float64
+	}{
+		{name: "steady", recent: 8, previous: 8, want: 0},
+		{name: "declining", recent: 2, previous: 8, want: 0},
+		{name: "doubling", recent: 2, previous: 1, want: 0.5},
+		{name: "new burst", recent: 100, previous: 0, want: 100.0 / 101.0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := socialTopicMomentum(tc.recent, tc.previous)
+			if got < tc.want-1e-9 || got > tc.want+1e-9 {
+				t.Fatalf("momentum = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
