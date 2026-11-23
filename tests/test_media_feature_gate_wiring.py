@@ -219,7 +219,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         script = match.group(0) + "\n" + "\n".join([
             'BASE_ENV="$(mktemp)"',
             'trap \'rm -f "$BASE_ENV"\' EXIT',
-            "write_env_value TESTAGRAM_WEBAUTHN_RPID 
+            "write_env_value TESTAGRAM_WEBAUTHN_RPID $'ops.testagram.site\r\n'",
             "if grep -q $'\\r' \"$BASE_ENV\"; then exit 1; fi",
             '[[ "$(cat "$BASE_ENV")" == "TESTAGRAM_WEBAUTHN_RPID=ops.testagram.site" ]]',
         ]) + "\n"
