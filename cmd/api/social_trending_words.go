@@ -87,6 +87,7 @@ WHERE p.deleted_at IS NULL
 				"word": word, "posts_count": count,
 				"last_used_at": lastUsed.UTC().Format(time.RFC3339Nano),
 				"momentum": trendMomentum(recentCount, previousCount),
+				"reasons": trendReasons(trendMomentum(recentCount, previousCount)),
 			})
 		}
 	}
