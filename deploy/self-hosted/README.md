@@ -89,7 +89,7 @@ For an existing PostgreSQL volume, Docker init scripts do not rerun. Apply this
 migration only after reviewing the SQL and confirming a recent restorable backup:
 
 ```sh
-./apply-social-platform-product-migration.sh
+bash ./apply-social-platform-product-migration.sh
 ```
 
 The operator script waits for PostgreSQL, creates a custom-format database
