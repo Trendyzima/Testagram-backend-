@@ -345,6 +345,125 @@ func nullableUUID(value string) any {
 	return value
 }
 
+// socialTrendingWords ranks public discussion terms from the last seven days.
+// The Backend performs public-only candidate discovery; the Algorithm service
+// only orders this bounded, privacy-filtered set.
+func (s *service) socialTrendingWords(w http.ResponseWriter, r *http.Request) {
+	viewerID, requestID, ok := s.socialOptionalReadAuth(w, r)
+	if !ok {
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_WORDS_UNAVAILABLE", "Trending words are temporarily unavailable", requestID))
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 50 {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_LIMIT", "Trending word limit must be between 1 and 50", requestID))
+			return
+		}
+		limit = value
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	stopWords := []string{
+		"about", "after", "again", "also", "because", "been", "before", "being",
+		"could", "does", "doing", "down", "each", "from", "have", "here", "just",
+		"more", "most", "only", "other", "over", "same", "some", "such", "than",
+		"that", "their", "them", "then", "there", "these", "they", "this", "those",
+		"through", "under", "very", "what", "when", "where", "which", "while",
+		"with", "would", "your", "yours", "kwa", "hiyo", "hizi", "hapo", "yako",
+		"sana", "kama", "lakini", "ndiyo", "kuwa", "watu", "huyu", "hawa",
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT word,count(DISTINCT p.id)::bigint AS posts_count,
+       count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '24 hours')::bigint AS recent_count,
+       count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '48 hours'
+                                     AND p.created_at < now()-interval '24 hours')::bigint AS previous_count,
+       max(p.created_at) AS last_used_at,
+       COALESCE(bool_or(hf.user_id IS NOT NULL),false) AS is_following
+FROM testagram_local.posts p
+JOIN testagram_local.accounts a ON a.user_id=p.author_id
+CROSS JOIN LATERAL regexp_split_to_table(lower(p.text),'[^[:alnum:]_]+') AS extracted(word)
+LEFT JOIN testagram_local.hashtag_follows hf
+  ON hf.user_id=$1::uuid AND hf.tag=word
+WHERE p.deleted_at IS NULL
+  AND p.visibility='public'
+  AND a.account_status='active'
+  AND NOT a.protected_account
+  AND p.created_at >= now()-interval '7 days'
+  AND char_length(word) BETWEEN 4 AND 48
+  AND word ~ '[[:alpha:]]'
+  AND NOT (word=ANY($2::text[]))
+GROUP BY word
+ORDER BY count(DISTINCT p.id) DESC,max(p.created_at) DESC,word
+LIMIT 200`, nullableUUID(viewerID), stopWords)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_WORDS_FAILED", "Trending words could not be loaded", requestID))
+		return
+	}
+	defer rows.Close()
+	candidates := make([]algorithmclient.TopicCandidate, 0, 200)
+	fallback := make([]map[string]any, 0, limit)
+	for rows.Next() {
+		var word string
+		var count, recentCount, previousCount int64
+		var lastUsed time.Time
+		var isFollowing bool
+		if err := rows.Scan(&word, &count, &recentCount, &previousCount, &lastUsed, &isFollowing); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_WORDS_FAILED", "Trending words could not be decoded", requestID))
+			return
+		}
+		affinity := 0.0
+		if isFollowing {
+			affinity = 1
+		}
+		momentum := socialTopicMomentum(recentCount, previousCount)
+		candidates = append(candidates, algorithmclient.TopicCandidate{
+			Tag: word, PostsCount: count, LastUsedAt: lastUsed,
+			InterestAffinity: affinity, Momentum: momentum,
+		})
+		if len(fallback) < limit {
+			fallback = append(fallback, map[string]any{
+				"word": word, "posts_count": count,
+				"last_used_at": lastUsed.UTC().Format(time.RFC3339Nano),
+				"momentum": momentum, "is_following": isFollowing,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_WORDS_FAILED", "Trending words could not be loaded", requestID))
+		return
+	}
+	items := fallback
+	ranking := "recent_post_volume"
+	if s.algorithm != nil && len(candidates) > 0 {
+		s.algorithmRequests.Add(1)
+		ranked, rankErr := s.algorithm.RankTopics(ctx, algorithmclient.TopicRequest{
+			Now: time.Now().UTC(), Candidates: candidates, Limit: limit,
+		})
+		if rankErr == nil && len(ranked.Items) > 0 {
+			items = make([]map[string]any, 0, len(ranked.Items))
+			for _, item := range ranked.Items {
+				items = append(items, map[string]any{
+					"word": item.Tag, "posts_count": item.PostsCount,
+					"score": item.Score, "reasons": item.Reasons,
+				})
+			}
+			ranking = "algorithm_topic_ranker_v1"
+		} else {
+			s.algorithmFailures.Add(1)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{"items": items, "window": "7d", "ranking": ranking},
+		"error": nil, "request_id": requestID,
+	})
+}
+
 func socialTopicMomentum(recentCount, previousCount int64) float64 {
 	if recentCount <= previousCount {
 		return 0
