@@ -61,7 +61,13 @@ func (s *service) socialEmailPreferences(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_EMAIL_PREFERENCES", "Set at least one email notification preference", requestID))
 			return
 		}
-		_, err := s.db.Exec(r.Context(), `
+		tx, err := s.db.Begin(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_PREFERENCES_SAVE_FAILED", "Email preferences could not be saved", requestID))
+			return
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		_, err = tx.Exec(r.Context(), `
 			INSERT INTO testagram_local.email_notification_preferences(
 				user_id,new_follower_email_enabled,new_post_email_enabled,consent_version,
 				new_follower_consent_at,new_follower_consent_withdrawn_at,
@@ -93,6 +99,23 @@ func (s *service) socialEmailPreferences(w http.ResponseWriter, r *http.Request)
 					THEN $4 ELSE email_notification_preferences.consent_version END,
 				updated_at=now()
 		`, userID, input.NewFollowerEmailEnabled, input.NewPostEmailEnabled, socialEmailConsentVersion)
+		if err == nil && input.NewFollowerEmailEnabled != nil && !*input.NewFollowerEmailEnabled {
+			_, err = tx.Exec(r.Context(), `
+				UPDATE testagram_mail.outbox
+				SET status='dead',last_error_code='CONSENT_WITHDRAWN',updated_at=now()
+				WHERE preference_user_id=$1 AND preference_category='new_follower' AND status='pending'
+			`, userID)
+		}
+		if err == nil && input.NewPostEmailEnabled != nil && !*input.NewPostEmailEnabled {
+			_, err = tx.Exec(r.Context(), `
+				UPDATE testagram_mail.outbox
+				SET status='dead',last_error_code='CONSENT_WITHDRAWN',updated_at=now()
+				WHERE preference_user_id=$1 AND preference_category='new_post' AND status='pending'
+			`, userID)
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_PREFERENCES_SAVE_FAILED", "Email preferences could not be saved", requestID))
 			return
