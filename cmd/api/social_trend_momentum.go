@@ -26,3 +26,10 @@ func trendMomentum(current, previous int64) float64 {
 	}
 	return momentum
 }
+
+func trendReasons(momentum float64) []string {
+	if momentum >= 0.6 {
+		return []string{"accelerating"}
+	}
+	return []string{}
+}
