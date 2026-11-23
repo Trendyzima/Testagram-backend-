@@ -799,6 +799,17 @@ jobs:
           set -euo pipefail
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
+          api_response="$tmp/signup-probe.json"
+          api_headers="$tmp/signup-probe.headers"
+          api_status="$(curl --silent --show-error --max-time 20 -D "$api_headers" -o "$api_response" -w '%{http_code}' -X POST \
+            "https://api.testagram.site/api/auth/signup" \
+            -H 'Content-Type: application/json' \
+            --data-binary '{"email":"signup-probe@example.invalid","username":"signup_probe","password":"short"}')"
+          api_error="$(jq -r '.error.code // empty' "$api_response" 2>/dev/null || true)"
+          if [[ "$api_status" != "400" || "$api_error" != "INVALID_PASSWORD" ]]; then
+            echo "::error::Production native signup API did not reach password validation (HTTP $api_status, code=$api_error). No account was created."
+            exit 1
+          fi
           base="https://www.testagram.site"
           for path in "/" "/?mode=signup"; do
             curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 30 \
