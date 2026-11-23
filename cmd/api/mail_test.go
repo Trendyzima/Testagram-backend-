@@ -128,7 +128,7 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 	messageID, err := sendCloudflareMailRequest(context.Background(), client, server.URL+"/accounts/0123456789abcdef0123456789abcdef/email/sending/send", "test-token", "no-reply@testagram.site", queuedMail{
 		Recipient: "person@example.test", Subject: "Password reset", HTML: "<p>Reset</p>", Text: "Reset text",
-		Headers: map[string]string{"List-Unsubscribe":"<https://testagram.site/api/email/unsubscribe?token=abc>","List-Unsubscribe-Post":"List-Unsubscribe=One-Click"},
+		Headers: map[string]string{"List-Unsubscribe": "<https://testagram.site/api/email/unsubscribe?token=abc>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -151,13 +151,13 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 	}{
 		{
 			name: "provider rejects request permanently", status: http.StatusBadRequest,
-			response: `{"success":false,"errors":[{"code":10001,"message":"invalid request"}],"result":null}`,
+			response:  `{"success":false,"errors":[{"code":10001,"message":"invalid request"}],"result":null}`,
 			permanent: true,
 		},
 		{
 			name: "rate limited request is safely retryable", status: http.StatusTooManyRequests,
 			response: `{"success":false,"errors":[{"code":10002,"message":"rate limited"}],"result":null}`,
-			wantErr: "temporarily rejected",
+			wantErr:  "temporarily rejected",
 		},
 		{
 			name: "suppressed recipient", status: http.StatusOK,
