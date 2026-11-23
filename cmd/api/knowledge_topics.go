@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const knowledgeMaxQuestionTopics = 5
@@ -75,7 +78,7 @@ func (s *service) knowledgeTopics(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `
 SELECT t.id::text,t.slug,t.name,t.description,
        (SELECT count(*) FROM testagram_local.topic_follows tf WHERE tf.topic_id=t.id)::bigint,
-       (SELECT count(*) FROM testagram_local.question_topics qt JOIN testagram_local.questions q ON q.id=qt.question_id WHERE qt.topic_id=t.id AND q.deleted_at IS NULL AND q.status<>'removed')::bigint,
+       (SELECT count(*) FROM testagram_local.question_topics qt JOIN testagram_local.questions q ON q.id=qt.question_id JOIN testagram_local.accounts a ON a.user_id=q.author_id WHERE qt.topic_id=t.id AND `+knowledgeVisible+`)::bigint,
        EXISTS(SELECT 1 FROM testagram_local.topic_follows mine WHERE mine.topic_id=t.id AND mine.user_id=$1::uuid)
 FROM testagram_local.topics t
 WHERE t.status='active'
@@ -133,12 +136,16 @@ func (s *service) knowledgeTopicRead(w http.ResponseWriter, r *http.Request) {
 	err := s.db.QueryRow(r.Context(), `
 SELECT t.id::text,t.name,t.description,
        (SELECT count(*) FROM testagram_local.topic_follows tf WHERE tf.topic_id=t.id)::bigint,
-       (SELECT count(*) FROM testagram_local.question_topics qt JOIN testagram_local.questions q ON q.id=qt.question_id WHERE qt.topic_id=t.id AND q.deleted_at IS NULL AND q.status<>'removed')::bigint,
+       (SELECT count(*) FROM testagram_local.question_topics qt JOIN testagram_local.questions q ON q.id=qt.question_id JOIN testagram_local.accounts a ON a.user_id=q.author_id WHERE qt.topic_id=t.id AND `+knowledgeVisible+`)::bigint,
        EXISTS(SELECT 1 FROM testagram_local.topic_follows mine WHERE mine.topic_id=t.id AND mine.user_id=$1::uuid)
 FROM testagram_local.topics t
 WHERE t.slug=$2 AND t.status='active'`, uid, slug).Scan(&id, &name, &description, &followers, &questions, &following)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusNotFound, errorBody("TOPIC_NOT_FOUND", "Topic is unavailable", rid))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("TOPIC_UNAVAILABLE", "Topic could not be loaded", rid))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"id": id, "slug": slug, "name": name, "description": description, "followers_count": followers, "questions_count": questions, "is_following": following}, "error": nil, "request_id": rid})
@@ -163,7 +170,11 @@ func (s *service) knowledgeTopicFollow(w http.ResponseWriter, r *http.Request) {
 	}
 	var topicID string
 	if err := s.db.QueryRow(r.Context(), `SELECT id::text FROM testagram_local.topics WHERE slug=$1 AND status='active'`, slug).Scan(&topicID); err != nil {
-		writeJSON(w, http.StatusNotFound, errorBody("TOPIC_NOT_FOUND", "Topic is unavailable", rid))
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, errorBody("TOPIC_NOT_FOUND", "Topic is unavailable", rid))
+		} else {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("TOPIC_UNAVAILABLE", "Topic could not be loaded", rid))
+		}
 		return
 	}
 	if r.Method == http.MethodPost {
