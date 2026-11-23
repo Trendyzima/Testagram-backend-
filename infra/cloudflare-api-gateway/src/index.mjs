@@ -161,5 +161,44 @@ export default {
         "x-testagram-recovery": "attempted",
       });
     }
+  },,
+
+  async queue(batch, env) {
+    const origin = resolveOrigin(env.APP_ORIGIN);
+    const edgeToken = env.EDGE_PROXY_SHARED_TOKEN;
+    const eventsToken = env.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN;
+    if (
+      !origin ||
+      !/^[a-f0-9]{64}$/i.test(edgeToken || "") ||
+      !/^[a-f0-9]{64}$/i.test(eventsToken || "")
+    ) {
+      for (const message of batch.messages) message.retry();
+      return;
+    }
+
+    const endpoint = new URL("/internal/mail/events", origin);
+    for (const message of batch.messages) {
+      try {
+        const body = typeof message.body === "string"
+          ? message.body
+          : JSON.stringify(message.body);
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${eventsToken}`,
+            "Content-Type": "application/json",
+            "X-Testagram-Edge-Token": edgeToken,
+          },
+          body,
+          redirect: "manual",
+        });
+        if (response.status === 202) message.ack();
+        else message.retry();
+      } catch {
+        // Preserve Queue's at-least-once delivery contract. The backend's
+        // provider_event_id uniqueness makes retries safe.
+        message.retry();
+      }
+    }
   },
 };
