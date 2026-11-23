@@ -1317,8 +1317,11 @@ func main() {
 		log.Fatalf("configure public Federation origin: %v", federationURLerr)
 	}
 	edgeRecoveryReadinessToken := strings.TrimSpace(os.Getenv("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN"))
-	if edgeRecoveryReadinessToken != "" && len(edgeRecoveryReadinessToken) < 64 {
-		log.Fatal("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must contain at least 64 characters when configured")
+	if edgeRecoveryReadinessToken != "" {
+		decoded, decodeErr := hex.DecodeString(edgeRecoveryReadinessToken)
+		if decodeErr != nil || len(decoded) != 32 {
+			log.Fatal("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must be exactly 32 random bytes encoded as 64 hexadecimal characters")
+		}
 	}
 	svc := &service{
 		db: db, edgeRecoveryReadinessToken: edgeRecoveryReadinessToken, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
