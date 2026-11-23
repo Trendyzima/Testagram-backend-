@@ -338,6 +338,7 @@ func (s *service) knowledgeQuestionRead(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 503, errorBody("ANSWERS_UNAVAILABLE", "Answer data could not be loaded", rid))
 		return
 	}
+	rows.Close()
 	topicRows, topicErr := s.db.Query(r.Context(), `SELECT t.slug,t.name FROM testagram_local.question_topics qt JOIN testagram_local.topics t ON t.id=qt.topic_id WHERE qt.question_id=$1::uuid AND t.status='active' ORDER BY t.name,t.slug`, qid)
 	if topicErr != nil {
 		writeJSON(w, 503, errorBody("QUESTION_TOPICS_UNAVAILABLE", "Question topics could not be loaded", rid))
