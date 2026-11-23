@@ -134,3 +134,63 @@ A transport timeout, interrupted response, provider 5xx, malformed success respo
 
 
 Expired worker leases are also quarantined as `uncertain`, never automatically reclaimed. A process may have crashed after the provider accepted the request but before the database recorded the response. This conservative behavior can require manual review even when no request was actually sent; it deliberately prefers a delayed message over an undetected duplicate security email.
+
+
+## Delivery-event reconciliation
+
+The backend accepts Cloudflare Email Sending lifecycle events at:
+
+`POST /internal/mail/events`
+
+The route is protected by a high-entropy `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN` bearer secret and validates the event source domain against the configured `AUTH_FROM_EMAIL` sender domain. It accepts the six Cloudflare Email Sending event types: delivered, deferred, bounced, failed, rejected and complained.
+
+The migration `migrations/20261125_testagram_mail_delivery_events.sql` adds an idempotent event ledger, recipient fingerprints, delivery timestamps and a suppression registry. The event ID is unique. The message ID and keyed recipient fingerprint must both match the original outbox record before its delivery state can change. Events arriving before the outbox provider message ID is recorded remain unprocessed and are reconciled by the mail worker later.
+
+Provider acceptance remains the outbox state `sent`; final provider lifecycle is stored separately in `delivery_status`. A delivered event means the recipient mail server accepted the message, not that a human opened it. Hard bounces and complaints create a recipient suppression. Soft bounces and sender-side rejections do not automatically suppress the recipient. Suppressed recipients are discarded before any later provider request.
+
+### Cloudflare Queue wiring
+
+Cloudflare's Email Sending event subscription is scoped to a sending domain. Create a Queue and subscribe it to the six Email Sending events for the verified `testagram.site` sending domain. Configure a Queue consumer Worker to forward each event to the backend endpoint above.
+
+The backend and the Queue consumer must each receive the same independently generated high-entropy secret under the name `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. Configure it as a backend runtime secret and a Cloudflare Worker secret; never place it in source control or logs. The backend also needs the existing `AUTH_FROM_EMAIL` and stable mail encryption key.
+
+A Queue consumer should acknowledge a message only after the backend returns HTTP 202. On timeout, network failure, or any non-202 response, retry the Queue message so Cloudflare can redeliver it. The backend event ledger makes those redeliveries idempotent.
+
+Example consumer logic (adapt the origin and secret binding to the existing Cloudflare Worker deployment):
+
+```ts
+export default {
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      const response = await fetch(
+        `${env.TESTAGRAM_API_ORIGIN}/internal/mail/events`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${env.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(message.body),
+        },
+      );
+      if (response.status === 202) message.ack();
+      else message.retry();
+    }
+  },
+};
+```
+
+Do not acknowledge an event before the backend accepts it. Configure Queue retries and a dead-letter queue, then alert on messages reaching the dead-letter queue. The subscription and Queue consumer are Cloudflare account resources and must be provisioned and verified separately; adding the backend endpoint does not create them automatically.
+
+### Event acceptance checks
+
+1. Confirm all six event types arrive through the Queue consumer.
+2. Confirm the same event delivered twice creates one ledger row and one state transition.
+3. Confirm a delivered event updates the matching outbox row only when both message ID and recipient fingerprint match.
+4. Confirm a hard bounce and a complaint suppress future sends to that recipient.
+5. Confirm a soft bounce and sender-side rejection do not create recipient suppression.
+6. Confirm an event that arrives before the provider message ID is persisted is reconciled later by the worker.
+7. Confirm a wrong token or sending-domain mismatch is rejected.
+8. Confirm the Queue message is retried for backend errors and acknowledged only after HTTP 202.
+
+The backup-gated migration script and PostgreSQL Compose mount include the delivery-event migration. It must be applied before deploying the API code that reads the new columns and tables.
