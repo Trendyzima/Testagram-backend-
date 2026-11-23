@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Verify pinned Go CDN image, scratch healthcheck and writable cache volume
         env:
-          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:d0b1fa4c1cbd579c8674ba520566d39ca3b7be90132939d880753c17fe80b425
+          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:bb7e1b067223cb7140e8cf10ee86562d039b0370d9d5c5f8dc1bef22e5d00b14
         run: |
           set -euo pipefail
           docker pull "$TESTAGRAM_CDN_IMAGE"
@@ -151,7 +151,7 @@ jobs:
           web_image = str(web.get("image", ""))
           web_expose = [str(port) for port in web.get("expose", [])]
           web_env_image = next((line.split("=", 1)[1] for line in env_example.splitlines() if line.startswith("TESTAGRAM_WEB_IMAGE=")), "")
-          if "TESTAGRAM_WEB_IMAGE" not in web_image or web_env_image != "ghcr.io/trendyzima/testagram-web@sha256:be1d80e65506c44912ac16bccd9b57a8a31914f2ee4f2fa7ec026af65715bf68":
+          if "TESTAGRAM_WEB_IMAGE" not in web_image or web_env_image != "ghcr.io/trendyzima/testagram-web@sha256:3aa39a426322cbfda5d6dbf8d252cc09a8748ec1e99923e70e7e7ed1f45a8b53":
               raise SystemExit("Self-hosted Flutter web must use the reviewed GHCR release tag, resolved to a digest by the deployment script.")
           if "8080" not in web_expose or "ports" in web or "edge" not in web.get("networks", []):
               raise SystemExit("Flutter web must expose only its private 8080 listener on the Caddy edge network.")
