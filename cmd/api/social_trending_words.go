@@ -98,7 +98,7 @@ LIMIT 200`, trendingWordStopwords)
 			fallback = append(fallback, map[string]any{
 				"word": word, "posts_count": count,
 				"last_used_at": lastUsed.UTC().Format(time.RFC3339Nano),
-				"momentum": momentum, "reasons": trendReasons(momentum),
+				"momentum":     momentum, "reasons": trendReasons(momentum),
 			})
 		}
 	}
