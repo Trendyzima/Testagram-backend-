@@ -4,7 +4,8 @@ ALTER TABLE testagram_mail.outbox
   ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'accepted',
   ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS delivery_failed_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS complained_at TIMESTAMPTZ;
+  ADD COLUMN IF NOT EXISTS complained_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS recipient_fingerprint BYTEA;
 
 DO $constraints$
 BEGIN
