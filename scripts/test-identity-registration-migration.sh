@@ -879,6 +879,10 @@ TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
+# Exercise Cloudflare event reconciliation, duplicate protection, recipient suppression,
+# consent withdrawal and one-click unsubscribe against this PostgreSQL fixture.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient|TestSocialEmailUnsubscribeGetIsSafeAndPostWithdrawsConsent|TestMailWorkerRetriesDefiniteFailureAndPreservesPayload|TestMailWorkerQuarantinesAmbiguousOutcomeWithoutResending|TestMailWorkerNeverSendsPendingSocialMailAfterConsentWithdrawal)$' -count=1
+
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestNativePasswordRecoveryRequestIsAntiEnumeration|TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin|TestNativeSessionRefreshRotationAndReuseRevokesFamily|TestNativeSessionLogoutRevokesCurrentSession|TestNativeSessionLogoutAllRevokesEverySession|TestNativeSessionConcurrentRefreshReuseRevokesFamily)$' -count=1
 
 
@@ -933,7 +937,6 @@ SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
 
- -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
@@ -991,7 +994,6 @@ SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
 
- -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
@@ -1049,7 +1051,6 @@ SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
 
- -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
