@@ -78,9 +78,10 @@ add a new forward-only migration instead.
 
 ## Social platform product foundation migration
 
-The additive social-platform foundation migration creates curated Lists, private
-post drafts, scheduled-post commands, ephemeral Stories, safety reports,
-moderation actions and appeals. It does not publish content or start a scheduler.
+The Knowledge and social-platform foundation migrations create topical Q&A
+(questions, answers and answer revisions), curated Lists, private post drafts,
+scheduled-post commands, ephemeral Stories, safety reports, moderation actions
+and appeals. It does not publish content or start a scheduler.
 The API must continue enforcing native authentication and privacy; scheduled
 publishing must use the same moderation and idempotency path as interactive
 publishing.
@@ -92,10 +93,11 @@ migration only after reviewing the SQL and confirming a recent restorable backup
 bash ./apply-social-platform-product-migration.sh
 ```
 
-The operator script waits for PostgreSQL, creates a custom-format database
-backup, verifies the archive and SHA-256 checksum, and requires the exact
+The operator script applies migration 062 (Knowledge Engine) and migration 063
+(social platform) in order. It waits for PostgreSQL, creates a custom-format
+database backup, verifies the archive and SHA-256 checksum, and requires the exact
 `APPLY-TESTAGRAM-SOCIAL-PLATFORM-FOUNDATION` confirmation before applying
-migration 063. It is idempotent when all expected tables already exist. Retain
+migration 063. It is idempotent when all expected Knowledge and social-platform tables already exist. Retain
 the backup until the deployed API and Flutter acceptance tests pass. Do not
 manually create the tables or bypass the backup/confirmation guard.
 
