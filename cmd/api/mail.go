@@ -56,8 +56,8 @@ var mailHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
 
 func mailPlainTextFromHTML(value string) string {
 	value = strings.NewReplacer(
-		"<br>", "\\n", "<br/>", "\\n", "<br />", "\\n",
-		"</p>", "\\n", "</div>", "\\n", "</li>", "\\n", "</blockquote>", "\\n",
+		"<br>", "\n", "<br/>", "\n", "<br />", "\n",
+		"</p>", "\n", "</div>", "\n", "</li>", "\n", "</blockquote>", "\n",
 	).Replace(value)
 	value = mailHTMLTagPattern.ReplaceAllString(value, "")
 	return strings.TrimSpace(htmlstd.UnescapeString(value))
