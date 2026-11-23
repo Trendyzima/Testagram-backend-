@@ -150,9 +150,14 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 		permanent bool
 	}{
 		{
-			name: "provider rejects request", status: http.StatusBadRequest,
+			name: "provider rejects request permanently", status: http.StatusBadRequest,
 			response: `{"success":false,"errors":[{"code":10001,"message":"invalid request"}],"result":null}`,
-			wantErr:  "code 10001",
+			permanent: true,
+		},
+		{
+			name: "rate limited request is safely retryable", status: http.StatusTooManyRequests,
+			response: `{"success":false,"errors":[{"code":10002,"message":"rate limited"}],"result":null}`,
+			wantErr: "temporarily rejected",
 		},
 		{
 			name: "suppressed recipient", status: http.StatusOK,
