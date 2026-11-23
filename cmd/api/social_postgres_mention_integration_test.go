@@ -33,9 +33,9 @@ func TestSocialMentionNotificationsPostgresIntegration(t *testing.T) {
 	suffix := fmt.Sprintf("%09d", time.Now().UnixNano()%1_000_000_000)
 	var authorID, followerID, strangerID, protectedID string
 	for _, fixture := range []struct {
-		username string
+		username  string
 		protected bool
-		target *string
+		target    *string
 	}{
 		{"ci_mention_author_" + suffix, false, &authorID},
 		{"ci_mention_follower_" + suffix, false, &followerID},
@@ -50,7 +50,7 @@ func TestSocialMentionNotificationsPostgresIntegration(t *testing.T) {
 	var publicPostID, followersPostID, privatePostID, protectedPostID, blockedPostID string
 	for _, fixture := range []struct {
 		author, visibility string
-		target *string
+		target             *string
 	}{
 		{authorID, "public", &publicPostID},
 		{authorID, "followers", &followersPostID},
