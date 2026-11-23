@@ -209,7 +209,6 @@ test("forwards Cloudflare Email Sending Queue events to the pinned backend and a
     await gateway.queue({ messages: [message] }, {
       APP_ORIGIN,
       EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
-      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: "b".repeat(64),
     });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].input, APP_ORIGIN + "/internal/mail/events");
@@ -236,14 +235,12 @@ test("retries Queue events on non-202 responses, transport errors and missing se
     await gateway.queue({ messages: [makeMessage("server-error")] }, {
       APP_ORIGIN,
       EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
-      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: "b".repeat(64),
     });
 
     globalThis.fetch = async () => { throw new Error("private origin detail"); };
     await gateway.queue({ messages: [makeMessage("network-error")] }, {
       APP_ORIGIN,
       EDGE_PROXY_SHARED_TOKEN: "a".repeat(64),
-      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: "b".repeat(64),
     });
 
     await gateway.queue({ messages: [makeMessage("missing-secret")] }, {
