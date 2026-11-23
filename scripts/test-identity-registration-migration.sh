@@ -99,12 +99,14 @@ psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at) VALUES
