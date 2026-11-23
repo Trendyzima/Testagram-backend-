@@ -127,6 +127,13 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 	ciphertext := aead.Seal(nil, nonce, payload, []byte("testagram-mail-v1"))
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	if preferenceUserID == nil {
+		_, err = executor.Exec(ctx, `
+			INSERT INTO testagram_mail.outbox(payload_ciphertext,payload_nonce,status,available_at)
+			VALUES($1,$2,'pending',now())
+		`, ciphertext, nonce)
+		return err
+	}
 	_, err = executor.Exec(ctx, `
 		INSERT INTO testagram_mail.outbox(
 			payload_ciphertext,payload_nonce,status,available_at,preference_user_id,preference_category
