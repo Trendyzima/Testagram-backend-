@@ -5,7 +5,7 @@ AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
 TESTAGRAM_EDGE_PROXY_SHARED_TOKEN="${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}"
 TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN="${TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:-}"
-if [[ -n "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" && ${#TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN} -lt 64 ]]; then echo "::error::TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must contain at least 64 characters when configured."; exit 1; fi
+if [[ -n "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" && ! "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]]; then echo "::error::TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must be exactly 32 random bytes encoded as 64 hexadecimal characters when configured."; exit 1; fi
 [[ "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_EDGE_PROXY_SHARED_TOKEN must be a configured 32-byte hexadecimal secret shared with the Cloudflare API Worker."; exit 1; }
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
