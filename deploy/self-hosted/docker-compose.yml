@@ -64,6 +64,8 @@ services:
       - ../../migrations/20261120_native_verification_decider.sql:/docker-entrypoint-initdb.d/056_native_verification_decider.sql:ro
       - ../../migrations/20261122_testagram_mail_outbox.sql:/docker-entrypoint-initdb.d/057_testagram_mail_outbox.sql:ro
       - ../../migrations/20261123_testagram_mail_outbox_runtime_role.sql:/docker-entrypoint-initdb.d/058_testagram_mail_outbox_runtime_role.sql:ro
+      - ../../migrations/20261124_testagram_email_verification_otp.sql:/docker-entrypoint-initdb.d/20261124_testagram_email_verification_otp.sql:ro
+      - ../../migrations/20261124_testagram_social_email_consent.sql:/docker-entrypoint-initdb.d/20261124_testagram_social_email_consent.sql:ro
       - ../../migrations/20261120_native_identity_historical_account_archive.sql:/docker-entrypoint-initdb.d/058a_native_identity_historical_account_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_staff_archive.sql:/docker-entrypoint-initdb.d/058b_native_identity_historical_staff_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_admin_archive.sql:/docker-entrypoint-initdb.d/058c_native_identity_historical_admin_archive.sql:ro
