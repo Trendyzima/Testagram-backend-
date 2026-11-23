@@ -20,6 +20,8 @@ class TestInstaBoxRuntimeHealthcheckPaths(unittest.TestCase):
         stack_workflow = STACK_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('/app/healthcheck', deploy)
         self.assertIn('/app/healthcheck', workflow)
+        self.assertNotIn('exec -T media-cache /healthcheck', deploy)
+        self.assertNotIn('exec -T media-cache /healthcheck', workflow)
         self.assertIn('video-worker', deploy)
         self.assertIn('if [[ "$video_worker_health" != "healthy" ]]', deploy)
         self.assertIn('for attempt in $(seq 1 60); do', deploy)
