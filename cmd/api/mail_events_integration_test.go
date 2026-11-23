@@ -15,7 +15,7 @@ func TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *t
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("4c", 32))
-	t.Setenv("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	t.Setenv("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	t.Setenv("CLOUDFLARE_EMAIL_ACCOUNT_ID", "0123456789abcdef0123456789abcdef")
 	t.Setenv("CLOUDFLARE_EMAIL_API_TOKEN", "ci-provider-token")
 	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
