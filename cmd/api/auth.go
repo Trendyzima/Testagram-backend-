@@ -78,6 +78,17 @@ func authRandomOTP() (string, error) {
 	return fmt.Sprintf("%06d", value.Int64()), nil
 }
 
+func authOTPHash(code string) ([]byte, error) {
+	key, err := hex.DecodeString(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_ENCRYPTION_KEY")))
+	if err != nil || len(key) != 32 {
+		return nil, errors.New("email OTP hashing key is unavailable")
+	}
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("testagram-email-otp-v1\\x00"))
+	_, _ = mac.Write([]byte(code))
+	return mac.Sum(nil), nil
+}
+
 func authTokenHash(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
@@ -319,6 +330,11 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusInternalServerError, errorBody("OTP_FAILED", "Unable to create verification code", requestID(r)))
 			return true
 		}
+		otpHash, err := authOTPHash(otp)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Account verification email is temporarily unavailable", requestID(r)))
+			return true
+		}
 		tx, txErr := s.db.Begin(ctx)
 		if txErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
@@ -333,7 +349,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		)
 		VALUES($1,$2,$3,$4,now()+interval '24 hours',$5,now()+interval '10 minutes',0)
 		ON CONFLICT DO NOTHING RETURNING user_id::text
-		`, email, in.Username, passwordHash, authTokenHash(token), authTokenHash(otp)).Scan(&userID)
+		`, email, in.Username, passwordHash, authTokenHash(token), otpHash).Scan(&userID)
 		if errors.Is(txErr, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the address is eligible, a verification email will be sent."})
 			return true
@@ -361,7 +377,8 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			if rateErr == nil && allowed {
 				token, tokenErr := authRandomToken()
 				otp, otpErr := authRandomOTP()
-				if tokenErr == nil && otpErr == nil {
+				otpHash, otpHashErr := authOTPHash(otp)
+				if tokenErr == nil && otpErr == nil && otpHashErr == nil {
 					var savedEmail string
 					tx, txErr := s.db.Begin(ctx)
 					if txErr == nil {
@@ -372,7 +389,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 							    verification_otp_hash=$3,verification_otp_expires_at=now()+interval '10 minutes',
 							    verification_otp_attempts=0,updated_at=now()
 							WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
-						`, email, authTokenHash(token), authTokenHash(otp)).Scan(&savedEmail)
+						`, email, authTokenHash(token), otpHash).Scan(&savedEmail)
 						if updateErr == nil {
 							base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 							link := base + "/verify-email?token=" + url.QueryEscape(token)
@@ -436,7 +453,12 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				writeJSON(w, http.StatusBadRequest, errorBody("INVALID_OTP", "Verification code is invalid or expired", requestID(r)))
 				return true
 			}
-			if subtle.ConstantTimeCompare(authTokenHash(token), storedHash) != 1 {
+			otpHash, hashErr := authOTPHash(token)
+			if hashErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Account verification is temporarily unavailable", requestID(r)))
+				return true
+			}
+			if subtle.ConstantTimeCompare(otpHash, storedHash) != 1 {
 				_, txErr = tx.Exec(ctx, `
 					UPDATE testagram_auth.identities
 					SET verification_otp_attempts=verification_otp_attempts+1,updated_at=now()
