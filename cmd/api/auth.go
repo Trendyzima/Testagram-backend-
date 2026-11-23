@@ -392,26 +392,103 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		if token == "" {
 			token = strings.TrimSpace(r.URL.Query().Get("token"))
 		}
-		if len(token) < 32 || len(token) > 128 {
-			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Verification token is invalid or expired", requestID(r)))
-			return true
+		isOTP := len(token) == 6
+		if isOTP {
+			for _, digit := range token {
+				if digit < '0' || digit > '9' {
+					isOTP = false
+					break
+				}
+			}
 		}
 		var userID, email, username string
-		err := s.db.QueryRow(ctx, `
-			UPDATE testagram_auth.identities
-			SET email_verified_at=COALESCE(email_verified_at,now()), updated_at=now()
-			WHERE verification_token_hash=$1 AND verification_expires_at>now()
-			RETURNING user_id::text,email,username
-		`, authTokenHash(token)).Scan(&userID, &email, &username)
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Idempotently report success for an already-verified address only if a valid session isn't possible;
-			// invalid tokens intentionally receive the same generic response.
-			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Verification token is invalid or expired", requestID(r)))
-			return true
-		}
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
-			return true
+		var err error
+		if isOTP {
+			email, err = authEmail(in.Email)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody("INVALID_OTP", "Verification code is invalid or expired", requestID(r)))
+				return true
+			}
+			allowed, rateErr := s.authRateAllowed(ctx, "verify-otp-ip", ip, 10)
+			if rateErr == nil && allowed {
+				allowed, rateErr = s.authRateAllowed(ctx, "verify-otp-email", email, 5)
+			}
+			if rateErr != nil || !allowed {
+				writeJSON(w, http.StatusTooManyRequests, errorBody("OTP_RATE_LIMITED", "Too many verification attempts. Request a new code and try again later.", requestID(r)))
+				return true
+			}
+			tx, txErr := s.db.Begin(ctx)
+			if txErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
+				return true
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			var storedHash []byte
+			var expires time.Time
+			var attempts int
+			txErr = tx.QueryRow(ctx, `
+				SELECT verification_otp_hash,verification_otp_expires_at,verification_otp_attempts
+				FROM testagram_auth.identities
+				WHERE email_normalized=$1 AND email_verified_at IS NULL
+				FOR UPDATE
+			`, email).Scan(&storedHash, &expires, &attempts)
+			if txErr != nil || len(storedHash) != sha256.Size || !expires.After(time.Now().UTC()) || attempts >= 5 {
+				writeJSON(w, http.StatusBadRequest, errorBody("INVALID_OTP", "Verification code is invalid or expired", requestID(r)))
+				return true
+			}
+			if subtle.ConstantTimeCompare(authTokenHash(token), storedHash) != 1 {
+				_, txErr = tx.Exec(ctx, `
+					UPDATE testagram_auth.identities
+					SET verification_otp_attempts=verification_otp_attempts+1,updated_at=now()
+					WHERE email_normalized=$1 AND verification_otp_attempts<5
+				`, email)
+				if txErr == nil {
+					txErr = tx.Commit(ctx)
+				}
+				if txErr != nil {
+					writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
+					return true
+				}
+				writeJSON(w, http.StatusBadRequest, errorBody("INVALID_OTP", "Verification code is invalid or expired", requestID(r)))
+				return true
+			}
+			txErr = tx.QueryRow(ctx, `
+				UPDATE testagram_auth.identities
+				SET email_verified_at=now(),verification_token_hash=NULL,verification_expires_at=NULL,
+				    verification_otp_hash=NULL,verification_otp_expires_at=NULL,
+				    verification_otp_attempts=0,updated_at=now()
+				WHERE email_normalized=$1 AND email_verified_at IS NULL
+				RETURNING user_id::text,email,username
+			`, email).Scan(&userID, &email, &username)
+			if txErr == nil {
+				txErr = tx.Commit(ctx)
+			}
+			if txErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
+				return true
+			}
+		} else {
+			if len(token) < 32 || len(token) > 128 {
+				writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Verification token is invalid or expired", requestID(r)))
+				return true
+			}
+			err = s.db.QueryRow(ctx, `
+				UPDATE testagram_auth.identities
+				SET email_verified_at=COALESCE(email_verified_at,now()), updated_at=now(),
+				    verification_token_hash=NULL,verification_expires_at=NULL,
+				    verification_otp_hash=NULL,verification_otp_expires_at=NULL,
+				    verification_otp_attempts=0
+				WHERE verification_token_hash=$1 AND verification_expires_at>now()
+				RETURNING user_id::text,email,username
+			`, authTokenHash(token)).Scan(&userID, &email, &username)
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Verification token is invalid or expired", requestID(r)))
+				return true
+			}
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
+				return true
+			}
 		}
 		_, err = s.db.Exec(ctx, `
 			INSERT INTO testagram_local.accounts(user_id,username,display_name)
