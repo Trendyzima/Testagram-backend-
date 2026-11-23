@@ -33,9 +33,9 @@ func TestTrendingTopicMomentumPostgresIntegration(t *testing.T) {
 	suffix := fmt.Sprintf("%09d", time.Now().UnixNano()%1_000_000_000)
 	var publicAuthorA, publicAuthorB, protectedAuthor string
 	for _, fixture := range []struct {
-		username string
+		username  string
 		protected bool
-		target *string
+		target    *string
 	}{
 		{"trend_public_a_" + suffix, false, &publicAuthorA},
 		{"trend_public_b_" + suffix, false, &publicAuthorB},
@@ -52,10 +52,10 @@ VALUES(gen_random_uuid(),$1,$2) RETURNING user_id::text`,
 	tag := "trendmomentum" + suffix
 	word := "wordmomentum" + suffix
 	posts := []struct {
-		author string
+		author     string
 		visibility string
-		content string
-		age string
+		content    string
+		age        string
 	}{
 		{publicAuthorA, "public", "#" + tag + " " + word, "1 hour"},
 		{publicAuthorB, "public", "#" + tag + " " + word, "30 hours"},
