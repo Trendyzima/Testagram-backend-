@@ -32,6 +32,56 @@ func TestParseHomeFeedMode(t *testing.T) {
 	}
 }
 
+func TestParseHomeFeedListID(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "omitted", input: "", want: ""},
+		{name: "valid canonical UUID", input: "550e8400-e29b-41d4-a716-446655440000", want: "550e8400-e29b-41d4-a716-446655440000"},
+		{name: "normalizes whitespace and case", input: "  550E8400-E29B-41D4-A716-446655440000  ", want: "550e8400-e29b-41d4-a716-446655440000"},
+		{name: "rejects malformed ID", input: "not-a-list", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseHomeFeedListID(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("parseHomeFeedListID(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Fatalf("parseHomeFeedListID(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHomeFeedCursorPreservesCustomListScope(t *testing.T) {
+	listID := "550e8400-e29b-41d4-a716-446655440000"
+	createdAt := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	encoded := encodeHomeFeedCursor(homeFeedCursor{
+		CreatedAt: createdAt, Source: homeFeedSourceNative,
+		ID: "550e8400-e29b-41d4-a716-446655440001", ListID: listID,
+	})
+	decoded, err := decodeHomeFeedCursor(encoded)
+	if err != nil {
+		t.Fatalf("decode custom-feed cursor: %v", err)
+	}
+	if decoded.ListID != listID {
+		t.Fatalf("cursor list scope = %q, want %q", decoded.ListID, listID)
+	}
+	if !homeFeedCursorMatchesList(decoded, listID) {
+		t.Fatal("cursor should match its originating custom feed")
+	}
+	if homeFeedCursorMatchesList(decoded, "") {
+		t.Fatal("custom-feed cursor must not be reusable on the global feed")
+	}
+	if !homeFeedCursorMatchesList(nil, listID) {
+		t.Fatal("first-page cursor should match any requested list")
+	}
+}
+
 func TestParseVideoOnly(t *testing.T) {
 	cases := []struct {
 		name    string

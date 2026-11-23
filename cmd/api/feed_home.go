@@ -23,6 +23,17 @@ func parseFollowingOnly(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
+func parseHomeFeedListID(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "", nil
+	}
+	if !socialUUIDPattern.MatchString(value) {
+		return "", errors.New("invalid list ID")
+	}
+	return value, nil
+}
+
 func parseVideoOnly(value string) (bool, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -52,6 +63,7 @@ type homeFeedCursor struct {
 	CreatedAt time.Time                 `json:"created_at,omitempty"`
 	Source    string                    `json:"source,omitempty"`
 	ID        string                    `json:"id,omitempty"`
+	ListID    string                    `json:"list_id,omitempty"`
 	Sources   []homeFeedSourcePosition  `json:"sources,omitempty"`
 	Pending   []homeFeedPendingIdentity `json:"pending,omitempty"`
 }
@@ -125,6 +137,10 @@ func validHomeFeedCursorIdentity(source, id string) bool {
 func nativeSingleHomeFeedCursor(cursor *homeFeedCursor) bool {
 	return cursor == nil || (cursor.Source == homeFeedSourceNative && cursor.ID != "" &&
 		!cursor.CreatedAt.IsZero() && len(cursor.Sources) == 0 && len(cursor.Pending) == 0)
+}
+
+func homeFeedCursorMatchesList(cursor *homeFeedCursor, listID string) bool {
+	return cursor == nil || cursor.ListID == listID
 }
 
 type homeFeedPost struct {
@@ -291,6 +307,11 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	mediaOnly := feedMode == "media"
 	discoverOnly := feedMode == "discover"
 	rankingEnabled := feedMode != "latest"
+	listID, listIDErr := parseHomeFeedListID(r.URL.Query().Get("list_id"))
+	if listIDErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_LIST_ID", "list_id must be a valid list UUID", requestID))
+		return
+	}
 	if discoverOnly && followingOnly {
 		writeJSON(w, http.StatusBadRequest, errorBody("CONFLICTING_FEED_FILTERS", "discover cannot be combined with following_only=true", requestID))
 		return
@@ -370,6 +391,10 @@ WHERE p.deleted_at IS NULL
        AND ma.visibility='public'
        AND ma.content_type LIKE 'video/%'
   ))
+  AND ($9::uuid IS NULL OR EXISTS (
+      SELECT 1 FROM testagram_local.social_list_members lm
+      WHERE lm.list_id=$9::uuid AND lm.member_user_id=p.author_id
+  ))
   AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
@@ -379,10 +404,36 @@ LIMIT $4`
 		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_SOURCE_MISMATCH", "This feed page cursor does not belong to the current native feed window", requestID))
 		return
 	}
+	if !homeFeedCursorMatchesList(cursor, listID) {
+		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_FEED_MISMATCH", "This cursor belongs to a different custom feed", requestID))
+		return
+	}
+	var listIDArg any
+	if listID != "" {
+		// A list is a saved, user-controlled author set. Private lists remain
+		// owner-only; public/unlisted lists are readable, but every post still
+		// passes the normal account, follow, block, mute and visibility gates.
+		var accessible bool
+		listCtx, listCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		err := s.db.QueryRow(listCtx, `SELECT true
+FROM testagram_local.social_lists
+WHERE id=$1::uuid AND deleted_at IS NULL
+  AND (owner_id=$2::uuid OR visibility IN ('public','unlisted'))`, listID, userID).Scan(&accessible)
+		listCancel()
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, errorBody("FEED_NOT_FOUND", "Custom feed is unavailable", requestID))
+			return
+		}
+		if !accessible {
+			writeJSON(w, http.StatusNotFound, errorBody("FEED_NOT_FOUND", "Custom feed is unavailable", requestID))
+			return
+		}
+		listIDArg = listID
+	}
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly, videoOnly, mediaOnly, discoverOnly)
+	rows, err := s.db.Query(queryCtx, query, userID, before, beforeID, limit+1, followingOnly, videoOnly, mediaOnly, discoverOnly, listIDArg)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
 		return
@@ -467,11 +518,11 @@ LIMIT $4`
 		// not from the rank order. This prevents score ordering from corrupting pagination.
 		// Re-fetch the chronological boundary using the last candidate timestamp and ID.
 		last := candidates[len(candidates)-1]
-		nextCursor = encodeHomeFeedCursor(homeFeedCursor{CreatedAt: last.CreatedAt, Source: homeFeedSourceNative, ID: last.ID})
+		nextCursor = encodeHomeFeedCursor(homeFeedCursor{CreatedAt: last.CreatedAt, Source: homeFeedSourceNative, ID: last.ID, ListID: listID})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
-		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode, "feed_mode": feedMode, "video_only": videoOnly},
+		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode, "feed_mode": feedMode, "video_only": videoOnly, "list_id": listID},
 		"error": nil, "request_id": requestID,
 	})
 }
