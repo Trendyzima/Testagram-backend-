@@ -75,6 +75,8 @@ WITH checks(check_name, ok) AS (VALUES
   ('native_registration_provisioning table', to_regclass('testagram_identity.native_registration_provisioning') IS NOT NULL),
   ('testagram_mail.outbox table', to_regclass('testagram_mail.outbox') IS NOT NULL),
   ('mail outbox encrypted payload and lifecycle columns', (SELECT count(*)=10 FROM information_schema.columns WHERE table_schema='testagram_mail' AND table_name='outbox' AND column_name IN ('payload_ciphertext','payload_nonce','status','attempts','available_at','lease_until','sent_at','provider_message_id','last_error_code','updated_at'))),
+  ('mail outbox social consent recipient column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_mail' AND table_name='outbox' AND column_name='preference_user_id')),
+  ('mail outbox social consent category column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_mail' AND table_name='outbox' AND column_name='preference_category')),
   ('testagram_app mail schema USAGE', COALESCE((SELECT has_schema_privilege(oid,'testagram_mail','USAGE') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('testagram_app mail outbox SELECT', COALESCE((SELECT has_table_privilege(oid,'testagram_mail.outbox','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('testagram_app mail outbox INSERT', COALESCE((SELECT has_table_privilege(oid,'testagram_mail.outbox','INSERT') FROM pg_roles WHERE rolname='testagram_app'),false)),
@@ -173,6 +175,8 @@ schema_ready() {
          AND (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_approvals'\'' AND column_name IN ('\''webauthn_rpid'\'','\''webauthn_credential_id'\''))
         AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
         AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_mail'\'' AND table_name='\''outbox'\'' AND column_name='\''preference_user_id'\'')
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_mail'\'' AND table_name='\''outbox'\'' AND column_name='\''preference_category'\'')
         AND (
           SELECT count(*) = 10
           FROM information_schema.columns
