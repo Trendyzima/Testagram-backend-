@@ -50,6 +50,7 @@ for migration in \
   migrations/20261115_native_identity_status_access.sql \
   migrations/20261019_dual_backend_replication.sql \
   migrations/20261019_testagram_local_accounts_posts.sql \
+  migrations/20261106_social_core.sql \
   migrations/20261115_testagram_native_auth_cutover_foundation.sql \
   migrations/20261116_native_approved_identity_provisioning.sql \
   migrations/20261116_native_auth_runtime_grants.sql \
@@ -98,6 +99,8 @@ psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
+psql_ci < migrations/20261106_social_core.sql
+psql_ci < migrations/20261106_social_core.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
