@@ -171,7 +171,7 @@ func (s *service) advancedSearchAPI(w http.ResponseWriter, r *http.Request) {
 	if kind == "all" || kind == "posts" {
 		orderBy := "p.created_at DESC,p.id DESC"
 		if filters.Sort == "popular" {
-			orderBy = "(p.likes_count + 2*p.replies_count + 2*p.reposts_count) DESC,p.created_at DESC,p.id DESC"
+			orderBy = "(p.likes_count::bigint + 2*p.replies_count::bigint + 2*p.reposts_count::bigint) DESC,p.created_at DESC,p.id DESC"
 		}
 		postsSQL := `SELECT p.id::text,p.author_id::text,p.text,p.visibility,p.media_ids,
 			p.language,p.created_at,p.likes_count,p.replies_count,p.reposts_count,
