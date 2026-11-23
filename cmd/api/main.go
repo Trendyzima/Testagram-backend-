@@ -621,6 +621,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/social/notifications", s.socialNotifications)
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("POST /internal/mail/events", s.cloudflareMailEvent)
+	mux.HandleFunc("GET /api/email/unsubscribe", s.socialEmailUnsubscribe)
+	mux.HandleFunc("POST /api/email/unsubscribe", s.socialEmailUnsubscribe)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
