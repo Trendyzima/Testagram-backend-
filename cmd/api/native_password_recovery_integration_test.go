@@ -144,6 +144,10 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
 
 	svc := &service{db: db}
+	invalidToken, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	oldSession, err := issueNativeSession(ctx, db, userID, email, version, "recovery-integration", "192.0.2.11")
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +180,7 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 	// Invalid links are rejected before Argon2id runs. Repeated attempts against
 	// one capability are bounded independently of the caller's IP bucket.
 	for attempt := 0; attempt < 3; attempt++ {
-		if got := reset("invalid-recovery-capability-00000000000000000000000000000000", "NewRecoveryPassword-456!"); got.Code != http.StatusBadRequest {
+		if got := reset(invalidToken, "NewRecoveryPassword-456!"); got.Code != http.StatusBadRequest {
 			t.Fatalf("invalid reset attempt %d status=%d body=%s", attempt+1, got.Code, got.Body.String())
 		}
 	}
