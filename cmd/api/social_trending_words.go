@@ -48,9 +48,10 @@ func (s *service) socialTrendingWords(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	rows, err := s.db.Query(ctx, `
 SELECT lower(parts[1]) AS word,
-       (count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '7 days'))::bigint AS posts_count,
-       (count(DISTINCT p.id) FILTER (WHERE p.created_at < now()-interval '7 days'))::bigint AS previous_posts_count,
-       max(p.created_at) FILTER (WHERE p.created_at >= now()-interval '7 days') AS last_used_at
+       count(DISTINCT p.id)::bigint AS posts_count,
+       count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '24 hours')::bigint AS recent_posts_count,
+       count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '48 hours' AND p.created_at < now()-interval '24 hours')::bigint AS previous_posts_count,
+       max(p.created_at) AS last_used_at
 FROM testagram_local.posts p
 JOIN testagram_local.accounts a ON a.user_id=p.author_id
 CROSS JOIN LATERAL regexp_matches(lower(p.text),'([[:alpha:]][[:alnum:]_]{2,})','g') AS extracted(parts)
@@ -58,7 +59,7 @@ WHERE p.deleted_at IS NULL
   AND p.visibility='public'
   AND a.account_status='active'
   AND NOT a.protected_account
-  AND p.created_at >= now()-interval '14 days'
+  AND p.created_at >= now()-interval '7 days'
   AND lower(parts[1]) <> ALL($1::text[])
   AND lower(parts[1]) !~ '^[0-9_]+`, trendingWordStopwords)
 	if err != nil {
@@ -71,21 +72,21 @@ WHERE p.deleted_at IS NULL
 	fallback := make([]map[string]any, 0, limit)
 	for rows.Next() {
 		var word string
-		var count, previousCount int64
+		var count, recentCount, previousCount int64
 		var lastUsed time.Time
-		if err := rows.Scan(&word, &count, &previousCount, &lastUsed); err != nil {
+		if err := rows.Scan(&word, &count, &recentCount, &previousCount, &lastUsed); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("TRENDING_WORDS_FAILED", "Trending words could not be decoded", requestID))
 			return
 		}
 		candidates = append(candidates, algorithmclient.TopicCandidate{
 			Tag: word, PostsCount: count, LastUsedAt: lastUsed,
-			Momentum: trendMomentum(count, previousCount),
+			Momentum: trendMomentum(recentCount, previousCount),
 		})
 		if len(fallback) < limit {
 			fallback = append(fallback, map[string]any{
 				"word": word, "posts_count": count,
 				"last_used_at": lastUsed.UTC().Format(time.RFC3339Nano),
-				"momentum": trendMomentum(count, previousCount),
+				"momentum": trendMomentum(recentCount, previousCount),
 			})
 		}
 	}
