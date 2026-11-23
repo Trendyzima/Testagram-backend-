@@ -139,6 +139,10 @@ func nativeSingleHomeFeedCursor(cursor *homeFeedCursor) bool {
 		!cursor.CreatedAt.IsZero() && len(cursor.Sources) == 0 && len(cursor.Pending) == 0)
 }
 
+func homeFeedCursorMatchesList(cursor *homeFeedCursor, listID string) bool {
+	return cursor == nil || cursor.ListID == listID
+}
+
 type homeFeedPost struct {
 	ID                string            `json:"id"`
 	UserID            string            `json:"user_id"`
@@ -400,7 +404,7 @@ LIMIT $4`
 		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_SOURCE_MISMATCH", "This feed page cursor does not belong to the current native feed window", requestID))
 		return
 	}
-	if cursor != nil && cursor.ListID != listID {
+	if !homeFeedCursorMatchesList(cursor, listID) {
 		writeJSON(w, http.StatusBadRequest, errorBody("CURSOR_FEED_MISMATCH", "This cursor belongs to a different custom feed", requestID))
 		return
 	}
@@ -409,19 +413,21 @@ LIMIT $4`
 		// A list is a saved, user-controlled author set. Private lists remain
 		// owner-only; public/unlisted lists are readable, but every post still
 		// passes the normal account, follow, block, mute and visibility gates.
-		var ownerID, visibility string
+		var accessible bool
 		listCtx, listCancel := context.WithTimeout(r.Context(), 2*time.Second)
-		err := s.db.QueryRow(listCtx, `SELECT owner_id::text,visibility
+		err := s.db.QueryRow(listCtx, `SELECT true
 FROM testagram_local.social_lists
 WHERE id=$1::uuid AND deleted_at IS NULL
-  AND (owner_id=$2::uuid OR visibility IN ('public','unlisted'))`, listID, userID).Scan(&ownerID, &visibility)
+  AND (owner_id=$2::uuid OR visibility IN ('public','unlisted'))`, listID, userID).Scan(&accessible)
 		listCancel()
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, errorBody("FEED_NOT_FOUND", "Custom feed is unavailable", requestID))
 			return
 		}
-		_ = ownerID
-		_ = visibility
+		if !accessible {
+			writeJSON(w, http.StatusNotFound, errorBody("FEED_NOT_FOUND", "Custom feed is unavailable", requestID))
+			return
+		}
 		listIDArg = listID
 	}
 	if cursor != nil {
