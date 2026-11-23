@@ -308,7 +308,10 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 || resp.StatusCode >= 500 {
 			return "", ambiguousMailError{cause: fmt.Errorf("unreadable provider response (HTTP %d)", resp.StatusCode)}
 		}
-		return "", fmt.Errorf("Cloudflare Email Sending returned an unreadable rejection (HTTP %d)", resp.StatusCode)
+		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
+			return "", fmt.Errorf("Cloudflare Email Sending temporarily rejected an unreadable request (HTTP %d)", resp.StatusCode)
+		}
+		return "", permanentMailError{code: "CLOUDFLARE_REQUEST_REJECTED"}
 	}
 	if resp.StatusCode >= 500 {
 		return "", ambiguousMailError{cause: fmt.Errorf("provider server error (HTTP %d)", resp.StatusCode)}
