@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/mail"
 	"os"
 	"strings"
 	"time"
@@ -86,6 +87,10 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid event fields", http.StatusBadRequest)
 		return
 	}
+	if _, err := mail.ParseAddress(event.Payload.Recipient); err != nil {
+		http.Error(w, "invalid recipient", http.StatusBadRequest)
+		return
+	}
 	fingerprint, err := mailRecipientFingerprint(event.Payload.Recipient)
 	if err != nil {
 		http.Error(w, "mail event service unavailable", http.StatusServiceUnavailable)
@@ -124,7 +129,7 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 	_, err := s.db.Exec(ctx, `
 		WITH candidates AS (
 			SELECT e.id,e.provider_event_id,e.provider_message_id,e.event_type,
-			       e.recipient_fingerprint,e.bounce_type
+			       e.recipient_fingerprint,e.bounce_type,e.rejection_reason,e.rejection_party
 			FROM testagram_mail.delivery_events e
 			WHERE e.processed_at IS NULL
 			ORDER BY e.received_at,e.id
@@ -155,7 +160,7 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 			WHERE o.provider_message_id=c.provider_message_id
 			  AND o.recipient_fingerprint=c.recipient_fingerprint
 			  
-			RETURNING c.id,c.provider_event_id,c.event_type,c.recipient_fingerprint,c.bounce_type
+			RETURNING c.id,c.provider_event_id,c.event_type,c.recipient_fingerprint,c.bounce_type,c.rejection_reason,c.rejection_party
 		),
 		suppressions AS (
 			INSERT INTO testagram_mail.recipient_suppressions(recipient_fingerprint,reason,source_event_id)
