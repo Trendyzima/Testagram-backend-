@@ -296,11 +296,7 @@ LIMIT 200`, nullableUUID(viewerID))
 		if isFollowing {
 			affinity = 1
 		}
-		momentum := 0.0
-		if recentCount > previousCount {
-			growth := float64(recentCount-previousCount) / float64(maxInt64(previousCount, 1))
-			momentum = growth / (1 + growth)
-		}
+		momentum := socialTopicMomentum(recentCount, previousCount)
 		topicCandidates = append(topicCandidates, algorithmclient.TopicCandidate{
 			Tag: tag, PostsCount: count, LastUsedAt: lastUsed,
 			InterestAffinity: affinity, Momentum: momentum,
@@ -350,7 +346,15 @@ func nullableUUID(value string) any {
 }
 
 
-func maxInt64(a, b int64) int64 {
-	if a > b { return a }
-	return b
+
+func socialTopicMomentum(recentCount, previousCount int64) float64 {
+	if recentCount <= previousCount {
+		return 0
+	}
+	baseline := previousCount
+	if baseline < 1 {
+		baseline = 1
+	}
+	growth := float64(recentCount-previousCount) / float64(baseline)
+	return growth / (1 + growth)
 }
