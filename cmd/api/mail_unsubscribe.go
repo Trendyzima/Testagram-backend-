@@ -32,6 +32,7 @@ func (s *service) socialEmailUnsubscribe(w http.ResponseWriter, r *http.Request)
 	}
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
 	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid unsubscribe request", http.StatusBadRequest)
 			return
