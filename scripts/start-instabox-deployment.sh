@@ -44,7 +44,8 @@ if [[ "$DATA_CENTRE_MEDIA_ENABLED" != "true" ]]; then
 fi
 if [[ "$TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED" == "true" ]]; then
   [[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" ]] || { echo "::error::Identity review cannot be enabled without the private Data Centre evidence-storage profile."; exit 1; }
-  [[ ${#TESTAGRAM_WEBAUTHN_READINESS_TOKEN:-0} -ge 32 ]] || { echo "::error::Identity review requires TESTAGRAM_WEBAUTHN_READINESS_TOKEN (32+ characters)."; exit 1; }
+  readiness_token="${TESTAGRAM_WEBAUTHN_READINESS_TOKEN:-}"
+  [[ ${#readiness_token} -ge 32 ]] || { echo "::error::Identity review requires TESTAGRAM_WEBAUTHN_READINESS_TOKEN (32+ characters)."; exit 1; }
   [[ -n "${TESTAGRAM_WEBAUTHN_RPID:-}" ]] || { echo "::error::Identity review requires TESTAGRAM_WEBAUTHN_RPID."; exit 1; }
   [[ "${TESTAGRAM_WEBAUTHN_ORIGINS:-}" == https://* ]] || { echo "::error::Identity review requires HTTPS TESTAGRAM_WEBAUTHN_ORIGINS."; exit 1; }
 fi
