@@ -76,6 +76,29 @@ requires an explicit confirmation phrase, applies migrations 022 and 024, and ve
 and checksums in the same database. Never edit an already-applied migration;
 add a new forward-only migration instead.
 
+## Social platform product foundation migration
+
+The additive social-platform foundation migration creates curated Lists, private
+post drafts, scheduled-post commands, ephemeral Stories, safety reports,
+moderation actions and appeals. It does not publish content or start a scheduler.
+The API must continue enforcing native authentication and privacy; scheduled
+publishing must use the same moderation and idempotency path as interactive
+publishing.
+
+For an existing PostgreSQL volume, Docker init scripts do not rerun. Apply this
+migration only after reviewing the SQL and confirming a recent restorable backup:
+
+```sh
+./apply-social-platform-product-migration.sh
+```
+
+The operator script waits for PostgreSQL, creates a custom-format database
+backup, verifies the archive and SHA-256 checksum, and requires the exact
+`APPLY-TESTAGRAM-SOCIAL-PLATFORM-FOUNDATION` confirmation before applying
+migration 063. It is idempotent when all expected tables already exist. Retain
+the backup until the deployed API and Flutter acceptance tests pass. Do not
+manually create the tables or bypass the backup/confirmation guard.
+
 ## Testagram Wallet and M-Pesa
 
 The native wallet is KES-only at launch. It supports internal wallet transfers and Safaricom STK Push deposits. A top-up is credited only after the public callback is checked against Safaricom's STK query API and the Backend commits the wallet ledger entry.
