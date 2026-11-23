@@ -166,11 +166,9 @@ export default {
   async queue(batch, env) {
     const origin = resolveOrigin(env.APP_ORIGIN);
     const edgeToken = env.EDGE_PROXY_SHARED_TOKEN;
-    const eventsToken = env.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN;
     if (
       !origin ||
-      !/^[a-f0-9]{64}$/i.test(edgeToken || "") ||
-      !/^[a-f0-9]{64}$/i.test(eventsToken || "")
+      !/^[a-f0-9]{64}$/i.test(edgeToken || "")
     ) {
       for (const message of batch.messages) message.retry();
       return;
@@ -185,7 +183,7 @@ export default {
         const response = await fetch(endpoint, {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${eventsToken}`,
+            "Authorization": `Bearer ${edgeToken}`,
             "Content-Type": "application/json",
             "X-Testagram-Edge-Token": edgeToken,
           },
