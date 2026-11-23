@@ -113,14 +113,23 @@ func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
 		INSERT INTO testagram_local.email_notification_preferences(
 			user_id,new_follower_email_enabled,new_post_email_enabled,
 			new_follower_consent_at,new_post_consent_at
-		) VALUES($1::uuid,TRUE,FALSE,now(),NULL)
+		) VALUES($1::uuid,FALSE,FALSE)
 		ON CONFLICT(user_id) DO UPDATE SET
-			new_follower_email_enabled=TRUE,new_follower_consent_at=now(),
-			new_follower_consent_withdrawn_at=NULL
+			new_follower_email_enabled=FALSE,new_post_email_enabled=FALSE,
+			new_follower_consent_at=NULL,new_follower_consent_withdrawn_at=NULL,
+			new_post_consent_at=NULL,new_post_consent_withdrawn_at=NULL
 	`, userID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	enabled, disabled := true, false
+	tx, err := db.Begin(ctx)
+	if err != nil { t.Fatal(err) }
+	if err := upsertSocialEmailPreferences(ctx, tx, userID, socialEmailPreferenceInput{NewFollowerEmailEnabled: &enabled, NewPostEmailEnabled: &disabled}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("first-time partial opt-in failed: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil { t.Fatal(err) }
 
 	active, err := socialMailConsentActive(ctx, db, userID, "new_follower")
 	if err != nil || !active {
