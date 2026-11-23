@@ -161,8 +161,8 @@ jobs:
           if "@www_frontend header X-Forwarded-Host www.testagram.site" not in caddyfile or "reverse_proxy flutter-web:8080" not in caddyfile:
               raise SystemExit("Caddy must serve www.testagram.site through the private Flutter web origin.")
           health = cdn.get("healthcheck", {}).get("test", [])
-          if "/healthcheck" not in health:
-              raise SystemExit("Go CDN healthcheck must use the scratch-compatible static probe.")
+          if "/app/healthcheck" not in health:
+              raise SystemExit("Go CDN healthcheck must use the image-baked /app/healthcheck probe.")
           api_env = services["api"].get("environment", {})
           for key in ("CDN_ORIGIN_AUTH_TOKEN", "CDN_MEDIA_ASSERTION_SECRET", "CDN_MEDIA_BASE_URL", "CDN_PURGE_URL", "CDN_PURGE_TOKEN"):
               if key not in api_env:
