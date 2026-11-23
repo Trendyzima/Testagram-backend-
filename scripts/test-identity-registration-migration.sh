@@ -875,7 +875,7 @@ echo "Native identity migrations, evidence-access audit and registration invaria
 
 # Exercise Cloudflare lifecycle reconciliation, duplicate-event protection, complaint suppression,
 # and RFC one-click social unsubscribe against the isolated PostgreSQL schema.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient|TestSocialEmailUnsubscribeGetIsSafeAndPostWithdrawsConsent)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient|TestSocialEmailUnsubscribeGetIsSafeAndPostWithdrawsConsent|TestMailWorkerRetriesDefiniteFailureAndPreservesPayload|TestMailWorkerQuarantinesAmbiguousOutcomeWithoutResending)$' -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
