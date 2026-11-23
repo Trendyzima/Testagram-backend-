@@ -143,7 +143,7 @@ func enqueueFollowActivityEmail(ctx context.Context, tx pgx.Tx, actorID, recipie
 
 
 func createFollowerPostNotifications(ctx context.Context, tx pgx.Tx, authorID, postID, visibility string) error {
-	if visibility == "private" {
+	if visibility != "public" && visibility != "followers" {
 		return nil
 	}
 	_, err := tx.Exec(ctx, `
