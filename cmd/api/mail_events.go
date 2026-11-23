@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/mail"
-	"net/mail"
 	"os"
 	"strings"
 	"time"
