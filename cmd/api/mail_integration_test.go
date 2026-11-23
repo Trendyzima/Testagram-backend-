@@ -111,8 +111,7 @@ func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
 	}()
 	_, err = db.Exec(ctx, `
 		INSERT INTO testagram_local.email_notification_preferences(
-			user_id,new_follower_email_enabled,new_post_email_enabled,
-			new_follower_consent_at,new_post_consent_at
+			user_id,new_follower_email_enabled,new_post_email_enabled
 		) VALUES($1::uuid,FALSE,FALSE)
 		ON CONFLICT(user_id) DO UPDATE SET
 			new_follower_email_enabled=FALSE,new_post_email_enabled=FALSE,
