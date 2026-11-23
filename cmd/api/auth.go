@@ -377,6 +377,9 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		if emailErr == nil {
 			allowed, rateErr := s.authRateAllowed(ctx, "verify-resend-ip", ip, 5)
 			if rateErr == nil && allowed {
+				allowed, rateErr = s.authRateAllowed(ctx, "verify-resend-email", email, 3)
+			}
+			if rateErr == nil && allowed {
 				token, tokenErr := authRandomToken()
 				otp, otpErr := authRandomOTP()
 				otpHash, otpHashErr := authOTPHash(otp)
