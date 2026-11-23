@@ -68,7 +68,7 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
         deploy_script = (ROOT / "scripts" / "start-instabox-deployment.sh").read_text(encoding="utf-8")
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertNotIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", deploy_script)
-        self.assertIn("EDGE_PROXY_SHARED_TOKEN: ${EDGE_PROXY_SHARED_TOKEN:?Set EDGE_PROXY_SHARED_TOKEN in .env}", compose)
+        self.assertIn("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${EDGE_PROXY_SHARED_TOKEN:?Set EDGE_PROXY_SHARED_TOKEN in .env}", compose)
         self.assertNotIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", WORKFLOW)
 
     def test_caddy_api_ingress_uses_the_shared_token_not_proxy_rewritten_host_metadata(self):
