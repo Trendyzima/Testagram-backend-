@@ -117,6 +117,9 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 			body["subject"] != "Password reset" || body["html"] != "<p>Reset</p>" || body["text"] != "Reset text" {
 			t.Errorf("unexpected Cloudflare request payload: %#v", body)
 		}
+		if headers, ok := body["headers"].(map[string]any); !ok || headers["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+			t.Errorf("Cloudflare request did not include RFC 8058 unsubscribe headers: %#v", body["headers"])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":{"message_id":"cf-message-123","delivered":["person@example.test"],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}`))
 	}))
@@ -125,6 +128,7 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 	client := &http.Client{Timeout: time.Second}
 	messageID, err := sendCloudflareMailRequest(context.Background(), client, server.URL+"/accounts/0123456789abcdef0123456789abcdef/email/sending/send", "test-token", "no-reply@testagram.site", queuedMail{
 		Recipient: "person@example.test", Subject: "Password reset", HTML: "<p>Reset</p>", Text: "Reset text",
+		Headers: map[string]string{"List-Unsubscribe":"<https://testagram.site/api/email/unsubscribe?token=abc>","List-Unsubscribe-Post":"List-Unsubscribe=One-Click"},
 	})
 	if err != nil {
 		t.Fatal(err)
