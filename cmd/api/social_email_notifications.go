@@ -18,15 +18,16 @@ type socialEmailPreferenceInput struct {
 }
 
 func (s *service) writeSocialEmailPreferences(w http.ResponseWriter, r *http.Request, userID, requestID string) {
-	var followEmails, postEmails bool
+	var followEmails, postEmails, promptRequired bool
 	var version string
 	err := s.db.QueryRow(r.Context(), `
 		SELECT COALESCE(p.new_follower_email_enabled,FALSE),
 		       COALESCE(p.new_post_email_enabled,FALSE),
-		       COALESCE(p.consent_version,$2)
+		       COALESCE(p.consent_version,$2),
+		       (p.user_id IS NULL)
 		FROM (SELECT $1::uuid AS user_id) owner
 		LEFT JOIN testagram_local.email_notification_preferences p USING(user_id)
-	`, userID, socialEmailConsentVersion).Scan(&followEmails, &postEmails, &version)
+	`, userID, socialEmailConsentVersion).Scan(&followEmails, &postEmails, &version, &promptRequired)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_PREFERENCES_UNAVAILABLE", "Email preferences could not be loaded", requestID))
 		return
@@ -37,6 +38,7 @@ func (s *service) writeSocialEmailPreferences(w http.ResponseWriter, r *http.Req
 			"new_follower_email_enabled": followEmails,
 			"new_post_email_enabled": postEmails,
 			"consent_version": version,
+			"consent_prompt_required": promptRequired,
 		},
 		"error": nil, "request_id": requestID,
 	})
