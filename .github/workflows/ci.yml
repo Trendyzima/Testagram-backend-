@@ -702,8 +702,12 @@ jobs:
           assert "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" not in deploy_workflow + deploy_script + compose, "the retired environment switch must not bypass real staff WebAuthn readiness"
           identity_intake = Path("cmd/api/identity_native.go").read_text()
           service_definition = Path("cmd/api/main.go").read_text()
-          assert "if !s.identityReviewWebAuthnReady" in identity_intake and "IDENTITY_REVIEW_MFA_UNAVAILABLE" in identity_intake, "new identity intake must remain fail-closed until real WebAuthn staff review is implemented"
+          identity_review = Path("cmd/api/identity_review.go").read_text()
+          review_readiness_test = Path("cmd/api/identity_review_webauthn_readiness_integration_test.go").read_text()
+          assert "if !s.identityReviewWebAuthnReady" not in identity_intake and "IDENTITY_REVIEW_MFA_UNAVAILABLE" not in identity_intake, "public identity intake must not be blocked by staff review WebAuthn readiness"
           assert "identityReviewWebAuthnReady" in service_definition and "identityReviewWebAuthnReady:" not in service_definition, "production Backend service must not enable the WebAuthn release capability through configuration"
+          assert "func (s *service) identityReviewer" in identity_review and "requireLiveIdentityReviewMFA(claims)" in identity_review and "func (s *service) identityReviewDecision" in identity_review, "privileged identity review and decisions must retain live credential-bound staff MFA"
+          assert "TestIdentityReviewWebAuthnReadinessRequiresIndependentCredentialedStaff" in review_readiness_test, "staff review readiness must retain its independent credential and Admin Console attestation integration test"
           assert "identity registration remains fail-closed" in deploy_script and "Core service deployment may continue." in deploy_script, "core deployment may proceed but public registration must remain gated until the private Data Centre evidence profile is ready"
           assert "Identity registration requires TESTAGRAM_TERMS_VERSION" in deploy_script and "Identity registration requires TESTAGRAM_PRIVACY_VERSION" in deploy_script, "public registration must have explicit policy versions"
           assert 'write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script and 'write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"' in deploy_script, "the R2 metadata bucket must reach both Backend and Data Centre environment files"
