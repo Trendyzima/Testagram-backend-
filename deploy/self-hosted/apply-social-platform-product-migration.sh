@@ -22,7 +22,11 @@ done
 
 schema_ready() {
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
-    SELECT to_regclass('\''testagram_local.social_lists'\'') IS NOT NULL
+    SELECT to_regclass('\''testagram_local.topics'\'') IS NOT NULL
+       AND to_regclass('\''testagram_local.questions'\'') IS NOT NULL
+       AND to_regclass('\''testagram_local.answers'\'') IS NOT NULL
+       AND to_regclass('\''testagram_local.answer_revisions'\'') IS NOT NULL
+       AND to_regclass('\''testagram_local.social_lists'\'') IS NOT NULL
        AND to_regclass('\''testagram_local.social_list_members'\'') IS NOT NULL
        AND to_regclass('\''testagram_local.social_list_posts'\'') IS NOT NULL
        AND to_regclass('\''testagram_local.post_drafts'\'') IS NOT NULL
