@@ -411,13 +411,3 @@ func TestMailOutboxInsertRollsBackWithCallerTransaction(t *testing.T) {
 		t.Fatalf("outbox rows after rollback = %d, want %d", after, before)
 	}
 }
-
-
-func mustMailFingerprint(t *testing.T, recipient string) []byte {
-	t.Helper()
-	fingerprint, err := mailRecipientFingerprint(recipient)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return fingerprint
-}
