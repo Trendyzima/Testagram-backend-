@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var socialMentionPattern = regexp.MustCompile(`(^|[^A-Za-z0-9_.])@([A-Za-z0-9_.]{2,30})($|[^A-Za-z0-9_.])`)
+var socialMentionPattern = regexp.MustCompile(`(^|[^A-Za-z0-9_.@])@([A-Za-z0-9_.]{2,30})($|[^A-Za-z0-9_.])`)
 
 // extractSocialMentionHandles returns normalized, unique local handles. It does
 // not resolve identities; the transaction below resolves them against the
