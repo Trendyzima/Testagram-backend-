@@ -96,7 +96,7 @@ A successful REST API response means Cloudflare accepted or queued the recipient
 - Social notification email is disabled by default and requires separate, per-category opt-in. The worker checks the current preference when claiming and again immediately before sending. Withdrawal cancels queued messages and clears their encrypted payloads. A message already in an external provider request cannot be recalled.
 - Keep the encryption key stable across deployments. Losing it makes pending encrypted messages unreadable.
 - Monitor dead-letter counts and provider acceptance; investigate ambiguous network failures because automatic retry can duplicate a message.
-- Keep registration enablement and the two-independent-reviewer approval gate unchanged.
+- Ordinary native account registration is self-service: email verification is required, but no administrator identity review or two-person approval is required to create a standard account. Keep separate staff/privileged-action approval controls intact; they must not gate ordinary signup.
 - No production deployment or DNS change is part of the code pull request.
 
 
