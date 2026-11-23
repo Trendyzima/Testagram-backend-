@@ -48,8 +48,8 @@ func (s *service) socialTrendingWords(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	rows, err := s.db.Query(ctx, `
 SELECT lower(parts[1]) AS word,
-       count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '7 days')::bigint AS posts_count,
-       count(DISTINCT p.id) FILTER (WHERE p.created_at < now()-interval '7 days')::bigint AS previous_posts_count,
+       (count(DISTINCT p.id) FILTER (WHERE p.created_at >= now()-interval '7 days'))::bigint AS posts_count,
+       (count(DISTINCT p.id) FILTER (WHERE p.created_at < now()-interval '7 days'))::bigint AS previous_posts_count,
        max(p.created_at) FILTER (WHERE p.created_at >= now()-interval '7 days') AS last_used_at
 FROM testagram_local.posts p
 JOIN testagram_local.accounts a ON a.user_id=p.author_id
