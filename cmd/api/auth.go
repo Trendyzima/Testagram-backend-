@@ -13,8 +13,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/mail"
 	"math/big"
+	"net/mail"
 	"net/url"
 	"os"
 	"regexp"
@@ -74,7 +74,9 @@ func authRandomToken() (string, error) {
 
 func authRandomOTP() (string, error) {
 	value, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("%06d", value.Int64()), nil
 }
 
