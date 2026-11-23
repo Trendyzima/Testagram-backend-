@@ -143,6 +143,19 @@ func homeFeedCursorMatchesList(cursor *homeFeedCursor, listID string) bool {
 	return cursor == nil || cursor.ListID == listID
 }
 
+func applyHomeFeedListFilter(query string) (string, error) {
+	cursorPredicate := "  AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))"
+	if !strings.Contains(query, cursorPredicate) {
+		return "", errors.New("home feed query is missing its cursor predicate")
+	}
+	listPredicate := `  AND EXISTS (
+      SELECT 1 FROM testagram_local.social_list_members lm
+      WHERE lm.list_id=$9::uuid AND lm.member_user_id=p.author_id
+  )
+` + cursorPredicate
+	return strings.Replace(query, cursorPredicate, listPredicate, 1), nil
+}
+
 type homeFeedPost struct {
 	ID                string            `json:"id"`
 	UserID            string            `json:"user_id"`
@@ -395,17 +408,13 @@ WHERE p.deleted_at IS NULL
 ORDER BY p.created_at DESC, p.id DESC
 LIMIT $4`
 	if listID != "" {
-		// Keep the global feed independent of the optional Lists schema so an
-		// existing database remains healthy until the additive Lists migration
-		// is explicitly applied. The custom-feed branch is activated only after
-		// the List access check above has succeeded.
-		const cursorPredicate = "  AND ($2::timestamptz IS NULL OR (p.created_at,p.id) < ($2::timestamptz,$3::uuid))"
-		listPredicate := `  AND EXISTS (
-      SELECT 1 FROM testagram_local.social_list_members lm
-      WHERE lm.list_id=$9::uuid AND lm.member_user_id=p.author_id
-  )
-` + cursorPredicate
-		query = strings.Replace(query, cursorPredicate, listPredicate, 1)
+		// Keep the global feed independent of the optional Lists schema until
+		// its additive migration has been explicitly applied.
+		query, err = applyHomeFeedListFilter(query)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorBody("FEED_QUERY_INVALID", "Feed query could not be prepared", requestID))
+			return
+		}
 	}
 	var before any
 	var beforeID any
