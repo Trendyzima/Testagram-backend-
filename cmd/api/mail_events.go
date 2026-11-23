@@ -188,7 +188,7 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 			       provider_event_id
 			FROM matched
 			WHERE event_type='cf.email.sending.message.complained'
-			   OR (event_type='cf.email.sending.message.rejected' AND (rejection_party='recipient' OR rejection_reason='spam'))
+			   OR (event_type='cf.email.sending.message.rejected' AND rejection_party='recipient')
 			   OR (event_type='cf.email.sending.message.bounced' AND bounce_type='hard')
 			ON CONFLICT(recipient_fingerprint) DO NOTHING
 			RETURNING recipient_fingerprint
