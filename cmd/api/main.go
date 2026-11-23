@@ -53,28 +53,28 @@ type upstreamMetric struct {
 }
 
 type service struct {
-	db                        *pgxpool.Pool
+	db                         *pgxpool.Pool
 	edgeRecoveryReadinessToken string
-	authEmailSender           func(context.Context, string, string, string) error
-	moderation                moderationpkg.ContentModeration
-	metricsMu                 sync.Mutex
-	routeMetrics              map[string]*requestMetric
-	capabilityMetrics         map[string]*requestMetric
-	upstreamMetrics           map[string]*upstreamMetric
-	requests                  atomic.Uint64
-	rateLimited               atomic.Uint64
-	capabilityRateLimitErrors atomic.Uint64
-	algorithmRequests         atomic.Uint64
-	algorithmFailures         atomic.Uint64
-	federationInternalToken   string
-	federationOutbox          *federationoutbox.Store
-	federationClient          *federationclient.Client
-	federationPublicBaseURL   string
-	upstream                  *http.Client
-	media                     *media.Signer
-	mediaIntentFactory        *media.IntentFactory
-	dataCentreMedia           *datacentreclient.Client
-	identityEvidenceMedia     identityEvidenceMediaClient
+	authEmailSender            func(context.Context, string, string, string) error
+	moderation                 moderationpkg.ContentModeration
+	metricsMu                  sync.Mutex
+	routeMetrics               map[string]*requestMetric
+	capabilityMetrics          map[string]*requestMetric
+	upstreamMetrics            map[string]*upstreamMetric
+	requests                   atomic.Uint64
+	rateLimited                atomic.Uint64
+	capabilityRateLimitErrors  atomic.Uint64
+	algorithmRequests          atomic.Uint64
+	algorithmFailures          atomic.Uint64
+	federationInternalToken    string
+	federationOutbox           *federationoutbox.Store
+	federationClient           *federationclient.Client
+	federationPublicBaseURL    string
+	upstream                   *http.Client
+	media                      *media.Signer
+	mediaIntentFactory         *media.IntentFactory
+	dataCentreMedia            *datacentreclient.Client
+	identityEvidenceMedia      identityEvidenceMediaClient
 	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
 	identityReviewWebAuthnReady         bool
 	identityReviewWebAuthnPrerequisites func(context.Context) bool
