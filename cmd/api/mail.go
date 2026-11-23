@@ -284,6 +284,24 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
+	// Remove social messages whose consent is absent or has been withdrawn.
+	// This also handles deleted accounts and stale queue rows from older builds.
+	if _, err := s.db.Exec(ctx, `
+		UPDATE testagram_mail.outbox o
+		SET status='dead',lease_until=NULL,last_error_code='CONSENT_WITHDRAWN',
+		    payload_ciphertext='',payload_nonce='',updated_at=now()
+		WHERE o.status='pending' AND o.preference_user_id IS NOT NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM testagram_local.email_notification_preferences p
+		    WHERE p.user_id=o.preference_user_id AND (
+		      (o.preference_category='new_follower' AND p.new_follower_email_enabled=TRUE)
+		      OR (o.preference_category='new_post' AND p.new_post_email_enabled=TRUE)
+		    )
+		  )
+	`); err != nil {
+		return false, err
+	}
+
 	// A worker may have crashed after Cloudflare accepted a request but before
 	// recording the response. Never reclaim an expired sending lease: its
 	// provider outcome is unknowable and automatic resend could duplicate mail.
