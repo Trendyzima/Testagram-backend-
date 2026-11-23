@@ -66,4 +66,4 @@ fi
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$knowledge_migration_file"
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$social_migration_file"
 [[ "$(schema_ready)" == "t" ]] || { echo "Social platform foundation schema verification failed." >&2; exit 1; }
-echo "Social platform foundation migration applied and verified. Retain backup until Backend and Flutter acceptance tests pass."
+echo "Knowledge engine and social platform foundation migrations applied and verified. Retain backup until Backend and Flutter acceptance tests pass."
