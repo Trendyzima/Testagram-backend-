@@ -399,3 +399,134 @@ func TestMailOutboxInsertRollsBackWithCallerTransaction(t *testing.T) {
 		t.Fatalf("outbox rows after rollback = %d, want %d", after, before)
 	}
 }
+
+
+func TestCloudflareMailEventReconcilesIdempotentlyAndSuppressesComplaints(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("4c", 32))
+	t.Setenv("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", "test-event-token")
+	t.Setenv("CLOUDFLARE_EMAIL_ACCOUNT_ID", "0123456789abcdef0123456789abcdef")
+	t.Setenv("CLOUDFLARE_EMAIL_API_TOKEN", "test-cloudflare-token")
+	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+
+	svc := &service{db: db}
+	recipient := fmt.Sprintf("mail-events-%d@example.test", time.Now().UnixNano())
+	if err := svc.enqueueAuthEmail(ctx, recipient, "Delivery event test", "<p>Test</p>"); err != nil {
+		t.Fatal(err)
+	}
+	var outboxID int64
+	if err := db.QueryRow(ctx, `
+		SELECT id FROM testagram_mail.outbox
+		WHERE recipient_fingerprint=$1
+		ORDER BY id DESC LIMIT 1
+	`, mustMailFingerprint(t, recipient)).Scan(&outboxID); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.delivery_events WHERE provider_message_id=$1", "cf-test-message")
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.recipient_suppressions WHERE recipient_fingerprint=$1", mustMailFingerprint(t, recipient))
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", outboxID)
+	}()
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_mail.outbox SET provider_message_id='cf-test-message' WHERE id=$1
+	`, outboxID); err != nil {
+		t.Fatal(err)
+	}
+
+	sendEvent := func(eventID, eventType, bounceType string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{
+			"type":%q,
+			"source":{"type":"email.sending","domain":"testagram.site"},
+			"payload":{
+				"eventId":%q,"messageId":"cf-test-message","recipient":%q,
+				"terminal":true,"delivery":{"status":"delivered","smtpStatusCode":"250"},
+				"bounce":{"type":%q}
+			},
+			"metadata":{"eventSchemaVersion":1,"eventTimestamp":"2026-11-23T00:00:00Z"}
+		}`, eventType, eventID, recipient, bounceType)
+		req := httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer test-event-token")
+		rec := httptest.NewRecorder()
+		svc.cloudflareMailEvent(rec, req)
+		return rec
+	}
+
+	delivered := sendEvent("cf-event-delivered-1", "cf.email.sending.message.delivered", "")
+	if delivered.Code != http.StatusAccepted {
+		t.Fatalf("delivered event status=%d body=%s", delivered.Code, delivered.Body.String())
+	}
+	var deliveryStatus string
+	if err := db.QueryRow(ctx, "SELECT delivery_status FROM testagram_mail.outbox WHERE id=$1", outboxID).Scan(&deliveryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if deliveryStatus != "delivered" {
+		t.Fatalf("delivery status=%q, want delivered", deliveryStatus)
+	}
+
+	duplicate := sendEvent("cf-event-delivered-1", "cf.email.sending.message.delivered", "")
+	if duplicate.Code != http.StatusAccepted {
+		t.Fatalf("duplicate event status=%d body=%s", duplicate.Code, duplicate.Body.String())
+	}
+	var eventCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.delivery_events WHERE provider_event_id='cf-event-delivered-1'").Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("duplicate provider event rows=%d, want 1", eventCount)
+	}
+
+	complained := sendEvent("cf-event-complained-1", "cf.email.sending.message.complained", "")
+	if complained.Code != http.StatusAccepted {
+		t.Fatalf("complaint event status=%d body=%s", complained.Code, complained.Body.String())
+	}
+	if err := db.QueryRow(ctx, "SELECT delivery_status FROM testagram_mail.outbox WHERE id=$1", outboxID).Scan(&deliveryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if deliveryStatus != "complained" {
+		t.Fatalf("delivery status after complaint=%q, want complained", deliveryStatus)
+	}
+
+	worked, err := svc.processOneMail(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !worked {
+		t.Fatal("worker did not process and suppress the queued message")
+	}
+	var outboxStatus, errorCode string
+	if err := db.QueryRow(ctx, "SELECT status,last_error_code FROM testagram_mail.outbox WHERE id=$1", outboxID).Scan(&outboxStatus, &errorCode); err != nil {
+		t.Fatal(err)
+	}
+	if outboxStatus != "dead" || errorCode != "RECIPIENT_SUPPRESSED" {
+		t.Fatalf("suppressed outbox state=(%q,%q), want (dead,RECIPIENT_SUPPRESSED)", outboxStatus, errorCode)
+	}
+}
+
+func mustMailFingerprint(t *testing.T, recipient string) []byte {
+	t.Helper()
+	fingerprint, err := mailRecipientFingerprint(recipient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fingerprint
+}
+
+func TestCloudflareMailEventRejectsMissingTokenAndUnknownEvent(t *testing.T) {
+	t.Setenv("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", "expected-token")
+	svc := &service{}
+	req := httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(`{"type":"cf.email.sending.message.delivered"}`))
+	rec := httptest.NewRecorder()
+	svc.cloudflareMailEvent(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing bearer token status=%d, want 401", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(`{"type":"cf.email.sending.unknown","payload":{"eventId":"x","messageId":"y","recipient":"person@example.test"}}`))
+	req.Header.Set("Authorization", "Bearer expected-token")
+	rec = httptest.NewRecorder()
+	svc.cloudflareMailEvent(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown event status=%d, want 400", rec.Code)
+	}
+}
