@@ -88,8 +88,8 @@ jobs:
       - name: Validate dedicated edge recovery readiness credential
         shell: bash
         run: |
-          if [[ ${#TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN} -lt 64 ]]; then
-            echo "::error::Missing or invalid TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN production secret (expected at least 64 characters; configure the same value in the CDN repository)."
+          if [[ ! "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+            echo "::error::Missing or invalid TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN production secret (expected 32 random bytes encoded as 64 hexadecimal characters; configure the same value in the CDN repository)."
             exit 1
           fi
       - name: Validate independent production media feature gates
