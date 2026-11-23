@@ -26,7 +26,7 @@ var trendingWordStopwords = []string{
 // window. The Backend discovers only public, non-protected content; Algorithm
 // ranks the bounded candidate set. No private text enters this pipeline.
 func (s *service) socialTrendingWords(w http.ResponseWriter, r *http.Request) {
-	viewerID, requestID, ok := s.socialOptionalReadAuth(w, r)
+	_, requestID, ok := s.socialOptionalReadAuth(w, r)
 	if !ok {
 		return
 	}
@@ -116,7 +116,6 @@ LIMIT 200`, trendingWordStopwords)
 		}
 	}
 
-	_ = viewerID // Authentication is optional; word candidates are intentionally global and public-only.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true,
 		"data": map[string]any{
