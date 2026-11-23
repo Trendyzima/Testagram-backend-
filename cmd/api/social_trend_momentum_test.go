@@ -23,3 +23,12 @@ func TestTrendMomentum(t *testing.T) {
 		})
 	}
 }
+
+func TestTrendReasonsIdentifyOnlyAcceleratingTopics(t *testing.T) {
+	if got := trendReasons(0.6); len(got) != 1 || got[0] != "accelerating" {
+		t.Fatalf("trendReasons(0.6) = %#v, want accelerating", got)
+	}
+	if got := trendReasons(0.59); len(got) != 0 {
+		t.Fatalf("trendReasons(0.59) = %#v, want no reasons", got)
+	}
+}
