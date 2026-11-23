@@ -14,6 +14,7 @@ import (
 )
 
 func TestAuthRandomOTPIsSixDigitAndHashable(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("ab", 32))
 	seen := make(map[string]struct{})
 	for i := 0; i < 100; i++ {
 		code, err := authRandomOTP()
@@ -28,13 +29,24 @@ func TestAuthRandomOTPIsSixDigitAndHashable(t *testing.T) {
 				t.Fatalf("OTP contains non-digit: %q", code)
 			}
 		}
-		if len(authTokenHash(code)) != sha256.Size {
-			t.Fatal("OTP hash must be SHA-256")
+		hash, err := authOTPHash(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hash) != sha256.Size {
+			t.Fatal("OTP HMAC must be SHA-256 sized")
 		}
 		seen[code] = struct{}{}
 	}
 	if len(seen) < 90 {
 		t.Fatalf("OTP generator produced too few distinct codes: %d", len(seen))
+	}
+}
+
+func TestAuthOTPHashRequiresTheExistingMailSecret(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", "")
+	if _, err := authOTPHash("012345"); err == nil {
+		t.Fatal("OTP hashing must fail closed without the mail encryption secret")
 	}
 }
 
