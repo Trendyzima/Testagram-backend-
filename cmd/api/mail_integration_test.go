@@ -72,6 +72,18 @@ func TestSocialMailOutboxCarriesConsentCategory(t *testing.T) {
 
 	recipient := fmt.Sprintf("social-mail-%d@example.test", time.Now().UnixNano())
 	userID := "123e4567-e89b-42d3-a456-426614174199"
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_local.accounts(user_id,username,display_name)
+		VALUES($1::uuid,'socialmailconsent','Social Mail Consent')
+		ON CONFLICT(user_id) DO UPDATE SET account_status='active'
+	`, userID); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE preference_user_id=$1::uuid", userID)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.social_unsubscribe_tokens WHERE user_id=$1::uuid", userID)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", userID)
+	}()
 	if err := enqueueSocialEmailWith(ctx, db, recipient, userID, "new_post",
 		"A person you follow shared a new Testagram post", "<p>New post</p>"); err != nil {
 		t.Fatal(err)
