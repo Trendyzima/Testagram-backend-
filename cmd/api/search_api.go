@@ -166,7 +166,7 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 		if filters.Sort == "popular" {
 			orderBy = "(p.likes_count + 2*p.replies_count + 2*p.reposts_count) DESC,p.created_at DESC,p.id DESC"
 		}
-		query := `SELECT p.id::text,p.author_id::text,p.text,p.visibility,p.media_ids,
+		postsSQL := `SELECT p.id::text,p.author_id::text,p.text,p.visibility,p.media_ids,
 			p.language,p.created_at,p.likes_count,p.replies_count,p.reposts_count,
 			a.username,a.display_name,a.avatar_key,a.protected_account,
 			(p.author_id=$1::uuid OR EXISTS(SELECT 1 FROM testagram_local.follows f
@@ -203,7 +203,7 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 				 AND ma.content_type LIKE 'video/%'
 			  ))
 			ORDER BY ` + orderBy + ` LIMIT $3`
-		rows, err := s.db.Query(ctx, query, viewer, query, limit, filters.MediaOnly,
+		rows, err := s.db.Query(ctx, postsSQL, viewer, query, limit, filters.MediaOnly,
 			nullableSearchString(filters.From), filters.Since, filters.Until,
 			nullableSearchString(filters.Language), filters.VideoOnly)
 		if err != nil {
