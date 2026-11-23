@@ -335,7 +335,7 @@ if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; th
 fi
 FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
 write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
-TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:d0b1fa4c1cbd579c8674ba520566d39ca3b7be90132939d880753c17fe80b425"
+TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:bb7e1b067223cb7140e8cf10ee86562d039b0370d9d5c5f8dc1bef22e5d00b14"
 write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
 # Preserve the exact immutable image selected by the protected deployment
 # workflow. For a recovery run without an override, retain only the previously

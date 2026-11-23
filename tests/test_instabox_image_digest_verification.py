@@ -21,6 +21,10 @@ class TestInstaboxImageDigestVerification(unittest.TestCase):
         self.assertIn("cdn_image_id=", self.script)
         self.assertIn('docker image inspect --format \'{{range .RepoDigests}}{{println .}}{{end}}\' "$cdn_image_id"', self.script)
 
+    def test_cdn_uses_the_canonical_go_edge_package(self):
+        self.assertIn("ghcr.io/trendyzima/testagram-edge@sha256:bb7e1b067223cb7140e8cf10ee86562d039b0370d9d5c5f8dc1bef22e5d00b14", self.script)
+        self.assertNotIn("ghcr.io/trendyzima/testagram-cdn@", self.script)
+
     def test_no_container_inspection_reads_repo_digests(self):
         self.assertNotIn('docker inspect --format \'{{range .RepoDigests}}{{println .}}{{end}}\'', self.script)
 
