@@ -17,18 +17,18 @@ import (
 )
 
 type cloudflareDeliveryEvent struct {
-	Type string `json:"type"`
+	Type   string `json:"type"`
 	Source struct {
 		Type string `json:"type"`
 		Domain string `json:"domain"`
 	} `json:"source"`
 	Payload struct {
-		EventID string `json:"eventId"`
+		EventID   string `json:"eventId"`
 		MessageID string `json:"messageId"`
 		Recipient string `json:"recipient"`
-		Terminal bool `json:"terminal"`
-		Delivery struct {
-			Status string `json:"status"`
+		Terminal  bool   `json:"terminal"`
+		Delivery  struct {
+			Status         string `json:"status"`
 			SMTPStatusCode string `json:"smtpStatusCode"`
 		} `json:"delivery"`
 		Bounce struct {
@@ -36,7 +36,7 @@ type cloudflareDeliveryEvent struct {
 		} `json:"bounce"`
 		Rejection struct {
 			Reason string `json:"reason"`
-			Party string `json:"party"`
+			Party  string `json:"party"`
 		} `json:"rejection"`
 	} `json:"payload"`
 }
@@ -47,7 +47,9 @@ func mailRecipientFingerprint(recipient string) ([]byte, error) {
 		return nil, errors.New("mail encryption key unavailable")
 	}
 	parsed, err := mail.ParseAddress(recipient)
-	if err != nil { return nil, errors.New("invalid recipient address") }
+	if err != nil {
+		return nil, errors.New("invalid recipient address")
+	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(strings.ToLower(strings.TrimSpace(parsed.Address))))
 	return mac.Sum(nil), nil
@@ -80,11 +82,11 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	allowed := map[string]bool{
-		"cf.email.sending.message.delivered": true,
-		"cf.email.sending.message.deferred": true,
-		"cf.email.sending.message.bounced": true,
-		"cf.email.sending.message.failed": true,
-		"cf.email.sending.message.rejected": true,
+		"cf.email.sending.message.delivered":  true,
+		"cf.email.sending.message.deferred":   true,
+		"cf.email.sending.message.bounced":    true,
+		"cf.email.sending.message.failed":     true,
+		"cf.email.sending.message.rejected":   true,
 		"cf.email.sending.message.complained": true,
 	}
 	sender, senderErr := mail.ParseAddress(os.Getenv("AUTH_FROM_EMAIL"))
