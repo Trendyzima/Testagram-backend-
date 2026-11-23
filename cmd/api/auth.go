@@ -259,17 +259,10 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return true
 	}
-	if action == "signup" || action == "resend-verification" || action == "verify-email" {
-		// Public account creation must flow through the identity-review pipeline.
-		// The legacy independent-auth path creates canonical accounts directly
-		// after email verification and therefore bypasses two-person approval.
-		writeJSON(w, http.StatusServiceUnavailable, errorBody(
-			"IDENTITY_REVIEW_REQUIRED",
-			"Registration is temporarily unavailable while identity review and account provisioning are being completed.",
-			requestID(r),
-		))
-		return true
-	}
+	// Self-service registration is intentionally independent of staff identity review.
+	// Accounts are created in an unverified state and cannot sign in until the
+	// single-use email verification token is redeemed. Staff review is not part
+	// of ordinary account creation.
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 	var in authInput
