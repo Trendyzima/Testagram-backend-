@@ -18,6 +18,8 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         self.assertIn("accept-web-authentication:", workflow)
         self.assertIn("needs: deploy", workflow)
         self.assertIn('base="https://www.testagram.site"', workflow)
+        self.assertIn("https://api.testagram.site/api/auth/signup", workflow)
+        self.assertIn("INVALID_PASSWORD", workflow)
         self.assertIn('"/?mode=signup"', workflow)
         self.assertIn('for marker in \'Sign in\' \'Sign up\' \'Create account\' \'Reset password\'; do', workflow)
         self.assertIn("flutter_bootstrap.js", workflow)
