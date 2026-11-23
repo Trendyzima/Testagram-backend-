@@ -90,6 +90,57 @@ func TestSocialMailOutboxCarriesConsentCategory(t *testing.T) {
 	}
 }
 
+
+func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	userID := "123e4567-e89b-42d3-a456-426614174188"
+	_, err := db.Exec(ctx, `
+		INSERT INTO testagram_local.accounts(user_id,username,display_name)
+		VALUES($1::uuid,'mailconsenttest','Mail Consent Test')
+		ON CONFLICT(user_id) DO UPDATE SET account_status='active'
+	`, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", userID)
+	}()
+	_, err = db.Exec(ctx, `
+		INSERT INTO testagram_local.email_notification_preferences(
+			user_id,new_follower_email_enabled,new_post_email_enabled,
+			new_follower_consent_at,new_post_consent_at
+		) VALUES($1::uuid,TRUE,FALSE,now(),NULL)
+		ON CONFLICT(user_id) DO UPDATE SET
+			new_follower_email_enabled=TRUE,new_follower_consent_at=now(),
+			new_follower_consent_withdrawn_at=NULL
+	`, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := socialMailConsentActive(ctx, db, userID, "new_follower")
+	if err != nil || !active {
+		t.Fatalf("enabled follower email consent = %v, err=%v; want true", active, err)
+	}
+	active, err = socialMailConsentActive(ctx, db, userID, "new_post")
+	if err != nil || active {
+		t.Fatalf("disabled post email consent = %v, err=%v; want false", active, err)
+	}
+	_, err = db.Exec(ctx, `
+		UPDATE testagram_local.email_notification_preferences
+		SET new_follower_email_enabled=FALSE,new_follower_consent_withdrawn_at=now()
+		WHERE user_id=$1::uuid
+	`, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err = socialMailConsentActive(ctx, db, userID, "new_follower")
+	if err != nil || active {
+		t.Fatalf("withdrawn follower email consent = %v, err=%v; want false", active, err)
+	}
+}
+
 func TestMailOutboxInsertRollsBackWithCallerTransaction(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
