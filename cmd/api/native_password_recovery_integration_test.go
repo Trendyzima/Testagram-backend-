@@ -163,13 +163,14 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 		t.Fatal(err)
 	}
 
+	resetIP := "192.0.2.11"
 	reset := func(token, password string) *httptest.ResponseRecorder {
 		body, err := json.Marshal(map[string]string{"token": token, "password": password})
 		if err != nil {
 			t.Fatal(err)
 		}
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/reset-password", strings.NewReader(string(body)))
-		req.RemoteAddr = "192.0.2.11:12345"
+		req.RemoteAddr = resetIP + ":12345"
 		rec := httptest.NewRecorder()
 		if !svc.authRespond(rec, req, "reset-password") {
 			t.Fatal("reset-password handler did not handle request")
@@ -188,6 +189,9 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 		t.Fatalf("fourth attempt against one token status=%d body=%s; want rate limit", got.Code, got.Body.String())
 	}
 
+	// Keep the valid capability check independent from the intentionally exhausted
+	// invalid-token/IP buckets above; the account session still uses the original IP.
+	resetIP = "192.0.2.13"
 	response := reset(resetToken, "NewRecoveryPassword-456!")
 	if response.Code != http.StatusOK {
 		t.Fatalf("valid reset status=%d body=%s", response.Code, response.Body.String())
