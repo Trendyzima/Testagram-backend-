@@ -176,7 +176,7 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		return "", errors.New("Cloudflare Email Sending HTTP client unavailable")
 	}
 	body, err := json.Marshal(map[string]string{
-		"to": []string{message.Recipient}, "from": from, "subject": message.Subject, "html": message.HTML,
+		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
 	})
 	if err != nil {
 		return "", err
