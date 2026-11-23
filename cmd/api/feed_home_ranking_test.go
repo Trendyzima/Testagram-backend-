@@ -57,6 +57,31 @@ func TestParseHomeFeedListID(t *testing.T) {
 	}
 }
 
+func TestHomeFeedCursorPreservesCustomListScope(t *testing.T) {
+	listID := "550e8400-e29b-41d4-a716-446655440000"
+	createdAt := time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)
+	encoded := encodeHomeFeedCursor(homeFeedCursor{
+		CreatedAt: createdAt, Source: homeFeedSourceNative,
+		ID: "550e8400-e29b-41d4-a716-446655440001", ListID: listID,
+	})
+	decoded, err := decodeHomeFeedCursor(encoded)
+	if err != nil {
+		t.Fatalf("decode custom-feed cursor: %v", err)
+	}
+	if decoded.ListID != listID {
+		t.Fatalf("cursor list scope = %q, want %q", decoded.ListID, listID)
+	}
+	if !homeFeedCursorMatchesList(decoded, listID) {
+		t.Fatal("cursor should match its originating custom feed")
+	}
+	if homeFeedCursorMatchesList(decoded, "") {
+		t.Fatal("custom-feed cursor must not be reusable on the global feed")
+	}
+	if !homeFeedCursorMatchesList(nil, listID) {
+		t.Fatal("first-page cursor should match any requested list")
+	}
+}
+
 func TestParseVideoOnly(t *testing.T) {
 	cases := []struct {
 		name    string
