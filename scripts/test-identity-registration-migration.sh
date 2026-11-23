@@ -61,8 +61,7 @@ for migration in \
   migrations/20261121_native_identity_intake_optional_fingerprint.sql \
   migrations/20261121_native_staff_webauthn.sql \
   migrations/061_native_sensitive_action_integrity.sql \
-  migrations/20261124_testagram_email_verification_otp.sql \
-  migrations/20261124_testagram_social_email_consent.sql; do
+  migrations/20261124_testagram_email_verification_otp.sql; do
   psql_ci < "$migration"
 done
 
