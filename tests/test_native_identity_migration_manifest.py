@@ -48,6 +48,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "061_native_sensitive_action_integrity.sql",
             "20261124_testagram_email_verification_otp.sql",
             "20261124_testagram_social_email_consent.sql",
+            "20261125_testagram_mail_delivery_events.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -60,7 +61,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
         otp = "20261124_testagram_email_verification_otp.sql"
         consent = "20261124_testagram_social_email_consent.sql"
-        for migration in (otp, consent):
+        delivery = "20261125_testagram_mail_delivery_events.sql"
+        for migration in (otp, consent, delivery):
             with self.subTest(migration=migration):
                 self.assertIn(
                     f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
@@ -77,6 +79,16 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("preference_user_id", consent_sql)
         self.assertIn("preference_category", consent_sql)
         self.assertIn("CONSENT_WITHDRAWN", (ROOT / "cmd/api/social_email_notifications.go").read_text(encoding="utf-8"))
+        delivery_sql = (ROOT / "migrations" / delivery).read_text(encoding="utf-8")
+        self.assertIn("delivery_events", delivery_sql)
+        self.assertIn("recipient_suppressions", delivery_sql)
+        self.assertIn("social_unsubscribe_tokens", delivery_sql)
+        self.assertIn("recipient_fingerprint", delivery_sql)
+        mail_events = (ROOT / "cmd/api/mail_events.go").read_text(encoding="utf-8")
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", mail_events)
+        self.assertIn("reconcileCloudflareMailEvents", mail_events)
+        self.assertIn("List-Unsubscribe-Post", (ROOT / "cmd/api/mail.go").read_text(encoding="utf-8"))
+        self.assertIn("socialEmailUnsubscribe", (ROOT / "cmd/api/mail_unsubscribe.go").read_text(encoding="utf-8"))
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
@@ -208,6 +220,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261120_native_identity_historical_attribution_archive.sql",
             "20261124_testagram_email_verification_otp.sql",
             "20261124_testagram_social_email_consent.sql",
+            "20261125_testagram_mail_delivery_events.sql",
         ):
             with self.subTest(migration=migration):
                 self.assertIn(migration, script)
