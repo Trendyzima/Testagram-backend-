@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const socialEmailConsentVersion = "2026-11-24-v1"
+const socialEmailConsentVersion = "2026-11-23-v1"
 
 type socialEmailPreferenceInput struct {
 	NewFollowerEmailEnabled *bool `json:"new_follower_email_enabled"`
