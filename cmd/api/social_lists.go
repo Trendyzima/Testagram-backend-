@@ -243,6 +243,9 @@ func (s *service) socialListMemberRemove(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	if !s.socialWriteAllowed(w, r, uid, rid, "social_list_member_remove", 60) {
+		return
+	}
 	id := strings.ToLower(strings.TrimSpace(r.PathValue("list_id")))
 	member := strings.ToLower(strings.TrimSpace(r.PathValue("member_id")))
 	if !socialUUIDPattern.MatchString(id) || !socialUUIDPattern.MatchString(member) {
@@ -269,6 +272,9 @@ WHERE m.list_id=l.id AND l.id=$1::uuid AND m.member_user_id=$2::uuid
 func (s *service) socialListDelete(w http.ResponseWriter, r *http.Request) {
 	uid, rid, ok := s.socialAuth(w, r)
 	if !ok {
+		return
+	}
+	if !s.socialWriteAllowed(w, r, uid, rid, "social_list_delete", 20) {
 		return
 	}
 	id := strings.ToLower(strings.TrimSpace(r.PathValue("list_id")))
