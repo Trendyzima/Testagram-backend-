@@ -30,6 +30,22 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
         self.assertLess(deploy, secret)
         self.assertLess(secret, attach)
 
+    def test_mail_event_queue_and_secrets_are_installed_before_subscription_activation(self):
+        deploy = WORKFLOW.index("wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml")
+        edge_secret = WORKFLOW.index("wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN")
+        events_secret = WORKFLOW.index("wrangler@4 secret put TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN")
+        route_verified = WORKFLOW.index("Canonical API route was not verified after attachment")
+        subscription = WORKFLOW.index("queues subscription create testagram-mail-delivery-events")
+        self.assertLess(deploy, edge_secret)
+        self.assertLess(edge_secret, events_secret)
+        self.assertLess(events_secret, route_verified)
+        self.assertLess(route_verified, subscription)
+        self.assertIn("ensure_queue \"testagram-mail-delivery-events\"", WORKFLOW)
+        self.assertIn("ensure_queue \"testagram-mail-delivery-events-dlq\"", WORKFLOW)
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", WORKFLOW)
+        self.assertIn('queue = "testagram-mail-delivery-events"', WRANGLER)
+        self.assertIn('dead_letter_queue = "testagram-mail-delivery-events-dlq"', WRANGLER)
+
     def test_route_attachment_is_explicit_and_verified_after_secret(self):
         secret = WORKFLOW.index("wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN")
         post = WORKFLOW.index("-X POST")
