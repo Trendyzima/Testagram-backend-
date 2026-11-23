@@ -191,8 +191,8 @@ test("forwards Cloudflare Email Sending Queue events to the pinned backend and a
   const originalFetch = globalThis.fetch;
   const calls = [];
   const actions = [];
-  globalThis.fetch = async (request) => {
-    calls.push(request);
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
     return new Response("accepted", { status: 202 });
   };
   try {
@@ -212,11 +212,11 @@ test("forwards Cloudflare Email Sending Queue events to the pinned backend and a
       TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: "b".repeat(64),
     });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, APP_ORIGIN + "/internal/mail/events");
-    assert.equal(calls[0].method, "POST");
-    assert.equal(calls[0].headers.get("authorization"), "Bearer " + "b".repeat(64));
-    assert.equal(calls[0].headers.get("x-testagram-edge-token"), "a".repeat(64));
-    assert.deepEqual(await calls[0].json(), body);
+    assert.equal(calls[0].input, APP_ORIGIN + "/internal/mail/events");
+    assert.equal(calls[0].init.method, "POST");
+    assert.equal(calls[0].init.headers.Authorization, "Bearer " + "b".repeat(64));
+    assert.equal(calls[0].init.headers["X-Testagram-Edge-Token"], "a".repeat(64));
+    assert.deepEqual(JSON.parse(calls[0].init.body), body);
     assert.deepEqual(actions, ["ack"]);
   } finally {
     globalThis.fetch = originalFetch;
