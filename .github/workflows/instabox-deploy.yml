@@ -785,3 +785,41 @@ jobs:
           echo "- Apex edge: port 8443; ActivityPub/WebFinger return 503 until G3 acceptance; canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend and Go CDN: public /healthz; private /readyz and /metrics on Docker-only port 8082" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
+
+  accept-web-authentication:
+    name: Verify production www serves native account creation
+    needs: deploy
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify the live Cloudflare-facing www route and signup deep link
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          base="https://www.testagram.site"
+          for path in "/" "/?mode=signup"; do
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 30 \
+              -H 'Cache-Control: no-cache' "$base$path" -o "$tmp/page.html"
+            grep -Fq 'flutter_bootstrap.js' "$tmp/page.html" || {
+              echo "::error::The live www route did not serve the Flutter application shell for $path."
+              exit 1
+            }
+          done
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 30 \
+            -H 'Cache-Control: no-cache' "$base/flutter_bootstrap.js" -o "$tmp/flutter_bootstrap.js"
+          grep -Fq 'main.dart.js' "$tmp/flutter_bootstrap.js" || {
+            echo "::error::The live Flutter bootstrap does not reference main.dart.js."
+            exit 1
+          }
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+            -H 'Cache-Control: no-cache' "$base/main.dart.js" -o "$tmp/main.dart.js"
+          for marker in 'Sign in' 'Sign up' 'Create account' 'Reset password'; do
+            grep -aFq "$marker" "$tmp/main.dart.js" || {
+              echo "::error::The production www Flutter bundle is missing required authentication entry: $marker"
+              exit 1
+            }
+          done
+          echo "Production www root, /?mode=signup deep link, Flutter bootstrap and native account-creation bundle markers passed." >> "$GITHUB_STEP_SUMMARY"
