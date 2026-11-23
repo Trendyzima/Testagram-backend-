@@ -46,6 +46,7 @@ Configure these values in the InstaBox deployment environment (never commit real
 | `CLOUDFLARE_EMAIL_API_TOKEN` | Runtime variable populated from the existing `CLOUDFLARE_API_TOKEN` GitHub secret; token needs Email Sending: Edit |
 | `AUTH_FROM_EMAIL` | `no-reply@testagram.site`, populated from the `TESTAGRAM_MAIL_FROM` GitHub variable |
 | `TESTAGRAM_MAIL_ENCRYPTION_KEY` | 32 random bytes encoded as 64 hexadecimal characters |
+| `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN` | High-entropy secret of at least 32 characters shared only with the Cloudflare Queue consumer Worker |
 
 Generate the encryption key with:
 
@@ -93,6 +94,7 @@ A successful REST API response means Cloudflare accepted or queued the recipient
 
 - Do not log message bodies, tokens, API credentials, or recipient addresses.
 - The database payload is encrypted at rest; the encryption key must be backed up separately from PostgreSQL.
+- Social unsubscribe tokens are one-way hashed in PostgreSQL; never log or expose the raw token. GET requests only render confirmation; the explicit POST performs withdrawal.
 - Social notification email is disabled by default and requires separate, per-category opt-in. The worker checks the current preference when claiming and again immediately before sending. Withdrawal cancels queued messages and clears their encrypted payloads. A message already in an external provider request cannot be recalled.
 - Keep the encryption key stable across deployments. Losing it makes pending encrypted messages unreadable.
 - Monitor dead-letter counts and provider acceptance; investigate ambiguous network failures because automatic retry can duplicate a message.
@@ -135,6 +137,20 @@ A transport timeout, interrupted response, provider 5xx, malformed success respo
 
 Expired worker leases are also quarantined as `uncertain`, never automatically reclaimed. A process may have crashed after the provider accepted the request but before the database recorded the response. This conservative behavior can require manual review even when no request was actually sent; it deliberately prefers a delayed message over an undetected duplicate security email.
 
+
+
+## Branded templates and one-click unsubscribe
+
+All queued messages are rendered inside a responsive, table-based Testagram email shell with a plain-text alternative. The plain-text renderer preserves link destinations so recipients using text-only clients can still follow verification, recovery and social links. Set `AUTH_PUBLIC_BASE_URL`; the documented fallback is `https://testagram.site`.
+
+Social activity messages include a visible category-specific unsubscribe link and the RFC 8058 headers `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`.
+
+- `GET /api/email/unsubscribe?token=...` displays a confirmation page and does not change preferences. This prevents email security scanners that prefetch links from unsubscribing users.
+- `POST /api/email/unsubscribe?token=...` consumes the token, withdraws only the matching social email category, and cancels that category's pending outbox rows in one PostgreSQL transaction.
+
+Tokens contain 256 bits of random entropy, are stored only as SHA-256 hashes, expire after 365 days, and can be consumed once. Repeated POSTs are safe. Recipients can opt back in through authenticated Testagram email settings. A message already in the `sending` state or submitted to Cloudflare cannot be recalled; pending messages are cancelled and the worker rechecks consent before submitting.
+
+The migration creates `testagram_mail.social_unsubscribe_tokens` and grants the existing application role only the required table and sequence permissions. No third-party preference center or new authentication provider is introduced.
 
 ## Delivery-event reconciliation
 
