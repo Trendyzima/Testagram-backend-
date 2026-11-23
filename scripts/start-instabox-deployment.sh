@@ -21,7 +21,7 @@ done
 normalize_boolean() {
   local name="$1" default="$2" value
   value="${!name:-$default}"
-  value="$(printf '%s' "$value" | tr -d '\r\n')"
+  value="$(printf '%s' "$value" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   case "$value" in
     true|false) printf -v "$name" '%s' "$value" ;;
     *) echo "::error::$name must be true or false (surrounding whitespace is ignored)."; exit 1 ;;
