@@ -51,10 +51,10 @@ func (e ambiguousMailError) Error() string {
 func (e ambiguousMailError) Unwrap() error { return e.cause }
 
 type queuedMail struct {
-	Recipient string `json:"recipient"`
-	Subject   string `json:"subject"`
-	HTML      string `json:"html"`
-	Text      string `json:"text,omitempty"`
+	Recipient string            `json:"recipient"`
+	Subject   string            `json:"subject"`
+	HTML      string            `json:"html"`
+	Text      string            `json:"text,omitempty"`
 	Headers   map[string]string `json:"headers,omitempty"`
 }
 
@@ -64,7 +64,9 @@ var mailAnchorPattern = regexp.MustCompile(`(?is)<a\b[^>]*href=["\x27]([^"\x27]+
 func mailPlainTextFromHTML(value string) string {
 	value = mailAnchorPattern.ReplaceAllStringFunc(value, func(anchor string) string {
 		parts := mailAnchorPattern.FindStringSubmatch(anchor)
-		if len(parts) != 3 { return anchor }
+		if len(parts) != 3 {
+			return anchor
+		}
 		label := strings.TrimSpace(mailHTMLTagPattern.ReplaceAllString(parts[2], ""))
 		return label + " (" + htmlstd.UnescapeString(parts[1]) + ")"
 	})
@@ -162,10 +164,12 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 	var headers map[string]string
 	if preferenceUserID != nil {
 		_, unsubscribeURL, err := createSocialUnsubscribeToken(ctx, executor, *preferenceUserID, preferenceCategory)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		html += `<p style="margin-top:24px;color:#667085;font-size:13px">You can <a href="` + htmlstd.EscapeString(unsubscribeURL) + `">unsubscribe from this type of email</a> at any time.</p>`
 		headers = map[string]string{
-			"List-Unsubscribe": "<" + unsubscribeURL + ">",
+			"List-Unsubscribe":      "<" + unsubscribeURL + ">",
 			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
 		}
 	}
@@ -208,7 +212,6 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 	return err
 }
 
-
 func testagramMailBaseURL() string {
 	baseURL := strings.TrimRight(env("AUTH_PUBLIC_BASE_URL", "https://testagram.site"), "/")
 	parsed, err := url.Parse(baseURL)
@@ -231,7 +234,9 @@ func createSocialUnsubscribeToken(ctx context.Context, executor mailQueueExecuto
 		return "", "", errors.New("invalid social unsubscribe token request")
 	}
 	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil { return "", "", err }
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256(raw)
 	baseURL := testagramMailBaseURL()
@@ -240,7 +245,9 @@ func createSocialUnsubscribeToken(ctx context.Context, executor mailQueueExecuto
 		INSERT INTO testagram_mail.social_unsubscribe_tokens(token_hash,user_id,preference_category,expires_at)
 		VALUES($1,$2::uuid,$3,now()+interval '365 days')
 	`, hash[:], userID, category)
-	if err != nil { return "", "", err }
+	if err != nil {
+		return "", "", err
+	}
 	return token, unsubscribeURL, nil
 }
 
@@ -279,7 +286,9 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 	payload := map[string]any{
 		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
 	}
-	if len(message.Headers) > 0 { payload["headers"] = message.Headers }
+	if len(message.Headers) > 0 {
+		payload["headers"] = message.Headers
+	}
 	if strings.TrimSpace(message.Text) != "" {
 		payload["text"] = message.Text
 	}
@@ -567,7 +576,9 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		var permanent permanentMailError
 		if errors.As(sendErr, &permanent) {
 			code := permanent.code
-			if code == "" { code = "CLOUDFLARE_REQUEST_REJECTED" }
+			if code == "" {
+				code = "CLOUDFLARE_REQUEST_REJECTED"
+			}
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
 				SET status='dead',lease_until=NULL,provider_message_id=NULLIF($2,''),
