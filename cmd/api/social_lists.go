@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+const socialListMaxMembers = 500
 
 type socialListInput struct {
 	Name        string `json:"name"`
@@ -217,7 +220,7 @@ func (s *service) socialListMemberAdd(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "Account could not be added", rid))
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer tx.Rollback(context.Background())
 
 	var owner string
 	if err := tx.QueryRow(r.Context(), `SELECT owner_id::text FROM testagram_local.social_lists
@@ -259,7 +262,7 @@ SELECT EXISTS(
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "List capacity could not be checked", rid))
 		return
 	}
-	if count >= 500 {
+	if count >= socialListMaxMembers {
 		writeJSON(w, http.StatusConflict, errorBody("LIST_CAPACITY_REACHED", "A list can contain at most 500 accounts", rid))
 		return
 	}
