@@ -56,6 +56,7 @@ type service struct {
 	db                         *pgxpool.Pool
 	edgeRecoveryReadinessToken string
 	authEmailSender            func(context.Context, string, string, string) error
+	mailSender                 func(context.Context, queuedMail) (string, error)
 	moderation                 moderationpkg.ContentModeration
 	metricsMu                  sync.Mutex
 	routeMetrics               map[string]*requestMetric
@@ -525,6 +526,9 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/me/federation", s.mediaPreflight)
 	mux.HandleFunc("GET /api/me/federation", s.federationPreference)
 	mux.HandleFunc("PUT /api/me/federation", s.federationPreference)
+	mux.HandleFunc("OPTIONS /api/me/email-notifications", s.mediaPreflight)
+	mux.HandleFunc("GET /api/me/email-notifications", s.socialEmailPreferences)
+	mux.HandleFunc("PUT /api/me/email-notifications", s.socialEmailPreferences)
 	mux.HandleFunc("OPTIONS /api/federation/subscriptions", s.mediaPreflight)
 	mux.HandleFunc("GET /api/federation/subscriptions", s.remoteAuthorSubscriptions)
 	mux.HandleFunc("POST /api/federation/subscriptions", s.remoteAuthorSubscriptions)
@@ -617,6 +621,9 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/social/posts/{post_id}/bookmarks", s.socialUnbookmark)
 	mux.HandleFunc("GET /api/social/notifications", s.socialNotifications)
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
+	mux.HandleFunc("POST /internal/mail/events", s.cloudflareMailEvent)
+	mux.HandleFunc("GET /api/email/unsubscribe", s.socialEmailUnsubscribe)
+	mux.HandleFunc("POST /api/email/unsubscribe", s.socialEmailUnsubscribe)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
@@ -705,6 +712,52 @@ func (s *service) internalRoutes() http.Handler {
 				fmt.Fprintf(&output, "testagram_replication_inbox_rejected_24h %d\n", inboxRejected24h)
 				fmt.Fprintf(&output, "testagram_replication_inbox_stale_total %d\n", inboxStale)
 			}
+		}
+		if s.db != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+			defer cancel()
+			var mailPending, mailOldestPendingSeconds, mailSending, mailSent, mailDead, mailUncertain int64
+			var mailDelivered, mailDeferred, mailBounced, mailFailed, mailComplained, mailEventsPending int64
+			mailErr := s.db.QueryRow(ctx, `
+				SELECT count(*) FILTER (WHERE status='pending'),
+				       COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status='pending')))::bigint,0),
+				       count(*) FILTER (WHERE status='sending'),
+				       count(*) FILTER (WHERE status='sent'),
+				       count(*) FILTER (WHERE status='dead'),
+				       count(*) FILTER (WHERE status='uncertain'),
+				       count(*) FILTER (WHERE delivery_status='delivered'),
+				       count(*) FILTER (WHERE delivery_status='deferred'),
+				       count(*) FILTER (WHERE delivery_status='bounced'),
+				       count(*) FILTER (WHERE delivery_status='failed'),
+				       count(*) FILTER (WHERE delivery_status='complained')
+				FROM testagram_mail.outbox
+			`).Scan(&mailPending, &mailOldestPendingSeconds, &mailSending, &mailSent, &mailDead, &mailUncertain,
+				&mailDelivered, &mailDeferred, &mailBounced, &mailFailed, &mailComplained)
+			if mailErr == nil {
+				mailErr = s.db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.delivery_events WHERE processed_at IS NULL").Scan(&mailEventsPending)
+			}
+			if mailErr == nil {
+				output.WriteString("testagram_mail_outbox_metrics_available 1\n")
+				fmt.Fprintf(&output, "testagram_mail_outbox_pending %d\n", mailPending)
+				fmt.Fprintf(&output, "testagram_mail_outbox_oldest_pending_seconds %d\n", mailOldestPendingSeconds)
+				fmt.Fprintf(&output, "testagram_mail_outbox_sending %d\n", mailSending)
+				fmt.Fprintf(&output, "testagram_mail_outbox_sent_total %d\n", mailSent)
+				fmt.Fprintf(&output, "testagram_mail_outbox_dead_total %d\n", mailDead)
+				fmt.Fprintf(&output, "testagram_mail_outbox_uncertain_total %d\n", mailUncertain)
+				fmt.Fprintf(&output, "testagram_mail_delivery_delivered_total %d\n", mailDelivered)
+				fmt.Fprintf(&output, "testagram_mail_delivery_deferred_total %d\n", mailDeferred)
+				fmt.Fprintf(&output, "testagram_mail_delivery_bounced_total %d\n", mailBounced)
+				fmt.Fprintf(&output, "testagram_mail_delivery_failed_total %d\n", mailFailed)
+				fmt.Fprintf(&output, "testagram_mail_delivery_complained_total %d\n", mailComplained)
+				fmt.Fprintf(&output, "testagram_mail_delivery_events_pending %d\n", mailEventsPending)
+			} else {
+				output.WriteString("testagram_mail_outbox_metrics_available 0\n")
+			}
+			mailProviderReady := 0
+			if mailRuntimeConfigurationError() == nil {
+				mailProviderReady = 1
+			}
+			fmt.Fprintf(&output, "testagram_mail_provider_configured %d\n", mailProviderReady)
 		}
 		_, _ = w.Write([]byte(output.String()))
 	})

@@ -46,6 +46,9 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
             "061_native_sensitive_action_integrity.sql",
+            "20261124_testagram_email_verification_otp.sql",
+            "20261124_testagram_social_email_consent.sql",
+            "20261125_testagram_mail_delivery_events.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -53,6 +56,42 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             with self.subTest(migration=name):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
+
+    def test_email_otp_and_social_email_consent_migrations_are_mounted_and_verified(self):
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        otp = "20261124_testagram_email_verification_otp.sql"
+        consent = "20261124_testagram_social_email_consent.sql"
+        delivery = "20261125_testagram_mail_delivery_events.sql"
+        for migration in (otp, consent, delivery):
+            with self.subTest(migration=migration):
+                self.assertIn(
+                    f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
+                    compose,
+                )
+                self.assertIn(f"apply_migration {migration}", SOURCE)
+                self.assertIn(migration, SOURCE.split("for file in", 1)[1].split("; do", 1)[0])
+        self.assertIn("verification_otp_hash", SOURCE)
+        self.assertIn("verification_otp_expires_at", SOURCE)
+        self.assertIn("verification_otp_attempts", SOURCE)
+        self.assertIn("email_notification_preferences", SOURCE)
+        self.assertIn("has_table_privilege", SOURCE)
+        consent_sql = (ROOT / "migrations" / consent).read_text(encoding="utf-8")
+        self.assertIn("preference_user_id", consent_sql)
+        self.assertIn("preference_category", consent_sql)
+        self.assertIn("CONSENT_WITHDRAWN", (ROOT / "cmd/api/social_email_notifications.go").read_text(encoding="utf-8"))
+        delivery_sql = (ROOT / "migrations" / delivery).read_text(encoding="utf-8")
+        self.assertIn("delivery_events", delivery_sql)
+        self.assertIn("recipient_suppressions", delivery_sql)
+        self.assertIn("social_unsubscribe_tokens", delivery_sql)
+        self.assertIn("recipient_fingerprint", delivery_sql)
+        mail_events = (ROOT / "cmd/api/mail_events.go").read_text(encoding="utf-8")
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", mail_events)
+        deploy_workflow = (ROOT / ".github" / "workflows" / "instabox-deploy.yml").read_text(encoding="utf-8")
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", deploy_workflow)
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", compose)
+        self.assertIn("reconcileCloudflareMailEvents", mail_events)
+        self.assertIn("List-Unsubscribe-Post", (ROOT / "cmd/api/mail.go").read_text(encoding="utf-8"))
+        self.assertIn("socialEmailUnsubscribe", (ROOT / "cmd/api/mail_unsubscribe.go").read_text(encoding="utf-8"))
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
@@ -182,6 +221,9 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261120_native_identity_historical_staff_archive.sql",
             "20261120_native_identity_historical_admin_archive.sql",
             "20261120_native_identity_historical_attribution_archive.sql",
+            "20261124_testagram_email_verification_otp.sql",
+            "20261124_testagram_social_email_consent.sql",
+            "20261125_testagram_mail_delivery_events.sql",
         ):
             with self.subTest(migration=migration):
                 self.assertIn(migration, script)

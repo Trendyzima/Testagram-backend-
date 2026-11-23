@@ -120,14 +120,33 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
           EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
+          TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${{ secrets.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN }}
         run: |
           set -euo pipefail
-          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Account.Workers Scripts:Edit scoped to account 77dbe7a859196105dc84fbb6b7094019, plus Zone.Workers Routes:Edit, Zone:Read and DNS:Read scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Account.Workers Scripts:Edit and Account.Queues:Edit scoped to account 77dbe7a859196105dc84fbb6b7094019, plus Zone.Workers Routes:Edit, Zone:Read and DNS:Read scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
           if [[ ! "${EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_EDGE_PROXY_SHARED_TOKEN as exactly 32 random bytes encoded in 64 hexadecimal characters; it must match EDGE_PROXY_SHARED_TOKEN in the InstaBox Caddy .env."; exit 1; fi
+          if [[ ! "${TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN as an independent 32-byte hex secret shared with the backend runtime."; exit 1; fi
+          API="https://api.cloudflare.com/client/v4"
+          ACCOUNT_ID="77dbe7a859196105dc84fbb6b7094019"
+          ZONE_NAME="testagram.site"
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Accept: application/json")
+          curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" "$API/zones?name=$ZONE_NAME&status=active" -o "$RUNNER_TEMP/mail-zone.json"
+          zone_id="$(jq -er --arg name "$ZONE_NAME" --arg account "$ACCOUNT_ID" '.result[] | select(.name == $name and .account.id == $account and .status == "active") | .id' "$RUNNER_TEMP/mail-zone.json")"
+          ensure_queue() {
+            local queue_name="$1"
+            curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" "$API/accounts/$ACCOUNT_ID/queues?per_page=100" -o "$RUNNER_TEMP/queues.json"
+            jq -e --arg name "$queue_name" '.success == true and any(.result[]?; .queue_name == $name)' "$RUNNER_TEMP/queues.json" >/dev/null && return 0
+            jq -nc --arg name "$queue_name" '{queue_name:$name}' > "$RUNNER_TEMP/create-queue.json"
+            curl --silent --show-error --fail --connect-timeout 10 --max-time 30 "${auth[@]}" -H "Content-Type: application/json" -X POST --data-binary @"$RUNNER_TEMP/create-queue.json" "$API/accounts/$ACCOUNT_ID/queues" -o "$RUNNER_TEMP/queue-created.json"
+            jq -e --arg name "$queue_name" '.success == true and .result.queue_name == $name' "$RUNNER_TEMP/queue-created.json" >/dev/null
+          }
+          ensure_queue "testagram-mail-delivery-events"
+          ensure_queue "testagram-mail-delivery-events-dlq"
           # wrangler.toml intentionally has no public route. Deploy the private
           # Worker script first, then install its secret before exposing traffic.
           npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
           printf '%s' "$EDGE_PROXY_SHARED_TOKEN" | npx --yes wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
+          printf '%s' "$TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN" | npx --yes wrangler@4 secret put TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
 
           # Recheck route ownership to close the preflight-to-deploy race. The
           # route is attached only after the secret is present, avoiding a
@@ -183,6 +202,18 @@ jobs:
               exit 1
             }
           echo "API edge secret installed before route attachment; canonical route ownership verified." >> "$GITHUB_STEP_SUMMARY"
+          # Ensure the existing API edge Worker receives all six lifecycle events.
+          npx --yes wrangler@4 queues subscription list testagram-mail-delivery-events --json > "$RUNNER_TEMP/mail-subscriptions.json"
+          subscription_id="$(jq -r --arg name "testagram-mail-delivery-events-testagram-site" '(.result // .)[]? | select(.name == $name and .source.type == "email.sending" and .source.domain == "testagram.site") | .id' "$RUNNER_TEMP/mail-subscriptions.json" | head -n 1)"
+          event_list="message.delivered,message.deferred,message.bounced,message.failed,message.rejected,message.complained"
+          if [[ -n "$subscription_id" ]]; then
+            npx --yes wrangler@4 queues subscription update testagram-mail-delivery-events --id "$subscription_id" --events "$event_list" --enabled true
+          else
+            npx --yes wrangler@4 queues subscription create testagram-mail-delivery-events --source email.sending --zone-id "$zone_id" --domain testagram.site --events "$event_list" --name testagram-mail-delivery-events-testagram-site
+          fi
+          npx --yes wrangler@4 queues subscription list testagram-mail-delivery-events --json > "$RUNNER_TEMP/mail-subscriptions-verified.json"
+          jq -e --arg name "testagram-mail-delivery-events-testagram-site" --argjson expected '["message.delivered","message.deferred","message.bounced","message.failed","message.rejected","message.complained"]' '(.result // .) | any(.[]?; .name == $name and .enabled == true and (.events | sort) == ($expected | sort))' "$RUNNER_TEMP/mail-subscriptions-verified.json" >/dev/null || { echo "::error::Cloudflare Email Sending event subscription could not be verified."; exit 1; }
+          echo "Cloudflare Email Sending event queue, dead-letter queue, Worker consumer secrets and six-event subscription verified." >> "$GITHUB_STEP_SUMMARY"
       - name: Verify canonical API ingress after deployment
         shell: bash
         run: |

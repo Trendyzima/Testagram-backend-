@@ -13,6 +13,43 @@ import (
 	"testing"
 )
 
+func TestAuthRandomOTPIsSixDigitAndHashable(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("ab", 32))
+	seen := make(map[string]struct{})
+	for i := 0; i < 100; i++ {
+		code, err := authRandomOTP()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(code) != 6 {
+			t.Fatalf("OTP length = %d, want 6", len(code))
+		}
+		for _, digit := range code {
+			if digit < '0' || digit > '9' {
+				t.Fatalf("OTP contains non-digit: %q", code)
+			}
+		}
+		hash, err := authOTPHash(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hash) != sha256.Size {
+			t.Fatal("OTP HMAC must be SHA-256 sized")
+		}
+		seen[code] = struct{}{}
+	}
+	if len(seen) < 90 {
+		t.Fatalf("OTP generator produced too few distinct codes: %d", len(seen))
+	}
+}
+
+func TestAuthOTPHashRequiresTheExistingMailSecret(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", "")
+	if _, err := authOTPHash("012345"); err == nil {
+		t.Fatal("OTP hashing must fail closed without the mail encryption secret")
+	}
+}
+
 func TestAuthPBKDF2KnownVector(t *testing.T) {
 	got := authPBKDF2([]byte("password"), []byte("salt"), 1, 32)
 	const want = "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"

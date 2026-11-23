@@ -10,8 +10,27 @@ WORKFLOW = ROOT / ".github" / "workflows" / "instabox-deploy.yml"
 class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
     def test_workflow_uses_the_published_flutter_main_release(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:54695ed91d029039777c5df2cc0d3b62a22815583ca82fc5ed21cd7d12cd2685", workflow)
+        self.assertIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:b79c3895343d1fc6518cdcba9ddff236b6375c90676663f6b9e4f391bde7671f", workflow)
         self.assertNotIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web:main", workflow)
+
+    def test_production_deployment_verifies_live_native_signup_page(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("accept-web-authentication:", workflow)
+        self.assertIn("needs: deploy", workflow)
+        self.assertIn('base="https://www.testagram.site"', workflow)
+        self.assertIn("https://api.testagram.site/api/auth/signup", workflow)
+        self.assertIn("INVALID_PASSWORD", workflow)
+        self.assertIn('"/?mode=signup"', workflow)
+        self.assertIn('for marker in \'Sign in\' \'Sign up\' \'Create account\' \'Reset password\'; do', workflow)
+        self.assertIn("flutter_bootstrap.js", workflow)
+        self.assertIn("main.dart.js", workflow)
+
+    def test_existing_vps_env_files_are_normalized_before_sourcing(self):
+        deploy = DEPLOY.read_text(encoding="utf-8")
+        self.assertIn("normalize_env_file()", deploy)
+        self.assertIn("sed -i 's/\\r$//' \"$env_file\"", deploy)
+        self.assertLess(deploy.index('normalize_env_file "$BASE_ENV"'), deploy.index('source "$BASE_ENV"'))
+        self.assertLess(deploy.index('normalize_env_file "$DC_ENV"'), deploy.index('source "$DC_ENV"'))
 
     def test_deployment_preserves_the_workflow_selected_digest(self):
         deploy = DEPLOY.read_text(encoding="utf-8")

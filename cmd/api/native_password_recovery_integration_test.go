@@ -144,6 +144,10 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
 
 	svc := &service{db: db}
+	invalidToken, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
 	oldSession, err := issueNativeSession(ctx, db, userID, email, version, "recovery-integration", "192.0.2.11")
 	if err != nil {
 		t.Fatal(err)
@@ -159,13 +163,14 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 		t.Fatal(err)
 	}
 
+	resetIP := "192.0.2.11"
 	reset := func(token, password string) *httptest.ResponseRecorder {
 		body, err := json.Marshal(map[string]string{"token": token, "password": password})
 		if err != nil {
 			t.Fatal(err)
 		}
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/reset-password", strings.NewReader(string(body)))
-		req.RemoteAddr = "192.0.2.11:12345"
+		req.RemoteAddr = resetIP + ":12345"
 		rec := httptest.NewRecorder()
 		if !svc.authRespond(rec, req, "reset-password") {
 			t.Fatal("reset-password handler did not handle request")
@@ -176,14 +181,17 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 	// Invalid links are rejected before Argon2id runs. Repeated attempts against
 	// one capability are bounded independently of the caller's IP bucket.
 	for attempt := 0; attempt < 3; attempt++ {
-		if got := reset("invalid-recovery-capability-00000000000000000000000000000000", "NewRecoveryPassword-456!"); got.Code != http.StatusBadRequest {
+		if got := reset(invalidToken, "NewRecoveryPassword-456!"); got.Code != http.StatusBadRequest {
 			t.Fatalf("invalid reset attempt %d status=%d body=%s", attempt+1, got.Code, got.Body.String())
 		}
 	}
-	if got := reset("invalid-recovery-capability-00000000000000000000000000000000", "NewRecoveryPassword-456!"); got.Code != http.StatusTooManyRequests {
+	if got := reset(invalidToken, "NewRecoveryPassword-456!"); got.Code != http.StatusTooManyRequests {
 		t.Fatalf("fourth attempt against one token status=%d body=%s; want rate limit", got.Code, got.Body.String())
 	}
 
+	// Keep the valid capability check independent from the intentionally exhausted
+	// invalid-token/IP buckets above; the account session still uses the original IP.
+	resetIP = "192.0.2.13"
 	response := reset(resetToken, "NewRecoveryPassword-456!")
 	if response.Code != http.StatusOK {
 		t.Fatalf("valid reset status=%d body=%s", response.Code, response.Body.String())

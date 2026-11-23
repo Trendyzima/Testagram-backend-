@@ -15,7 +15,7 @@ on:
         type: boolean
         default: false
       confirm_native_identity_migrations:
-        description: "Authorize additive native identity, transactional mail and Federation actor-consent PostgreSQL migrations only if the live schema preflight finds them incomplete"
+        description: "Authorize additive native identity, OTP, transactional mail, social email-consent and Federation actor-consent PostgreSQL migrations only if the live schema preflight finds them incomplete"
         required: true
         type: boolean
         default: false
@@ -80,6 +80,7 @@ jobs:
       CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
+      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${{ secrets.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN }}
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
@@ -462,8 +463,8 @@ jobs:
         id: remote
         env:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
-          # Immutable Flutter mainline build 03082cc7; published and smoke-tested by run 45039056776.
-          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:54695ed91d029039777c5df2cc0d3b62a22815583ca82fc5ed21cd7d12cd2685
+          # Immutable Flutter native-signup build a14a004c; published and smoke-tested by run 45251379507.
+          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:b79c3895343d1fc6518cdcba9ddff236b6375c90676663f6b9e4f391bde7671f
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
           # The legacy Backend multi-bucket replicator is not the canonical media path.
@@ -479,6 +480,7 @@ jobs:
           CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
           TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
+          TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${{ secrets.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}
           MPESA_ENV: ${{ vars.MPESA_ENV }}
           MPESA_SHORTCODE: ${{ secrets.MPESA_SHORTCODE }}
@@ -783,3 +785,52 @@ jobs:
           echo "- Apex edge: port 8443; ActivityPub/WebFinger return 503 until G3 acceptance; canonical www redirect" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend and Go CDN: public /healthz; private /readyz and /metrics on Docker-only port 8082" >> "$GITHUB_STEP_SUMMARY"
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
+
+  accept-web-authentication:
+    name: Verify production www serves native account creation
+    needs: deploy
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify the live Cloudflare-facing www route and signup deep link
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          api_response="$tmp/signup-probe.json"
+          api_headers="$tmp/signup-probe.headers"
+          api_status="$(curl --silent --show-error --max-time 20 -D "$api_headers" -o "$api_response" -w '%{http_code}' -X POST \
+            "https://api.testagram.site/api/auth/signup" \
+            -H 'Content-Type: application/json' \
+            --data-binary '{"email":"signup-probe@example.invalid","username":"signup_probe","password":"short"}')"
+          api_error="$(jq -r '.error.code // empty' "$api_response" 2>/dev/null || true)"
+          if [[ "$api_status" != "400" || "$api_error" != "INVALID_PASSWORD" ]]; then
+            echo "::error::Production native signup API did not reach password validation (HTTP $api_status, code=$api_error). No account was created."
+            exit 1
+          fi
+          base="https://www.testagram.site"
+          for path in "/" "/?mode=signup"; do
+            curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 30 \
+              -H 'Cache-Control: no-cache' "$base$path" -o "$tmp/page.html"
+            grep -Fq 'flutter_bootstrap.js' "$tmp/page.html" || {
+              echo "::error::The live www route did not serve the Flutter application shell for $path."
+              exit 1
+            }
+          done
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 30 \
+            -H 'Cache-Control: no-cache' "$base/flutter_bootstrap.js" -o "$tmp/flutter_bootstrap.js"
+          grep -Fq 'main.dart.js' "$tmp/flutter_bootstrap.js" || {
+            echo "::error::The live Flutter bootstrap does not reference main.dart.js."
+            exit 1
+          }
+          curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+            -H 'Cache-Control: no-cache' "$base/main.dart.js" -o "$tmp/main.dart.js"
+          for marker in 'Sign in' 'Sign up' 'Create account' 'Reset password'; do
+            grep -aFq "$marker" "$tmp/main.dart.js" || {
+              echo "::error::The production www Flutter bundle is missing required authentication entry: $marker"
+              exit 1
+            }
+          done
+          echo "Production www root, /?mode=signup deep link, Flutter bootstrap and native account-creation bundle markers passed." >> "$GITHUB_STEP_SUMMARY"

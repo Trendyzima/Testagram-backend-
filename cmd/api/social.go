@@ -320,6 +320,9 @@ func (s *service) socialFollow(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,event_key)
 			VALUES($1,$2,$3,$4) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL
 			DO UPDATE SET kind=EXCLUDED.kind,actor_id=EXCLUDED.actor_id,created_at=now()`, targetID, userID, kind, eventKey)
+		if err == nil {
+			err = enqueueFollowActivityEmail(ctx, tx, userID, targetID, kind)
+		}
 	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_WRITE_FAILED", "Follow could not be saved", requestID))

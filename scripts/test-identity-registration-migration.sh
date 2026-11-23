@@ -50,6 +50,7 @@ for migration in \
   migrations/20261115_native_identity_status_access.sql \
   migrations/20261019_dual_backend_replication.sql \
   migrations/20261019_testagram_local_accounts_posts.sql \
+  migrations/20261106_social_core.sql \
   migrations/20261115_testagram_native_auth_cutover_foundation.sql \
   migrations/20261116_native_approved_identity_provisioning.sql \
   migrations/20261116_native_auth_runtime_grants.sql \
@@ -60,7 +61,8 @@ for migration in \
   migrations/20261120_native_verification_decider.sql \
   migrations/20261121_native_identity_intake_optional_fingerprint.sql \
   migrations/20261121_native_staff_webauthn.sql \
-  migrations/061_native_sensitive_action_integrity.sql; do
+  migrations/061_native_sensitive_action_integrity.sql \
+  migrations/20261124_testagram_email_verification_otp.sql; do
   psql_ci < "$migration"
 done
 
@@ -97,8 +99,20 @@ psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
+psql_ci < migrations/20261106_social_core.sql
+psql_ci < migrations/20261106_social_core.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
+psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261124_testagram_email_verification_otp.sql
+psql_ci < migrations/20261124_testagram_email_verification_otp.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
+psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
+psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
+psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at) VALUES
@@ -561,7 +575,7 @@ $native_auth_schema$;
 SQL
 
 # Exercise the complete PostgreSQL native identity provisioning transaction.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestMailOutboxPersistsEncryptedPayload|TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestIdentityReviewerHonorsNativeRoleRevocationAndMFA)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^(TestMailOutboxPersistsEncryptedPayload|TestSocialMailOutboxCarriesConsentCategory|TestMailOutboxInsertRollsBackWithCallerTransaction|TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount|TestSocialMailConsentIsRecheckedAgainstCurrentPreference|TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers|TestNativeIdentityProvisioningTokenAndRedeemIntegration|TestNativeIdentityApplicationHTTPJourneyIntegration|TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration|TestNativeApprovedIdentityProvisioningAndEmailVerification|TestNativeIdentityApplicationStatusUsesVerificationSessions|TestIdentityReviewerHonorsNativeRoleRevocationAndMFA)$' -count=1
 
 # Consent evidence must be immutable after insertion.
 if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
@@ -837,6 +851,8 @@ DROP ROLE testagram_app;
 SQL
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
+psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
 psql_ci <<'SQL'
 DO $mail_role_repair$
 BEGIN
@@ -857,8 +873,13 @@ SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
 
+# Exercise Cloudflare lifecycle reconciliation, duplicate-event protection, complaint suppression,
+# and RFC one-click social unsubscribe against the isolated PostgreSQL schema.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient|TestSocialEmailUnsubscribeGetIsSafeAndPostWithdrawsConsent|TestMailWorkerRetriesDefiniteFailureAndPreservesPayload|TestMailWorkerQuarantinesAmbiguousOutcomeWithoutResending|TestMailWorkerNeverSendsPendingSocialMailAfterConsentWithdrawal)$' -count=1
+
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
+
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestNativePasswordRecoveryRequestIsAntiEnumeration|TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin|TestNativeSessionRefreshRotationAndReuseRevokesFamily|TestNativeSessionLogoutRevokesCurrentSession|TestNativeSessionLogoutAllRevokesEverySession|TestNativeSessionConcurrentRefreshReuseRevokesFamily)$' -count=1
 
 
@@ -891,6 +912,8 @@ DROP ROLE testagram_app;
 SQL
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
+psql_ci < migrations/20261124_testagram_social_email_consent.sql
+psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
 psql_ci <<'SQL'
 DO $mail_role_repair$
 BEGIN
@@ -910,4 +933,3 @@ $mail_role_repair$;
 SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
-

@@ -24,7 +24,9 @@ assert '"$URL/healthz"' in workflow
 assert "x-testagram-service" in workflow
 assert '.ok == true and .service == "testagram-api"' in workflow
 assert 'for path in /readyz /metrics; do' in workflow
-assert "https://api.testagram.site" not in workflow
+deploy_workflow, acceptance_workflow = workflow.split("  accept-web-authentication:", 1)
+assert "https://api.testagram.site" not in deploy_workflow
+assert "https://api.testagram.site/api/auth/signup" in acceptance_workflow
 assert "CANONICAL_API_URL" not in workflow
 assert 'PUBLIC_CDN_URL="https://media.testagram.site"' in workflow
 assert 'upsert_env CDN_MEDIA_BASE_URL "$PUBLIC_CDN_URL"' in workflow

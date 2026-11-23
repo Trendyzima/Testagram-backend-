@@ -279,6 +279,10 @@ jobs:
             migrations/007_media_product_bridge.sql \
             migrations/008_virtual_storage_bridge.sql \
             migrations/20261106_social_core.sql \
+            migrations/20261122_testagram_mail_outbox.sql \
+            migrations/20261123_testagram_mail_outbox_runtime_role.sql \
+            migrations/20261124_testagram_social_email_consent.sql \
+            migrations/20261125_testagram_mail_delivery_events.sql \
             migrations/20261107_federation_actor_consent.sql \
             migrations/20261108_communication_core.sql \
             migrations/20261122_communication_media_encryption_truth.sql \
@@ -1009,6 +1013,10 @@ jobs:
             migrations/20261019_testagram_media_replication_producers.sql \
             migrations/20261106_tv_health_postgres.sql \
             migrations/20261106_social_core.sql \
+            migrations/20261122_testagram_mail_outbox.sql \
+            migrations/20261123_testagram_mail_outbox_runtime_role.sql \
+            migrations/20261124_testagram_social_email_consent.sql \
+            migrations/20261125_testagram_mail_delivery_events.sql \
             migrations/20261108_communication_core.sql \
             migrations/20261122_communication_media_encryption_truth.sql \
             migrations/20261110_native_media_post_links.sql \
@@ -1154,7 +1162,9 @@ jobs:
           );
           SQL
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261124_testagram_email_verification_otp.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261122_testagram_mail_outbox.sql
+          docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261125_testagram_mail_delivery_events.sql
           docker exec -i testagram-auth-ci psql -U postgres -v ON_ERROR_STOP=1 <<'SQL'
           INSERT INTO testagram_auth.identities(email,username,password_hash)
           VALUES ('ci@example.test','ci_user','test-hash');
@@ -1249,6 +1259,10 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_dual_backend_replication.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261106_social_core.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261122_testagram_mail_outbox.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261123_testagram_mail_outbox_runtime_role.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261124_testagram_social_email_consent.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261125_testagram_mail_delivery_events.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261112_instabox_avatar_storage.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261112_profile_presentation_fields.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_independent_auth.sql
@@ -1262,6 +1276,7 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_identity_evidence_access_audit.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_native_identity_status_access.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261124_testagram_email_verification_otp.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261116_native_approved_identity_provisioning.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261117_native_staff_reviewer_grants.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261118_native_admin_console.sql
@@ -1272,6 +1287,7 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/061_native_sensitive_action_integrity.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261019_testagram_local_accounts_posts.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261115_testagram_native_auth_cutover_foundation.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261124_testagram_email_verification_otp.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261117_native_staff_reviewer_grants.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261118_native_admin_console.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261119_native_identity_approval_ledger.sql

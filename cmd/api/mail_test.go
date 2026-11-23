@@ -13,6 +13,29 @@ import (
 	"time"
 )
 
+func TestMailPlainTextAlternativeStripsMarkupAndDecodesEntities(t *testing.T) {
+	got := mailPlainTextFromHTML("<p>Hello &amp; welcome</p><p>Open <strong>Testagram</strong></p>")
+	if got != "Hello & welcome\nOpen Testagram" {
+		t.Fatalf("plain-text alternative = %q", got)
+	}
+}
+
+func TestMailPlainTextPreservesUnsubscribeLinkDestination(t *testing.T) {
+	got := mailPlainTextFromHTML(`<p>Manage your settings: <a href="https://testagram.site/api/email/unsubscribe?token=abc">unsubscribe</a></p>`)
+	if !strings.Contains(got, "unsubscribe (https://testagram.site/api/email/unsubscribe?token=abc)") {
+		t.Fatalf("plain-text alternative lost unsubscribe destination: %q", got)
+	}
+}
+
+func TestBrandedMailShellEscapesSubjectAndIncludesAccessibleLayout(t *testing.T) {
+	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.site")
+	got := brandedTestagramMailHTML("<welcome>", "<p>Hello</p>")
+	if !strings.Contains(got, "&lt;welcome&gt;") || !strings.Contains(got, "role=\"presentation\"") ||
+		!strings.Contains(got, "lang=\"en\"") || !strings.Contains(got, "<p>Hello</p>") {
+		t.Fatalf("branded email shell is missing expected accessible structure: %s", got)
+	}
+}
+
 func TestMailCipherEncryptsAndDecrypts(t *testing.T) {
 	key := strings.Repeat("ab", 32)
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", key)
@@ -86,13 +109,16 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 		if got := r.Header.Get("Content-Type"); got != "application/json" {
 			t.Errorf("content type = %q, want application/json", got)
 		}
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
 		if body["to"] != "person@example.test" || body["from"] != "no-reply@testagram.site" ||
-			body["subject"] != "Password reset" || body["html"] != "<p>Reset</p>" {
+			body["subject"] != "Password reset" || body["html"] != "<p>Reset</p>" || body["text"] != "Reset text" {
 			t.Errorf("unexpected Cloudflare request payload: %#v", body)
+		}
+		if headers, ok := body["headers"].(map[string]any); !ok || headers["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+			t.Errorf("Cloudflare request did not include RFC 8058 unsubscribe headers: %#v", body["headers"])
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"success":true,"errors":[],"result":{"message_id":"cf-message-123","delivered":["person@example.test"],"queued":[],"permanent_bounces":[],"suppressed_recipients":[]}}`))
@@ -101,7 +127,8 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 
 	client := &http.Client{Timeout: time.Second}
 	messageID, err := sendCloudflareMailRequest(context.Background(), client, server.URL+"/accounts/0123456789abcdef0123456789abcdef/email/sending/send", "test-token", "no-reply@testagram.site", queuedMail{
-		Recipient: "person@example.test", Subject: "Password reset", HTML: "<p>Reset</p>",
+		Recipient: "person@example.test", Subject: "Password reset", HTML: "<p>Reset</p>", Text: "Reset text",
+		Headers: map[string]string{"List-Unsubscribe": "<https://testagram.site/api/email/unsubscribe?token=abc>", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,9 +150,14 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 		permanent bool
 	}{
 		{
-			name: "provider rejects request", status: http.StatusBadRequest,
-			response: `{"success":false,"errors":[{"code":10001,"message":"invalid request"}],"result":null}`,
-			wantErr:  "code 10001",
+			name: "provider rejects request permanently", status: http.StatusBadRequest,
+			response:  `{"success":false,"errors":[{"code":10001,"message":"invalid request"}],"result":null}`,
+			permanent: true,
+		},
+		{
+			name: "rate limited request is safely retryable", status: http.StatusTooManyRequests,
+			response: `{"success":false,"errors":[{"code":10002,"message":"rate limited"}],"result":null}`,
+			wantErr:  "temporarily rejected",
 		},
 		{
 			name: "suppressed recipient", status: http.StatusOK,

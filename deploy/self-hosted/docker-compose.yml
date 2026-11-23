@@ -64,6 +64,9 @@ services:
       - ../../migrations/20261120_native_verification_decider.sql:/docker-entrypoint-initdb.d/056_native_verification_decider.sql:ro
       - ../../migrations/20261122_testagram_mail_outbox.sql:/docker-entrypoint-initdb.d/057_testagram_mail_outbox.sql:ro
       - ../../migrations/20261123_testagram_mail_outbox_runtime_role.sql:/docker-entrypoint-initdb.d/058_testagram_mail_outbox_runtime_role.sql:ro
+      - ../../migrations/20261124_testagram_email_verification_otp.sql:/docker-entrypoint-initdb.d/20261124_testagram_email_verification_otp.sql:ro
+      - ../../migrations/20261124_testagram_social_email_consent.sql:/docker-entrypoint-initdb.d/20261124_testagram_social_email_consent.sql:ro
+      - ../../migrations/20261125_testagram_mail_delivery_events.sql:/docker-entrypoint-initdb.d/20261125_testagram_mail_delivery_events.sql:ro
       - ../../migrations/20261120_native_identity_historical_account_archive.sql:/docker-entrypoint-initdb.d/058a_native_identity_historical_account_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_staff_archive.sql:/docker-entrypoint-initdb.d/058b_native_identity_historical_staff_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_admin_archive.sql:/docker-entrypoint-initdb.d/058c_native_identity_historical_admin_archive.sql:ro
@@ -175,6 +178,7 @@ services:
       CLOUDFLARE_EMAIL_ACCOUNT_ID: ${CLOUDFLARE_EMAIL_ACCOUNT_ID:-}
       CLOUDFLARE_EMAIL_API_TOKEN: ${CLOUDFLARE_EMAIL_API_TOKEN:-}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
+      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:-}
       ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       FEDERATION_INTERNAL_URL: ${FEDERATION_INTERNAL_URL:-http://federation-api:8081}

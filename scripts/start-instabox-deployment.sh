@@ -10,11 +10,12 @@ if [[ -n "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" && ! "$TESTAGRAM_EDGE_RECOVE
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
 [[ "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_WEB_IMAGE must be the approved immutable digest before remote deployment starts."; exit 1; }
-for key in CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY; do
+for key in CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN; do
   [[ -n "${!key:-}" ]] || { echo "::error::Cloudflare transactional mail requires $key."; exit 1; }
 done
 [[ "$CLOUDFLARE_EMAIL_ACCOUNT_ID" =~ ^[A-Fa-f0-9]{32}$ ]] || { echo "::error::CLOUDFLARE_EMAIL_ACCOUNT_ID must be 32 hexadecimal characters."; exit 1; }
 [[ "$TESTAGRAM_MAIL_ENCRYPTION_KEY" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."; exit 1; }
+[[ "$TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN must be an independent 32-byte hexadecimal secret shared with the Cloudflare Queue consumer."; exit 1; }
 [[ "$AUTH_FROM_EMAIL" == "no-reply@testagram.site" ]] || { echo "::error::AUTH_FROM_EMAIL must be no-reply@testagram.site for this release."; exit 1; }
 # GitHub Actions variables may contain accidental surrounding whitespace or CRLF.
 # Normalize the edges but reject every value other than the exact boolean literals.
@@ -119,6 +120,12 @@ sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/fl
 
 BASE_ENV="$BACKEND/deploy/self-hosted/.env"
 BASE_COMPOSE="$BACKEND/deploy/self-hosted/docker-compose.yml"
+normalize_env_file() {
+  local env_file="$1"
+  # Existing VPS .env files may have been edited on Windows; CRLF turns the final
+  # character of a sourced assignment into a shell command and aborts deployment.
+  sed -i 's/\r$//' "$env_file"
+}
 if [[ ! -f "$BASE_ENV" ]]; then
   POSTGRES_PASSWORD="$(openssl rand -hex 32)"
   MINIO_ROOT_PASSWORD="$(openssl rand -hex 32)"
@@ -176,6 +183,7 @@ CLOUDFLARE_EMAIL_ACCOUNT_ID=${CLOUDFLARE_EMAIL_ACCOUNT_ID:-}
 CLOUDFLARE_EMAIL_API_TOKEN=${CLOUDFLARE_EMAIL_API_TOKEN:-}
 AUTH_FROM_EMAIL=${AUTH_FROM_EMAIL:-no-reply@testagram.site}
 TESTAGRAM_MAIL_ENCRYPTION_KEY=${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
+TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN=${TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:-}
 ALGORITHM_URL=http://algorithm:8092
 ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
 FEDERATION_INTERNAL_URL=http://federation:8081
@@ -209,6 +217,7 @@ MEDIA_MODERATION_TOKEN=
 EOF
   chmod 600 "$BASE_ENV"
 fi
+normalize_env_file "$BASE_ENV"
 
 # Keep the two Federation directions independently keyed, including on existing VPS installs.
 read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
@@ -264,7 +273,7 @@ ensure_random_secret FEDERATION_INGRESS_TOKEN
 # Backend-local object storage is not an identity-evidence fallback; registration
 # remains fail-closed until the dedicated Data Centre profile is ready.
 write_env_value AUTH_PUBLIC_BASE_URL "$AUTH_PUBLIC_BASE_URL"
-for key in TESTAGRAM_AUTH_JWT_SECRET CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY TESTAGRAM_WEBAUTHN_READINESS_TOKEN TESTAGRAM_WEBAUTHN_RPID TESTAGRAM_WEBAUTHN_ORIGINS; do
+for key in TESTAGRAM_AUTH_JWT_SECRET CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN TESTAGRAM_WEBAUTHN_READINESS_TOKEN TESTAGRAM_WEBAUTHN_RPID TESTAGRAM_WEBAUTHN_ORIGINS; do
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
@@ -641,6 +650,7 @@ write_dc_env_value TESTAGRAM_FEDERATION_IMAGE "$TESTAGRAM_FEDERATION_IMAGE"
 # Provider credentials are not copied to the VPS unless the private
 # media profile has been explicitly enabled for this deployment.
 chmod 600 "$DC_ENV"
+normalize_env_file "$DC_ENV"
 
 set -a
 # shellcheck disable=SC1090
@@ -1070,6 +1080,7 @@ payload="$(jq -nc \
   --arg cloudflare_email_api_token "$CLOUDFLARE_EMAIL_API_TOKEN" \
   --arg auth_from_email "$AUTH_FROM_EMAIL" \
   --arg mail_encryption_key "$TESTAGRAM_MAIL_ENCRYPTION_KEY" \
+  --arg cloudflare_events_token "$TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN" \
   --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
   --arg edge_proxy_token "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" \
   --arg edge_recovery_readiness_token "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" \
@@ -1096,7 +1107,7 @@ payload="$(jq -nc \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
   --arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}" \
-  '{cmd:$cmd,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,CLOUDFLARE_EMAIL_ACCOUNT_ID:$cloudflare_email_account_id,CLOUDFLARE_EMAIL_API_TOKEN:$cloudflare_email_api_token,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,CLOUDFLARE_EMAIL_ACCOUNT_ID:$cloudflare_email_account_id,CLOUDFLARE_EMAIL_API_TOKEN:$cloudflare_email_api_token,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:$cloudflare_events_token,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \
