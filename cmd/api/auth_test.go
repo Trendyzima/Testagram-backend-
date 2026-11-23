@@ -233,7 +233,7 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 	}
 }
 
-func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
+func TestPublicRegistrationDoesNotRequireAdminIdentityReview(t *testing.T) {
 	old, had := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
 	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
 	t.Cleanup(func() {
@@ -244,16 +244,15 @@ func TestPublicRegistrationCannotBypassIdentityReview(t *testing.T) {
 		}
 	})
 	handler := (&service{}).routes()
-	for _, path := range []string{
-		"/api/auth/signup",
-		"/api/auth/resend-verification",
-		"/api/auth/verify-email",
-	} {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"applicant@example.com","username":"applicant","password":"a-strong-password-value","token":"a-valid-looking-token"}`))
+	for _, path := range []string{"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value","token":"a-valid-looking-token"}`))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-			t.Fatalf("POST %s status=%d body=%s; expected fail-closed identity-review gate", path, rec.Code, rec.Body.String())
+		if strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+			t.Fatalf("POST %s is still blocked by admin identity review: status=%d body=%s", path, rec.Code, rec.Body.String())
+		}
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "AUTH_STORE_UNAVAILABLE") {
+			t.Fatalf("POST %s did not reach the independent auth-store readiness gate: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
 }
