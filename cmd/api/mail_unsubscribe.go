@@ -7,13 +7,16 @@ import (
 	"html"
 	"net/http"
 	"strings"
-
 )
 
 func unsubscribeTokenHash(token string) ([]byte, error) {
-	if len(token) > 128 { return nil, errors.New("invalid unsubscribe token") }
+	if len(token) > 128 {
+		return nil, errors.New("invalid unsubscribe token")
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil || len(raw) != 32 { return nil, errors.New("invalid unsubscribe token") }
+	if err != nil || len(raw) != 32 {
+		return nil, errors.New("invalid unsubscribe token")
+	}
 	hash := sha256.Sum256(raw)
 	return hash[:], nil
 }
@@ -37,7 +40,9 @@ func (s *service) socialEmailUnsubscribe(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "invalid unsubscribe request", http.StatusBadRequest)
 			return
 		}
-		if token == "" { token = strings.TrimSpace(r.FormValue("token")) }
+		if token == "" {
+			token = strings.TrimSpace(r.FormValue("token"))
+		}
 	}
 	hash, err := unsubscribeTokenHash(token)
 	if err != nil || s.db == nil {
@@ -55,8 +60,12 @@ func (s *service) socialEmailUnsubscribe(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		label := "social activity"
-		if category == "new_follower" { label = "new follower" }
-		if category == "new_post" { label = "new post" }
+		if category == "new_follower" {
+			label = "new follower"
+		}
+		if category == "new_post" {
+			label = "new post"
+		}
 		_, _ = w.Write([]byte(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe from Testagram</title><body style="font-family:Arial,sans-serif;max-width:560px;margin:48px auto;padding:0 20px;color:#182230"><h1>Unsubscribe from Testagram emails</h1><p>Stop receiving ` + html.EscapeString(label) + ` activity emails?</p><form method="post" action="/api/email/unsubscribe?token=` + html.EscapeString(token) + `"><button type="submit" style="padding:12px 18px;background:#155eef;color:white;border:0;border-radius:8px">Unsubscribe</button></form></body></html>`))
 		return
 	}
@@ -125,4 +134,3 @@ func (s *service) socialEmailUnsubscribe(w http.ResponseWriter, r *http.Request)
 	}
 	_, _ = w.Write([]byte("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>Unsubscribed</title><body><h1>You are unsubscribed</h1><p>You will no longer receive this category of Testagram activity email.</p></body></html>"))
 }
-
