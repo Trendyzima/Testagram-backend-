@@ -44,6 +44,47 @@ INSERT INTO testagram_local.topic_follows(user_id,topic_id)
 VALUES ('00000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000001')
 ON CONFLICT DO NOTHING;
 
+DO $topic_feed$
+DECLARE visible_count INTEGER;
+BEGIN
+  SELECT count(*) INTO visible_count
+  FROM testagram_local.questions q
+  WHERE EXISTS (
+    SELECT 1
+    FROM testagram_local.question_topics qtt
+    JOIN testagram_local.topics active_topic
+      ON active_topic.id=qtt.topic_id AND active_topic.status='active'
+    JOIN testagram_local.topic_follows tf
+      ON tf.topic_id=qtt.topic_id
+     AND tf.user_id='00000000-0000-4000-8000-000000000003'
+    WHERE qtt.question_id=q.id
+  );
+  IF visible_count <> 1 THEN
+    RAISE EXCEPTION 'followed-topic feed should return exactly the one tagged question, got %', visible_count;
+  END IF;
+
+  UPDATE testagram_local.topics SET status='retired'
+  WHERE id='10000000-0000-4000-8000-000000000001';
+  SELECT count(*) INTO visible_count
+  FROM testagram_local.questions q
+  WHERE EXISTS (
+    SELECT 1
+    FROM testagram_local.question_topics qtt
+    JOIN testagram_local.topics active_topic
+      ON active_topic.id=qtt.topic_id AND active_topic.status='active'
+    JOIN testagram_local.topic_follows tf
+      ON tf.topic_id=qtt.topic_id
+     AND tf.user_id='00000000-0000-4000-8000-000000000003'
+    WHERE qtt.question_id=q.id
+  );
+  IF visible_count <> 0 THEN
+    RAISE EXCEPTION 'retired topics must not appear in followed-topic feeds';
+  END IF;
+  UPDATE testagram_local.topics SET status='active'
+  WHERE id='10000000-0000-4000-8000-000000000001';
+END
+$topic_feed$;
+
 INSERT INTO testagram_local.answers(id,question_id,author_id,body)
 VALUES
  ('30000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','Use a transaction boundary.'),
