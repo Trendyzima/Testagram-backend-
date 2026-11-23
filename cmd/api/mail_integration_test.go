@@ -157,6 +157,7 @@ func TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("9a", 32))
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("native-auth-test-key-", 4))
 
 	stamp := time.Now().UnixNano()
 	email := fmt.Sprintf("native-otp-%d@example.test", stamp)
