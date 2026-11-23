@@ -89,8 +89,12 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 		"cf.email.sending.message.complained": true,
 	}
 	sender, senderErr := mail.ParseAddress(os.Getenv("AUTH_FROM_EMAIL"))
+	if senderErr != nil {
+		http.Error(w, "mail sender configuration unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	senderParts := strings.Split(sender.Address, "@")
-	if senderErr != nil || len(senderParts) != 2 || event.Source.Type != "email.sending" ||
+	if len(senderParts) != 2 || event.Source.Type != "email.sending" ||
 		!strings.EqualFold(event.Source.Domain, senderParts[1]) ||
 		!allowed[event.Type] || strings.TrimSpace(event.Payload.EventID) == "" ||
 		strings.TrimSpace(event.Payload.MessageID) == "" || len(event.Payload.EventID) > 128 ||
