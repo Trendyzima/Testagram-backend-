@@ -43,6 +43,13 @@ WITH checks(check_name, ok) AS (VALUES
   ('legal_consent_audit table', to_regclass('testagram_identity.legal_consent_audit') IS NOT NULL),
   ('auth sessions table', to_regclass('testagram_auth.sessions') IS NOT NULL),
   ('auth rate_limits table', to_regclass('testagram_auth.rate_limits') IS NOT NULL),
+  ('email verification OTP hash column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name='verification_otp_hash')),
+  ('email verification OTP expiry column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name='verification_otp_expires_at')),
+  ('email verification OTP attempt counter', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='identities' AND column_name='verification_otp_attempts')),
+  ('social email notification preferences table', to_regclass('testagram_local.email_notification_preferences') IS NOT NULL),
+  ('testagram_app social email preference INSERT', COALESCE((SELECT has_table_privilege(oid,'testagram_local.email_notification_preferences','INSERT') FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app social email preference SELECT', COALESCE((SELECT has_table_privilege(oid,'testagram_local.email_notification_preferences','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app social email preference UPDATE', COALESCE((SELECT has_table_privilege(oid,'testagram_local.email_notification_preferences','UPDATE') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('password_reset_tokens table', to_regclass('testagram_auth.password_reset_tokens') IS NOT NULL),
   ('security_audit table', to_regclass('testagram_auth.security_audit') IS NOT NULL),
   ('legacy_account_reconciliation table', to_regclass('testagram_auth.legacy_account_reconciliation') IS NOT NULL),
@@ -131,6 +138,10 @@ schema_ready() {
         AND to_regclass('\''testagram_identity.legal_consent_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.sessions'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.rate_limits'\'') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\\''testagram_auth\\'' AND table_name='\\''identities\\'' AND column_name='\\''verification_otp_hash\\'')
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\\''testagram_auth\\'' AND table_name='\\''identities\\'' AND column_name='\\''verification_otp_expires_at\\'')
+        AND to_regclass('\\''testagram_local.email_notification_preferences\\'') IS NOT NULL
+        AND COALESCE((SELECT has_table_privilege(oid,'\\''testagram_local.email_notification_preferences\\'','\\''INSERT\\'') FROM pg_roles WHERE rolname='\\''testagram_app\\''), false)
         AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.security_audit'\'') IS NOT NULL
         AND to_regclass('\''testagram_auth.legacy_account_reconciliation'\'') IS NOT NULL
@@ -354,7 +365,9 @@ for file in \
   059_native_identity_approval_circuit.sql \
   20261121_native_identity_intake_optional_fingerprint.sql \
   060_native_staff_webauthn.sql \
-  061_native_sensitive_action_integrity.sql; do
+  061_native_sensitive_action_integrity.sql \
+  20261124_testagram_email_verification_otp.sql \
+  20261124_testagram_social_email_consent.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -391,6 +404,8 @@ apply_migration 059_native_identity_approval_circuit.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 apply_migration 060_native_staff_webauthn.sql
 apply_migration 061_native_sensitive_action_integrity.sql
+apply_migration 20261124_testagram_email_verification_otp.sql
+apply_migration 20261124_testagram_social_email_consent.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
