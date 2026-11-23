@@ -36,9 +36,9 @@ func (s *service) writeSocialEmailPreferences(w http.ResponseWriter, r *http.Req
 		"ok": true,
 		"data": map[string]any{
 			"new_follower_email_enabled": followEmails,
-			"new_post_email_enabled": postEmails,
-			"consent_version": version,
-			"consent_prompt_required": promptRequired,
+			"new_post_email_enabled":     postEmails,
+			"consent_version":            version,
+			"consent_prompt_required":    promptRequired,
 		},
 		"error": nil, "request_id": requestID,
 	})
