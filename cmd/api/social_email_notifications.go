@@ -114,7 +114,7 @@ func (s *service) socialEmailPreferences(w http.ResponseWriter, r *http.Request)
 		if err == nil && input.NewPostEmailEnabled != nil && !*input.NewPostEmailEnabled {
 			_, err = tx.Exec(r.Context(), `
 				UPDATE testagram_mail.outbox
-				SET status='dead',last_error_code='CONSENT_WITHDRAWN',updated_at=now()
+				SET status='dead',last_error_code='CONSENT_WITHDRAWN',payload_ciphertext='',payload_nonce='',updated_at=now()
 				WHERE preference_user_id=$1 AND preference_category='new_post' AND status='pending'
 			`, userID)
 		}
