@@ -698,6 +698,9 @@ func (s *service) instrument(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
+		// This server-owned marker distinguishes a genuine Backend response
+		// from a provider/proxy 502/503/504 during request-triggered recovery.
+		w.Header().Set("X-Testagram-Service", "testagram-api")
 		s.requests.Add(1)
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
