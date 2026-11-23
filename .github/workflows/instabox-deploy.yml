@@ -458,7 +458,7 @@ jobs:
         env:
           MACHINE_ID: ${{ steps.machine.outputs.machine_id }}
           # Immutable Flutter mainline build 03082cc7; published and smoke-tested by run 45039056776.
-          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:3aa39a426322cbfda5d6dbf8d252cc09a8748ec1e99923e70e7e7ed1f45a8b53
+          TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:54695ed91d029039777c5df2cc0d3b62a22815583ca82fc5ed21cd7d12cd2685
           DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}
           FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}
           # The legacy Backend multi-bucket replicator is not the canonical media path.
