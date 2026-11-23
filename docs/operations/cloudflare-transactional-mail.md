@@ -54,6 +54,8 @@ Generate the encryption key with:
 openssl rand -hex 32
 ```
 
+Generate the independent delivery-event bearer secret with the same command, then store it as the GitHub repository secret `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. Configure the exact same secret in the Cloudflare Queue consumer Worker. Do not reuse the mail encryption key or an edge recovery credential.
+
 Configure these exact GitHub repository settings for the InstaBox deployment workflow:
 
 - Existing repository secret: `CLOUDFLARE_ACCOUNT_ID`
@@ -126,7 +128,7 @@ ORDER BY updated_at DESC
 LIMIT 100;
 ```
 
-Treat a growing pending age as a delivery-configuration or worker-capacity incident. Investigate dead rows by error code. Reconcile uncertain rows against Cloudflare Email Sending logs before any manual retry. Do not expose payload ciphertext, decrypted HTML, OTP values, password-reset links, or recipient addresses in tickets or logs.
+Treat a growing pending age as a delivery-configuration or worker-capacity incident. Investigate dead rows by error code. Reconcile uncertain rows against Cloudflare Email Sending logs before any manual retry. Monitor `testagram_mail_delivery_events_pending`, delivered, deferred, bounced, failed and complained metrics alongside the outbox metrics. A rising unprocessed-event count indicates a Queue forwarding, provider-message-ID matching or migration issue. Do not expose payload ciphertext, decrypted HTML, OTP values, password-reset links, or recipient addresses in tickets or logs.
 
 The worker logs a single startup warning when provider configuration or the encryption key is missing. That warning does not imply queued mail was sent; messages remain pending until the worker is correctly configured.
 
