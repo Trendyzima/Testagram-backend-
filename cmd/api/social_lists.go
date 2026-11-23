@@ -204,23 +204,68 @@ func (s *service) socialListMemberAdd(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEMBER", "A valid user_id is required", rid))
 		return
 	}
-	var owner string
-	if err := s.db.QueryRow(r.Context(), `SELECT owner_id::text FROM testagram_local.social_lists WHERE id=$1::uuid AND deleted_at IS NULL`, id).Scan(&owner); err != nil || owner != uid {
-		writeJSON(w, http.StatusNotFound, errorBody("LIST_NOT_FOUND", "List is unavailable", rid))
-		return
-	}
 	if in.UserID == uid {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEMBER", "You cannot add yourself to your own list", rid))
 		return
 	}
-	var blocked bool
-	if err := s.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM testagram_local.blocks WHERE (blocker_id=$1::uuid AND blocked_id=$2::uuid) OR (blocker_id=$2::uuid AND blocked_id=$1::uuid))`, uid, in.UserID).Scan(&blocked); err != nil || blocked {
+
+	// Serialize additions per list so the 500-member cap cannot be exceeded
+	// by concurrent requests. Lock and validate the active owner-controlled
+	// list in the same transaction as membership creation.
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "Account could not be added", rid))
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	var owner string
+	if err := tx.QueryRow(r.Context(), `SELECT owner_id::text FROM testagram_local.social_lists
+WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE`, id).Scan(&owner); err != nil || owner != uid {
+		writeJSON(w, http.StatusNotFound, errorBody("LIST_NOT_FOUND", "List is unavailable", rid))
+		return
+	}
+
+	// Match the canonical username-resolution privacy policy at the write
+	// boundary too: hidden, protected-without-an-accepted-follow, inactive,
+	// and blocked accounts cannot be added by guessing a UUID.
+	var available bool
+	err = tx.QueryRow(r.Context(), `
+SELECT EXISTS(
+  SELECT 1 FROM testagram_local.accounts a
+  WHERE a.user_id=$2::uuid
+    AND a.account_status='active'
+    AND (a.discoverable_by_username OR EXISTS(
+      SELECT 1 FROM testagram_local.follows f
+      WHERE f.follower_id=$1::uuid AND f.following_id=a.user_id AND f.status='accepted'
+    ))
+    AND (NOT a.protected_account OR EXISTS(
+      SELECT 1 FROM testagram_local.follows f
+      WHERE f.follower_id=$1::uuid AND f.following_id=a.user_id AND f.status='accepted'
+    ))
+    AND NOT EXISTS(
+      SELECT 1 FROM testagram_local.blocks b
+      WHERE (b.blocker_id=$1::uuid AND b.blocked_id=a.user_id)
+         OR (b.blocker_id=a.user_id AND b.blocked_id=$1::uuid)
+    )
+)`, uid, in.UserID).Scan(&available)
+	if err != nil || !available {
 		writeJSON(w, http.StatusNotFound, errorBody("MEMBER_UNAVAILABLE", "This account cannot be added", rid))
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), `INSERT INTO testagram_local.social_list_members(list_id,member_user_id,added_by)
-SELECT $1::uuid,a.user_id,$3::uuid FROM testagram_local.accounts a
-WHERE a.user_id=$2::uuid AND a.account_status='active'
+
+	var count int64
+	if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM testagram_local.social_list_members WHERE list_id=$1::uuid`, id).Scan(&count); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "List capacity could not be checked", rid))
+		return
+	}
+	if count >= 500 {
+		writeJSON(w, http.StatusConflict, errorBody("LIST_CAPACITY_REACHED", "A list can contain at most 500 accounts", rid))
+		return
+	}
+
+	tag, err := tx.Exec(r.Context(), `INSERT INTO testagram_local.social_list_members(list_id,member_user_id,added_by)
+VALUES($1::uuid,$2::uuid,$3::uuid)
 ON CONFLICT(list_id,member_user_id) DO NOTHING`, id, in.UserID, uid)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "Account could not be added", rid))
@@ -228,16 +273,22 @@ ON CONFLICT(list_id,member_user_id) DO NOTHING`, id, in.UserID, uid)
 	}
 	if tag.RowsAffected() == 0 {
 		var exists bool
-		_ = s.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM testagram_local.social_list_members WHERE list_id=$1::uuid AND member_user_id=$2::uuid)`, id, in.UserID).Scan(&exists)
-		if !exists {
+		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM testagram_local.social_list_members WHERE list_id=$1::uuid AND member_user_id=$2::uuid)`, id, in.UserID).Scan(&exists); err != nil || !exists {
 			writeJSON(w, http.StatusNotFound, errorBody("MEMBER_UNAVAILABLE", "Account is unavailable", rid))
 			return
 		}
 	}
-	_, _ = s.db.Exec(r.Context(), `UPDATE testagram_local.social_lists SET updated_at=now() WHERE id=$1::uuid`, id)
+	_, err = tx.Exec(r.Context(), `UPDATE testagram_local.social_lists SET updated_at=now() WHERE id=$1::uuid`, id)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "List could not be updated", rid))
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "Account could not be added", rid))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"list_id": id, "user_id": in.UserID, "added": tag.RowsAffected() == 1}, "error": nil, "request_id": rid})
 }
-
 func (s *service) socialListMemberRemove(w http.ResponseWriter, r *http.Request) {
 	uid, rid, ok := s.socialAuth(w, r)
 	if !ok {
