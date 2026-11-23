@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS testagram_mail.delivery_events (
 CREATE INDEX IF NOT EXISTS testagram_mail_delivery_events_unprocessed
   ON testagram_mail.delivery_events(received_at,id)
   WHERE processed_at IS NULL;
+CREATE INDEX IF NOT EXISTS testagram_mail_delivery_events_retention
+  ON testagram_mail.delivery_events(processed_at,id)
+  WHERE processed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS testagram_mail.social_unsubscribe_tokens (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -63,6 +66,9 @@ CREATE TABLE IF NOT EXISTS testagram_mail.social_unsubscribe_tokens (
 CREATE INDEX IF NOT EXISTS testagram_mail_social_unsubscribe_expiry
   ON testagram_mail.social_unsubscribe_tokens(expires_at)
   WHERE used_at IS NULL;
+CREATE INDEX IF NOT EXISTS testagram_mail_social_unsubscribe_used_retention
+  ON testagram_mail.social_unsubscribe_tokens(used_at,id)
+  WHERE used_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS testagram_mail.recipient_suppressions (
   recipient_fingerprint BYTEA PRIMARY KEY,
