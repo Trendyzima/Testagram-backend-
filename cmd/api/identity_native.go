@@ -89,22 +89,9 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return
 	}
-	if !s.identityReviewWebAuthnReady {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed by production policy", requestID(r)))
-		return
-	}
-	readinessReady := false
-	if s.identityReviewWebAuthnPrerequisites != nil {
-		readinessReady = s.identityReviewWebAuthnPrerequisites(r.Context())
-	} else {
-		readinessCtx, readinessCancel := context.WithTimeout(r.Context(), 4*time.Second)
-		readinessReady = identityReviewWebAuthnPrerequisitesReady(readinessCtx, s.db)
-		readinessCancel()
-	}
-	if !readinessReady {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_MFA_UNAVAILABLE", "Identity applications remain closed until PostgreSQL and live Admin Console WebAuthn readiness are verified", requestID(r)))
-		return
-	}
+	// Public identity intake is deliberately independent of staff review MFA.
+	// Staff WebAuthn remains mandatory for privileged review and approval actions;
+	// it must not prevent an ordinary applicant from submitting an application.
 	if s.db == nil || !s.identityEvidenceStorageConfigured() {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification requires PostgreSQL and the private Data Centre evidence lifecycle or a verified private storage replica", requestID(r)))
 		return
