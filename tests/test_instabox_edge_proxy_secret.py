@@ -27,6 +27,15 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         self.assertNotIn("ensure_random_secret EDGE_PROXY_SHARED_TOKEN", self.script)
         self.assertNotIn('EDGE_PROXY_SHARED_TOKEN="$(openssl rand', self.script)
 
+    def test_production_deployment_requires_the_same_readiness_secret_as_the_edge_worker(self):
+        secret_ref = "TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN: ${{ secrets.TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN }}"
+        self.assertIn(secret_ref, self.workflow)
+        self.assertIn("Validate dedicated edge recovery readiness credential", self.workflow)
+        self.assertIn('[[ ! "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]]', self.workflow)
+        self.assertIn('--arg edge_recovery_readiness_token "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN"', self.script)
+        self.assertIn("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token", self.script)
+        self.assertIn('write_env_value TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN"', self.script)
+
     def test_environment_file_writers_escape_secret_metacharacters(self):
         self.assertIn('local key="$1" value="$2" escaped_value', self.script)
         self.assertIn("escaped_value", self.script)
@@ -81,6 +90,8 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         caddy = (ROOT / "deploy" / "self-hosted" / "Caddyfile").read_text(encoding="utf-8")
         env_example = (ROOT / "deploy" / "self-hosted" / ".env.example").read_text(encoding="utf-8")
         self.assertIn("EDGE_PROXY_SHARED_TOKEN", compose)
+        self.assertIn("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN", compose)
+        self.assertIn("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN=REPLACE_WITH_A_SEPARATE_RANDOM_32_BYTE_HEX_SECRET", env_example)
         self.assertEqual(env_example.count("EDGE_PROXY_SHARED_TOKEN="), 1)
         self.assertIn("REPLACE_WITH_A_SEPARATE_RANDOM_32_BYTE_EDGE_TOKEN", env_example)
         self.assertIn("{$EDGE_PROXY_SHARED_TOKEN}", caddy)

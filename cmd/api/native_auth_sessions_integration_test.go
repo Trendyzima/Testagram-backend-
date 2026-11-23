@@ -218,3 +218,39 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 		t.Fatal("new password did not establish a native session")
 	}
 }
+
+func TestEdgeRecoveryReadinessReportsLivePostgreSQL(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is required for edge recovery readiness integration")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("x", 32))
+	token := strings.Repeat("a", 64)
+	req := httptest.NewRequest(http.MethodGet, "/internal/edge/recovery-ready", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	(&service{db: db, edgeRecoveryReadinessToken: token}).routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edge recovery readiness status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		OK      bool   `json:"ok"`
+		Ready   bool   `json:"ready"`
+		Service string `json:"service"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.OK || !body.Ready || body.Service != "testagram-api" {
+		t.Fatalf("edge recovery readiness body=%+v; want ready Testagram API", body)
+	}
+}

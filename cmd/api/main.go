@@ -53,27 +53,28 @@ type upstreamMetric struct {
 }
 
 type service struct {
-	db                        *pgxpool.Pool
-	authEmailSender           func(context.Context, string, string, string) error
-	moderation                moderationpkg.ContentModeration
-	metricsMu                 sync.Mutex
-	routeMetrics              map[string]*requestMetric
-	capabilityMetrics         map[string]*requestMetric
-	upstreamMetrics           map[string]*upstreamMetric
-	requests                  atomic.Uint64
-	rateLimited               atomic.Uint64
-	capabilityRateLimitErrors atomic.Uint64
-	algorithmRequests         atomic.Uint64
-	algorithmFailures         atomic.Uint64
-	federationInternalToken   string
-	federationOutbox          *federationoutbox.Store
-	federationClient          *federationclient.Client
-	federationPublicBaseURL   string
-	upstream                  *http.Client
-	media                     *media.Signer
-	mediaIntentFactory        *media.IntentFactory
-	dataCentreMedia           *datacentreclient.Client
-	identityEvidenceMedia     identityEvidenceMediaClient
+	db                         *pgxpool.Pool
+	edgeRecoveryReadinessToken string
+	authEmailSender            func(context.Context, string, string, string) error
+	moderation                 moderationpkg.ContentModeration
+	metricsMu                  sync.Mutex
+	routeMetrics               map[string]*requestMetric
+	capabilityMetrics          map[string]*requestMetric
+	upstreamMetrics            map[string]*upstreamMetric
+	requests                   atomic.Uint64
+	rateLimited                atomic.Uint64
+	capabilityRateLimitErrors  atomic.Uint64
+	algorithmRequests          atomic.Uint64
+	algorithmFailures          atomic.Uint64
+	federationInternalToken    string
+	federationOutbox           *federationoutbox.Store
+	federationClient           *federationclient.Client
+	federationPublicBaseURL    string
+	upstream                   *http.Client
+	media                      *media.Signer
+	mediaIntentFactory         *media.IntentFactory
+	dataCentreMedia            *datacentreclient.Client
+	identityEvidenceMedia      identityEvidenceMediaClient
 	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
 	identityReviewWebAuthnReady         bool
 	identityReviewWebAuthnPrerequisites func(context.Context) bool
@@ -446,6 +447,38 @@ func (s *service) routes() http.Handler {
 	}
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("GET /internal/edge/recovery-ready", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if s.edgeRecoveryReadinessToken == "" || provided == "" ||
+			subtle.ConstantTimeCompare([]byte(provided), []byte(s.edgeRecoveryReadinessToken)) != 1 {
+			// Do not disclose this edge-only capability to unauthenticated callers.
+			http.NotFound(w, r)
+			return
+		}
+		// PostgreSQL reachability alone is insufficient for a successful
+		// native sign-in. Do not announce application readiness while the
+		// signing capability required by the login/session routes is absent.
+		if len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))) < 32 {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		if s.db == nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.db.Ping(ctx); err != nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"ready":true,"service":"testagram-api"}`))
+	})
+
 	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
@@ -665,6 +698,9 @@ func (s *service) instrument(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(r)
 		w.Header().Set("X-Request-ID", id)
+		// This server-owned marker distinguishes a genuine Backend response
+		// from a provider/proxy 502/503/504 during request-triggered recovery.
+		w.Header().Set("X-Testagram-Service", "testagram-api")
 		s.requests.Add(1)
 		started := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
@@ -1283,8 +1319,15 @@ func main() {
 	if federationURLerr != nil {
 		log.Fatalf("configure public Federation origin: %v", federationURLerr)
 	}
+	edgeRecoveryReadinessToken := strings.TrimSpace(os.Getenv("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN"))
+	if edgeRecoveryReadinessToken != "" {
+		decoded, decodeErr := hex.DecodeString(edgeRecoveryReadinessToken)
+		if decodeErr != nil || len(decoded) != 32 {
+			log.Fatal("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must be exactly 32 random bytes encoded as 64 hexadecimal characters")
+		}
+	}
 	svc := &service{
-		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
+		db: db, edgeRecoveryReadinessToken: edgeRecoveryReadinessToken, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
 		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
