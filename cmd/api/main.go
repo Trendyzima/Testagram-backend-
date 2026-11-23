@@ -1430,7 +1430,6 @@ func main() {
 	}
 }
 
-
 // nativeAuthReadinessSchema confirms that the relations used by native login,
 // session creation and the first authenticated profile read are present and
 // readable by the configured PostgreSQL application role. The names are
