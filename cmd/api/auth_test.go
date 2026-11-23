@@ -237,7 +237,11 @@ func TestPublicRegistrationDoesNotRequireAdminIdentityReview(t *testing.T) {
 	old, had := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
 	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
 	t.Cleanup(func() {
-		if had { _ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", old) } else { _ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET") }
+		if had {
+			_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", old)
+		} else {
+			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
+		}
 	})
 	handler := (&service{}).routes()
 	for _, path := range []string{"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email"} {
