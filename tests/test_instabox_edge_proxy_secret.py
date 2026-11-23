@@ -31,7 +31,7 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         secret_ref = "TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN: ${{ secrets.TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN }}"
         self.assertIn(secret_ref, self.workflow)
         self.assertIn("Validate dedicated edge recovery readiness credential", self.workflow)
-        self.assertIn('[[ ${#TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN} -lt 64 ]]', self.workflow)
+        self.assertIn('[[ ! "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]]', self.workflow)
         self.assertIn('--arg edge_recovery_readiness_token "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN"', self.script)
         self.assertIn("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token", self.script)
         self.assertIn('write_env_value TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN"', self.script)
