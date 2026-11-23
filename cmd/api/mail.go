@@ -176,7 +176,7 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		return "", errors.New("Cloudflare Email Sending HTTP client unavailable")
 	}
 	body, err := json.Marshal(map[string]string{
-		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
+		"to": []string{message.Recipient}, "from": from, "subject": message.Subject, "html": message.HTML,
 	})
 	if err != nil {
 		return "", err
@@ -277,18 +277,27 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	var id int64
 	var ciphertext, nonce []byte
 	var attempt int
+	var preferenceUserID, preferenceCategory string
 	err := s.db.QueryRow(ctx, `
 		WITH candidate AS (
-			SELECT id FROM testagram_mail.outbox
-			WHERE status='pending' AND available_at<=now()
-			ORDER BY available_at,id
+			SELECT id FROM testagram_mail.outbox o
+			WHERE o.status='pending' AND o.available_at<=now()
+			  AND (o.preference_user_id IS NULL OR EXISTS (
+			    SELECT 1 FROM testagram_local.email_notification_preferences p
+			    WHERE p.user_id=o.preference_user_id AND (
+			      (o.preference_category='new_follower' AND p.new_follower_email_enabled=TRUE)
+			      OR (o.preference_category='new_post' AND p.new_post_email_enabled=TRUE)
+			    )
+			  ))
+			ORDER BY o.available_at,o.id
 			LIMIT 1 FOR UPDATE SKIP LOCKED
 		)
 		UPDATE testagram_mail.outbox AS o
 		SET status='sending',attempts=o.attempts+1,lease_until=now()+interval '2 minutes',updated_at=now()
 		FROM candidate WHERE o.id=candidate.id
-		RETURNING o.id,o.payload_ciphertext,o.payload_nonce,o.attempts
-	`).Scan(&id, &ciphertext, &nonce, &attempt)
+		RETURNING o.id,o.payload_ciphertext,o.payload_nonce,o.attempts,
+		          COALESCE(o.preference_user_id::text,''),COALESCE(o.preference_category,'')
+	`).Scan(&id, &ciphertext, &nonce, &attempt, &preferenceUserID, &preferenceCategory)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -311,6 +320,29 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		_ = s.failMail(ctx, id, attempt, "MAIL_PAYLOAD_INVALID")
 		return true, err
 	}
+	// Re-check consent immediately before the provider call so queued social
+	// messages cannot be sent after a preference withdrawal.
+	if preferenceUserID != "" {
+		var consentActive bool
+		err := s.db.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM testagram_local.email_notification_preferences p
+			WHERE p.user_id=$1::uuid AND (
+				($2='new_follower' AND p.new_follower_email_enabled=TRUE)
+				OR ($2='new_post' AND p.new_post_email_enabled=TRUE)
+			)
+		)`, preferenceUserID, preferenceCategory).Scan(&consentActive)
+		if err != nil {
+			_ = s.failMail(ctx, id, attempt, "SOCIAL_EMAIL_CONSENT_LOOKUP_FAILED")
+			return true, err
+		}
+		if !consentActive {
+			_, err := s.db.Exec(ctx, `UPDATE testagram_mail.outbox
+				SET status='dead',lease_until=NULL,last_error_code='CONSENT_WITHDRAWN',
+				    payload_ciphertext='',payload_nonce='',updated_at=now()
+				WHERE id=$1 AND status='sending'`, id)
+			return true, err
+		}
+	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	messageID, sendErr := s.sendCloudflareMail(sendCtx, message)
@@ -330,7 +362,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
 				SET status='dead',lease_until=NULL,provider_message_id=NULLIF($2,''),
-				    last_error_code='CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE',updated_at=now()
+				    last_error_code='CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE',payload_ciphertext='',payload_nonce='',updated_at=now()
 				WHERE id=$1 AND status='sending'
 			`, id, messageID)
 			return true, err
@@ -357,7 +389,7 @@ func (s *service) failMail(ctx context.Context, id int64, attempt int, code stri
 	if attempt >= mailMaxAttempts {
 		_, err := s.db.Exec(ctx, `
 			UPDATE testagram_mail.outbox
-			SET status='dead',lease_until=NULL,last_error_code=$2,updated_at=now()
+			SET status='dead',lease_until=NULL,last_error_code=$2,payload_ciphertext='',payload_nonce='',updated_at=now()
 			WHERE id=$1
 		`, id, code)
 		return err
