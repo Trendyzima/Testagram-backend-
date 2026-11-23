@@ -32,10 +32,12 @@ const (
 	mailMaxAttempts    = 12
 )
 
-type permanentMailError struct{}
+type permanentMailError struct {
+	code string
+}
 
-func (permanentMailError) Error() string {
-	return "recipient was permanently bounced or suppressed"
+func (e permanentMailError) Error() string {
+	return "Cloudflare definitively rejected the message"
 }
 
 type ambiguousMailError struct {
@@ -312,16 +314,16 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		return "", ambiguousMailError{cause: fmt.Errorf("provider server error (HTTP %d)", resp.StatusCode)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.Success {
-		if len(result.Errors) > 0 {
-			return "", fmt.Errorf("Cloudflare Email Sending rejected the request (HTTP %d, code %d)", resp.StatusCode, result.Errors[0].Code)
+		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
+			return "", fmt.Errorf("Cloudflare Email Sending temporarily rejected the request (HTTP %d)", resp.StatusCode)
 		}
-		return "", fmt.Errorf("Cloudflare Email Sending rejected the request (HTTP %d)", resp.StatusCode)
+		return "", permanentMailError{code: "CLOUDFLARE_REQUEST_REJECTED"}
 	}
 	if strings.TrimSpace(result.Result.MessageID) == "" {
 		return "", ambiguousMailError{cause: errors.New("provider accepted the request without returning a message ID")}
 	}
 	if len(result.Result.PermanentBounces) > 0 || len(result.Result.Suppressed) > 0 {
-		return result.Result.MessageID, permanentMailError{}
+		return result.Result.MessageID, permanentMailError{code: "CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE"}
 	}
 	if len(result.Result.Delivered) == 0 && len(result.Result.Queued) == 0 {
 		return result.Result.MessageID, ambiguousMailError{cause: errors.New("provider returned no recipient outcome")}
@@ -521,12 +523,14 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		}
 		var permanent permanentMailError
 		if errors.As(sendErr, &permanent) {
+			code := permanent.code
+			if code == "" { code = "CLOUDFLARE_REQUEST_REJECTED" }
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
 				SET status='dead',lease_until=NULL,provider_message_id=NULLIF($2,''),
-				    last_error_code='CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE',payload_ciphertext='',payload_nonce='',updated_at=now()
+				    last_error_code=$3,payload_ciphertext='',payload_nonce='',updated_at=now()
 				WHERE id=$1 AND status='sending'
-			`, id, messageID)
+			`, id, messageID, code)
 			return true, err
 		}
 		code := "CLOUDFLARE_DELIVERY_FAILED"
