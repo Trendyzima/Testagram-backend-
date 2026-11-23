@@ -120,6 +120,12 @@ sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/fl
 
 BASE_ENV="$BACKEND/deploy/self-hosted/.env"
 BASE_COMPOSE="$BACKEND/deploy/self-hosted/docker-compose.yml"
+normalize_env_file() {
+  local env_file="$1"
+  # Existing VPS .env files may have been edited on Windows; CRLF turns the final
+  # character of a sourced assignment into a shell command and aborts deployment.
+  sed -i 's/\r$//' "$env_file"
+}
 if [[ ! -f "$BASE_ENV" ]]; then
   POSTGRES_PASSWORD="$(openssl rand -hex 32)"
   MINIO_ROOT_PASSWORD="$(openssl rand -hex 32)"
@@ -211,6 +217,7 @@ MEDIA_MODERATION_TOKEN=
 EOF
   chmod 600 "$BASE_ENV"
 fi
+normalize_env_file "$BASE_ENV"
 
 # Keep the two Federation directions independently keyed, including on existing VPS installs.
 read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
@@ -638,6 +645,7 @@ write_dc_env_value TESTAGRAM_FEDERATION_IMAGE "$TESTAGRAM_FEDERATION_IMAGE"
 # Provider credentials are not copied to the VPS unless the private
 # media profile has been explicitly enabled for this deployment.
 chmod 600 "$DC_ENV"
+normalize_env_file "$DC_ENV"
 
 set -a
 # shellcheck disable=SC1090
