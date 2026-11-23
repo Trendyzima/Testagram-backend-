@@ -221,7 +221,7 @@ func enqueueNewPostActivityEmails(ctx context.Context, tx pgx.Tx, authorID, visi
 		"<blockquote>" + html.EscapeString(snippet) + "</blockquote>" + link +
 		"<p>You received this email because you enabled new-post emails from accounts you follow in Testagram settings.</p>"
 	for _, recipient := range recipients {
-		if err := enqueueAuthEmailWith(ctx, tx, recipient, authorName+" shared a new Testagram post", body); err != nil {
+		if err := enqueueAuthEmailWith(ctx, tx, recipient, "A person you follow shared a new Testagram post", body); err != nil {
 			return err
 		}
 	}
