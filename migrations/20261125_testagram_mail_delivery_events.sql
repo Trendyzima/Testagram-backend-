@@ -50,6 +50,20 @@ CREATE INDEX IF NOT EXISTS testagram_mail_delivery_events_unprocessed
   ON testagram_mail.delivery_events(received_at,id)
   WHERE processed_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS testagram_mail.social_unsubscribe_tokens (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  token_hash BYTEA NOT NULL UNIQUE,
+  user_id UUID NOT NULL REFERENCES testagram_local.accounts(user_id) ON DELETE CASCADE,
+  preference_category TEXT NOT NULL CHECK (preference_category IN ('new_follower','new_post')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS testagram_mail_social_unsubscribe_expiry
+  ON testagram_mail.social_unsubscribe_tokens(expires_at)
+  WHERE used_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS testagram_mail.recipient_suppressions (
   recipient_fingerprint BYTEA PRIMARY KEY,
   reason TEXT NOT NULL CHECK (reason IN ('hard_bounce','complaint','rejected')),
@@ -59,6 +73,7 @@ CREATE TABLE IF NOT EXISTS testagram_mail.recipient_suppressions (
 
 REVOKE ALL ON testagram_mail.delivery_events FROM PUBLIC;
 REVOKE ALL ON testagram_mail.recipient_suppressions FROM PUBLIC;
+REVOKE ALL ON testagram_mail.social_unsubscribe_tokens FROM PUBLIC;
 
 DO $grants$
 BEGIN
@@ -66,12 +81,16 @@ BEGIN
   GRANT SELECT,INSERT,UPDATE ON testagram_mail.delivery_events TO testagram_app;
   GRANT SELECT,INSERT ON testagram_mail.recipient_suppressions TO testagram_app;
   GRANT USAGE,SELECT ON SEQUENCE testagram_mail.delivery_events_id_seq TO testagram_app;
+  GRANT SELECT,INSERT,UPDATE ON testagram_mail.social_unsubscribe_tokens TO testagram_app;
+  GRANT USAGE,SELECT ON SEQUENCE testagram_mail.social_unsubscribe_tokens_id_seq TO testagram_app;
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     GRANT USAGE ON SCHEMA testagram_mail TO service_role;
     GRANT SELECT,INSERT,UPDATE ON testagram_mail.delivery_events TO service_role;
     GRANT SELECT,INSERT ON testagram_mail.recipient_suppressions TO service_role;
     GRANT USAGE,SELECT ON SEQUENCE testagram_mail.delivery_events_id_seq TO service_role;
+    GRANT SELECT,INSERT,UPDATE ON testagram_mail.social_unsubscribe_tokens TO service_role;
+    GRANT USAGE,SELECT ON SEQUENCE testagram_mail.social_unsubscribe_tokens_id_seq TO service_role;
   END IF;
 END;
 $grants$;
