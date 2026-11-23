@@ -27,7 +27,7 @@ func TestCloudflareMailEventRejectsMissingTokenAndUnknownEvent(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized { t.Fatalf("missing token status=%d, want 401", rec.Code) }
 
 	req = httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(`{"type":"cf.email.sending.unknown","payload":{"eventId":"x","messageId":"y","recipient":"person@example.test"}}`))
-	req.Header.Set("Authorization", "Bearer expected-token")
+	req.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	rec = httptest.NewRecorder()
 	svc.cloudflareMailEvent(rec, req)
 	if rec.Code != http.StatusBadRequest { t.Fatalf("unknown event status=%d, want 400", rec.Code) }
