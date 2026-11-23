@@ -140,6 +140,9 @@ schema_ready() {
         AND to_regclass('\''testagram_auth.rate_limits'\'') IS NOT NULL
         AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth\'' AND table_name='\''identities\'' AND column_name='\''verification_otp_hash\'')
         AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth\'' AND table_name='\''identities\'' AND column_name='\''verification_otp_expires_at\'')
+        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''identities'\'' AND column_name='\''verification_otp_attempts'\'')
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_local.email_notification_preferences'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
+        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_local.email_notification_preferences'\'','\''UPDATE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
         AND to_regclass('\''testagram_local.email_notification_preferences\'') IS NOT NULL
         AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_local.email_notification_preferences\'','\''INSERT\'') FROM pg_roles WHERE rolname='\''testagram_app\''), false)
         AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
