@@ -103,41 +103,7 @@ func (s *service) socialEmailPreferences(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
-		err = upsertSocialEmailPreferences(r.Context(), tx, userID, input)return
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		_, err = tx.Exec(r.Context(), `
-			INSERT INTO testagram_local.email_notification_preferences(
-				user_id,new_follower_email_enabled,new_post_email_enabled,consent_version,
-				new_follower_consent_at,new_follower_consent_withdrawn_at,
-				new_post_consent_at,new_post_consent_withdrawn_at,updated_at
-			)
-			VALUES(
-				$1,COALESCE($2,FALSE),COALESCE($3,FALSE),$4,
-				CASE WHEN COALESCE($2,FALSE) THEN now() END,NULL,
-				CASE WHEN COALESCE($3,FALSE) THEN now() END,NULL,now()
-			)
-			ON CONFLICT(user_id) DO UPDATE SET
-				new_follower_email_enabled=COALESCE($2,email_notification_preferences.new_follower_email_enabled),
-				new_post_email_enabled=COALESCE($3,email_notification_preferences.new_post_email_enabled),
-				new_follower_consent_at=CASE
-					WHEN $2 IS TRUE THEN now()
-					ELSE email_notification_preferences.new_follower_consent_at END,
-				new_follower_consent_withdrawn_at=CASE
-					WHEN $2 IS TRUE THEN NULL
-					WHEN $2 IS FALSE AND email_notification_preferences.new_follower_email_enabled IS TRUE THEN now()
-					ELSE email_notification_preferences.new_follower_consent_withdrawn_at END,
-				new_post_consent_at=CASE
-					WHEN $3 IS TRUE THEN now()
-					ELSE email_notification_preferences.new_post_consent_at END,
-				new_post_consent_withdrawn_at=CASE
-					WHEN $3 IS TRUE THEN NULL
-					WHEN $3 IS FALSE AND email_notification_preferences.new_post_email_enabled IS TRUE THEN now()
-					ELSE email_notification_preferences.new_post_consent_withdrawn_at END,
-				consent_version=CASE WHEN COALESCE($2,FALSE) OR COALESCE($3,FALSE)
-					THEN $4 ELSE email_notification_preferences.consent_version END,
-				updated_at=now()
-		`, userID, input.NewFollowerEmailEnabled, input.NewPostEmailEnabled, socialEmailConsentVersion)
+		err = upsertSocialEmailPreferences(r.Context(), tx, userID, input)
 		if err == nil && input.NewFollowerEmailEnabled != nil && !*input.NewFollowerEmailEnabled {
 			_, err = tx.Exec(r.Context(), `
 				UPDATE testagram_mail.outbox
