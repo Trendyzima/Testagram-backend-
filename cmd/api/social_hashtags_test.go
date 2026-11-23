@@ -95,3 +95,13 @@ func TestSocialTopicMomentumRewardsAccelerationAndClamps(t *testing.T) {
 		})
 	}
 }
+
+func TestTrendingWordsEndpointFailsClosedWithoutDatabase(t *testing.T) {
+	handler := (&service{}).routes()
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/trends/words", nil))
+	if recorder.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(recorder.Body.String(), "SOCIAL_DATABASE_UNAVAILABLE") {
+		t.Fatalf("trending words without DB: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
