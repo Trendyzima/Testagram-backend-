@@ -14,6 +14,14 @@ Testagram uses Cloudflare Email Service for outbound transactional notifications
 
 The API and worker share the existing InstaBox process and PostgreSQL database. Cloudflare is the external delivery provider.
 
+## Message classes and consent
+
+- **Account verification:** native signup creates an unverified identity and queues a six-digit OTP plus a single-use verification link in the same PostgreSQL transaction. The OTP is HMAC-hashed in the identity row, expires after 10 minutes, and is limited to five guesses. The verification link expires after 24 hours. Successful verification creates the Testagram local profile; no staff approval is required.
+- **Password recovery:** the native reset flow queues a single-use recovery link. It is transactional security mail and does not depend on social-email consent.
+- **New follower / follow request:** sent only to an email-verified, active account that explicitly enabled the follower category.
+- **New post from followed accounts:** sent only for public or follower-visible posts, to active, email-verified followers with the new-post category enabled. Blocked relationships are excluded.
+- Social email preferences are independent and off by default. The first authenticated session asks the user whether they want to choose categories; declining records both categories as off. Users can change or withdraw either category in Email notifications settings. Transactional verification and recovery messages are never gated by these social preferences.
+
 ## Cloudflare account setup
 
 1. Ensure `testagram.site` is active on Cloudflare authoritative DNS.
