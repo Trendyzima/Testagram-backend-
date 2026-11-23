@@ -32,6 +32,31 @@ func TestParseHomeFeedMode(t *testing.T) {
 	}
 }
 
+func TestParseHomeFeedListID(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "omitted", input: "", want: ""},
+		{name: "valid canonical UUID", input: "550e8400-e29b-41d4-a716-446655440000", want: "550e8400-e29b-41d4-a716-446655440000"},
+		{name: "normalizes whitespace and case", input: "  550E8400-E29B-41D4-A716-446655440000  ", want: "550e8400-e29b-41d4-a716-446655440000"},
+		{name: "rejects malformed ID", input: "not-a-list", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseHomeFeedListID(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("parseHomeFeedListID(%q) error = %v, wantErr %v", tc.input, err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Fatalf("parseHomeFeedListID(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseVideoOnly(t *testing.T) {
 	cases := []struct {
 		name    string
