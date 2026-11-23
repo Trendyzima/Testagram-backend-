@@ -15,6 +15,11 @@ SQL
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/062_testagram_knowledge_engine.sql"
 # Replaying the additive migration must be safe.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/062_testagram_knowledge_engine.sql"
+# The curated topic catalog is additive and must remain stable on replay.
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/064_knowledge_topic_seed_catalog.sql"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/064_knowledge_topic_seed_catalog.sql"
+topic_count="$(psql "$DATABASE_URL" -Atqc "SELECT count(*) FROM testagram_local.topics WHERE status = 'active' AND slug = ANY(ARRAY['kenya','east-africa','technology','software-engineering','artificial-intelligence','entrepreneurship','business','agriculture','education','science','climate','finance','design','photography','sports','music','film','travel','history','creative-writing']::text[])")"
+[[ "$topic_count" == "20" ]] || { echo "Knowledge topic seed catalog is incomplete" >&2; exit 1; }
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO testagram_local.accounts(user_id) VALUES
  ('00000000-0000-4000-8000-000000000001'),
