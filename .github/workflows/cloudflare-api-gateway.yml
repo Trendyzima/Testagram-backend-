@@ -144,8 +144,7 @@ jobs:
           # Worker script first, then install its secret before exposing traffic.
           npx --yes wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml
           printf '%s' "$EDGE_PROXY_SHARED_TOKEN" | npx --yes wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
-          printf '%s' "$TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN" | npx --yes wrangler@4 secret put TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN --config infra/cloudflare-api-gateway/wrangler.toml
-
+          
           # Recheck route ownership to close the preflight-to-deploy race. The
           # route is attached only after the secret is present, avoiding a
           # public 503 window during first deployment.
