@@ -86,7 +86,7 @@ func authOTPHash(code string) ([]byte, error) {
 		return nil, errors.New("email OTP hashing key is unavailable")
 	}
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte("testagram-email-otp-v1\\x00"))
+	_, _ = mac.Write([]byte("testagram-email-otp-v1\x00"))
 	_, _ = mac.Write([]byte(code))
 	return mac.Sum(nil), nil
 }
