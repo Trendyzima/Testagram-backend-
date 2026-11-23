@@ -8,6 +8,7 @@ env_file="${ENV_FILE:-$script_dir/.env}"
 backup_dir="${BACKUP_DIR:-$script_dir/backups}"
 knowledge_migration_file="/docker-entrypoint-initdb.d/062_testagram_knowledge_engine.sql"
 social_migration_file="/docker-entrypoint-initdb.d/063_testagram_social_platform_product_foundation.sql"
+catalog_migration_file="/docker-entrypoint-initdb.d/064_knowledge_topic_seed_catalog.sql"
 
 [[ -f "$compose_file" && -f "$env_file" ]] || { echo "Compose and .env files are required." >&2; exit 1; }
 for bin in docker pg_restore sha256sum; do command -v "$bin" >/dev/null 2>&1 || { echo "$bin is required" >&2; exit 1; }; done
@@ -37,13 +38,28 @@ schema_ready() {
        AND to_regclass('\''testagram_local.social_moderation_appeals'\'') IS NOT NULL
   "'
 }
-if [[ "$(schema_ready)" == "t" ]]; then
-  echo "Knowledge and social platform foundation schemas already exist; no changes made."
+catalog_ready() {
+  docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "
+    SELECT count(*)=20
+    FROM testagram_local.topics
+    WHERE status=\$\$active\$\$
+      AND slug = ANY(ARRAY[
+        \$\$kenya\$\$,\$\$east-africa\$\$,\$\$technology\$\$,\$\$software-engineering\$\$,
+        \$\$artificial-intelligence\$\$,\$\$entrepreneurship\$\$,\$\$business\$\$,\$\$agriculture\$\$,
+        \$\$education\$\$,\$\$science\$\$,\$\$climate\$\$,\$\$finance\$\$,\$\$design\$\$,
+        \$\$photography\$\$,\$\$sports\$\$,\$\$music\$\$,\$\$film\$\$,\$\$travel\$\$,
+        \$\$history\$\$,\$\$creative-writing\$\$
+      ]::text[])
+  "'
+}
+if [[ "$(schema_ready)" == "t" && "$(catalog_ready)" == "t" ]]; then
+  echo "Knowledge, social platform and curated topic catalog are already ready; no changes made."
   exit 0
 fi
 
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "$knowledge_migration_file"
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "$social_migration_file"
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "$catalog_migration_file"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -65,5 +81,7 @@ fi
 
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$knowledge_migration_file"
 docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$social_migration_file"
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$catalog_migration_file"
 [[ "$(schema_ready)" == "t" ]] || { echo "Social platform foundation schema verification failed." >&2; exit 1; }
-echo "Knowledge engine and social platform foundation migrations applied and verified. Retain backup until Backend and Flutter acceptance tests pass."
+[[ "$(catalog_ready)" == "t" ]] || { echo "Curated Knowledge topic catalog verification failed." >&2; exit 1; }
+echo "Knowledge engine, social platform foundation and curated topic catalog migrations applied and verified. Retain backup until Backend and Flutter acceptance tests pass."
