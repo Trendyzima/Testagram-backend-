@@ -19,7 +19,7 @@ import (
 type cloudflareDeliveryEvent struct {
 	Type   string `json:"type"`
 	Source struct {
-		Type string `json:"type"`
+		Type   string `json:"type"`
 		Domain string `json:"domain"`
 	} `json:"source"`
 	Payload struct {
