@@ -282,6 +282,7 @@ jobs:
             migrations/20261122_testagram_mail_outbox.sql \
             migrations/20261123_testagram_mail_outbox_runtime_role.sql \
             migrations/20261124_testagram_social_email_consent.sql \
+            migrations/20261125_testagram_mail_delivery_events.sql \
             migrations/20261107_federation_actor_consent.sql \
             migrations/20261108_communication_core.sql \
             migrations/20261122_communication_media_encryption_truth.sql \
@@ -1015,6 +1016,7 @@ jobs:
             migrations/20261122_testagram_mail_outbox.sql \
             migrations/20261123_testagram_mail_outbox_runtime_role.sql \
             migrations/20261124_testagram_social_email_consent.sql \
+            migrations/20261125_testagram_mail_delivery_events.sql \
             migrations/20261108_communication_core.sql \
             migrations/20261122_communication_media_encryption_truth.sql \
             migrations/20261110_native_media_post_links.sql \
