@@ -86,14 +86,14 @@ func (s *service) socialEmailPreferences(w http.ResponseWriter, r *http.Request)
 					ELSE email_notification_preferences.new_follower_consent_at END,
 				new_follower_consent_withdrawn_at=CASE
 					WHEN $2 IS TRUE THEN NULL
-					WHEN $2 IS FALSE THEN now()
+					WHEN $2 IS FALSE AND email_notification_preferences.new_follower_email_enabled IS TRUE THEN now()
 					ELSE email_notification_preferences.new_follower_consent_withdrawn_at END,
 				new_post_consent_at=CASE
 					WHEN $3 IS TRUE THEN now()
 					ELSE email_notification_preferences.new_post_consent_at END,
 				new_post_consent_withdrawn_at=CASE
 					WHEN $3 IS TRUE THEN NULL
-					WHEN $3 IS FALSE THEN now()
+					WHEN $3 IS FALSE AND email_notification_preferences.new_post_email_enabled IS TRUE THEN now()
 					ELSE email_notification_preferences.new_post_consent_withdrawn_at END,
 				consent_version=CASE WHEN COALESCE($2,FALSE) OR COALESCE($3,FALSE)
 					THEN $4 ELSE email_notification_preferences.consent_version END,
