@@ -66,6 +66,14 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
         self.assertIn("exactly one active testagram.site zone in the pinned Cloudflare account", WORKFLOW)
         self.assertIn("Cloudflare zone/account changed after preflight", WORKFLOW)
 
+    def test_delivery_event_secret_reaches_backend_runtime_without_logging(self):
+        deploy_script = (ROOT / "scripts" / "start-instabox-deployment.sh").read_text(encoding="utf-8")
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", deploy_script)
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:$cloudflare_events_token", deploy_script)
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:-}", compose)
+        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", WORKFLOW)
+
     def test_caddy_api_ingress_uses_the_shared_token_not_proxy_rewritten_host_metadata(self):
         self.assertIn("@api_edge header X-Testagram-Edge-Token {$EDGE_PROXY_SHARED_TOKEN}", CADDYFILE)
         self.assertNotIn("header X-Forwarded-Host api.testagram.site", CADDYFILE)
