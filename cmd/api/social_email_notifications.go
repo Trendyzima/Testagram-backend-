@@ -164,7 +164,6 @@ func enqueueFollowActivityEmail(ctx context.Context, tx pgx.Tx, actorID, recipie
 	return enqueueSocialEmailWith(ctx, tx, recipient, recipientID, "new_follower", subject, body)
 }
 
-
 func createFollowerPostNotifications(ctx context.Context, tx pgx.Tx, authorID, postID, visibility string) error {
 	if visibility != "public" && visibility != "followers" {
 		return nil
