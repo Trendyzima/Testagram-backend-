@@ -13,6 +13,13 @@ import (
 	"time"
 )
 
+func TestMailPlainTextAlternativeStripsMarkupAndDecodesEntities(t *testing.T) {
+	got := mailPlainTextFromHTML("<p>Hello &amp; welcome</p><p>Open <strong>Testagram</strong></p>")
+	if got != "Hello & welcome\nOpen Testagram" {
+		t.Fatalf("plain-text alternative = %q", got)
+	}
+}
+
 func TestMailCipherEncryptsAndDecrypts(t *testing.T) {
 	key := strings.Repeat("ab", 32)
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", key)
@@ -91,7 +98,7 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 			t.Errorf("decode request: %v", err)
 		}
 		if body["to"] != "person@example.test" || body["from"] != "no-reply@testagram.site" ||
-			body["subject"] != "Password reset" || body["html"] != "<p>Reset</p>" {
+			body["subject"] != "Password reset" || body["html"] != "<p>Reset</p>" || body["text"] != "Reset text" {
 			t.Errorf("unexpected Cloudflare request payload: %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -101,7 +108,7 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 
 	client := &http.Client{Timeout: time.Second}
 	messageID, err := sendCloudflareMailRequest(context.Background(), client, server.URL+"/accounts/0123456789abcdef0123456789abcdef/email/sending/send", "test-token", "no-reply@testagram.site", queuedMail{
-		Recipient: "person@example.test", Subject: "Password reset", HTML: "<p>Reset</p>",
+		Recipient: "person@example.test", Subject: "Password reset", HTML: "<p>Reset</p>", Text: "Reset text",
 	})
 	if err != nil {
 		t.Fatal(err)
