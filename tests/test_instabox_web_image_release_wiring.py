@@ -10,7 +10,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "instabox-deploy.yml"
 class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
     def test_workflow_uses_the_published_flutter_main_release(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:54695ed91d029039777c5df2cc0d3b62a22815583ca82fc5ed21cd7d12cd2685", workflow)
+        self.assertIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:b79c3895343d1fc6518cdcba9ddff236b6375c90676663f6b9e4f391bde7671f", workflow)
         self.assertNotIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web:main", workflow)
 
     def test_deployment_preserves_the_workflow_selected_digest(self):
