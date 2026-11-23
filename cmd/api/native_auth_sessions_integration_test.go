@@ -232,6 +232,7 @@ func TestEdgeRecoveryReadinessReportsLivePostgreSQL(t *testing.T) {
 	}
 	defer db.Close()
 
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("x", 32))
 	token := strings.Repeat("edge-recovery-readiness-integration-", 2)
 	req := httptest.NewRequest(http.MethodGet, "/internal/edge/recovery-ready", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
