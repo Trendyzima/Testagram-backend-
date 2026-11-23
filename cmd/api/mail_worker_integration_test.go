@@ -17,12 +17,6 @@ func configureMailWorkerTest(t *testing.T) {
 	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
 }
 
-func queueWorkerTestMail(t *testing.T, db interface {
-	Exec(context.Context, string, ...any) (interface{ RowsAffected() int64 }, error)
-}, recipient string) {
-	t.Helper()
-}
-
 func TestMailWorkerRetriesDefiniteFailureAndPreservesPayload(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
