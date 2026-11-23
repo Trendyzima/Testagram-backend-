@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -32,7 +33,7 @@ type cloudflareDeliveryEvent struct {
 }
 
 func mailRecipientFingerprint(recipient string) ([]byte, error) {
-	key, err := hex.DecodeString(strings.TrimSpace(getenv("TESTAGRAM_MAIL_ENCRYPTION_KEY")))
+	key, err := hex.DecodeString(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_ENCRYPTION_KEY")))
 	if err != nil || len(key) != 32 {
 		return nil, errors.New("mail encryption key unavailable")
 	}
@@ -129,13 +130,17 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 		),
 		matched AS (
 			UPDATE testagram_mail.outbox o
-			SET delivery_status=CASE c.event_type
-				WHEN 'cf.email.sending.message.delivered' THEN 'delivered'
-				WHEN 'cf.email.sending.message.deferred' THEN 'deferred'
-				WHEN 'cf.email.sending.message.bounced' THEN 'bounced'
-				WHEN 'cf.email.sending.message.failed' THEN 'failed'
-				WHEN 'cf.email.sending.message.rejected' THEN 'rejected'
-				WHEN 'cf.email.sending.message.complained' THEN 'complained'
+			SET delivery_status=CASE
+				WHEN o.delivery_status IN ('delivered','bounced','failed','rejected','complained')
+				 AND c.event_type <> 'cf.email.sending.message.complained' THEN o.delivery_status
+				ELSE CASE c.event_type
+					WHEN 'cf.email.sending.message.delivered' THEN 'delivered'
+					WHEN 'cf.email.sending.message.deferred' THEN 'deferred'
+					WHEN 'cf.email.sending.message.bounced' THEN 'bounced'
+					WHEN 'cf.email.sending.message.failed' THEN 'failed'
+					WHEN 'cf.email.sending.message.rejected' THEN 'rejected'
+					WHEN 'cf.email.sending.message.complained' THEN 'complained'
+				END
 			END,
 			delivered_at=CASE WHEN c.event_type='cf.email.sending.message.delivered' THEN now() ELSE o.delivered_at END,
 			delivery_failed_at=CASE WHEN c.event_type IN (
@@ -145,7 +150,8 @@ func (s *service) reconcileCloudflareMailEvents(ctx context.Context) error {
 			updated_at=now()
 			FROM candidates c
 			WHERE o.provider_message_id=c.provider_message_id
-			  AND o.delivery_status NOT IN ('delivered','complained')
+			  AND o.recipient_fingerprint=c.recipient_fingerprint
+			  
 			RETURNING c.id,c.provider_event_id,c.event_type,c.recipient_fingerprint,c.bounce_type
 		),
 		suppressions AS (
