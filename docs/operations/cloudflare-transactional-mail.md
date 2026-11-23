@@ -150,7 +150,7 @@ Social activity messages include a visible category-specific unsubscribe link an
 - `GET /api/email/unsubscribe?token=...` displays a confirmation page and does not change preferences. This prevents email security scanners that prefetch links from unsubscribing users.
 - `POST /api/email/unsubscribe?token=...` consumes the token, withdraws only the matching social email category, and cancels that category's pending outbox rows in one PostgreSQL transaction.
 
-Tokens contain 256 bits of random entropy, are stored only as SHA-256 hashes, expire after 365 days, and can be consumed once. Repeated POSTs are safe. Recipients can opt back in through authenticated Testagram email settings. A message already in the `sending` state or submitted to Cloudflare cannot be recalled; pending messages are cancelled and the worker rechecks consent before submitting.
+Tokens contain 256 bits of random entropy, are stored only as SHA-256 hashes, expire after 365 days, and can be consumed once. The worker removes consumed tokens after 90 days and expired tokens after a 30-day grace period. Processed delivery events are retained for 180 days; unmatched events remain available for investigation until reconciled. Repeated POSTs are safe. Recipients can opt back in through authenticated Testagram email settings. A message already in the `sending` state or submitted to Cloudflare cannot be recalled; pending messages are cancelled and the worker rechecks consent before submitting.
 
 The migration creates `testagram_mail.social_unsubscribe_tokens` and grants the existing application role only the required table and sequence permissions. No third-party preference center or new authentication provider is introduced.
 
