@@ -1,7 +1,7 @@
 package main
 
 // trendMomentum returns a bounded acceleration signal comparing the current
-// seven-day window with the preceding seven-day window. Negative growth is
+// most recent 24-hour window with the preceding 24-hour window. Negative growth is
 // clamped to zero; a topic with no prior-window posts receives full momentum.
 func trendMomentum(current, previous int64) float64 {
 	if current <= 0 {
