@@ -305,7 +305,7 @@ LIMIT 200`, nullableUUID(viewerID))
 			fallbackItems = append(fallbackItems, map[string]any{
 				"tag": tag, "posts_count": count, "last_used_at": lastUsed.UTC().Format(time.RFC3339Nano), "is_following": isFollowing,
 				"momentum": trendMomentum(recentCount, previousCount),
-				"reasons": trendReasons(trendMomentum(recentCount, previousCount)),
+				"reasons":  trendReasons(trendMomentum(recentCount, previousCount)),
 			})
 		}
 	}
