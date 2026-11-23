@@ -58,6 +58,21 @@ class TestSocialPlatformMigrationSafety(unittest.TestCase):
         self.assertIn("migration 062 (Knowledge Engine)", readme)
         self.assertIn("APPLY-TESTAGRAM-SOCIAL-PLATFORM-FOUNDATION", readme)
 
+    def test_list_member_add_enforces_privacy_capacity_and_serialized_writes(self):
+        handler = (ROOT / "cmd" / "api" / "social_lists.go").read_text(encoding="utf-8")
+        start = handler.index("func (s *service) socialListMemberAdd(")
+        end = handler.index("\nfunc (s *service) socialListMemberRemove(", start)
+        add = handler[start:end]
+        self.assertIn("FOR UPDATE", add, "concurrent additions must serialize on the owning list row")
+        self.assertIn("a.discoverable_by_username", add, "hidden accounts must not be added by UUID")
+        self.assertIn("NOT a.protected_account OR EXISTS", add, "protected accounts require an accepted follow")
+        self.assertIn("f.status='accepted'", add, "pending follows must not satisfy protected-account consent")
+        self.assertIn("NOT EXISTS(\n      SELECT 1 FROM testagram_local.blocks", add, "either-direction blocks must prevent membership")
+        self.assertIn("count >= socialListMaxMembers", add, "list membership must have a hard bounded capacity")
+        self.assertIn("LIST_CAPACITY_REACHED", add, "capacity exhaustion must be a stable conflict response")
+        self.assertIn("tx.Commit(r.Context())", add, "membership changes must commit atomically")
+        self.assertIn("defer tx.Rollback(context.Background())", add, "request cancellation must not skip transaction cleanup")
+
 
 if __name__ == "__main__":
     unittest.main()
