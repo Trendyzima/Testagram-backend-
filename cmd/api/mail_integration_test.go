@@ -421,4 +421,3 @@ func mustMailFingerprint(t *testing.T, recipient string) []byte {
 	}
 	return fingerprint
 }
-
