@@ -120,12 +120,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
           EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
-          TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${{ secrets.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "::error::Add CLOUDFLARE_WORKERS_DEPLOY_TOKEN with Account.Workers Scripts:Edit and Account.Queues:Edit scoped to account 77dbe7a859196105dc84fbb6b7094019, plus Zone.Workers Routes:Edit, Zone:Read and DNS:Read scoped to testagram.site. Keep the read-only audit token separate."; exit 1; fi
           if [[ ! "${EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_EDGE_PROXY_SHARED_TOKEN as exactly 32 random bytes encoded in 64 hexadecimal characters; it must match EDGE_PROXY_SHARED_TOKEN in the InstaBox Caddy .env."; exit 1; fi
-          if [[ ! "${TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:-}" =~ ^[a-fA-F0-9]{64}$ ]]; then echo "::error::Add TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN as an independent 32-byte hex secret shared with the backend runtime."; exit 1; fi
           API="https://api.cloudflare.com/client/v4"
           ACCOUNT_ID="77dbe7a859196105dc84fbb6b7094019"
           ZONE_NAME="testagram.site"
