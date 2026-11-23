@@ -872,6 +872,9 @@ TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?
 # and that revoking the underlying PostgreSQL session invalidates that elevation.
 TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestAdminConsoleElevationTokenAcceptedByNativeIdentityReviewer$' -count=1
 
+# Recovery must wait for the native auth/profile schema, not just PostgreSQL Ping.
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' go test ./cmd/api -run '^TestEdgeRecoveryReadinessRequiresNativeAuthPostgresSchema$' -count=1
+
 # Consent evidence must be immutable after insertion.
 if psql_ci -c "UPDATE testagram_identity.legal_consent_audit SET request_id='tampered' WHERE request_id='ci-registration-request';" >/dev/null 2>&1; then
   echo "legal consent audit mutation unexpectedly succeeded" >&2

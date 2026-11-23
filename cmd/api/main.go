@@ -474,6 +474,13 @@ func (s *service) routes() http.Handler {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
+		// A live PostgreSQL socket is not enough: the authentication and
+		// protected-profile queries must be able to resolve their required
+		// migrated relations before the edge tells a waiting login to retry.
+		if err := nativeAuthReadinessSchema(ctx, s.db); err != nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true,"ready":true,"service":"testagram-api"}`))
@@ -1421,4 +1428,29 @@ func main() {
 			}
 		}
 	}
+}
+
+// nativeAuthReadinessSchema confirms that the relations used by native login,
+// session creation and the first authenticated profile read are present and
+// readable by the configured PostgreSQL application role. The names are
+// compile-time constants, never request-derived SQL identifiers.
+func nativeAuthReadinessSchema(ctx context.Context, db *pgxpool.Pool) error {
+	for _, relation := range []string{
+		"testagram_auth.identities",
+		"testagram_auth.sessions",
+		"testagram_auth.rate_limits",
+		"testagram_auth.security_audit",
+		"testagram_identity.native_registration_provisioning",
+		"testagram_local.accounts",
+	} {
+		rows, err := db.Query(ctx, "SELECT 1 FROM "+relation+" LIMIT 0")
+		if err != nil {
+			return fmt.Errorf("required native-auth relation %s is unavailable: %w", relation, err)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("required native-auth relation %s could not be read: %w", relation, err)
+		}
+	}
+	return nil
 }
