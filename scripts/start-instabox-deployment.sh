@@ -732,6 +732,9 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
   write_dc_env_value MEDIA_DATABASE_USER "$MEDIA_DATABASE_USER"
   write_dc_env_value MEDIA_DATABASE_PASSWORD "$MEDIA_DATABASE_PASSWORD"
   write_dc_env_value MEDIA_DATABASE_URL "$MEDIA_DATABASE_URL"
+  # The detached VPS script sources these files independently of the outer orchestrator.
+  # Normalize both here as well; the existing .env may retain CRLF from manual edits.
+  sed -i 's/\r$//' "$BASE_ENV" "$DC_ENV"
   chmod 600 "$BASE_ENV" "$DC_ENV"
   set -a
   # shellcheck disable=SC1090
