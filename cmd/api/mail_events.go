@@ -60,7 +60,6 @@ func (s *service) cloudflareMailEvent(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var event cloudflareDeliveryEvent
 	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&event); err != nil {
 		http.Error(w, "invalid event", http.StatusBadRequest)
 		return
