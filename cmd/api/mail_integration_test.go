@@ -2,8 +2,8 @@ package main
 
 import (
 	"bytes"
-	"crypto/hmac"
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -93,7 +93,6 @@ func TestSocialMailOutboxCarriesConsentCategory(t *testing.T) {
 	}
 }
 
-
 func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
@@ -123,12 +122,16 @@ func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
 	}
 	enabled, disabled := true, false
 	tx, err := db.Begin(ctx)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := upsertSocialEmailPreferences(ctx, tx, userID, socialEmailPreferenceInput{NewFollowerEmailEnabled: &enabled, NewPostEmailEnabled: &disabled}); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("first-time partial opt-in failed: %v", err)
 	}
-	if err := tx.Commit(ctx); err != nil { t.Fatal(err) }
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	active, err := socialMailConsentActive(ctx, db, userID, "new_follower")
 	if err != nil || !active {
@@ -151,7 +154,6 @@ func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
 		t.Fatalf("withdrawn follower email consent = %v, err=%v; want false", active, err)
 	}
 }
-
 
 func TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
@@ -270,7 +272,6 @@ func TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount(t *testing.T) {
 		t.Fatal("successful OTP verification did not create the Testagram profile")
 	}
 }
-
 
 func TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("7b", 32))
