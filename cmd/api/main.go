@@ -584,6 +584,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/social/lists", s.socialListsList)
 	mux.HandleFunc("POST /api/social/lists", s.socialListCreate)
 	mux.HandleFunc("GET /api/social/lists/{list_id}", s.socialListRead)
+	mux.HandleFunc("GET /api/social/lists/{list_id}/feed", s.socialListFeed)
 	mux.HandleFunc("DELETE /api/social/lists/{list_id}", s.socialListDelete)
 	mux.HandleFunc("GET /api/social/lists/{list_id}/members", s.socialListMembers)
 	mux.HandleFunc("POST /api/social/lists/{list_id}/members", s.socialListMemberAdd)
