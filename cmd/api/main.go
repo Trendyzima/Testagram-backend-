@@ -448,6 +448,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /healthz", healthHandler)
 	mux.HandleFunc("GET /internal/edge/recovery-ready", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if s.edgeRecoveryReadinessToken == "" || provided == "" ||
 			subtle.ConstantTimeCompare([]byte(provided), []byte(s.edgeRecoveryReadinessToken)) != 1 {
@@ -456,21 +458,20 @@ func (s *service) routes() http.Handler {
 			return
 		}
 		if s.db == nil {
-			http.Error(w, "{\\"ok\\":false,\\"ready\\":false}", http.StatusServiceUnavailable)
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := s.db.Ping(ctx); err != nil {
-			http.Error(w, "{\\"ok\\":false,\\"ready\\":false}", http.StatusServiceUnavailable)
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{\\"ok\\":true,\\"ready\\":true,\\"service\\":\\"testagram-api\\"}\\n"))
+		_, _ = w.Write([]byte(`{"ok":true,"ready":true,"service":"testagram-api"}`))
 	})
+
 	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
