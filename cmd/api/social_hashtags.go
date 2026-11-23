@@ -304,7 +304,7 @@ LIMIT 200`, nullableUUID(viewerID))
 		topicFollowState[tag] = isFollowing
 		if len(fallbackItems) < limit {
 			fallbackItems = append(fallbackItems, map[string]any{
-				"tag": tag, "posts_count": count, "last_used_at": lastUsed.UTC().Format(time.RFC3339Nano), "momentum": momentum, "is_following": isFollowing,
+				"tag": tag, "posts_count": count, "last_used_at": lastUsed.UTC().Format(time.RFC3339Nano), "momentum":     momentum, "is_following": isFollowing,
 			})
 		}
 	}
@@ -458,8 +458,8 @@ LIMIT 200`, nullableUUID(viewerID), stopWords)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{"items": items, "window": "7d", "ranking": ranking},
+		"ok":    true,
+		"data":  map[string]any{"items": items, "window": "7d", "ranking": ranking},
 		"error": nil, "request_id": requestID,
 	})
 }
