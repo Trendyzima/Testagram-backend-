@@ -76,10 +76,10 @@ func TestHashtagEndpointsFailClosedWithoutDatabase(t *testing.T) {
 
 func TestSocialTopicMomentumRewardsAccelerationAndClamps(t *testing.T) {
 	cases := []struct {
-		name string
-		recent int64
+		name     string
+		recent   int64
 		previous int64
-		want float64
+		want     float64
 	}{
 		{name: "steady", recent: 8, previous: 8, want: 0},
 		{name: "declining", recent: 2, previous: 8, want: 0},
