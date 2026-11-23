@@ -15,6 +15,11 @@ SQL
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/062_testagram_knowledge_engine.sql"
 # Replaying the additive migration must be safe.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/062_testagram_knowledge_engine.sql"
+# The curated topic catalog is additive and must remain stable on replay.
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/064_knowledge_topic_seed_catalog.sql"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root/migrations/064_knowledge_topic_seed_catalog.sql"
+topic_count="$(psql "$DATABASE_URL" -Atqc "SELECT count(*) FROM testagram_local.topics WHERE status = 'active' AND slug = ANY(ARRAY['kenya','east-africa','technology','software-engineering','artificial-intelligence','entrepreneurship','business','agriculture','education','science','climate','finance','design','photography','sports','music','film','travel','history','creative-writing']::text[])")"
+[[ "$topic_count" == "20" ]] || { echo "Knowledge topic seed catalog is incomplete" >&2; exit 1; }
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO testagram_local.accounts(user_id) VALUES
  ('00000000-0000-4000-8000-000000000001'),
@@ -38,6 +43,47 @@ ON CONFLICT DO NOTHING;
 INSERT INTO testagram_local.topic_follows(user_id,topic_id)
 VALUES ('00000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000001')
 ON CONFLICT DO NOTHING;
+
+DO $topic_feed$
+DECLARE visible_count INTEGER;
+BEGIN
+  SELECT count(*) INTO visible_count
+  FROM testagram_local.questions q
+  WHERE EXISTS (
+    SELECT 1
+    FROM testagram_local.question_topics qtt
+    JOIN testagram_local.topics active_topic
+      ON active_topic.id=qtt.topic_id AND active_topic.status='active'
+    JOIN testagram_local.topic_follows tf
+      ON tf.topic_id=qtt.topic_id
+     AND tf.user_id='00000000-0000-4000-8000-000000000003'
+    WHERE qtt.question_id=q.id
+  );
+  IF visible_count <> 1 THEN
+    RAISE EXCEPTION 'followed-topic feed should return exactly the one tagged question, got %', visible_count;
+  END IF;
+
+  UPDATE testagram_local.topics SET status='retired'
+  WHERE id='10000000-0000-4000-8000-000000000001';
+  SELECT count(*) INTO visible_count
+  FROM testagram_local.questions q
+  WHERE EXISTS (
+    SELECT 1
+    FROM testagram_local.question_topics qtt
+    JOIN testagram_local.topics active_topic
+      ON active_topic.id=qtt.topic_id AND active_topic.status='active'
+    JOIN testagram_local.topic_follows tf
+      ON tf.topic_id=qtt.topic_id
+     AND tf.user_id='00000000-0000-4000-8000-000000000003'
+    WHERE qtt.question_id=q.id
+  );
+  IF visible_count <> 0 THEN
+    RAISE EXCEPTION 'retired topics must not appear in followed-topic feeds';
+  END IF;
+  UPDATE testagram_local.topics SET status='active'
+  WHERE id='10000000-0000-4000-8000-000000000001';
+END
+$topic_feed$;
 
 INSERT INTO testagram_local.answers(id,question_id,author_id,body)
 VALUES

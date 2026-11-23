@@ -93,13 +93,15 @@ migration only after reviewing the SQL and confirming a recent restorable backup
 bash ./apply-social-platform-product-migration.sh
 ```
 
-The operator script applies migration 062 (Knowledge Engine) and migration 063
-(social platform) in order. It waits for PostgreSQL, creates a custom-format
-database backup, verifies the archive and SHA-256 checksum, and requires the exact
+The operator script applies migration 062 (Knowledge Engine), migration 063
+(social platform) and migration 064 (curated topic catalog) in order. It waits
+for PostgreSQL, creates a custom-format database backup, verifies the archive
+and SHA-256 checksum, and requires the exact
 `APPLY-TESTAGRAM-SOCIAL-PLATFORM-FOUNDATION` confirmation before applying
-migration 063. It is idempotent when all expected Knowledge and social-platform tables already exist. Retain
-the backup until the deployed API and Flutter acceptance tests pass. Do not
-manually create the tables or bypass the backup/confirmation guard.
+the migrations. It is idempotent when the expected schemas and all 20 curated
+starter topics already exist. Retain the backup until the deployed API and
+Flutter acceptance tests pass. Do not manually create the tables or bypass
+the backup/confirmation guard.
 
 ## Testagram Wallet and M-Pesa
 

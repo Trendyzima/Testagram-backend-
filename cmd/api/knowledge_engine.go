@@ -17,10 +17,11 @@ import (
 )
 
 type knowledgeQuestionInput struct {
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	Visibility string `json:"visibility"`
-	Language   string `json:"language"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	Visibility string   `json:"visibility"`
+	Language   string   `json:"language"`
+	TopicSlugs []string `json:"topic_slugs,omitempty"`
 }
 type knowledgeAnswerInput struct {
 	Body string `json:"body"`
@@ -99,15 +100,37 @@ func (s *service) knowledgeQuestions(w http.ResponseWriter, r *http.Request) {
 	}
 	mine := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("mine")), "true")
 	following := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("following")), "true")
+	topicSlug := strings.TrimSpace(r.PathValue("topic_slug"))
+	topicsFollowing := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("topics_following")), "true")
+	if topicSlug != "" {
+		var valid bool
+		topicSlug, valid = normalizeKnowledgeTopicSlug(topicSlug)
+		if !valid {
+			writeJSON(w, 400, errorBody("INVALID_TOPIC", "Topic slug is invalid", rid))
+			return
+		}
+		var exists bool
+		if err := s.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM testagram_local.topics WHERE slug=$1 AND status='active')`, topicSlug).Scan(&exists); err != nil {
+			writeJSON(w, 503, errorBody("TOPIC_LOOKUP_FAILED", "Topic could not be checked", rid))
+			return
+		}
+		if !exists {
+			writeJSON(w, 404, errorBody("TOPIC_NOT_FOUND", "Topic is unavailable", rid))
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	rows, e := s.db.Query(ctx, `SELECT q.id::text,q.author_id::text,q.title,q.body,q.visibility,q.status,COALESCE(q.accepted_answer_id::text,''),q.created_at,q.updated_at,a.username,a.display_name,a.avatar_key,a.protected_account,(SELECT count(*) FROM testagram_local.answers x WHERE x.question_id=q.id AND x.deleted_at IS NULL)
+	rows, e := s.db.Query(ctx, `SELECT q.id::text,q.author_id::text,q.title,q.body,q.visibility,q.status,COALESCE(q.accepted_answer_id::text,''),q.created_at,q.updated_at,a.username,a.display_name,a.avatar_key,a.protected_account,(SELECT count(*) FROM testagram_local.answers x WHERE x.question_id=q.id AND x.deleted_at IS NULL),
+COALESCE((SELECT json_agg(json_build_object('slug',t.slug,'name',t.name) ORDER BY t.name)::text FROM testagram_local.question_topics qt JOIN testagram_local.topics t ON t.id=qt.topic_id WHERE qt.question_id=q.id AND t.status='active'),'[]')
 FROM testagram_local.questions q JOIN testagram_local.accounts a ON a.user_id=q.author_id
 WHERE `+knowledgeVisible+` AND ($2='all' OR q.status=$2)
 AND (NOT $3::boolean OR q.author_id=$1)
 AND (NOT $4::boolean OR EXISTS(SELECT 1 FROM testagram_local.follows ff WHERE ff.follower_id=$1 AND ff.following_id=q.author_id AND ff.status='accepted'))
 AND ($5::timestamptz IS NULL OR (q.created_at,q.id)<($5::timestamptz,$6::uuid))
-ORDER BY q.created_at DESC,q.id DESC LIMIT $7`, uid, status, mine, following, before, beforeID, limit+1)
+AND ($8='' OR EXISTS(SELECT 1 FROM testagram_local.question_topics qtf JOIN testagram_local.topics tf ON tf.id=qtf.topic_id WHERE qtf.question_id=q.id AND tf.slug=$8 AND tf.status='active'))
+AND (NOT $9::boolean OR EXISTS(SELECT 1 FROM testagram_local.question_topics qtt JOIN testagram_local.topics qtopic ON qtopic.id=qtt.topic_id AND qtopic.status='active' JOIN testagram_local.topic_follows tff ON tff.topic_id=qtt.topic_id AND tff.user_id=$1 WHERE qtt.question_id=q.id))
+ORDER BY q.created_at DESC,q.id DESC LIMIT $7`, uid, status, mine, following, before, beforeID, limit+1, topicSlug, topicsFollowing)
 	if e != nil {
 		writeJSON(w, 503, errorBody("QUESTIONS_UNAVAILABLE", "Questions could not be loaded", rid))
 		return
@@ -121,7 +144,8 @@ ORDER BY q.created_at DESC,q.id DESC LIMIT $7`, uid, status, mine, following, be
 		var created, updated time.Time
 		var protected bool
 		var count int64
-		if e := rows.Scan(&id, &author, &title, &body, &vis, &state, &accepted, &created, &updated, &username, &display, &avatar, &protected, &count); e != nil {
+		var topicsJSON string
+		if e := rows.Scan(&id, &author, &title, &body, &vis, &state, &accepted, &created, &updated, &username, &display, &avatar, &protected, &count, &topicsJSON); e != nil {
 			writeJSON(w, 503, errorBody("QUESTIONS_UNAVAILABLE", "Question data could not be decoded", rid))
 			return
 		}
@@ -129,7 +153,9 @@ ORDER BY q.created_at DESC,q.id DESC LIMIT $7`, uid, status, mine, following, be
 			more = true
 			break
 		}
-		items = append(items, map[string]any{"id": id, "author_id": author, "title": title, "body": body, "visibility": vis, "status": state, "accepted_answer_id": accepted, "created_at": created, "updated_at": updated, "answers_count": count, "author": map[string]any{"id": author, "username": username, "display_name": display, "avatar_key": avatar, "avatar_url": publicMediaURL(avatar), "protected_account": protected}})
+		topics := []map[string]any{}
+		_ = json.Unmarshal([]byte(topicsJSON), &topics)
+		items = append(items, map[string]any{"id": id, "author_id": author, "title": title, "body": body, "visibility": vis, "status": state, "accepted_answer_id": accepted, "created_at": created, "updated_at": updated, "answers_count": count, "topics": topics, "author": map[string]any{"id": author, "username": username, "display_name": display, "avatar_key": avatar, "avatar_url": publicMediaURL(avatar), "protected_account": protected}})
 		next = socialCursor{CreatedAt: created, ID: id}
 	}
 	if e := rows.Err(); e != nil {
@@ -160,6 +186,12 @@ func (s *service) knowledgeQuestionCreate(w http.ResponseWriter, r *http.Request
 	in.Body = strings.TrimSpace(in.Body)
 	in.Visibility = strings.ToLower(strings.TrimSpace(in.Visibility))
 	in.Language = strings.ToLower(strings.TrimSpace(in.Language))
+	var topicsValid bool
+	in.TopicSlugs, topicsValid = normalizeKnowledgeTopicSlugs(in.TopicSlugs)
+	if !topicsValid {
+		writeJSON(w, 400, errorBody("INVALID_QUESTION_TOPICS", "A question can have up to five valid topic slugs", rid))
+		return
+	}
 	if !utf8.ValidString(in.Title) || utf8.RuneCountInString(in.Title) < 8 || utf8.RuneCountInString(in.Title) > 180 || !utf8.ValidString(in.Body) || utf8.RuneCountInString(in.Body) > 20000 {
 		writeJSON(w, 400, errorBody("INVALID_QUESTION_CONTENT", "Title must be 8-180 characters; body at most 20,000", rid))
 		return
@@ -239,6 +271,18 @@ func (s *service) knowledgeQuestionCreate(w http.ResponseWriter, r *http.Request
 	}
 	var id string
 	e = tx.QueryRow(r.Context(), `INSERT INTO testagram_local.questions(author_id,title,body,visibility,language) VALUES($1,$2,$3,$4,$5) RETURNING id::text`, uid, in.Title, in.Body, in.Visibility, in.Language).Scan(&id)
+	if e == nil && len(in.TopicSlugs) > 0 {
+		tag, topicErr := tx.Exec(r.Context(), `INSERT INTO testagram_local.question_topics(question_id,topic_id,added_by)
+SELECT $1::uuid,t.id,$2::uuid
+FROM unnest($3::text[]) AS requested(slug)
+JOIN testagram_local.topics t ON t.slug=requested.slug AND t.status='active'`, id, uid, in.TopicSlugs)
+		if topicErr != nil {
+			e = topicErr
+		} else if tag.RowsAffected() != int64(len(in.TopicSlugs)) {
+			writeJSON(w, 400, errorBody("INVALID_QUESTION_TOPICS", "One or more topics are unavailable", rid))
+			return
+		}
+	}
 	if e == nil {
 		_, e = tx.Exec(r.Context(), `INSERT INTO testagram_local.question_create_idempotency(author_id,key_hash,request_hash,question_id) VALUES($1,$2,$3,$4)`, uid, kh, hash, id)
 	}
@@ -250,7 +294,7 @@ func (s *service) knowledgeQuestionCreate(w http.ResponseWriter, r *http.Request
 		writeJSON(w, 503, errorBody("QUESTION_CREATE_FAILED", "Could not commit question", rid))
 		return
 	}
-	writeJSON(w, 201, map[string]any{"ok": true, "data": map[string]any{"id": id, "author_id": uid, "title": in.Title, "body": in.Body, "visibility": in.Visibility, "status": "open"}, "error": nil, "request_id": rid})
+	writeJSON(w, 201, map[string]any{"ok": true, "data": map[string]any{"id": id, "author_id": uid, "title": in.Title, "body": in.Body, "visibility": in.Visibility, "status": "open", "topic_slugs": in.TopicSlugs}, "error": nil, "request_id": rid})
 }
 func (s *service) knowledgeQuestionRead(w http.ResponseWriter, r *http.Request) {
 	uid, rid, ok := s.socialAuth(w, r)
@@ -296,7 +340,29 @@ func (s *service) knowledgeQuestionRead(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 503, errorBody("ANSWERS_UNAVAILABLE", "Answer data could not be loaded", rid))
 		return
 	}
-	data := map[string]any{"id": qid, "author_id": author, "title": title, "body": body, "visibility": vis, "status": state, "accepted_answer_id": accepted, "created_at": created, "updated_at": updated, "author": map[string]any{"id": author, "username": username, "display_name": display, "avatar_key": avatar, "avatar_url": publicMediaURL(avatar), "protected_account": protected}, "answers": answers, "can_accept_answer": author == uid}
+	rows.Close()
+	topicRows, topicErr := s.db.Query(r.Context(), `SELECT t.slug,t.name FROM testagram_local.question_topics qt JOIN testagram_local.topics t ON t.id=qt.topic_id WHERE qt.question_id=$1::uuid AND t.status='active' ORDER BY t.name,t.slug`, qid)
+	if topicErr != nil {
+		writeJSON(w, 503, errorBody("QUESTION_TOPICS_UNAVAILABLE", "Question topics could not be loaded", rid))
+		return
+	}
+	topics := []map[string]string{}
+	for topicRows.Next() {
+		var slug, name string
+		if err := topicRows.Scan(&slug, &name); err != nil {
+			topicRows.Close()
+			writeJSON(w, 503, errorBody("QUESTION_TOPICS_UNAVAILABLE", "Question topics could not be decoded", rid))
+			return
+		}
+		topics = append(topics, map[string]string{"slug": slug, "name": name})
+	}
+	if err := topicRows.Err(); err != nil {
+		topicRows.Close()
+		writeJSON(w, 503, errorBody("QUESTION_TOPICS_UNAVAILABLE", "Question topics could not be loaded", rid))
+		return
+	}
+	topicRows.Close()
+	data := map[string]any{"id": qid, "author_id": author, "title": title, "body": body, "visibility": vis, "status": state, "accepted_answer_id": accepted, "topics": topics, "created_at": created, "updated_at": updated, "author": map[string]any{"id": author, "username": username, "display_name": display, "avatar_key": avatar, "avatar_url": publicMediaURL(avatar), "protected_account": protected}, "answers": answers, "can_accept_answer": author == uid}
 	writeJSON(w, 200, map[string]any{"ok": true, "data": data, "error": nil, "request_id": rid})
 }
 func (s *service) knowledgeAnswerCreate(w http.ResponseWriter, r *http.Request) {
