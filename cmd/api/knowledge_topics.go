@@ -177,7 +177,7 @@ func (s *service) knowledgeTopicFollow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var topicID string
-	if err := s.db.QueryRow(r.Context(), `SELECT id::text FROM testagram_local.topics WHERE slug=$1 AND status='active'`, slug).Scan(&topicID); err != nil {
+	if err := s.db.QueryRow(ctx, `SELECT id::text FROM testagram_local.topics WHERE slug=$1 AND status='active'`, slug).Scan(&topicID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, errorBody("TOPIC_NOT_FOUND", "Topic is unavailable", rid))
 		} else {
@@ -195,7 +195,7 @@ func (s *service) knowledgeTopicFollow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodDelete {
-		if _, err := s.db.Exec(r.Context(), `DELETE FROM testagram_local.topic_follows WHERE user_id=$1::uuid AND topic_id=$2::uuid`, uid, topicID); err != nil {
+		if _, err := s.db.Exec(ctx, `DELETE FROM testagram_local.topic_follows WHERE user_id=$1::uuid AND topic_id=$2::uuid`, uid, topicID); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("TOPIC_UNFOLLOW_FAILED", "Topic could not be unfollowed", rid))
 			return
 		}
