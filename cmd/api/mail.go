@@ -57,7 +57,7 @@ type queuedMail struct {
 }
 
 var mailHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
-var mailAnchorPattern = regexp.MustCompile(`(?is)<a\\b[^>]*href=["\x27]([^"\x27]+)["\x27][^>]*>(.*?)</a>`)
+var mailAnchorPattern = regexp.MustCompile(`(?is)<a\b[^>]*href=["\x27]([^"\x27]+)["\x27][^>]*>(.*?)</a>`)
 
 func mailPlainTextFromHTML(value string) string {
 	value = mailAnchorPattern.ReplaceAllStringFunc(value, func(anchor string) string {
