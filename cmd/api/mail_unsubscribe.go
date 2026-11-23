@@ -7,9 +7,7 @@ import (
 	"html"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/jackc/pgx/v5"
 )
 
 func unsubscribeTokenHash(token string) ([]byte, error) {
@@ -127,5 +125,3 @@ func (s *service) socialEmailUnsubscribe(w http.ResponseWriter, r *http.Request)
 	_, _ = w.Write([]byte("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>Unsubscribed</title><body><h1>You are unsubscribed</h1><p>You will no longer receive this category of Testagram activity email.</p></body></html>"))
 }
 
-var _ = pgx.ErrNoRows
-var _ = time.Second
