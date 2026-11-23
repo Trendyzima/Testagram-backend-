@@ -56,6 +56,7 @@ type service struct {
 	db                         *pgxpool.Pool
 	edgeRecoveryReadinessToken string
 	authEmailSender            func(context.Context, string, string, string) error
+	mailSender                 func(context.Context, queuedMail) (string, error)
 	moderation                 moderationpkg.ContentModeration
 	metricsMu                  sync.Mutex
 	routeMetrics               map[string]*requestMetric
