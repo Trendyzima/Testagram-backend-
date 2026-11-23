@@ -120,7 +120,7 @@ class TestInstaBoxFederationRuntimeContract(unittest.TestCase):
 
     def test_deployment_uses_reviewed_immutable_service_digests(self):
         self.assertIn('ghcr.io/trendyzima/testagram-feed@sha256:6db5714bf3c10d6fe5507904ad48cb52e25ddf8739f7e1bc243a01fac2bd0ed8', self.script)
-        self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:5ee24cb38db3dc460fd9ac96f758fa917a0d3f84bdc9adb915f5bb6cce323f0e', self.script)
+        self.assertIn('ghcr.io/trendyzima/testagram-federation@sha256:c3e4b34d1d1e5c77fcf9fae34a7eb5cfcc8f52b56325f05d14a9b45fc4799e38', self.script)
 
 
 if __name__ == "__main__":
