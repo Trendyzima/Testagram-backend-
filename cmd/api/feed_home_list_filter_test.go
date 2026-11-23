@@ -3,9 +3,6 @@ package main
 import (
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
 )
 
 func TestGlobalHomeFeedQueryDoesNotDependOnListsSchema(t *testing.T) {
