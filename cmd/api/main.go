@@ -54,6 +54,7 @@ type upstreamMetric struct {
 
 type service struct {
 	db                        *pgxpool.Pool
+	edgeRecoveryReadinessToken string
 	authEmailSender           func(context.Context, string, string, string) error
 	moderation                moderationpkg.ContentModeration
 	metricsMu                 sync.Mutex
@@ -446,6 +447,30 @@ func (s *service) routes() http.Handler {
 	}
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("GET /internal/edge/recovery-ready", func(w http.ResponseWriter, r *http.Request) {
+		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if s.edgeRecoveryReadinessToken == "" || provided == "" ||
+			subtle.ConstantTimeCompare([]byte(provided), []byte(s.edgeRecoveryReadinessToken)) != 1 {
+			// Do not disclose this edge-only capability to unauthenticated callers.
+			http.NotFound(w, r)
+			return
+		}
+		if s.db == nil {
+			http.Error(w, "{\\"ok\\":false,\\"ready\\":false}", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.db.Ping(ctx); err != nil {
+			http.Error(w, "{\\"ok\\":false,\\"ready\\":false}", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{\\"ok\\":true,\\"ready\\":true,\\"service\\":\\"testagram-api\\"}\\n"))
+	})
 	// Testagram-owned identity enrollment and private evidence intake.
 	mux.HandleFunc("OPTIONS /api/identity/applications", s.mediaPreflight)
 	mux.HandleFunc("OPTIONS /api/identity/applications/{application_id}", s.mediaPreflight)
@@ -1283,8 +1308,12 @@ func main() {
 	if federationURLerr != nil {
 		log.Fatalf("configure public Federation origin: %v", federationURLerr)
 	}
+	edgeRecoveryReadinessToken := strings.TrimSpace(os.Getenv("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN"))
+	if edgeRecoveryReadinessToken != "" && len(edgeRecoveryReadinessToken) < 64 {
+		log.Fatal("TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must contain at least 64 characters when configured")
+	}
 	svc := &service{
-		db: db, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
+		db: db, edgeRecoveryReadinessToken: edgeRecoveryReadinessToken, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
 		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
