@@ -264,6 +264,7 @@ func TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount(t *testing.T) {
 
 
 func TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("7b", 32))
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
 	actorID := "123e4567-e89b-42d3-a456-426614174181"
