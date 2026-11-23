@@ -30,3 +30,25 @@ func TestNormalizeSocialListInput(t *testing.T) {
 		})
 	}
 }
+
+func TestSocialListMemberCapacityExceeded(t *testing.T) {
+	tests := []struct {
+		name          string
+		count         int64
+		alreadyMember bool
+		wantExceeded  bool
+	}{
+		{name: "new member below capacity", count: 499, wantExceeded: false},
+		{name: "new member at capacity", count: 500, wantExceeded: true},
+		{name: "new member above capacity", count: 501, wantExceeded: true},
+		{name: "existing member at capacity remains idempotent", count: 500, alreadyMember: true, wantExceeded: false},
+		{name: "existing member above capacity remains idempotent", count: 501, alreadyMember: true, wantExceeded: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := socialListMemberCapacityExceeded(tt.count, tt.alreadyMember); got != tt.wantExceeded {
+				t.Fatalf("socialListMemberCapacityExceeded(%d, %v)=%v want %v", tt.count, tt.alreadyMember, got, tt.wantExceeded)
+			}
+		})
+	}
+}
