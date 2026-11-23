@@ -1362,9 +1362,9 @@ func main() {
 	}
 	svc.identityReviewWebAuthnReady = strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED")), "true")
 	if svc.identityReviewWebAuthnReady {
-		log.Printf("Native identity review policy gate is enabled; each application request must pass live PostgreSQL and Admin Console WebAuthn readiness attestation")
+		log.Printf("Native identity review WebAuthn policy is enabled; privileged review operations require live PostgreSQL and Admin Console readiness attestation")
 	} else {
-		log.Printf("Native identity application intake remains disabled by TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED policy gate")
+		log.Printf("Native identity review WebAuthn policy remains disabled; public applicant intake is independent and remains subject to database, private evidence storage, and registration policy readiness")
 	}
 	internalAddr := env("INTERNAL_LISTEN_ADDR", ":8082")
 	server := &http.Server{
