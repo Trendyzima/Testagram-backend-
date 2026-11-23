@@ -222,7 +222,10 @@ func enqueueNewPostActivityEmails(ctx context.Context, tx pgx.Tx, authorID, visi
 	if err != nil {
 		return err
 	}
-	type socialEmailRecipient struct { email string; userID string }
+	type socialEmailRecipient struct {
+		email  string
+		userID string
+	}
 	recipients := make([]socialEmailRecipient, 0)
 	for rows.Next() {
 		var recipient socialEmailRecipient
