@@ -138,7 +138,7 @@ func enqueueFollowActivityEmail(ctx context.Context, tx pgx.Tx, actorID, recipie
 	}
 	body := "<p><strong>" + html.EscapeString(actorName) + "</strong> " + action + ".</p>" + link +
 		"<p>You received this email because you enabled follower activity emails in Testagram settings.</p>"
-	return enqueueAuthEmailWith(ctx, tx, recipient, subject, body)
+	return enqueueSocialEmailWith(ctx, tx, recipient, recipientID, "new_follower", subject, body)
 }
 
 
@@ -177,7 +177,7 @@ func enqueueNewPostActivityEmails(ctx context.Context, tx pgx.Tx, authorID, visi
 		return err
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT DISTINCT i.email
+		SELECT DISTINCT i.email,f.follower_id::text
 		FROM testagram_local.follows f
 		JOIN testagram_local.accounts follower ON follower.user_id=f.follower_id
 		JOIN testagram_auth.identities i ON i.user_id=f.follower_id
@@ -199,10 +199,11 @@ func enqueueNewPostActivityEmails(ctx context.Context, tx pgx.Tx, authorID, visi
 	if err != nil {
 		return err
 	}
-	recipients := make([]string, 0)
+	type socialEmailRecipient struct { email string; userID string }
+	recipients := make([]socialEmailRecipient, 0)
 	for rows.Next() {
-		var recipient string
-		if err := rows.Scan(&recipient); err != nil {
+		var recipient socialEmailRecipient
+		if err := rows.Scan(&recipient.email, &recipient.userID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -228,7 +229,7 @@ func enqueueNewPostActivityEmails(ctx context.Context, tx pgx.Tx, authorID, visi
 		"<blockquote>" + html.EscapeString(snippet) + "</blockquote>" + link +
 		"<p>You received this email because you enabled new-post emails from accounts you follow in Testagram settings.</p>"
 	for _, recipient := range recipients {
-		if err := enqueueAuthEmailWith(ctx, tx, recipient, "A person you follow shared a new Testagram post", body); err != nil {
+		if err := enqueueSocialEmailWith(ctx, tx, recipient.email, recipient.userID, "new_post", "A person you follow shared a new Testagram post", body); err != nil {
 			return err
 		}
 	}
