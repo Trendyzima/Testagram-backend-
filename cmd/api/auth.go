@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"math/big"
 	"os"
 	"regexp"
 	"strings"
@@ -69,6 +70,12 @@ func authRandomToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func authRandomOTP() (string, error) {
+	value, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil { return "", err }
+	return fmt.Sprintf("%06d", value.Int64()), nil
 }
 
 func authTokenHash(token string) []byte {
@@ -307,6 +314,11 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Unable to create verification token", requestID(r)))
 			return true
 		}
+		otp, err := authRandomOTP()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorBody("OTP_FAILED", "Unable to create verification code", requestID(r)))
+			return true
+		}
 		tx, txErr := s.db.Begin(ctx)
 		if txErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
@@ -315,10 +327,13 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		var userID string
 		txErr = tx.QueryRow(ctx, `
-			INSERT INTO testagram_auth.identities(email,username,password_hash,verification_token_hash,verification_expires_at)
-			VALUES($1,$2,$3,$4,now()+interval '24 hours')
-			ON CONFLICT DO NOTHING RETURNING user_id::text
-		`, email, in.Username, passwordHash, authTokenHash(token)).Scan(&userID)
+			INSERT INTO testagram_auth.identities(
+			email,username,password_hash,verification_token_hash,verification_expires_at,
+			verification_otp_hash,verification_otp_expires_at,verification_otp_attempts
+		)
+		VALUES($1,$2,$3,$4,now()+interval '24 hours',$5,now()+interval '10 minutes',0)
+		ON CONFLICT DO NOTHING RETURNING user_id::text
+		`, email, in.Username, passwordHash, authTokenHash(token), authTokenHash(otp)).Scan(&userID)
 		if errors.Is(txErr, pgx.ErrNoRows) {
 			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the address is eligible, a verification email will be sent."})
 			return true
@@ -329,7 +344,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		}
 		base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 		link := base + "/verify-email?token=" + url.QueryEscape(token)
-		if err := enqueueAuthEmailWith(ctx, tx, email, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>"); err != nil {
+		if err := enqueueAuthEmailWith(ctx, tx, email, "Your Testagram verification code", "<p>Welcome to Testagram. Enter this verification code in the app:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:8px\">"+otp+"</p><p>Your code expires in 10 minutes and can be used once.</p><p>You can also verify using this secure link:</p><p><a href=\""+link+"\">Verify email</a></p><p>The link expires in 24 hours. If you did not create this account, ignore this email.</p>"); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Unable to queue verification email. Please try again.", requestID(r)))
 			return true
 		}
@@ -345,20 +360,23 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			allowed, rateErr := s.authRateAllowed(ctx, "verify-resend-ip", ip, 5)
 			if rateErr == nil && allowed {
 				token, tokenErr := authRandomToken()
-				if tokenErr == nil {
+				otp, otpErr := authRandomOTP()
+				if tokenErr == nil && otpErr == nil {
 					var savedEmail string
 					tx, txErr := s.db.Begin(ctx)
 					if txErr == nil {
 						defer func() { _ = tx.Rollback(context.Background()) }()
 						updateErr := tx.QueryRow(ctx, `
 							UPDATE testagram_auth.identities
-							SET verification_token_hash=$2,verification_expires_at=now()+interval '24 hours',updated_at=now()
+							SET verification_token_hash=$2,verification_expires_at=now()+interval '24 hours',
+							    verification_otp_hash=$3,verification_otp_expires_at=now()+interval '10 minutes',
+							    verification_otp_attempts=0,updated_at=now()
 							WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
-						`, email, authTokenHash(token)).Scan(&savedEmail)
+						`, email, authTokenHash(token), authTokenHash(otp)).Scan(&savedEmail)
 						if updateErr == nil {
 							base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
 							link := base + "/verify-email?token=" + url.QueryEscape(token)
-							updateErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Verify your Testagram account", "<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours.</p>")
+							updateErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Your Testagram verification code", "<p>Enter this verification code in Testagram:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:8px\">"+otp+"</p><p>Your code expires in 10 minutes and can be used once.</p><p><a href=\""+link+"\">Verify email</a> using the secure link (expires in 24 hours).</p>")
 						}
 						if updateErr == nil {
 							_ = tx.Commit(ctx)
