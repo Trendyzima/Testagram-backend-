@@ -11,6 +11,10 @@ import (
 
 const socialListMaxMembers = 500
 
+func socialListMemberCapacityExceeded(count int64, alreadyMember bool) bool {
+	return !alreadyMember && count >= socialListMaxMembers
+}
+
 type socialListInput struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -257,12 +261,20 @@ SELECT EXISTS(
 		return
 	}
 
+	var alreadyMember bool
+	if err := tx.QueryRow(r.Context(), `SELECT EXISTS(
+  SELECT 1 FROM testagram_local.social_list_members
+  WHERE list_id=$1::uuid AND member_user_id=$2::uuid
+)`, id, in.UserID).Scan(&alreadyMember); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "List membership could not be checked", rid))
+		return
+	}
 	var count int64
 	if err := tx.QueryRow(r.Context(), `SELECT count(*) FROM testagram_local.social_list_members WHERE list_id=$1::uuid`, id).Scan(&count); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_MEMBER_ADD_FAILED", "List capacity could not be checked", rid))
 		return
 	}
-	if count >= socialListMaxMembers {
+	if socialListMemberCapacityExceeded(count, alreadyMember) {
 		writeJSON(w, http.StatusConflict, errorBody("LIST_CAPACITY_REACHED", "A list can contain at most 500 accounts", rid))
 		return
 	}
