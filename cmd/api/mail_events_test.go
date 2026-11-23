@@ -26,7 +26,7 @@ func TestMailRecipientFingerprintIsStableAndCaseInsensitive(t *testing.T) {
 }
 
 func TestCloudflareMailEventRejectsMissingTokenAndUnknownEvent(t *testing.T) {
-	t.Setenv("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	t.Setenv("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
 	svc := &service{}
 	req := httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(`{"type":"cf.email.sending.message.delivered"}`))
