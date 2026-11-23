@@ -26,4 +26,3 @@ LIMIT $4`
 		t.Fatal("List membership predicate must be applied before cursor pagination")
 	}
 }
-
