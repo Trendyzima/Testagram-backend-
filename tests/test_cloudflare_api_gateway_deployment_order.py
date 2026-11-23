@@ -33,16 +33,14 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
     def test_mail_event_queue_and_secrets_are_installed_before_subscription_activation(self):
         deploy = WORKFLOW.index("wrangler@4 deploy --config infra/cloudflare-api-gateway/wrangler.toml")
         edge_secret = WORKFLOW.index("wrangler@4 secret put EDGE_PROXY_SHARED_TOKEN")
-        events_secret = WORKFLOW.index("wrangler@4 secret put TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN")
         route_verified = WORKFLOW.index("Canonical API route was not verified after attachment")
         subscription = WORKFLOW.index("queues subscription create testagram-mail-delivery-events")
         self.assertLess(deploy, edge_secret)
-        self.assertLess(edge_secret, events_secret)
-        self.assertLess(events_secret, route_verified)
+        self.assertLess(edge_secret, route_verified)
         self.assertLess(route_verified, subscription)
         self.assertIn("ensure_queue \"testagram-mail-delivery-events\"", WORKFLOW)
         self.assertIn("ensure_queue \"testagram-mail-delivery-events-dlq\"", WORKFLOW)
-        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", WORKFLOW)
+        self.assertNotIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", WORKFLOW)
         self.assertIn('queue = "testagram-mail-delivery-events"', WRANGLER)
         self.assertIn('dead_letter_queue = "testagram-mail-delivery-events-dlq"', WRANGLER)
 
@@ -66,13 +64,12 @@ class CloudflareApiGatewayDeploymentOrderTests(unittest.TestCase):
         self.assertIn("exactly one active testagram.site zone in the pinned Cloudflare account", WORKFLOW)
         self.assertIn("Cloudflare zone/account changed after preflight", WORKFLOW)
 
-    def test_delivery_event_secret_reaches_backend_runtime_without_logging(self):
+    def test_mail_events_reuse_the_existing_edge_token_without_a_second_secret(self):
         deploy_script = (ROOT / "scripts" / "start-instabox-deployment.sh").read_text(encoding="utf-8")
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", deploy_script)
-        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:$cloudflare_events_token", deploy_script)
-        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN:-}", compose)
-        self.assertIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", WORKFLOW)
+        self.assertNotIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", deploy_script)
+        self.assertIn("EDGE_PROXY_SHARED_TOKEN: ${EDGE_PROXY_SHARED_TOKEN:?Set EDGE_PROXY_SHARED_TOKEN in .env}", compose)
+        self.assertNotIn("TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN", WORKFLOW)
 
     def test_caddy_api_ingress_uses_the_shared_token_not_proxy_rewritten_host_metadata(self):
         self.assertIn("@api_edge header X-Testagram-Edge-Token {$EDGE_PROXY_SHARED_TOKEN}", CADDYFILE)
