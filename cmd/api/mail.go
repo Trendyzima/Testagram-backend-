@@ -81,14 +81,36 @@ type mailQueueExecutor interface {
 }
 
 func enqueueAuthEmailWith(ctx context.Context, executor mailQueueExecutor, recipient, subject, html string) error {
+	return enqueueMailWithPreference(ctx, executor, recipient, subject, html, nil, "")
+}
+
+func enqueueSocialEmailWith(ctx context.Context, executor mailQueueExecutor, recipient, recipientUserID, category, subject, html string) error {
+	if strings.TrimSpace(recipientUserID) == "" ||
+		(category != "new_follower" && category != "new_post") {
+		return errors.New("invalid social email consent reference")
+	}
+	return enqueueMailWithPreference(ctx, executor, recipient, subject, html, &recipientUserID, category)
+}
+
+func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, recipient, subject, html string, preferenceUserID *string, preferenceCategory string) error {
 	if executor == nil {
 		return errors.New("mail queue database unavailable")
 	}
 	if _, err := mail.ParseAddress(recipient); err != nil {
 		return errors.New("invalid mail recipient")
 	}
-	if len(subject) == 0 || len(subject) > 180 || strings.ContainsAny(subject, "\r\n") || len(html) > 256*1024 {
+	if len(subject) == 0 || len(subject) > 180 || strings.ContainsAny(subject, "\\r\\n") || len(html) > 256*1024 {
 		return errors.New("mail content exceeds allowed bounds")
+	}
+	var preferenceID any
+	var category any
+	if preferenceUserID != nil {
+		if strings.TrimSpace(*preferenceUserID) == "" ||
+			(preferenceCategory != "new_follower" && preferenceCategory != "new_post") {
+			return errors.New("invalid social email consent reference")
+		}
+		preferenceID = *preferenceUserID
+		category = preferenceCategory
 	}
 	aead, err := mailCipher()
 	if err != nil {
@@ -106,9 +128,11 @@ func enqueueAuthEmailWith(ctx context.Context, executor mailQueueExecutor, recip
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	_, err = executor.Exec(ctx, `
-		INSERT INTO testagram_mail.outbox(payload_ciphertext,payload_nonce,status,available_at)
-		VALUES($1,$2,'pending',now())
-	`, ciphertext, nonce)
+		INSERT INTO testagram_mail.outbox(
+			payload_ciphertext,payload_nonce,status,available_at,preference_user_id,preference_category
+		)
+		VALUES($1,$2,'pending',now(),$3,$4)
+	`, ciphertext, nonce, preferenceID, category)
 	return err
 }
 
