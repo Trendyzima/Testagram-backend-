@@ -46,7 +46,7 @@ Configure these values in the InstaBox deployment environment (never commit real
 | `CLOUDFLARE_EMAIL_API_TOKEN` | Runtime variable populated from the existing `CLOUDFLARE_API_TOKEN` GitHub secret; token needs Email Sending: Edit |
 | `AUTH_FROM_EMAIL` | `no-reply@testagram.site`, populated from the `TESTAGRAM_MAIL_FROM` GitHub variable |
 | `TESTAGRAM_MAIL_ENCRYPTION_KEY` | 32 random bytes encoded as 64 hexadecimal characters |
-| `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN` | High-entropy secret of at least 32 characters shared only with the Cloudflare Queue consumer Worker |
+| `TESTAGRAM_EDGE_PROXY_SHARED_TOKEN` | High-entropy secret of at least 32 characters shared only with the Cloudflare Queue consumer Worker |
 
 Generate the encryption key with:
 
@@ -54,7 +54,7 @@ Generate the encryption key with:
 openssl rand -hex 32
 ```
 
-Generate the independent delivery-event bearer secret with the same command, then store it as the GitHub repository secret `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. Configure the exact same secret in the existing `testagram-api-edge` Worker as `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. The guarded API-edge deployment also requires the existing `EDGE_PROXY_SHARED_TOKEN` secret so the Queue consumer can reach the private InstaBox origin through the existing Caddy edge gate. Do not reuse the mail encryption key or an edge recovery credential.
+Reuse the existing `TESTAGRAM_EDGE_PROXY_SHARED_TOKEN` in both the backend runtime and the existing `testagram-api-edge` Worker. The Queue consumer sends it as the bearer credential and as `X-Testagram-Edge-Token`; Caddy validates and strips the edge header before forwarding, while the backend independently validates the bearer token. No additional mail-event secret is required.
 
 Configure these exact GitHub repository settings for the InstaBox deployment workflow:
 
@@ -160,7 +160,7 @@ The backend accepts Cloudflare Email Sending lifecycle events at:
 
 `POST /internal/mail/events`
 
-The route is protected by a high-entropy `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN` bearer secret and validates the event source domain against the configured `AUTH_FROM_EMAIL` sender domain. It accepts the six Cloudflare Email Sending event types: delivered, deferred, bounced, failed, rejected and complained.
+The route is protected by a high-entropy `TESTAGRAM_EDGE_PROXY_SHARED_TOKEN` bearer secret and validates the event source domain against the configured `AUTH_FROM_EMAIL` sender domain. It accepts the six Cloudflare Email Sending event types: delivered, deferred, bounced, failed, rejected and complained.
 
 The migration `migrations/20261125_testagram_mail_delivery_events.sql` adds an idempotent event ledger, recipient fingerprints, delivery timestamps and a suppression registry. The event ID is unique. New outbox records require both the provider message ID and keyed recipient fingerprint to match before delivery state can change. For legacy rows without a fingerprint, the first authenticated event is bound by the exact provider message ID and its recipient fingerprint is stored for subsequent events. Events arriving before the outbox provider message ID is recorded remain unprocessed and are reconciled by the mail worker later.
 
@@ -170,9 +170,9 @@ Provider acceptance remains the outbox state `sent`; final provider lifecycle is
 
 Cloudflare's Email Sending event subscription is scoped to a sending domain. Create a Queue and subscribe it to the six Email Sending events for the verified `testagram.site` sending domain. Configure a Queue consumer Worker to forward each event to the backend endpoint above.
 
-The backend and the Queue consumer must each receive the same independently generated high-entropy secret under the name `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. Configure it as a backend runtime secret and a Cloudflare Worker secret; never place it in source control or logs. The backend also needs the existing `AUTH_FROM_EMAIL` and stable mail encryption key.
+The backend and Queue consumer reuse the existing `TESTAGRAM_EDGE_PROXY_SHARED_TOKEN`. The backend also needs the existing `AUTH_FROM_EMAIL` and stable mail encryption key.
 
-The existing `testagram-api-edge` Worker consumes the Queue and forwards each event directly to the pinned InstaBox origin, using both the independent delivery-event bearer secret and the existing Caddy edge token. It acknowledges a Queue message only after the backend returns HTTP 202. Timeouts, network errors and every non-202 response cause `message.retry()`. The backend event ledger makes redelivery idempotent. No separate mail provider, Worker service or authentication system is introduced.
+The existing `testagram-api-edge` Worker consumes the Queue and forwards each event directly to the pinned InstaBox origin, using the existing shared edge token for both the bearer authorization and Caddy edge gate. It acknowledges a Queue message only after the backend returns HTTP 202. Timeouts, network errors and every non-202 response cause `message.retry()`. The backend event ledger makes redelivery idempotent. No separate mail provider, Worker service or authentication system is introduced.
 
 Example consumer logic (adapt the origin and secret binding to the existing Cloudflare Worker deployment):
 
@@ -198,7 +198,7 @@ export default {
 };
 ```
 
-Do not acknowledge an event before the backend accepts it. Configure Queue retries and a dead-letter queue, then alert on messages reaching the dead-letter queue. The guarded API-edge deployment provisions the primary Queue and dead-letter Queue, deploys the Queue consumer, installs both Worker secrets, creates or updates the Email Sending event subscription for `testagram.site`, and verifies the six-event subscription. The Cloudflare deployment token must include **Queues Write** (Cloudflare's permission label is **Account → Queues → Edit**) in addition to the existing Worker and zone permissions. The backend deployment workflow transfers the same repository secret into the existing API container environment and validates its 64-hex-character format. Keep the repository secret and Cloudflare Worker secret synchronized when rotating it. Keep Queue retries and the dead-letter Queue enabled, and alert on messages reaching the dead-letter Queue.
+Do not acknowledge an event before the backend accepts it. Configure Queue retries and a dead-letter queue, then alert on messages reaching the dead-letter queue. The guarded API-edge deployment provisions the primary Queue and dead-letter Queue, deploys the Queue consumer, installs both Worker secrets, creates or updates the Email Sending event subscription for `testagram.site`, and verifies the six-event subscription. The Cloudflare deployment token must include **Queues Write** (Cloudflare's permission label is **Account → Queues → Edit**) in addition to the existing Worker and zone permissions. The backend deployment workflow passes the existing edge token into the API container and validates its 64-hex-character format. Keep the repository secret and Cloudflare Worker secret synchronized when rotating it. Keep Queue retries and the dead-letter Queue enabled, and alert on messages reaching the dead-letter Queue.
 
 ### Event acceptance checks
 
