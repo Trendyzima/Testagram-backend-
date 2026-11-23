@@ -219,7 +219,135 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         script = match.group(0) + "\n" + "\n".join([
             'BASE_ENV="$(mktemp)"',
             'trap \'rm -f "$BASE_ENV"\' EXIT',
-            "write_env_value TESTAGRAM_WEBAUTHN_RPID ",
+            "write_env_value TESTAGRAM_WEBAUTHN_RPID 
+            "if grep -q $'\\r' \"$BASE_ENV\"; then exit 1; fi",
+            '[[ "$(cat "$BASE_ENV")" == "TESTAGRAM_WEBAUTHN_RPID=ops.testagram.site" ]]',
+        ]) + "\n"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_fresh_media_approval_reaches_remote_deployment(self):
+        self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
+        self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
+        self.assertIn('write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"', self.deployer)
+        self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
+
+
+    def test_dedicated_identity_evidence_buckets_are_independent_of_legacy_replicator(self):
+        for token in (
+            'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"',
+            'DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-r2}"',
+            'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
+            'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "r2/$R2_BUCKET"',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'internal/v1/identity-evidence/readyz',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.deployer)
+
+    def test_optional_fingerprint_migration_is_mounted_for_remote_preflight(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        migration = "20261121_native_identity_intake_optional_fingerprint.sql"
+        self.assertIn(migration + ":/docker-entrypoint-initdb.d/" + migration + ":ro", compose)
+        self.assertIn("github.event_name == 'push'", self.workflow)
+        self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
+
+    def test_b2_s3_credentials_are_trimmed_before_provider_calls(self):
+        self.assertIn("B2 S3 access key ID length after whitespace normalization", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.deployer)
+
+    def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("image: testagram-self-hosted-api:latest", compose)
+        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
+        self.assertIn("config --format json | jq -r '.services.api.image // empty'", self.deployer)
+        self.assertIn('docker image inspect --format \'{{.Id}}\' "$api_image_ref"', self.deployer)
+        self.assertIn('docker inspect --format \'{{.Image}}\' "$api_container"', self.deployer)
+        self.assertIn('"$api_actual_image_id" != "$api_expected_image_id"', self.deployer)
+        self.assertIn("Verified running Backend immutable image ID", self.deployer)
+        self.assertNotIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
+
+    def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
+        deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", deploy_gate)
+        self.assertIn("github.event_name == 'push' ||", deploy_gate)
+        self.assertIn("inputs.confirm_production_deploy == true", deploy_gate)
+        self.assertNotIn("github.event_name == 'pull_request' ||", deploy_gate)
+        self.assertIn("environment: production", self.workflow)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ops.testagram.site\\r\\n'",
+            "if grep -q $'\\r' \"$BASE_ENV\"; then exit 1; fi",
+            '[[ "$(cat "$BASE_ENV")" == "TESTAGRAM_WEBAUTHN_RPID=ops.testagram.site" ]]',
+        ]) + "\n"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_fresh_media_approval_reaches_remote_deployment(self):
+        self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
+        self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
+        self.assertIn('write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"', self.deployer)
+        self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
+
+
+    def test_dedicated_identity_evidence_buckets_are_independent_of_legacy_replicator(self):
+        for token in (
+            'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"',
+            'DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-r2}"',
+            'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
+            'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "r2/$R2_BUCKET"',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'internal/v1/identity-evidence/readyz',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.deployer)
+
+    def test_optional_fingerprint_migration_is_mounted_for_remote_preflight(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        migration = "20261121_native_identity_intake_optional_fingerprint.sql"
+        self.assertIn(migration + ":/docker-entrypoint-initdb.d/" + migration + ":ro", compose)
+        self.assertIn("github.event_name == 'push'", self.workflow)
+        self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
+
+    def test_b2_s3_credentials_are_trimmed_before_provider_calls(self):
+        self.assertIn("B2 S3 access key ID length after whitespace normalization", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.workflow)
+        self.assertIn("tr -d '\\r\\n[:space:]'", self.deployer)
+
+    def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("image: testagram-self-hosted-api:latest", compose)
+        self.assertIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api', self.deployer)
+        self.assertIn("config --format json | jq -r '.services.api.image // empty'", self.deployer)
+        self.assertIn('docker image inspect --format \'{{.Id}}\' "$api_image_ref"', self.deployer)
+        self.assertIn('docker inspect --format \'{{.Image}}\' "$api_container"', self.deployer)
+        self.assertIn('"$api_actual_image_id" != "$api_expected_image_id"', self.deployer)
+        self.assertIn("Verified running Backend immutable image ID", self.deployer)
+        self.assertNotIn('docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" images -q api', self.deployer)
+
+    def test_approved_main_pushes_deploy_but_pull_requests_do_not(self):
+        deploy_gate = self.workflow.split("  deploy:", 1)[1].split("    name:", 1)[0]
+        self.assertIn("github.ref == 'refs/heads/main'", deploy_gate)
+        self.assertIn("github.event_name == 'push' ||", deploy_gate)
+        self.assertIn("inputs.confirm_production_deploy == true", deploy_gate)
+        self.assertNotIn("github.event_name == 'pull_request' ||", deploy_gate)
+        self.assertIn("environment: production", self.workflow)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ops.testagram.site\\r\\n'",
             "if grep -q $'\\r' \"$BASE_ENV\"; then exit 1; fi",
             '[[ "$(cat "$BASE_ENV")" == "TESTAGRAM_WEBAUTHN_RPID=ops.testagram.site" ]]',
         ]) + "\n"
