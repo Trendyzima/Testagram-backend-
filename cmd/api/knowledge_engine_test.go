@@ -21,7 +21,7 @@ func TestKnowledgeIdempotencyKeyHashDoesNotExposeRawKey(t *testing.T) {
 }
 
 func TestKnowledgeVisibilityPolicyIncludesBlocksAndProtectedAccounts(t *testing.T) {
-	for _, fragment := range []string{"q.visibility='public' AND NOT a.protected_account", "f.status='accepted'", "testagram_local.blocks", "q.deleted_at IS NULL"} {
+	for _, fragment := range []string{"q.visibility='public' AND NOT a.protected_account", "f.status='accepted'", "testagram_local.blocks", "testagram_local.mutes", "q.deleted_at IS NULL"} {
 		if !contains(knowledgeVisible, fragment) { t.Fatalf("visibility policy is missing %q", fragment) }
 	}
 }
