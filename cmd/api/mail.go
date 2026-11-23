@@ -509,7 +509,11 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	messageID, sendErr := s.sendCloudflareMail(sendCtx, message)
+	send := s.sendCloudflareMail
+	if s.mailSender != nil {
+		send = s.mailSender
+	}
+	messageID, sendErr := send(sendCtx, message)
 	cancel()
 	if sendErr != nil {
 		var ambiguous ambiguousMailError
