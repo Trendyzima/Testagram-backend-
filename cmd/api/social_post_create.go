@@ -8,12 +8,36 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
+
+var socialMentionPattern = regexp.MustCompile(`(^|[^A-Za-z0-9_.])@([A-Za-z0-9_.]{2,30})(?:$|[^A-Za-z0-9_.])`)
+
+// extractSocialMentionHandles returns normalized, unique local handles. It does
+// not resolve identities; the transaction below resolves them against the
+// canonical account table and applies block, account and visibility policy.
+func extractSocialMentionHandles(content string) []string {
+	matches := socialMentionPattern.FindAllStringSubmatch(content, -1)
+	handles := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		handle := strings.ToLower(match[2])
+		if _, exists := seen[handle]; exists {
+			continue
+		}
+		seen[handle] = struct{}{}
+		handles = append(handles, handle)
+	}
+	return handles
+}
 
 type socialPostCreateInput struct {
 	Content    string `json:"content"`
@@ -191,6 +215,46 @@ func (s *service) socialPostCreate(w http.ResponseWriter, r *http.Request) {
 		if err := s.enqueueFederationCreateTx(r.Context(), tx, userID, postID, input.Content, createdAt); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("FEDERATION_OUTBOX_UNAVAILABLE", "The public post could not be durably queued for opted-in federation", requestID))
 			return
+		}
+	}
+	// Mention notifications are committed atomically with the post. Resolve
+	// handles only against active Testagram accounts; do not notify blocked
+	// pairs or recipients who cannot see a protected/followers-only post.
+	if input.Visibility != "private" {
+		handles := extractSocialMentionHandles(input.Content)
+		if len(handles) > 0 {
+			_, err = tx.Exec(r.Context(), `
+INSERT INTO testagram_local.notifications
+  (recipient_id,actor_id,post_id,kind,payload,event_key)
+SELECT DISTINCT recipient.user_id,author.user_id,$2::uuid,'mention',
+       jsonb_build_object('handle',recipient.username),
+       'mention:' || $2::text || ':' || recipient.user_id::text
+FROM unnest($3::text[]) AS mentioned(handle)
+JOIN testagram_local.accounts recipient
+  ON lower(recipient.username)=mentioned.handle
+JOIN testagram_local.accounts author ON author.user_id=$1::uuid
+WHERE recipient.account_status='active'
+  AND recipient.user_id<>author.user_id
+  AND NOT EXISTS (
+    SELECT 1 FROM testagram_local.blocks b
+    WHERE (b.blocker_id=author.user_id AND b.blocked_id=recipient.user_id)
+       OR (b.blocker_id=recipient.user_id AND b.blocked_id=author.user_id)
+  )
+  AND (
+    (input_visibility.visibility='public' AND NOT author.protected_account)
+    OR EXISTS (
+      SELECT 1 FROM testagram_local.follows f
+      WHERE f.follower_id=recipient.user_id
+        AND f.following_id=author.user_id
+        AND f.status='accepted'
+    )
+  )
+ON CONFLICT (recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,
+				userID, postID, handles, pgx.QueryExecModeSimpleProtocol)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("MENTION_NOTIFICATION_FAILED", "Mention notifications could not be saved", requestID))
+				return
+			}
 		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
