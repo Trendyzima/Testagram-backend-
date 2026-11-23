@@ -18,6 +18,17 @@ type socialListMemberInput struct {
 	UserID string `json:"user_id"`
 }
 
+func normalizeSocialListInput(in *socialListInput) bool {
+	in.Name = strings.TrimSpace(in.Name)
+	in.Description = strings.TrimSpace(in.Description)
+	in.Visibility = strings.ToLower(strings.TrimSpace(in.Visibility))
+	if len([]rune(in.Name)) < 1 || len([]rune(in.Name)) > 64 || len([]rune(in.Description)) > 280 {
+		return false
+	}
+	if in.Visibility == "" { in.Visibility = "private" }
+	return in.Visibility == "private" || in.Visibility == "unlisted" || in.Visibility == "public"
+}
+
 func (s *service) socialListsList(w http.ResponseWriter, r *http.Request) {
 	uid, rid, ok := s.socialAuth(w, r)
 	if !ok { return }
@@ -55,10 +66,7 @@ func (s *service) socialListCreate(w http.ResponseWriter, r *http.Request) {
 	var in socialListInput
 	if err:=d.Decode(&in);err!=nil {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_LIST","List payload is invalid",rid));return}
 	if err:=d.Decode(&struct{}{});err!=io.EOF {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_LIST","List payload must contain one JSON object",rid));return}
-	in.Name=strings.TrimSpace(in.Name);in.Description=strings.TrimSpace(in.Description);in.Visibility=strings.ToLower(strings.TrimSpace(in.Visibility))
-	if len([]rune(in.Name))<1||len([]rune(in.Name))>64||len([]rune(in.Description))>280 {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_LIST","List name must be 1-64 characters and description at most 280",rid));return}
-	if in.Visibility=="" {in.Visibility="private"}
-	if in.Visibility!="private"&&in.Visibility!="unlisted"&&in.Visibility!="public" {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_LIST_VISIBILITY","Visibility must be private, unlisted, or public",rid));return}
+	if !normalizeSocialListInput(&in) {writeJSON(w,http.StatusBadRequest,errorBody("INVALID_LIST","List name, description or visibility is invalid",rid));return}
 	var id string
 	var created time.Time
 	err:=s.db.QueryRow(r.Context(),`INSERT INTO testagram_local.social_lists(owner_id,name,description,visibility)
@@ -97,6 +105,7 @@ SELECT a.user_id::text,a.username,a.display_name,a.avatar_key,m.created_at
 FROM testagram_local.social_list_members m
 JOIN testagram_local.accounts a ON a.user_id=m.member_user_id
 WHERE m.list_id=$1::uuid AND a.account_status='active'
+  AND (NOT a.protected_account OR a.user_id=$2::uuid OR EXISTS(SELECT 1 FROM testagram_local.follows f WHERE f.follower_id=$2::uuid AND f.following_id=a.user_id AND f.status='accepted'))
   AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b WHERE (b.blocker_id=$2::uuid AND b.blocked_id=a.user_id) OR (b.blocker_id=a.user_id AND b.blocked_id=$2::uuid))
 ORDER BY m.created_at DESC,m.member_user_id
 LIMIT 500`,id,uid)
