@@ -30,6 +30,9 @@ class TestSocialPlatformMigrationSafety(unittest.TestCase):
         self.assertLess(checksum, confirmation)
         self.assertLess(confirmation, apply)
         self.assertIn("schema_ready", script)
+        self.assertIn("062_testagram_knowledge_engine.sql", script)
+        self.assertIn("063_testagram_social_platform_product_foundation.sql", script)
+        self.assertIn("testagram_local.questions", script)
         self.assertIn("no migration applied", script)
         self.assertIn("social_moderation_appeals", script)
 
@@ -51,7 +54,8 @@ class TestSocialPlatformMigrationSafety(unittest.TestCase):
 
     def test_operator_documentation_requires_the_backup_first_workflow(self):
         readme = README.read_text(encoding="utf-8")
-        self.assertIn("./apply-social-platform-product-migration.sh", readme)
+        self.assertIn("bash ./apply-social-platform-product-migration.sh", readme)
+        self.assertIn("migration 062 (Knowledge Engine)", readme)
         self.assertIn("APPLY-TESTAGRAM-SOCIAL-PLATFORM-FOUNDATION", readme)
 
 
