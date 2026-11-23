@@ -55,16 +55,16 @@ func TestQuestionTopicExtensionPreservesLegacyIdempotencyHashWithoutTopics(t *te
 		Visibility string `json:"visibility"`
 		Language   string `json:"language"`
 	}{
-		Title: "How does PostgreSQL work?",
-		Body: "Explain MVCC.",
+		Title:      "How does PostgreSQL work?",
+		Body:       "Explain MVCC.",
 		Visibility: "public",
-		Language: "en",
+		Language:   "en",
 	}
 	current := knowledgeQuestionInput{
-		Title: legacy.Title,
-		Body: legacy.Body,
+		Title:      legacy.Title,
+		Body:       legacy.Body,
 		Visibility: legacy.Visibility,
-		Language: legacy.Language,
+		Language:   legacy.Language,
 	}
 	oldHash, err := knowledgeHash(legacy)
 	if err != nil {
