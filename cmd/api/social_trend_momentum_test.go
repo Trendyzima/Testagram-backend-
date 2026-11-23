@@ -4,10 +4,10 @@ import "testing"
 
 func TestTrendMomentum(t *testing.T) {
 	cases := []struct {
-		name string
-		current int64
+		name     string
+		current  int64
 		previous int64
-		want float64
+		want     float64
 	}{
 		{name: "new topic", current: 5, previous: 0, want: 1},
 		{name: "doubling", current: 10, previous: 5, want: 0.5},
