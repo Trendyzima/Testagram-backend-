@@ -161,19 +161,23 @@ func enqueueMailWithPreference(ctx context.Context, executor mailQueueExecutor, 
 	ciphertext := aead.Seal(nil, nonce, payload, []byte("testagram-mail-v1"))
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	fingerprint, err := mailRecipientFingerprint(recipient)
+	if err != nil {
+		return err
+	}
 	if preferenceUserID == nil {
 		_, err = executor.Exec(ctx, `
-			INSERT INTO testagram_mail.outbox(payload_ciphertext,payload_nonce,status,available_at)
-			VALUES($1,$2,'pending',now())
-		`, ciphertext, nonce)
+			INSERT INTO testagram_mail.outbox(payload_ciphertext,payload_nonce,status,available_at,recipient_fingerprint)
+			VALUES($1,$2,'pending',now(),$3)
+		`, ciphertext, nonce, fingerprint)
 		return err
 	}
 	_, err = executor.Exec(ctx, `
 		INSERT INTO testagram_mail.outbox(
-			payload_ciphertext,payload_nonce,status,available_at,preference_user_id,preference_category
+			payload_ciphertext,payload_nonce,status,available_at,preference_user_id,preference_category,recipient_fingerprint
 		)
-		VALUES($1,$2,'pending',now(),$3,$4)
-	`, ciphertext, nonce, preferenceID, category)
+		VALUES($1,$2,'pending',now(),$3,$4,$5)
+	`, ciphertext, nonce, preferenceID, category, fingerprint)
 	return err
 }
 
@@ -319,6 +323,9 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if err := mailRuntimeConfigurationError(); err != nil {
 		return false, nil
 	}
+	if err := s.reconcileCloudflareMailEvents(ctx); err != nil {
+		return false, err
+	}
 
 	// Remove social messages whose consent is absent or has been withdrawn.
 	// This also handles deleted accounts and stale queue rows from older builds.
@@ -395,6 +402,31 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		_ = s.failMail(ctx, id, attempt, "MAIL_PAYLOAD_INVALID")
 		return true, err
 	}
+	fingerprint, err := mailRecipientFingerprint(message.Recipient)
+	if err != nil {
+		_ = s.failMail(ctx, id, attempt, "MAIL_RECIPIENT_FINGERPRINT_FAILED")
+		return true, err
+	}
+	var suppressed bool
+	if err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM testagram_mail.recipient_suppressions
+			WHERE recipient_fingerprint=$1
+		)
+	`, fingerprint).Scan(&suppressed); err != nil {
+		_ = s.failMail(ctx, id, attempt, "MAIL_SUPPRESSION_LOOKUP_FAILED")
+		return true, err
+	}
+	if suppressed {
+		_, err := s.db.Exec(ctx, `
+			UPDATE testagram_mail.outbox
+			SET status='dead',lease_until=NULL,last_error_code='RECIPIENT_SUPPRESSED',
+			    payload_ciphertext='',payload_nonce='',updated_at=now()
+			WHERE id=$1 AND status='sending'
+		`, id)
+		return true, err
+	}
+
 	// Re-check consent immediately before the provider call so queued social
 	// messages cannot be sent after a preference withdrawal.
 	if preferenceUserID != "" {
