@@ -55,11 +55,11 @@ VALUES(gen_random_uuid(),$1,$2) RETURNING user_id::text`,
 		author string
 		visibility string
 		content string
-		age time.Duration
+		age string
 	}{
-		{publicAuthorA, "public", "#" + tag + " " + word, time.Hour},
-		{publicAuthorB, "public", "#" + tag + " " + word, 30 * time.Hour},
-		{publicAuthorA, "private", "#private" + suffix + " privateword" + suffix, time.Hour},
+		{publicAuthorA, "public", "#" + tag + " " + word, "1 hour"},
+		{publicAuthorB, "public", "#" + tag + " " + word, "30 hours"},
+		{publicAuthorA, "private", "#private" + suffix + " privateword" + suffix, "1 hour"},
 		{protectedAuthor, "public", "#protected" + suffix + " protectedword" + suffix, time.Hour},
 		{publicAuthorA, "followers", "#followers" + suffix + " followersword" + suffix, time.Hour},
 	}
