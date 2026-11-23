@@ -13,6 +13,15 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         self.assertIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web@sha256:b79c3895343d1fc6518cdcba9ddff236b6375c90676663f6b9e4f391bde7671f", workflow)
         self.assertNotIn("TESTAGRAM_WEB_IMAGE: ghcr.io/trendyzima/testagram-web:main", workflow)
 
+    def test_production_deployment_verifies_live_native_signup_page(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("accept-web-authentication:", workflow)
+        self.assertIn("needs: deploy", workflow)
+        self.assertIn("https://www.testagram.site/?mode=signup", workflow)
+        self.assertIn('for marker in \'Sign in\' \'Sign up\' \'Create account\' \'Reset password\'; do', workflow)
+        self.assertIn("flutter_bootstrap.js", workflow)
+        self.assertIn("main.dart.js", workflow)
+
     def test_deployment_preserves_the_workflow_selected_digest(self):
         deploy = DEPLOY.read_text(encoding="utf-8")
         self.assertIn('TESTAGRAM_WEB_IMAGE="${DEPLOY_WEB_IMAGE:-}"', deploy)
