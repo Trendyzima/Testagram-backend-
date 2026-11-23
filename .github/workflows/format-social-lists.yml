@@ -1,0 +1,33 @@
+name: Format curated Lists Go sources
+
+on:
+  push:
+    branches: [feat/x-lists-runtime-20261123]
+    paths:
+      - "cmd/api/social_lists.go"
+      - "cmd/api/social_lists_test.go"
+      - ".github/workflows/format-social-lists.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Format curated Lists sources
+        run: |
+          gofmt -w cmd/api/social_lists.go cmd/api/social_lists_test.go
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add cmd/api/social_lists.go cmd/api/social_lists_test.go
+            git commit -m "style: format curated Lists API"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
