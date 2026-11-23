@@ -68,7 +68,7 @@ func TestHashtagEndpointsFailClosedWithoutDatabase(t *testing.T) {
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
-		if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "TRENDING_WORDS_UNAVAILABLE") {
+		if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "SOCIAL_DATABASE_UNAVAILABLE") {
 			t.Errorf("%s %s without DB: status=%d body=%s", route.method, route.path, recorder.Code, recorder.Body.String())
 		}
 	}
