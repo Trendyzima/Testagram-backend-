@@ -54,7 +54,7 @@ Generate the encryption key with:
 openssl rand -hex 32
 ```
 
-Generate the independent delivery-event bearer secret with the same command, then store it as the GitHub repository secret `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. Configure the exact same secret in the Cloudflare Queue consumer Worker. Do not reuse the mail encryption key or an edge recovery credential.
+Generate the independent delivery-event bearer secret with the same command, then store it as the GitHub repository secret `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. Configure the exact same secret in the existing `testagram-api-edge` Worker as `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. The guarded API-edge deployment also requires the existing `EDGE_PROXY_SHARED_TOKEN` secret so the Queue consumer can reach the private InstaBox origin through the existing Caddy edge gate. Do not reuse the mail encryption key or an edge recovery credential.
 
 Configure these exact GitHub repository settings for the InstaBox deployment workflow:
 
@@ -172,7 +172,7 @@ Cloudflare's Email Sending event subscription is scoped to a sending domain. Cre
 
 The backend and the Queue consumer must each receive the same independently generated high-entropy secret under the name `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`. Configure it as a backend runtime secret and a Cloudflare Worker secret; never place it in source control or logs. The backend also needs the existing `AUTH_FROM_EMAIL` and stable mail encryption key.
 
-A Queue consumer should acknowledge a message only after the backend returns HTTP 202. On timeout, network failure, or any non-202 response, retry the Queue message so Cloudflare can redeliver it. The backend event ledger makes those redeliveries idempotent.
+The existing `testagram-api-edge` Worker consumes the Queue and forwards each event directly to the pinned InstaBox origin, using both the independent delivery-event bearer secret and the existing Caddy edge token. It acknowledges a Queue message only after the backend returns HTTP 202. Timeouts, network errors and every non-202 response cause `message.retry()`. The backend event ledger makes redelivery idempotent. No separate mail provider, Worker service or authentication system is introduced.
 
 Example consumer logic (adapt the origin and secret binding to the existing Cloudflare Worker deployment):
 
@@ -198,7 +198,7 @@ export default {
 };
 ```
 
-Do not acknowledge an event before the backend accepts it. Configure Queue retries and a dead-letter queue, then alert on messages reaching the dead-letter queue. The subscription and Queue consumer are Cloudflare account resources and must be provisioned and verified separately; adding the backend endpoint does not create them automatically.
+Do not acknowledge an event before the backend accepts it. Configure Queue retries and a dead-letter queue, then alert on messages reaching the dead-letter queue. The guarded API-edge deployment provisions the primary Queue and dead-letter Queue, deploys the Queue consumer, installs both Worker secrets, creates or updates the Email Sending event subscription for `testagram.site`, and verifies the six-event subscription. The Cloudflare deployment token must include **Queues Write** (Cloudflare's permission label is **Account → Queues → Edit**) in addition to the existing Worker and zone permissions. The backend runtime must independently receive `TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN`; the deployment workflow does not copy that secret into the InstaBox environment. Keep Queue retries and the dead-letter Queue enabled, and alert on messages reaching the dead-letter Queue.
 
 ### Event acceptance checks
 
