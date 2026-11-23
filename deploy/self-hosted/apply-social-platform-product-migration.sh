@@ -6,7 +6,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 compose_file="${COMPOSE_FILE:-$script_dir/docker-compose.yml}"
 env_file="${ENV_FILE:-$script_dir/.env}"
 backup_dir="${BACKUP_DIR:-$script_dir/backups}"
-migration_file="/docker-entrypoint-initdb.d/063_testagram_social_platform_product_foundation.sql"
+knowledge_migration_file="/docker-entrypoint-initdb.d/062_testagram_knowledge_engine.sql"
+social_migration_file="/docker-entrypoint-initdb.d/063_testagram_social_platform_product_foundation.sql"
 
 [[ -f "$compose_file" && -f "$env_file" ]] || { echo "Compose and .env files are required." >&2; exit 1; }
 for bin in docker pg_restore sha256sum; do command -v "$bin" >/dev/null 2>&1 || { echo "$bin is required" >&2; exit 1; }; done
@@ -33,11 +34,12 @@ schema_ready() {
   "'
 }
 if [[ "$(schema_ready)" == "t" ]]; then
-  echo "Social platform foundation schema already exists; no changes made."
+  echo "Knowledge and social platform foundation schemas already exist; no changes made."
   exit 0
 fi
 
-docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "$migration_file"
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "$knowledge_migration_file"
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "$social_migration_file"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -57,6 +59,7 @@ if [[ "$confirm" != "APPLY-TESTAGRAM-SOCIAL-PLATFORM-FOUNDATION" ]]; then
   exit 0
 fi
 
-docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$migration_file"
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$knowledge_migration_file"
+docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f "$1"' sh "$social_migration_file"
 [[ "$(schema_ready)" == "t" ]] || { echo "Social platform foundation schema verification failed." >&2; exit 1; }
 echo "Social platform foundation migration applied and verified. Retain backup until Backend and Flutter acceptance tests pass."
