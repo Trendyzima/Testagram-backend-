@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+func TestInstrumentedResponsesIdentifyTheBackendOrigin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/not-a-real-route", nil)
+	rec := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(rec, req)
+	if got := rec.Header().Get("X-Testagram-Service"); got != "testagram-api" {
+		t.Fatalf("X-Testagram-Service = %q, want testagram-api", got)
+	}
+	if got := rec.Header().Get("X-Request-ID"); got == "" {
+		t.Fatal("instrumented Backend response must include a request ID")
+	}
+}
+
 func TestHealthzIdentifiesCanonicalBackend(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
