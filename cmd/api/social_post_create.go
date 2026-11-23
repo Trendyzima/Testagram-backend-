@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var socialMentionPattern = regexp.MustCompile(`(^|[^A-Za-z0-9_.])@([A-Za-z0-9_.]{2,30})(?:$|[^A-Za-z0-9_.])`)
+var socialMentionPattern = regexp.MustCompile(`(^|[^A-Za-z0-9_.])@([A-Za-z0-9_.]{2,30})($|[^A-Za-z0-9_.])`)
 
 // extractSocialMentionHandles returns normalized, unique local handles. It does
 // not resolve identities; the transaction below resolves them against the
@@ -241,7 +241,7 @@ WHERE recipient.account_status='active'
        OR (b.blocker_id=recipient.user_id AND b.blocked_id=author.user_id)
   )
   AND (
-    (input_visibility.visibility='public' AND NOT author.protected_account)
+    ($4::text='public' AND NOT author.protected_account)
     OR EXISTS (
       SELECT 1 FROM testagram_local.follows f
       WHERE f.follower_id=recipient.user_id
@@ -250,7 +250,7 @@ WHERE recipient.account_status='active'
     )
   )
 ON CONFLICT (recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,
-				userID, postID, handles, pgx.QueryExecModeSimpleProtocol)
+				userID, postID, handles, input.Visibility)
 			if err != nil {
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("MENTION_NOTIFICATION_FAILED", "Mention notifications could not be saved", requestID))
 				return
