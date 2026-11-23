@@ -25,12 +25,13 @@ func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
 	var id int64
 	var ciphertext, nonce []byte
 	var status string
+	var preferenceUserID, preferenceCategory *string
 	if err := db.QueryRow(ctx, `
-		SELECT id,payload_ciphertext,payload_nonce,status
+		SELECT id,payload_ciphertext,payload_nonce,status,preference_user_id::text,preference_category
 		FROM testagram_mail.outbox
 		WHERE payload_ciphertext IS NOT NULL
 		ORDER BY id DESC LIMIT 1
-	`).Scan(&id, &ciphertext, &nonce, &status); err != nil {
+	`).Scan(&id, &ciphertext, &nonce, &status, &preferenceUserID, &preferenceCategory); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", id) }()
@@ -55,6 +56,34 @@ func TestMailOutboxPersistsEncryptedPayload(t *testing.T) {
 	}
 	if message.Recipient != recipient || message.Subject != "Testagram security notice" || !strings.Contains(message.HTML, secretLink) {
 		t.Fatalf("decrypted outbox message did not match queued content: %#v", message)
+	}
+}
+
+func TestSocialMailOutboxCarriesConsentCategory(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("ab", 32))
+
+	recipient := fmt.Sprintf("social-mail-%d@example.test", time.Now().UnixNano())
+	userID := "123e4567-e89b-42d3-a456-426614174199"
+	if err := enqueueSocialEmailWith(ctx, db, recipient, userID, "new_post",
+		"A person you follow shared a new Testagram post", "<p>New post</p>"); err != nil {
+		t.Fatal(err)
+	}
+
+	var id int64
+	var storedUserID, category string
+	if err := db.QueryRow(ctx, `
+		SELECT id,preference_user_id::text,preference_category
+		FROM testagram_mail.outbox
+		WHERE preference_user_id=$1
+		ORDER BY id DESC LIMIT 1
+	`, userID).Scan(&id, &storedUserID, &category); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", id) }()
+	if storedUserID != userID || category != "new_post" {
+		t.Fatalf("social mail consent reference = (%q,%q), want (%q,new_post)", storedUserID, category, userID)
 	}
 }
 
