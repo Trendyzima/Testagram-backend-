@@ -213,6 +213,19 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         result = subprocess.run(["bash", "-c", rejected], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_env_writer_strips_crlf_from_single_line_values(self):
+        match = re.search(r"write_env_value\(\) \{.*?\n\}", self.deployer, re.S)
+        self.assertIsNotNone(match)
+        script = match.group(0) + "\n" + "\n".join([
+            'BASE_ENV="$(mktemp)"',
+            'trap \'rm -f "$BASE_ENV"\' EXIT',
+            "write_env_value TESTAGRAM_WEBAUTHN_RPID $'ops.testagram.site\\r\\n'",
+            "if grep -q $'\\r' \"$BASE_ENV\"; then exit 1; fi",
+            '[[ "$(cat "$BASE_ENV")" == "TESTAGRAM_WEBAUTHN_RPID=ops.testagram.site" ]]',
+        ]) + "\n"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fresh_media_approval_reaches_remote_deployment(self):
         self.assertIn('--arg fresh_media_enabled "$FRESH_MEDIA_ENABLED"', self.deployer)
         self.assertIn("FRESH_MEDIA_ENABLED:$fresh_media_enabled", self.deployer)
