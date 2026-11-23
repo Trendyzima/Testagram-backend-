@@ -345,8 +345,6 @@ func nullableUUID(value string) any {
 	return value
 }
 
-
-
 func socialTopicMomentum(recentCount, previousCount int64) float64 {
 	if recentCount <= previousCount {
 		return 0
