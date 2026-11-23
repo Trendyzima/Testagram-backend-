@@ -219,7 +219,6 @@ func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 	}
 }
 
-
 func TestEdgeRecoveryReadinessReportsLivePostgreSQL(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {
