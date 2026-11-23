@@ -291,7 +291,7 @@ func (c *Client) RankTopics(ctx context.Context, input TopicRequest) (TopicsResp
 			return TopicsResponse{}, errors.New("algorithm topic ranker returned a duplicate topic")
 		}
 		seen[item.Tag] = struct{}{}
-		if len(item.Reasons) > 3 {
+		if len(item.Reasons) > 4 {
 			return TopicsResponse{}, errors.New("algorithm topic ranker returned too many reasons")
 		}
 		for _, reason := range item.Reasons {
