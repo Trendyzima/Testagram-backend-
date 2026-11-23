@@ -593,6 +593,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/social/lists/{list_id}/members", s.socialListMembers)
 	mux.HandleFunc("POST /api/social/lists/{list_id}/members", s.socialListMemberAdd)
 	mux.HandleFunc("DELETE /api/social/lists/{list_id}/members/{member_id}", s.socialListMemberRemove)
+	mux.HandleFunc("POST /api/social/lists/{list_id}/follow-members", s.socialListFollowMembers)
 	mux.HandleFunc("GET /api/social/history", s.browsingHistoryList)
 	mux.HandleFunc("POST /api/social/history", s.browsingHistoryRecord)
 	mux.HandleFunc("POST /api/iptv/social", s.iptvSocial)
