@@ -28,7 +28,10 @@ func TestSocialEmailUnsubscribeGetIsSafeAndPostWithdrawsConsent(t *testing.T) {
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", userID)
 	}()
 	enabled := true
-	if err := upsertSocialEmailPreferences(ctx, db, userID, socialEmailPreferenceInput{NewPostEmailEnabled:&enabled}); err != nil { t.Fatal(err) }
+	tx, err := db.Begin(ctx)
+	if err != nil { t.Fatal(err) }
+	if err := upsertSocialEmailPreferences(ctx, tx, userID, socialEmailPreferenceInput{NewPostEmailEnabled:&enabled}); err != nil { _ = tx.Rollback(ctx); t.Fatal(err) }
+	if err := tx.Commit(ctx); err != nil { t.Fatal(err) }
 	if err := enqueueSocialEmailWith(ctx, db, recipient, userID, "new_post", "A followed account posted", "<p>A new post</p>"); err != nil { t.Fatal(err) }
 
 	var ciphertext, nonce []byte
