@@ -52,12 +52,14 @@ func (s *service) knowledgeQuestions(w http.ResponseWriter,r *http.Request) {
 	if status!="all"&&status!="open"&&status!="answered"{writeJSON(w,400,errorBody("INVALID_STATUS","Status must be all, open, or answered",rid));return}
 	var before,beforeID any
 	if raw:=r.URL.Query().Get("before");raw!=""{c,e:=decodeSocialCursor(raw);if e!=nil{writeJSON(w,400,errorBody("INVALID_CURSOR","Cursor is invalid",rid));return};before,beforeID=c.CreatedAt,c.ID}
+	mine:=strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("mine")),"true")
 	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel()
 	rows,e:=s.db.Query(ctx,`SELECT q.id::text,q.author_id::text,q.title,q.body,q.visibility,q.status,COALESCE(q.accepted_answer_id::text,''),q.created_at,q.updated_at,a.username,a.display_name,a.avatar_key,a.protected_account,(SELECT count(*) FROM testagram_local.answers x WHERE x.question_id=q.id AND x.deleted_at IS NULL)
 FROM testagram_local.questions q JOIN testagram_local.accounts a ON a.user_id=q.author_id
 WHERE `+knowledgeVisible+` AND ($2='all' OR q.status=$2)
-AND ($3::timestamptz IS NULL OR (q.created_at,q.id)<($3::timestamptz,$4::uuid))
-ORDER BY q.created_at DESC,q.id DESC LIMIT $5`,uid,status,before,beforeID,limit+1)
+AND (NOT $3::boolean OR q.author_id=$1)
+AND ($4::timestamptz IS NULL OR (q.created_at,q.id)<($4::timestamptz,$5::uuid))
+ORDER BY q.created_at DESC,q.id DESC LIMIT $6`,uid,status,mine,before,beforeID,limit+1)
 	if e!=nil{writeJSON(w,503,errorBody("QUESTIONS_UNAVAILABLE","Questions could not be loaded",rid));return};defer rows.Close()
 	items:=[]map[string]any{};var next socialCursor;more:=false
 	for rows.Next(){var id,author,title,body,vis,state,accepted,username,display,avatar string;var created,updated time.Time;var protected bool;var count int64
@@ -110,7 +112,7 @@ func (s *service) knowledgeQuestionRead(w http.ResponseWriter,r *http.Request) {
 		answers=append(answers,map[string]any{"id":aid,"question_id":qid2,"author_id":au,"body":txt,"revision_number":rev,"created_at":c,"updated_at":u,"accepted":ac,"author":map[string]any{"id":au,"username":ab,"display_name":ak,"avatar_key":av,"avatar_url":publicMediaURL(av)}})
 	}
 	if e:=rows.Err();e!=nil{writeJSON(w,503,errorBody("ANSWERS_UNAVAILABLE","Answer data could not be loaded",rid));return}
-	data:=map[string]any{"id":qid,"author_id":author,"title":title,"body":body,"visibility":vis,"status":state,"accepted_answer_id":accepted,"created_at":created,"updated_at":updated,"author":map[string]any{"id":author,"username":username,"display_name":display,"avatar_key":avatar,"avatar_url":publicMediaURL(avatar),"protected_account":protected},"answers":answers}
+	data:=map[string]any{"id":qid,"author_id":author,"title":title,"body":body,"visibility":vis,"status":state,"accepted_answer_id":accepted,"created_at":created,"updated_at":updated,"author":map[string]any{"id":author,"username":username,"display_name":display,"avatar_key":avatar,"avatar_url":publicMediaURL(avatar),"protected_account":protected},"answers":answers,"can_accept_answer":author==uid}
 	writeJSON(w,200,map[string]any{"ok":true,"data":data,"error":nil,"request_id":rid})
 }
 func (s *service) knowledgeAnswerCreate(w http.ResponseWriter,r *http.Request) {
