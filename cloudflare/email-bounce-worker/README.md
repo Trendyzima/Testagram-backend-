@@ -17,7 +17,7 @@ InstaBox over HTTPS. It does not send application mail and is not an SMTP relay.
    bounce address. The deployment checks that it is already enabled; it does
    not toggle this setting or rewrite apex MX records.
 3. Create a dedicated Cloudflare API token and save it as the GitHub Actions
-   production secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`. Required scopes:
+   production secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`. This is Cloudflare control-plane access only, not an SMTP or outbound mail credential. Required scopes:
    - Account: Workers Scripts Read and Write
    - Zone `testagram.site`: Zone Read
    - Zone `testagram.site`: Zone Settings Read
