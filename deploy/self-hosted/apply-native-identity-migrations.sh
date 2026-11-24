@@ -207,7 +207,7 @@ for file in \
   061_native_sensitive_action_integrity.sql \
   20261124_testagram_email_verification_otp.sql \
   20261124_testagram_social_email_consent.sql \
-  20261125_testagram_mail_delivery_events.sql \\
+  20261125_testagram_mail_delivery_events.sql \
   20261126_testagram_native_mail_feedback.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
