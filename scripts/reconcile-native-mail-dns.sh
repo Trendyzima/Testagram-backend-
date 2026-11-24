@@ -67,7 +67,13 @@ done
 upsert_record() {
   local type="$1" name="$2" content="$3" priority="${4:-}" proxied="${5:-false}"
   local matches count record_id body url method
-  matches="$(jq -s --arg type "$type" --arg name "$name" '[.[] | select(.type==$type and .name==$name)]' "$TMP_DIR/records.jsonl")"
+  if [[ "$type" == "TXT" && "$name" == "$BOUNCE_HOST" ]]; then
+    matches="$(jq -s --arg name "$name" '[.[] | select(.type=="TXT" and .name==$name and (.content | startswith("v=spf1")))]' "$TMP_DIR/records.jsonl")"
+  elif [[ "$type" == "TXT" && "$name" == "$DMARC_HOST" ]]; then
+    matches="$(jq -s --arg name "$name" '[.[] | select(.type=="TXT" and .name==$name and (.content | startswith("v=DMARC1")))]' "$TMP_DIR/records.jsonl")"
+  else
+    matches="$(jq -s --arg type "$type" --arg name "$name" '[.[] | select(.type==$type and .name==$name)]' "$TMP_DIR/records.jsonl")"
+  fi
   count="$(jq 'length' <<<"$matches")"
   if [[ "$type" == "A" ]]; then
     local cname_count
