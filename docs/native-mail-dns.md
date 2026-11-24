@@ -86,10 +86,10 @@ Automated deployment:
   the public Testagram API and requires HTTP 401 plus
   `X-Testagram-Bounce-Endpoint: native-v1`; it returns 204 only if the API
   handler was reached.
-- It deploys the final `wrangler.toml` with `workers_dev=false` and the literal
+- It deploys the final `wrangler.toml` with `workers_dev=false`, `preview_urls=false`, and the literal
   `b@bounces.testagram.site` email rule, re-applies the HMAC secret, verifies
   that the rule targets this Worker, and confirms the temporary workers.dev
-  endpoint is disabled. Only then does the deployment re-enable the outbox
+  endpoint and version preview URLs are disabled. Only then does the deployment re-enable the outbox
   sender and restart the API; queued messages resume over Testagram's native
   SMTP transport.
 - The Cloudflare account must already have a workers.dev subdomain configured
