@@ -113,7 +113,9 @@ func TestCloudflareMailRequestContract(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		if body["to"] != "person@example.test" || body["from"] != "no-reply@testagram.site" ||
+		recipients, recipientsOK := body["to"].([]any)
+		if !recipientsOK || len(recipients) != 1 || recipients[0] != "person@example.test" ||
+			body["from"] != "no-reply@testagram.site" ||
 			body["subject"] != "Password reset" || body["html"] != "<p>Reset</p>" || body["text"] != "Reset text" {
 			t.Errorf("unexpected Cloudflare request payload: %#v", body)
 		}
