@@ -35,7 +35,7 @@ InstaBox over HTTPS. It does not send application mail and is not an SMTP relay.
 
 ## Read-only InstaBox network diagnostic
 
-After this workflow change is merged, run the `Deploy Testagram to InstaBox` workflow manually with `diagnose_native_mail_egress=true` and `confirm_production_deploy=false`. It executes a read-only command on the existing InstaBox machine and reports two public IPv4 observations, reverse PTR, the current `mail.testagram.site` A result, and TCP/25 connectivity to Gmail and Outlook MX hosts. It does not send email, change DNS, deploy containers, or start/stop the machine. A single probe cannot prove the egress IP is static or dedicated; that still requires InstaBox provider confirmation.
+After this workflow change is merged, run the `Deploy Testagram to InstaBox` workflow manually with `diagnose_native_mail_egress=true` and `confirm_production_deploy=false`. It executes a read-only command on the existing InstaBox machine and reports two public IPv4 observations, reverse PTR, the current `mail.testagram.site` A result, and TCP/25 connectivity to Gmail and Outlook MX hosts. It does not send email, change DNS, deploy containers, or issue machine start/stop commands; the machine must already be running. A single probe cannot prove the egress IP is static or dedicated; that still requires InstaBox provider confirmation.
 
 ## Automated production deployment
 
