@@ -110,11 +110,15 @@ sudo docker info >/dev/null
 # Verify outbound HTTPS/TLS reachability to Mailjet before changing production services.
 # A credential-free GET is intentionally used: it cannot send an email. Any
 # HTTP response proves DNS, TCP 443, TLS certificate verification, and HTTP routing.
+# Encode Basic Auth before passing it to curl's stdin config. This avoids
+# exposing the API credentials in process arguments and keeps curl config syntax safe.
+mailjet_basic_auth="$(printf '%s:%s' "$MAILJET_API_KEY" "$MAILJET_SECRET_KEY" | base64 | tr -d '\r\n')"
 if mailjet_api_status="$(
-  printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nuser = "%s:%s"\n' \
-    "$MAILJET_API_KEY" "$MAILJET_SECRET_KEY" |
+  printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nheader = "Authorization: Basic %s"\n' \
+    "$mailjet_basic_auth" |
     curl --config - --silent --show-error --output /dev/null --max-time 15 --write-out '%{http_code}'
 )"; then
+  unset mailjet_basic_auth
   [[ "$mailjet_api_status" == "200" ]] || {
     echo "::error::Mailjet read-only API credential check returned HTTP $mailjet_api_status."
     exit 1
