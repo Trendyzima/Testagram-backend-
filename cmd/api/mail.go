@@ -75,7 +75,7 @@ func mailPlainTextFromHTML(value string) string {
 }
 
 func mailRuntimeConfigurationError() error {
-	return mailSMTPConfigurationError()
+	return mailProviderConfigurationError()
 }
 
 func mailCipher() (cipher.AEAD, error) {
@@ -434,7 +434,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	send := sendMailjetSMTP
+	send := sendMailjetAPI
 	if s.mailSender != nil {
 		send = s.mailSender
 	}
