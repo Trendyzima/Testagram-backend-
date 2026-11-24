@@ -1,8 +1,8 @@
 name: Deploy Testagram to InstaBox
 
 on:
-  # A merge/push to main is the production approval boundary. Pull requests
-  # run validation only; they never receive production secrets or deploy.
+  # Pushes/merges to main run validation only. Production deployment requires
+  # manual workflow_dispatch confirmation and the protected production environment.
   push:
     branches: [main]
   pull_request:
