@@ -69,8 +69,8 @@ jobs:
           account_id="$CLOUDFLARE_ACCOUNT_ID"
           status="$(request GET "/accounts/$account_id/email/sending/suppressions?per_page=1" "$TMP/email-access.json")"
           codes="$(error_codes "$TMP/email-access.json")"
-          success="$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)"
-          echo "- Account Email Sending read-only probe: HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          email_access_success="$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)"
+          echo "- Account Email Sending read-only probe: HTTP $status; API success=$email_access_success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
 
           status="$(request GET "/zones?name=testagram.site&per_page=1" "$TMP/zone.json")"
           codes="$(error_codes "$TMP/zone.json")"
@@ -131,7 +131,7 @@ jobs:
             echo "::warning::Zone lookup failed or account mismatch; account-level Email Sending probe was still performed."
           fi
 
-          if [[ "$success" != "true" ]]; then
+          if [[ "$email_access_success" != "true" ]]; then
             echo "::warning::Review the account-level Email Sending read-only probe result."
           fi
 
