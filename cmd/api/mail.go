@@ -33,7 +33,7 @@ type permanentMailError struct {
 }
 
 func (e permanentMailError) Error() string {
-	return "Cloudflare definitively rejected the message"
+	return "Mail provider definitively rejected the message"
 }
 
 type ambiguousMailError struct {
@@ -41,7 +41,7 @@ type ambiguousMailError struct {
 }
 
 func (e ambiguousMailError) Error() string {
-	return "Cloudflare delivery outcome is unknown; manual reconciliation is required"
+	return "Mail delivery outcome is unknown; manual reconciliation is required"
 }
 
 func (e ambiguousMailError) Unwrap() error { return e.cause }
