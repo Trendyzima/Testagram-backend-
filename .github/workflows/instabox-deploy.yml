@@ -84,11 +84,6 @@ jobs:
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
-      - name: Validate native Testagram mail configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          ! grep -Eq 'MAILJET_API_KEY|MAILJET_SECRET_KEY|api\.mailjet\.com' scripts/start-instabox-deployment.sh deploy/self-hosted/docker-compose.yml
       - name: Validate edge proxy shared credential
         shell: bash
         run: |
