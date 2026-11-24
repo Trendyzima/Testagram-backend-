@@ -64,14 +64,14 @@ func TestNativeBounceReportCorrelatesAndDeduplicatesHardBounce(t *testing.T) {
 	}
 
 	var deliveryStatus string
-	var failedAt *time.Time
-	if err := db.QueryRow(ctx, "SELECT delivery_status,delivery_failed_at FROM testagram_mail.outbox WHERE id=$1", outboxID).Scan(&deliveryStatus, &failedAt); err != nil {
+	var hasFailedAt bool
+	if err := db.QueryRow(ctx, "SELECT delivery_status,delivery_failed_at IS NOT NULL FROM testagram_mail.outbox WHERE id=$1", outboxID).Scan(&deliveryStatus, &hasFailedAt); err != nil {
 		t.Fatal(err)
 	}
-	if deliveryStatus != "bounced" || failedAt == nil {
-		t.Fatalf("hard-bounce delivery state=(%s,%v)", deliveryStatus, failedAt)
+	if deliveryStatus != "bounced" || !hasFailedAt {
+		t.Fatalf("hard-bounce delivery state=(%s,failed_at=%v)", deliveryStatus, hasFailedAt)
 	}
-	var suppressionCount, reportCount, eventCount int
+	var suppressionCount, reportCount, eventCount int64
 	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.recipient_suppressions WHERE recipient_fingerprint=$1 AND reason='hard_bounce'", fingerprint).Scan(&suppressionCount); err != nil {
 		t.Fatal(err)
 	}
