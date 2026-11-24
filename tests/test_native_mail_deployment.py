@@ -24,6 +24,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
         mail = (ROOT / "cmd/api/mail.go").read_text()
         self.assertIn("TESTAGRAM_MAIL_DELIVERY_ENABLED", compose)
+        self.assertIn("export TESTAGRAM_MAIL_DELIVERY_ENABLED", deploy)
         self.assertIn('EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_DELIVERY_ENABLED")), "false")', mail)
         pause = deploy.index("write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED false")
         api_start = deploy.index("up -d --force-recreate object-storage object-init api")
