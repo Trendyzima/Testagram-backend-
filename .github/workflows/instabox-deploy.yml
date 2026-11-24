@@ -46,7 +46,9 @@ jobs:
           node-version: 22
       - name: Build the inbound bounce Worker without deploying
         working-directory: cloudflare/email-bounce-worker
-        run: npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --dry-run --config wrangler.toml
+        run: |
+          npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --dry-run --config wrangler-probe.toml
+          npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --dry-run --config wrangler.toml
       - name: Validate deployment shell syntax, PostgreSQL readiness, and native Testagram mail transport
         shell: bash
         run: |
