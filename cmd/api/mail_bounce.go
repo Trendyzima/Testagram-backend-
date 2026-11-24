@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net"
+	"os"
 	"net/mail"
 	"regexp"
 	"strings"
@@ -287,6 +289,22 @@ func processNativeBounceReport(ctx context.Context, db *pgxpool.Pool, tokenHash,
 }
 
 func startNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, addr string) error {
+	certPath := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_TLS_CERT_FILE"))
+	keyPath := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_TLS_KEY_FILE"))
+	var tlsConfig *tls.Config
+	if (certPath == "") != (keyPath == "") {
+		return errors.New("TESTAGRAM_MAIL_TLS_CERT_FILE and TESTAGRAM_MAIL_TLS_KEY_FILE must be configured together")
+	}
+	if certPath != "" {
+		certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return fmt.Errorf("load native mail feedback TLS certificate: %w", err)
+		}
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{certificate},
+			MinVersion:   tls.VersionTLS12,
+		}
+	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen for native mail feedback on %s: %w", addr, err)
@@ -319,7 +337,7 @@ func startNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, addr string) e
 	return nil
 }
 
-func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn) {
+func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn, tlsConfig *tls.Config) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Minute))
 	reader := bufio.NewReaderSize(conn, 8192)
@@ -335,6 +353,7 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 	}
 
 	mailFromSeen := false
+	tlsActive := false
 	var tokenHash []byte
 	for {
 		line, err := reader.ReadString('\n')
@@ -349,7 +368,11 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 		upper := strings.ToUpper(command)
 		switch {
 		case strings.HasPrefix(upper, "EHLO ") || strings.HasPrefix(upper, "HELO "):
-			_, _ = writer.WriteString("250-mail.testagram.site\r\n250 SIZE 1048576\r\n")
+			if tlsConfig != nil && !tlsActive {
+				_, _ = writer.WriteString("250-mail.testagram.site\r\n250-STARTTLS\r\n250 SIZE 1048576\r\n")
+			} else {
+				_, _ = writer.WriteString("250-mail.testagram.site\r\n250 SIZE 1048576\r\n")
+			}
 			if writer.Flush() != nil {
 				return
 			}
@@ -366,10 +389,26 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 		case upper == "QUIT":
 			_ = reply(221, "Bye")
 			return
-		case strings.HasPrefix(upper, "STARTTLS"):
-			if !reply(454, "TLS not configured on this receiver") {
+		case upper == "STARTTLS":
+			if tlsConfig == nil || tlsActive {
+				if !reply(454, "TLS is not available") {
+					return
+				}
+				continue
+			}
+			if !reply(220, "Begin TLS negotiation") {
 				return
 			}
+			tlsConn := tls.Server(conn, tlsConfig)
+			if err := tlsConn.HandshakeContext(ctx); err != nil {
+				return
+			}
+			conn = tlsConn
+			reader = bufio.NewReaderSize(conn, 8192)
+			writer = bufio.NewWriter(conn)
+			mailFromSeen = false
+			tokenHash = nil
+			tlsActive = true
 		case strings.HasPrefix(upper, "AUTH "):
 			if !reply(503, "Authentication is not supported") {
 				return
