@@ -92,7 +92,7 @@ func TestSignNativeMailDKIMProducesVerifiableSignature(t *testing.T) {
 }
 
 func TestNativeMailReturnPathIsStableAndOpaque(t *testing.T) {
-	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("ab", 32))
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("ab", 32))
 	first, firstHash, err := nativeMailReturnPath(12345)
 	if err != nil {
 		t.Fatal(err)
