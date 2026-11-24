@@ -279,10 +279,13 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return true
 	}
-	// Self-service registration is intentionally independent of staff identity review.
-	// Accounts are created in an unverified state and cannot sign in until the
-	// single-use email verification token is redeemed. Staff review is not part
-	// of ordinary account creation.
+	// Public signup remains closed until identity evidence review and two-person
+	// approval are complete. Approved accounts are provisioned only through the
+	// application-scoped identityProvisioningRedeemNative path.
+	if action == "signup" {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_REVIEW_REQUIRED", "Identity evidence review and two-person approval are required before public account creation.", requestID(r)))
+		return true
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 	var in authInput
@@ -302,76 +305,6 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 	defer cancel()
 	ip := authClientIP(r)
 	switch action {
-	case "signup":
-		email, err := authEmail(in.Email)
-		if err != nil || !authUsernamePattern.MatchString(in.Username) {
-			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_SIGNUP", "Enter a valid email, username, and password of at least 12 characters", requestID(r)))
-			return true
-		}
-		ok, err := s.authRateAllowed(ctx, "signup-ip", ip, 8)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Authentication store is unavailable", requestID(r)))
-			return true
-		}
-		if !ok {
-			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Try again later", requestID(r)))
-			return true
-		}
-		passwordHash, err := authPasswordHash(in.Password)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PASSWORD", "Password must be 12–128 bytes", requestID(r)))
-			return true
-		}
-		token, err := authRandomToken()
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorBody("TOKEN_FAILED", "Unable to create verification token", requestID(r)))
-			return true
-		}
-		otp, err := authRandomOTP()
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorBody("OTP_FAILED", "Unable to create verification code", requestID(r)))
-			return true
-		}
-		otpHash, err := authOTPHash(otp)
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Account verification email is temporarily unavailable", requestID(r)))
-			return true
-		}
-		tx, txErr := s.db.Begin(ctx)
-		if txErr != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
-			return true
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		var userID string
-		txErr = tx.QueryRow(ctx, `
-			INSERT INTO testagram_auth.identities(
-			email,username,password_hash,verification_token_hash,verification_expires_at,
-			verification_otp_hash,verification_otp_expires_at,verification_otp_attempts
-		)
-		VALUES($1,$2,$3,$4,now()+interval '24 hours',$5,now()+interval '10 minutes',0)
-		ON CONFLICT DO NOTHING RETURNING user_id::text
-		`, email, in.Username, passwordHash, authTokenHash(token), otpHash).Scan(&userID)
-		if errors.Is(txErr, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the address is eligible, a verification email will be sent."})
-			return true
-		}
-		if txErr != nil {
-			writeJSON(w, http.StatusConflict, errorBody("SIGNUP_FAILED", "Account could not be created", requestID(r)))
-			return true
-		}
-		base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
-		link := base + "/verify-email?token=" + url.QueryEscape(token)
-		if err := enqueueAuthEmailWith(ctx, tx, email, "Your Testagram verification code", "<p>Welcome to Testagram. Enter this verification code in the app:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:8px\">"+otp+"</p><p>Your code expires in 10 minutes and can be used once.</p><p>You can also verify using this secure link:</p><p><a href=\""+link+"\">Verify email</a></p><p>The link expires in 24 hours. If you did not create this account, ignore this email.</p>"); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Unable to queue verification email. Please try again.", requestID(r)))
-			return true
-		}
-		if err := tx.Commit(ctx); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account could not be created", requestID(r)))
-			return true
-		}
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "Check your email to verify your Testagram account."})
-		return true
 	case "resend-verification":
 		email, emailErr := authEmail(in.Email)
 		if emailErr == nil {
