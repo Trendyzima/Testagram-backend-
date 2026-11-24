@@ -30,35 +30,6 @@ func authFingerprint(value string) []byte {
 	return sum[:]
 }
 
-func lockNativeProvisioningReady(ctx context.Context, tx pgx.Tx, userID string) (bool, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT status
-		FROM testagram_identity.native_registration_provisioning
-		WHERE user_id=$1::uuid
-		FOR UPDATE
-	`, userID)
-	if err != nil {
-		return false, err
-	}
-	ready := true
-	for rows.Next() {
-		var status string
-		if err := rows.Scan(&status); err != nil {
-			rows.Close()
-			return false, err
-		}
-		if status != "active" {
-			ready = false
-		}
-	}
-	rowsErr := rows.Err()
-	rows.Close()
-	if rowsErr != nil {
-		return false, rowsErr
-	}
-	return ready, nil
-}
-
 func issueNativeSession(ctx context.Context, db interface {
 	Begin(context.Context) (pgx.Tx, error)
 }, userID, email string, version int64, userAgent, ip string) (nativeSessionTokens, error) {
@@ -87,17 +58,11 @@ func issueNativeSession(ctx context.Context, db interface {
 		return nativeSessionTokens{}, err
 	}
 
-	// New approved registrations remain locked until every provisioning
-	// record for the identity is active. Existing native identities created
-	// before this workflow have no provisioning row and remain eligible once
-	// their email and account state have been verified.
-	provisioningReady, err := lockNativeProvisioningReady(ctx, tx, userID)
-	if err != nil {
-		return nativeSessionTokens{}, err
-	}
-
+	// Ordinary native sign-in is independent of the separate identity-evidence
+	// and account-provisioning workflow. Email verification, account state,
+	// password-reset state, and token version remain enforced here.
 	if currentEmail != strings.ToLower(strings.TrimSpace(email)) || currentVersion != version ||
-		!emailVerified || !accountEnabled || !resetNotRequired || !provisioningReady {
+		!emailVerified || !accountEnabled || !resetNotRequired {
 		return nativeSessionTokens{}, errors.New("identity changed during sign-in")
 	}
 	var sessionID, familyID string
@@ -182,8 +147,6 @@ func verifyNativeAccessToken(ctx context.Context, db interface {
 			  AND s.token_version=$3 AND s.revoked_at IS NULL AND s.expires_at>now()
 			  AND i.token_version=$3 AND i.disabled_at IS NULL
 			  AND i.email_verified_at IS NOT NULL AND NOT i.password_reset_required
-			  AND NOT EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
-			                 WHERE p.user_id=i.user_id AND p.status<>'active')
 		)
 	`, claims.SessionID, claims.Subject, claims.TokenVersion).Scan(&active)
 	if err != nil {
@@ -233,11 +196,7 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token reuse detected; session family revoked")
 	}
-	provisioningReady, err := lockNativeProvisioningReady(ctx, tx, userID)
-	if err != nil {
-		return nativeSessionTokens{}, err
-	}
-	if !expires.After(time.Now()) || disabled || !verified || resetRequired || !provisioningReady {
+	if !expires.After(time.Now()) || disabled || !verified || resetRequired {
 		_, _ = tx.Exec(ctx, "UPDATE testagram_auth.sessions SET revoked_at=now(),revoke_reason='refresh_invalidated' WHERE family_id=$1::uuid AND revoked_at IS NULL", familyID)
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token is expired or account is disabled")
