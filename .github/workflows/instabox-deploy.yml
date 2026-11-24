@@ -531,10 +531,10 @@ jobs:
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-          MAILJET_SMTP_USERNAME: ${{ secrets.MAILJET_SMTP_USERNAME }}
-          MAILJET_SMTP_PASSWORD: ${{ secrets.MAILJET_SMTP_PASSWORD }}
+          MAILJET_SMTP_USERNAME: ${{ secrets.MAILJET_API_KEY }}
+          MAILJET_SMTP_PASSWORD: ${{ secrets.MAILJET_SECRET_KEY }}
           MAILJET_SMTP_PORT: '587'
-          AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
+          AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
           TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}
           MPESA_ENV: ${{ vars.MPESA_ENV }}
