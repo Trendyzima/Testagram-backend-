@@ -510,22 +510,29 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatalf("verification token replay status=%d body=%s; want 400", replayVerifyResp.Code, replayVerifyResp.Body.String())
 	}
 
+	bypassSuffix, err := authRandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bypassSuffix = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(bypassSuffix[:16], "-", ""), "_", ""))
+	bypassEmail := "bypass-" + bypassSuffix + "@example.test"
+	bypassUsername := "bypass_" + bypassSuffix
 	authReq := httptest.NewRequest(http.MethodPost, "/api/auth/signup",
-		strings.NewReader("{\"email\":\"bypass@example.test\",\"username\":\"bypass_user\",\"password\":\"native-ci-password-123\"}"))
+		strings.NewReader(fmt.Sprintf("{\"email\":%q,\"username\":%q,\"password\":%q}", bypassEmail, bypassUsername, "native-ci-password-123")))
 	authResp := httptest.NewRecorder()
 	if !svc.authRespond(authResp, authReq, "signup") {
-		t.Fatal("ordinary native signup route was not handled")
+		t.Fatal("public signup route was not handled")
 	}
-	if strings.Contains(authResp.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-		t.Fatalf("ordinary native signup is still blocked by administrator identity review: status=%d body=%s", authResp.Code, authResp.Body.String())
-	}
-	// This integration fixture intentionally does not configure production
-	// mail delivery. Reaching EMAIL_UNAVAILABLE proves the request passed the
-	// obsolete admin-review gate and reached the native verification-email
-	// enqueue stage; production signup still requires the real mail outbox.
 	if authResp.Code != http.StatusServiceUnavailable ||
-		!strings.Contains(authResp.Body.String(), "EMAIL_UNAVAILABLE") {
-		t.Fatalf("ordinary native signup did not reach its email-delivery gate: status=%d body=%s", authResp.Code, authResp.Body.String())
+		!strings.Contains(authResp.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+		t.Fatalf("public signup bypassed the identity-evidence and two-person approval gate: status=%d body=%s", authResp.Code, authResp.Body.String())
+	}
+	var bypassAccounts int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", bypassEmail).Scan(&bypassAccounts); err != nil {
+		t.Fatal(err)
+	}
+	if bypassAccounts != 0 {
+		t.Fatalf("public signup created %d identity rows before identity approval", bypassAccounts)
 	}
 	// Existing native identities may predate the approved-registration
 	// ledger. They still require verified email, an enabled account and no
