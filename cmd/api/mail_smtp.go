@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -153,6 +154,11 @@ func buildSMTPMessage(from, to *mail.Address, message queuedMail, messageID stri
 		"MIME-Version: 1.0",
 	}
 	for key, value := range message.Headers {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "list-unsubscribe", "list-unsubscribe-post":
+		default:
+			return nil, errors.New("unsupported custom mail header")
+		}
 		if strings.ContainsAny(key, "\r\n:") || strings.ContainsAny(value, "\r\n") {
 			return nil, errors.New("unsafe custom mail header")
 		}
@@ -164,8 +170,10 @@ func buildSMTPMessage(from, to *mail.Address, message queuedMail, messageID stri
 	}
 	if strings.TrimSpace(message.Text) == "" {
 		out.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
-		out.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
-		out.WriteString(message.HTML)
+		out.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+		if err := writeQuotedPrintable(&out, message.HTML); err != nil {
+			return nil, err
+		}
 		return out.Bytes(), nil
 	}
 	boundaryBytes := make([]byte, 18)
@@ -174,11 +182,24 @@ func buildSMTPMessage(from, to *mail.Address, message queuedMail, messageID stri
 	}
 	boundary := "testagram-" + hex.EncodeToString(boundaryBytes)
 	out.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n")
-	out.WriteString("--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n")
-	out.WriteString(message.Text + "\r\n")
-	out.WriteString("--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n")
-	out.WriteString(message.HTML + "\r\n")
-	out.WriteString("--" + boundary + "--\r\n")
+	out.WriteString("--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
+	if err := writeQuotedPrintable(&out, message.Text); err != nil {
+		return nil, err
+	}
+	out.WriteString("\r\n--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
+	if err := writeQuotedPrintable(&out, message.HTML); err != nil {
+		return nil, err
+	}
+	out.WriteString("\r\n--" + boundary + "--\r\n")
 	return out.Bytes(), nil
+}
+
+func writeQuotedPrintable(out *bytes.Buffer, value string) error {
+	writer := quotedprintable.NewWriter(out)
+	if _, err := writer.Write([]byte(value)); err != nil {
+		_ = writer.Close()
+		return err
+	}
+	return writer.Close()
 }
 
