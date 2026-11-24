@@ -1,50 +1,107 @@
-# Testagram inbound bounce worker
+# Testagram inbound bounce Worker
 
-This Worker is an **inbound-only** adapter. It receives mail for Testagram VERP
-return paths and posts the original RFC 5322 message to Testagram's HTTPS API.
-It does not send application email and is not an SMTP relay.
+This Worker is an **inbound-only** adapter. It receives DSNs sent to Testagram
+VERP return paths and posts the original RFC 5322 message to Testagram on
+InstaBox over HTTPS. It does not send application mail and is not an SMTP relay.
 
-## Cloudflare setup
+## One-time Cloudflare setup
 
-1. In Cloudflare Email Routing, enable the `bounces.testagram.site` subdomain
-   under the `testagram.site` zone. This is a subdomain-only setup; do not
-   replace the zone apex MX records used by any existing mailbox provider.
-2. Enable Email Routing subaddressing for the zone. Testagram generates
-   recipients in the form `b+<32-character-token>@bounces.testagram.site`;
-   subaddressing maps them to the Worker rule for `b@bounces.testagram.site`
-   while preserving the full address in the Worker's `message.to` value.
-3. Install Wrangler and validate the Worker configuration:
-   `npm install --global wrangler`
-   `wrangler deploy --dry-run`
-4. Create a Cloudflare API token for deployment with Workers Scripts Write
-   and Email Routing Rules Write permissions, scoped to the account and
-   `testagram.site` zone. Do not reuse the DNS-only token.
-5. Set Worker secrets/variables:
-   - `TESTAGRAM_BOUNCE_INGRESS_URL`: the public HTTPS URL for
-     `POST /internal/mail/bounce` on the Testagram API.
-   - `TESTAGRAM_BOUNCE_INGRESS_SECRET`: a randomly generated 32-byte-or-longer
-     secret. It must exactly match the value configured for the Testagram API.
-6. Deploy from this directory with `wrangler deploy`. The configured
-   `addresses` entry creates the literal base-address Worker rule. Confirm
-   subaddressing is enabled before sending a test DSN.
+1. In Cloudflare, open `testagram.site` → Compute → Email Service → Email
+   Routing → Settings → Subdomains. Add `bounces.testagram.site` there.
+   Cloudflare provisions the subdomain's inbound MX, SPF and routing DKIM
+   records. Do not enable Email Routing on the apex as part of this change,
+   and do not change the existing `testagram.site` apex MX records.
+2. The production deployment script enables plus-addressing through the
+   Email Routing settings API (`support_subaddress=true`). It does not
+   enable or rewrite apex MX records.
+3. Create a dedicated Cloudflare API token and save it as the GitHub Actions
+   production secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`. Required scopes:
+   - Account: Workers Scripts Write
+   - Zone `testagram.site`: Zone Read
+   - Zone `testagram.site`: Zone Settings Write
+   - Zone `testagram.site`: Email Routing Rules Read and Write
+4. Keep the existing DNS-only token in GitHub secret
+   `CLOUDFLARE_DNS_API_TOKEN` with Zone Read and DNS Edit scoped to
+   `testagram.site`. It is used only for outbound A/SPF/DKIM/DMARC records;
+   it is not reused to deploy Workers.
+5. Ensure GitHub secret `CLOUDFLARE_ACCOUNT_ID` identifies the account
+   containing the `testagram.site` zone and the Worker.
+6. After InstaBox confirms its stable, dedicated SMTP egress IPv4 and the
+   provider-configured PTR, set repository variable
+   `TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4` to that exact IPv4. The
+   deployment refuses to infer this value from an IP-echo service.
 
-## Security and delivery behavior
+## Automated production deployment
 
-- The Worker validates the VERP recipient shape and enforces a 1 MiB message
-  limit before forwarding.
-- It preserves the original raw MIME bytes and signs the timestamp, normalized
-  recipient, and SHA-256 body digest with HMAC-SHA-256.
-- The API rejects missing/invalid signatures and requests outside a five-minute
-  clock window. The API independently parses the DSN, validates the token
-  against PostgreSQL, verifies the original recipient fingerprint, and uses
-  the existing report hash for idempotency.
-- A non-2xx API response throws from the Worker handler so the event is not
-  silently acknowledged as processed.
-- No message content, recipient, token, or secret is written to Worker logs.
+The InstaBox deployment performs the following in order:
 
-## Test boundary
+1. Checks outbound TCP/25 to Gmail and Outlook MX hosts.
+2. Cross-checks the actual egress IPv4 against two independent IP reflectors
+   and verifies PTR equals `mail.testagram.site`. This is not a substitute
+   for InstaBox confirming the address is static and dedicated.
+3. Generates and persists Testagram's DKIM key and internal mail secrets.
+4. Reconciles `mail.testagram.site` A (DNS-only), merges the InstaBox IPv4
+   and Cloudflare Email Routing include into the single SPF record on
+   `bounces.testagram.site`, publishes Testagram selector `tg2026`, and
+   preserves any existing DMARC policy. It never changes the bounce MX;
+   Cloudflare owns those inbound records.
+5. Probes `https://api.testagram.site/internal/mail/bounce` and expects
+   HTTP 401 without HMAC headers, proving the public route reaches the
+   authenticated Testagram handler.
+6. Enables plus-addressing, verifies Cloudflare MX exists on the bounce
+   subdomain, deploys this Worker with Wrangler 4.113.0, and registers the
+   literal `b@bounces.testagram.site` Worker rule.
+7. Reads the InstaBox-generated HMAC secret from the protected InstaBox
+   environment and sends it directly to Cloudflare with `wrangler secret
+   put`. The secret is not printed, committed, or copied to GitHub Actions.
 
-A successful Worker deployment and a successful HTTP response are not proof
-that an actual bounce was delivered. Acceptance requires a controlled message
-to a generated VERP address, a real DSN arriving through Cloudflare Email
-Routing, exactly one correlated Testagram delivery event, and a replay test.
+The deployment requires `npm`/Node.js 18 or later on the InstaBox machine.
+If the bounce subdomain has not been enabled in Cloudflare first, deployment
+fails before creating the Worker route.
+
+## Mail flow and token integrity
+
+1. Testagram creates a per-message envelope sender:
+   `b+<32-character-base64url-token>@bounces.testagram.site`.
+2. The recipient MX returns a DSN to Cloudflare's MX for the bounce
+   subdomain. Cloudflare subaddressing matches the base rule while
+   preserving the original recipient in `message.to`.
+3. The Worker preserves the token's case-sensitive local part, lowercases
+   only the DNS domain, reads the raw MIME stream, and enforces a 1 MiB cap.
+4. It signs timestamp, canonical recipient and SHA-256 body digest using
+   HMAC-SHA-256, then posts the raw bytes to Testagram over HTTPS.
+5. Testagram validates the HMAC and five-minute timestamp window, parses the
+   DSN/ARF, correlates the exact VERP token and recipient fingerprint in
+   PostgreSQL, and applies existing idempotent delivery and suppression
+   handling.
+
+Do not lowercase the full VERP address: the base64url token is case-sensitive.
+Repeated delivery of the same DSN must remain idempotent. The Worker throws
+on non-2xx API responses rather than treating an unsuccessful handoff as
+success. A controlled outage test must verify Cloudflare's SMTP retry behavior
+before production acceptance; do not assume retries without that evidence.
+
+Cloudflare Email Routing performs inbound SPF/DKIM/DMARC checks before
+invoking a Worker. A real Gmail and Outlook DSN must therefore be tested
+through the complete Cloudflare path, not merely by posting a synthetic MIME
+message to the API.
+
+## Production acceptance
+
+- [ ] InstaBox confirms stable, dedicated outbound IPv4 and configurable PTR.
+- [ ] Outbound TCP/25 connects to Gmail and Outlook MX hosts from InstaBox.
+- [ ] `mail.testagram.site` A and PTR both match that egress IPv4.
+- [ ] `bounces.testagram.site` MX remains Cloudflare-owned.
+- [ ] Exactly one SPF record authorizes the InstaBox IPv4 and Cloudflare's
+      Email Routing include.
+- [ ] Testagram `tg2026` DKIM record resolves and verifies on a real message.
+- [ ] Existing DMARC policy remains unchanged and recipient results show
+      SPF/DKIM/DMARC pass.
+- [ ] Cloudflare Worker route exists and receives a generated plus-address.
+- [ ] Worker-to-API outage behavior is tested; no bounce is silently lost.
+- [ ] Real Gmail and Outlook delivery reaches the intended inboxes.
+- [ ] A real hard-bounce DSN correlates to one outbox row and suppresses the
+      invalid recipient exactly once; replay creates no duplicate event.
+
+CI validates code and deployment wiring only. It does not prove production
+SMTP reachability, DNS correctness, inbox placement or real bounce delivery.
