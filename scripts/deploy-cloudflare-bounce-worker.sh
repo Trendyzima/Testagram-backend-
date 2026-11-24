@@ -20,6 +20,23 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 auth_header="Authorization: Bearer $CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
 
+fetch_all_email_routing_rules() {
+  local output="$1" page=1 pages=1 status
+  : > "$tmp/email-routing-rules.ndjson"
+  while (( page <= pages )); do
+    status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/email-routing-rules-page.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing/rules?page=$page&per_page=100" -H "$auth_header")"
+    if [[ "$status" != 200 ]] || ! jq -e '.success == true' "$tmp/email-routing-rules-page.json" >/dev/null; then
+      return 1
+    fi
+    jq -c '.result[]?' "$tmp/email-routing-rules-page.json" >> "$tmp/email-routing-rules.ndjson"
+    pages="$(jq -r '.result_info.total_pages // 1' "$tmp/email-routing-rules-page.json")"
+    [[ "$pages" =~ ^[0-9]+$ ]] || return 1
+    ((page++))
+  done
+  jq -s '{success:true,result:.}' "$tmp/email-routing-rules.ndjson" > "$output"
+}
+
+
 # Prove the public API route reaches the new HMAC-protected handler before
 # registering an email route that could begin delivering real bounce traffic.
 probe_status="$(curl -sS --connect-timeout 5 --max-time 15 -D "$tmp/api-probe.headers" -o "$tmp/api-probe.body" -w '%{http_code}' -X POST "$INGRESS_URL" -H 'Content-Type: message/rfc822' --data-binary '')"
@@ -62,9 +79,8 @@ fi
 # Refuse to take over or shadow any pre-existing routing rule on this
 # subdomain. In particular, explicit plus-address rules take precedence
 # over the base address when subaddressing is enabled.
-existing_rules_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/existing-rules.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing/rules" -H "$auth_header")"
-if [[ "$existing_rules_status" != 200 ]] || ! jq -e '.success == true' "$tmp/existing-rules.json" >/dev/null; then
-  echo "::error::Could not inspect existing Email Routing rules before Worker deployment."
+if ! fetch_all_email_routing_rules "$tmp/existing-rules.json"; then
+  echo "::error::Could not inspect every existing Email Routing rule before Worker deployment."
   exit 1
 fi
 if ! jq -e --arg suffix "@$BOUNCE_DOMAIN" --arg address "$BOUNCE_ADDRESS" --arg worker "testagram-bounce-ingress" '
@@ -144,8 +160,7 @@ if [[ "$script_subdomain_status" != 200 ]] || ! jq -e '.success == true and .res
 fi
 
 # Verify the route exists and targets a Worker before declaring setup complete.
-rules_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/rules.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing/rules" -H "$auth_header")"
-if [[ "$rules_status" != 200 ]] || ! jq -e --arg address "$BOUNCE_ADDRESS" --arg worker "testagram-bounce-ingress" '[.result[]? | select(any(.matchers[]?; .type == "literal" and .value == $address))] as $matches | ($matches | length) == 1 and $matches[0].source == "wrangler" and any($matches[0].actions[]?; .type == "worker" and ((.value // []) | index($worker) != null))' "$tmp/rules.json" >/dev/null; then
+if ! fetch_all_email_routing_rules "$tmp/rules.json" || ! jq -e --arg address "$BOUNCE_ADDRESS" --arg worker "testagram-bounce-ingress" '[.result[]? | select(any(.matchers[]?; .type == "literal" and .value == $address))] as $matches | ($matches | length) == 1 and $matches[0].source == "wrangler" and any($matches[0].actions[]?; .type == "worker" and ((.value // []) | index($worker) != null))' "$tmp/rules.json" >/dev/null; then
   echo "::error::Cloudflare did not confirm exactly one Worker routing rule for $BOUNCE_ADDRESS."
   exit 1
 fi
