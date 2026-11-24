@@ -17,7 +17,7 @@ func TestMailjetDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *test
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("4c", 32))
 	t.Setenv("MAILJET_API_KEY", "ci-api-key")
 	t.Setenv("MAILJET_SECRET_KEY", "ci-secret-key")
-		t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
 	svc := &service{db: db}
 
 	recipient := fmt.Sprintf("mail-event-%d@example.test", time.Now().UnixNano())
