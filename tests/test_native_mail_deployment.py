@@ -43,6 +43,11 @@ class NativeMailDeploymentTest(unittest.TestCase):
     def test_native_sender_has_no_external_mail_provider_requirement(self):
         smtp = (ROOT / "cmd/api/mail_smtp.go").read_text()
         script = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        env_example = (ROOT / "deploy/self-hosted/.env.example").read_text()
+        self.assertNotIn("MAILJET_SMTP_USERNAME", env_example)
+        self.assertNotIn("MAILJET_SMTP_PASSWORD", env_example)
+        self.assertIn("TESTAGRAM_MAIL_VERP_KEY", env_example)
+        self.assertIn("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", env_example)
         self.assertIn("LookupMX", smtp)
         self.assertIn("client.StartTLS", smtp)
         self.assertNotIn("MAILJET_API_KEY", script)
