@@ -619,6 +619,14 @@ psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql
 psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
 psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
 
+# Match the production runner's replay order after the provider-keyed ledgers
+# have already been archived. These legacy migrations must not recreate retired
+# tables/columns, attach a dead trigger, or fail on missing provider relations.
+psql_ci < migrations/20261113_identity_registration_hardening.sql
+psql_ci < migrations/20261119_native_identity_approval_ledger.sql
+psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
+
 psql_ci <<'SQL'
 DO $retirement_acceptance$
 BEGIN
