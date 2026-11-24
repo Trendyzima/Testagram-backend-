@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const nativeMailFrom = "no-reply@testagram.site"
+const nativeMailFrom = "no-reply@testagram.site"\nconst nativeBounceDomain = "bounces.testagram.site"
 
 // Kept for existing readiness callers. Native delivery has no provider credentials.
 func mailProviderConfigurationError() error {
@@ -49,6 +49,12 @@ func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
 		return "", err
 	}
 
+	if dkimPayload, signErr := signNativeMailDKIM(payload); signErr == nil {
+		payload = dkimPayload
+	} else if strings.TrimSpace(os.Getenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE")) != "" {
+		return "", fmt.Errorf("native DKIM signing failed: %w", signErr)
+	}
+
 	domain := to.Address[strings.LastIndex(to.Address, "@")+1:]
 	if domain == "" {
 		return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"}
@@ -65,7 +71,11 @@ func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
 		if host == "" {
 			continue
 		}
-		_, sendErr := sendNativeSMTPToMX(ctx, host, to.Address, payload)
+		envelopeFrom := strings.TrimSpace(message.EnvelopeFrom)
+		if envelopeFrom == "" {
+			envelopeFrom = nativeMailFrom
+		}
+		_, sendErr := sendNativeSMTPToMXWithEnvelope(ctx, host, envelopeFrom, to.Address, payload)
 		if sendErr == nil {
 			return messageID, nil
 		}
@@ -86,6 +96,10 @@ func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
 }
 
 func sendNativeSMTPToMX(ctx context.Context, host, recipient string, payload []byte) (string, error) {
+	return sendNativeSMTPToMXWithEnvelope(ctx, host, nativeMailFrom, recipient, payload)
+}
+
+func sendNativeSMTPToMXWithEnvelope(ctx context.Context, host, envelopeFrom, recipient string, payload []byte) (string, error) {
 	conn, err := (&net.Dialer{Timeout: 12 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(host, "25"))
 	if err != nil {
 		return "", err
@@ -113,7 +127,10 @@ func sendNativeSMTPToMX(ctx context.Context, host, recipient string, payload []b
 	if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
 		return "", fmt.Errorf("recipient MX STARTTLS failed: %w", err)
 	}
-	if err := client.Mail(nativeMailFrom); err != nil {
+	if _, err := mail.ParseAddress(envelopeFrom); err != nil {
+		return "", permanentMailError{code: "MAIL_ENVELOPE_SENDER_INVALID"}
+	}
+	if err := client.Mail(envelopeFrom); err != nil {
 		return "", classifyNativeSMTPError("MAIL_MX_SENDER_REJECTED", err)
 	}
 	if err := client.Rcpt(recipient); err != nil {
