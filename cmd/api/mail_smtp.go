@@ -123,6 +123,15 @@ func sendMailjetSMTP(ctx context.Context, message queuedMail) (string, error) {
 		return "", ambiguousMailError{cause: err}
 	}
 	if err := writer.Close(); err != nil {
+		var smtpErr *textproto.Error
+		if errors.As(err, &smtpErr) {
+			if smtpErr.Code >= 500 {
+				return "", permanentMailError{code: "MAIL_SMTP_DATA_REJECTED"}
+			}
+			if smtpErr.Code >= 400 {
+				return "", fmt.Errorf("Mailjet SMTP temporarily rejected DATA (%d): %w", smtpErr.Code, err)
+			}
+		}
 		return "", ambiguousMailError{cause: err}
 	}
 	_ = client.Quit()
