@@ -315,9 +315,9 @@ ensure_random_secret() {
   printf -v "$key" '%s' "$value"
 }
 ensure_random_secret FEDERATION_INGRESS_TOKEN
-# Both native mail keys are independent 32-byte hex secrets persisted only on InstaBox.
-# The encryption key protects queued payloads; the VERP key signs opaque bounce tokens.
-# Keep the VERP key stable until every outstanding return-path token has expired.
+# Native mail secrets are generated and persisted on InstaBox; no SMTP-provider credentials are used.
+# The encryption key protects queued payloads, VERP signs bounce tokens, and ingress HMAC authenticates Cloudflare's inbound-only handoff.
+# Keep VERP stable until every outstanding return-path token has expired.
 ensure_hex_secret() {
   local key="$1" value
   value="$(read_env_value "$key")"
@@ -329,6 +329,7 @@ ensure_hex_secret() {
 }
 ensure_hex_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
 ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY
+ensure_hex_secret TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET
 # Purge obsolete external mail-provider credentials from older VPS .env files.
 sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d' "$BASE_ENV"
 # Identity-application evidence is owned by the private Data Centre media service.
