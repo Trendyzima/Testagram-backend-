@@ -40,6 +40,22 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("inbound_reports", migration)
         self.assertIn("'mailjet.bounce'", migration)
 
+    def test_cloudflare_worker_proves_api_reachability_before_email_route(self):
+        worker = (ROOT / "cloudflare/email-bounce-worker/src/index.ts").read_text()
+        final_config = (ROOT / "cloudflare/email-bounce-worker/wrangler.toml").read_text()
+        probe_config = (ROOT / "cloudflare/email-bounce-worker/wrangler-probe.toml").read_text()
+        deploy = (ROOT / "scripts/deploy-cloudflare-bounce-worker.sh").read_text()
+        handler = (ROOT / "cmd/api/mail_bounce_http.go").read_text()
+        self.assertIn('workers_dev = true', probe_config)
+        self.assertIn('workers_dev = false', final_config)
+        self.assertIn('url.pathname !== "/__health"', worker)
+        self.assertIn('probe.status !== 401', worker)
+        self.assertIn('X-Testagram-Bounce-Endpoint', worker)
+        self.assertIn('X-Testagram-Bounce-Endpoint', handler)
+        self.assertLess(deploy.index("wrangler-probe.toml"), deploy.index("wrangler.toml"))
+        self.assertIn('worker_health_status" != 204', deploy)
+        self.assertIn(".result.enabled == false", deploy)
+
     def test_cloudflare_bounce_ingress_is_inbound_only_and_authenticated(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         main = (ROOT / "cmd/api/main.go").read_text()
