@@ -33,12 +33,12 @@ zones_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/zones.json" 
 zone_id="$(jq -r --arg name "$ZONE_NAME" '[.result[]? | select(.name == $name)][0].id // empty' "$tmp/zones.json")"
 [[ "$zone_id" =~ ^[A-Fa-f0-9]{32}$ ]] || { echo "::error::Cloudflare did not return exactly one active Testagram zone ID."; exit 1; }
 
-# Enable plus-address matching without changing the zone's Email Routing
-# enabled state, apex MX records, or any existing routing rules.
-settings_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/settings.json" -w '%{http_code}' -X PATCH "$API_BASE/zones/$zone_id/email/routing" -H "$auth_header" -H 'Content-Type: application/json' --data-binary '{"support_subaddress":true}')"
-if [[ "$settings_status" != 200 ]] || ! jq -e '.success == true and .result.support_subaddress == true' "$tmp/settings.json" >/dev/null; then
-  echo "::error::Could not enable Cloudflare Email Routing subaddressing (HTTP $settings_status)."
-  jq -c '{success,errors:[.errors[]? | {code,message}]}' "$tmp/settings.json" || true
+# Subaddressing is a zone-wide Email Routing setting. Never toggle it
+# automatically because that would change matching behavior for existing
+# apex and subdomain routes. Require the operator to enable it after review.
+settings_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/settings.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing" -H "$auth_header")"
+if [[ "$settings_status" != 200 ]] || ! jq -e '.success == true and .result.enabled == true and .result.support_subaddress == true' "$tmp/settings.json" >/dev/null; then
+  echo "::error::Cloudflare Email Routing must be enabled and zone-wide subaddressing must already be true. Review existing routing rules before enabling plus-addressing in Cloudflare Email Routing Settings; this affects all rules, not only bounces.testagram.site."
   exit 1
 fi
 
