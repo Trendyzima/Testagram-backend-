@@ -94,23 +94,7 @@ type cloudflareMailResponse struct {
 }
 
 func mailRuntimeConfigurationError() error {
-	accountID := strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID"))
-	apiToken := strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN"))
-	from := strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL"))
-	if accountID == "" || apiToken == "" || from == "" {
-		return errors.New("Cloudflare Email Sending configuration is incomplete")
-	}
-	decoded, err := hex.DecodeString(accountID)
-	if err != nil || len(decoded) != 16 {
-		return errors.New("Cloudflare Email Sending account ID is invalid")
-	}
-	if _, err := mail.ParseAddress(from); err != nil {
-		return errors.New("Cloudflare Email Sending sender address is invalid")
-	}
-	if _, err := mailCipher(); err != nil {
-		return err
-	}
-	return nil
+	return mailSMTPConfigurationError()
 }
 
 func mailCipher() (cipher.AEAD, error) {
@@ -320,7 +304,7 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
 			return "", fmt.Errorf("Cloudflare Email Sending temporarily rejected an unreadable request (HTTP %d)", resp.StatusCode)
 		}
-		return "", permanentMailError{code: "CLOUDFLARE_REQUEST_REJECTED"}
+		return "", permanentMailError{code: "MAIL_PROVIDER_REJECTED"}
 	}
 	if resp.StatusCode >= 500 {
 		return "", ambiguousMailError{cause: fmt.Errorf("provider server error (HTTP %d)", resp.StatusCode)}
@@ -432,10 +416,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if err := mailRuntimeConfigurationError(); err != nil {
 		return false, nil
 	}
-	if err := s.reconcileCloudflareMailEvents(ctx); err != nil {
-		return false, err
-	}
-	if err := s.cleanupMailOperationalRecords(ctx); err != nil {
+		if err := s.cleanupMailOperationalRecords(ctx); err != nil {
 		return false, err
 	}
 
@@ -457,7 +438,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	// A worker may have crashed after Cloudflare accepted a request but before
+	// A worker may have crashed after the SMTP relay accepted DATA but before
 	// recording the response. Never reclaim an expired sending lease: its
 	// provider outcome is unknowable and automatic resend could duplicate mail.
 	if _, err := s.db.Exec(ctx, `
@@ -557,7 +538,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	send := s.sendCloudflareMail
+	send := sendMailjetSMTP
 	if s.mailSender != nil {
 		send = s.mailSender
 	}
@@ -568,7 +549,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		if errors.As(sendErr, &ambiguous) {
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
-				SET status='uncertain',lease_until=NULL,last_error_code='CLOUDFLARE_OUTCOME_UNKNOWN',updated_at=now()
+				SET status='uncertain',lease_until=NULL,last_error_code='MAIL_OUTCOME_UNKNOWN',updated_at=now()
 				WHERE id=$1 AND status='sending'
 			`, id)
 			return true, err
@@ -587,9 +568,9 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 			`, id, messageID, code)
 			return true, err
 		}
-		code := "CLOUDFLARE_DELIVERY_FAILED"
+		code := "MAIL_DELIVERY_FAILED"
 		if strings.Contains(sendErr.Error(), "not configured") {
-			code = "CLOUDFLARE_NOT_CONFIGURED"
+			code = "MAIL_PROVIDER_NOT_CONFIGURED"
 		}
 		if err := s.failMail(ctx, id, attempt, code); err != nil {
 			return true, err
