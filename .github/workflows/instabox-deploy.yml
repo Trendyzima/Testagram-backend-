@@ -125,7 +125,7 @@ jobs:
           if [[ "$early_dc_media_enabled" == true ]]; then
             echo "Private media profile explicitly enabled; dedicated provider provisioning will run."
           else
-            echo "Core-only deployment selected. Private media provisioning is skipped; ordinary native email-verified signup remains enabled while evidence-based identity applications stay fail-closed."
+            echo "Core-only deployment selected. Private media provisioning is skipped; public signup remains fail-closed until identity evidence review and two-person approval are complete."
           fi
 
       - name: Resolve and start the InstaBox machine
@@ -789,7 +789,7 @@ jobs:
           echo "- Federation delivery workers remain disabled by design." >> "$GITHUB_STEP_SUMMARY"
 
   accept-web-authentication:
-    name: Verify production www serves native account creation
+    name: Verify production www auth UI and fail-closed signup gate
     needs: deploy
     if: needs.deploy.result == 'success'
     runs-on: ubuntu-latest
@@ -808,8 +808,8 @@ jobs:
             -H 'Content-Type: application/json' \
             --data-binary '{"email":"signup-probe@example.invalid","username":"signup_probe","password":"short"}')"
           api_error="$(jq -r '.error.code // empty' "$api_response" 2>/dev/null || true)"
-          if [[ "$api_status" != "400" || "$api_error" != "INVALID_PASSWORD" ]]; then
-            echo "::error::Production native signup API did not reach password validation (HTTP $api_status, code=$api_error). No account was created."
+          if [[ "$api_status" != "503" || "$api_error" != "IDENTITY_REVIEW_REQUIRED" ]]; then
+            echo "::error::Production public signup is not fail-closed with IDENTITY_REVIEW_REQUIRED (HTTP $api_status, code=$api_error). No account was created."
             exit 1
           fi
           base="https://www.testagram.site"
@@ -835,4 +835,4 @@ jobs:
               exit 1
             }
           done
-          echo "Production www root, /?mode=signup deep link, Flutter bootstrap and native account-creation bundle markers passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Production www root, /?mode=signup deep link, Flutter bootstrap and auth UI markers passed while public signup remains fail-closed." >> "$GITHUB_STEP_SUMMARY"
