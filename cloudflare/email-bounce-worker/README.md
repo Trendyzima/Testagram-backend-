@@ -44,6 +44,8 @@ that still requires explicit InstaBox confirmation.
 
 ## Automated deployment sequence
 
+Wrangler is executed inside the official Node 22 Bookworm-slim Docker image on InstaBox; the host does not need Node.js or npm installed. Wrangler itself is pinned to version `4.113.0` and its npm cache is persisted locally.
+
 1. InstaBox pauses the native outbox sender before starting the new API, so
    queued messages cannot leave before bounce ingress is ready. It verifies
    outbound TCP/25 to Gmail and Outlook, cross-checks the egress IPv4 against
