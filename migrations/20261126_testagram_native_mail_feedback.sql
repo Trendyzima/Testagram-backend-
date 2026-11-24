@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS testagram_mail.inbound_reports (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   token_hash BYTEA NOT NULL,
   report_sha256 BYTEA NOT NULL,
-  event_type TEXT NOT NULL CHECK (event_type IN ('dsn.delayed','dsn.bounced','arf.complaint')),
+  event_type TEXT NOT NULL CHECK (event_type IN ('dsn.delayed','dsn.bounced','dsn.delivered','arf.complaint')),
   enhanced_status_code TEXT,
   diagnostic_code TEXT,
   remote_mta TEXT,
