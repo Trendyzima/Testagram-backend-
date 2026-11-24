@@ -211,4 +211,3 @@ func writeQuotedPrintable(out *bytes.Buffer, value string) error {
 	}
 	return writer.Close()
 }
-
