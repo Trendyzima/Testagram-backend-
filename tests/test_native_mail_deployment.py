@@ -86,6 +86,15 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("pre-existing routing rule", worker_deploy)
         self.assertIn("api.testagram.site/internal/mail/bounce", worker_deploy)
 
+    def test_production_deploy_requires_explicit_manual_confirmation(self):
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        deploy_start = workflow.index("  deploy:")
+        deploy_end = workflow.find("\\n  ", deploy_start + 5)
+        deploy = workflow[deploy_start:] if deploy_end < 0 else workflow[deploy_start:deploy_end]
+        self.assertIn("github.event_name == 'workflow_dispatch'", deploy)
+        self.assertIn("inputs.confirm_production_deploy == true", deploy)
+        self.assertNotIn("github.event_name == 'push'", deploy)
+
     def test_read_only_instabox_egress_diagnostic_cannot_deploy(self):
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         job_start = workflow.index("  diagnose-native-mail-egress:")
