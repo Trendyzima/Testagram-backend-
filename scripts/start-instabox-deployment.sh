@@ -88,9 +88,13 @@ sudo chmod 0770 "$ROOT/storage/media"
 
 trap 'code=$?; echo "DEPLOY_EXIT=$code"; if [[ "$code" -ne 0 ]]; then echo "Deployment stopped at line $LINENO"; fi' EXIT
 
-if ! command -v git >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+if ! command -v git >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
   sudo apt-get update
-  sudo apt-get install -y git openssl curl jq
+  sudo apt-get install -y git openssl curl jq ca-certificates
+fi
+if [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then
+  sudo apt-get update
+  sudo apt-get install -y ca-certificates
 fi
 if ! command -v docker >/dev/null 2>&1; then
   sudo apt-get update
@@ -104,17 +108,19 @@ fi
 sudo docker info >/dev/null
 
 # Verify outbound HTTPS/TLS reachability to Mailjet before changing production services.
-# This read-only TLS handshake uses no API credentials and sends no email.
-if timeout 15 openssl s_client -connect api.mailjet.com:443 \
-  -servername api.mailjet.com -verify_return_error -brief </dev/null \
-  > /tmp/testagram-mailjet-https.log 2>&1; then
-  echo "Verified outbound HTTPS/TLS connectivity to Mailjet Send API on port 443."
+# A credential-free GET is intentionally used: it cannot send an email. Any
+# HTTP response proves DNS, TCP 443, TLS certificate verification, and HTTP routing.
+if mailjet_http_status="$(curl --silent --show-error --output /dev/null --max-time 15 \
+  --write-out '%{http_code}' https://api.mailjet.com:443/v3.1/send)"; then
+  [[ "$mailjet_http_status" =~ ^[1-5][0-9]{2}$ ]] || {
+    echo "::error::Mailjet HTTPS preflight returned no valid HTTP status."
+    exit 1
+  }
+  echo "Verified Mailjet HTTPS/TLS connectivity on TCP 443 (HTTP $mailjet_http_status; unauthenticated probe only)."
 else
-  echo "::error::InstaBox cannot establish verified HTTPS/TLS connectivity to api.mailjet.com:443."
-  tail -n 20 /tmp/testagram-mailjet-https.log || true
+  echo "::error::InstaBox cannot establish verified HTTPS connectivity to api.mailjet.com:443."
   exit 1
 fi
-rm -f /tmp/testagram-mailjet-https.log
 
 
 sync_repo() {
