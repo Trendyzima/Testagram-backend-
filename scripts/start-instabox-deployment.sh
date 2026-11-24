@@ -1025,6 +1025,15 @@ if ! timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/25; IFS= read -r -t 3 banner 
   echo "::error::Native SMTP feedback receiver is not answering on InstaBox host TCP/25."
   exit 1
 fi
+if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
+  if ! timeout 12 openssl s_client -starttls smtp -connect 127.0.0.1:25 -servername mail.testagram.site -verify_return_error -brief </dev/null >/dev/null 2>&1; then
+    echo "::error::Native feedback SMTP STARTTLS handshake or certificate verification failed."
+    exit 1
+  fi
+  echo "Verified inbound SMTP STARTTLS certificate for mail.testagram.site."
+else
+  echo "Inbound SMTP STARTTLS remains disabled until the mail.testagram.site certificate is installed."
+fi
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
