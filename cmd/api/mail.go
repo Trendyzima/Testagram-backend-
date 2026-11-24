@@ -76,6 +76,9 @@ func mailPlainTextFromHTML(value string) string {
 }
 
 func mailRuntimeConfigurationError() error {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_DELIVERY_ENABLED")), "false") {
+		return errors.New("native mail delivery is paused until bounce ingress is verified")
+	}
 	if err := mailProviderConfigurationError(); err != nil {
 		return err
 	}
