@@ -69,7 +69,7 @@ that still requires explicit InstaBox confirmation.
 7. The script deploys the final `wrangler.toml` configuration with
    `workers_dev=false` and the literal `b@bounces.testagram.site` email rule.
    It reapplies the HMAC secret, verifies the email rule targets this Worker,
-   and confirms the temporary `workers.dev` HTTP endpoint is disabled. Only
+   and confirms the temporary `workers.dev` HTTP endpoint and version preview URLs are disabled. Only
    then does InstaBox re-enable the outbox sender and restart the API; queued
    messages resume through Testagram's native SMTP transport.
 
