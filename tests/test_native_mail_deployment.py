@@ -96,6 +96,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("nativeBounceIngressMaxSkew", handler)
         self.assertIn("processNativeBounceReport", handler)
         self.assertIn("message.raw", worker)
+        self.assertIn("[400, 413, 422]", worker)
+        self.assertIn("message.setReject", worker)
         self.assertIn('method: "POST"', worker)
         self.assertIn("HMAC", worker)
         self.assertNotIn("env.EMAIL.send", worker)
