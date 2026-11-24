@@ -14,7 +14,7 @@ func configureMailWorkerTest(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
 	t.Setenv("MAILJET_API_KEY", "ci-api-key")
 	t.Setenv("MAILJET_SECRET_KEY", "ci-secret-key")
-		t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
 }
 
 func TestMailWorkerRetriesDefiniteFailureAndPreservesPayload(t *testing.T) {
