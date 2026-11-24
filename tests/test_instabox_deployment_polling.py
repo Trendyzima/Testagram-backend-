@@ -31,13 +31,13 @@ class InstaBoxDeploymentPollingTests(unittest.TestCase):
         self.assertLess(writer.index("value=\"$(printf"), writer.index("escaped_value="))
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / ".env"
-            env_file.write_text("EXISTING=value\\n", encoding="utf-8")
+            env_file.write_text("EXISTING=value\n", encoding="utf-8")
             subprocess.run(
                 [
                     "bash", "-c",
                     f'BASE_ENV="$1"; {writer}; write_env_value "$2" "$3"',
                     "test", str(env_file), "TESTAGRAM_WEBAUTHN_RPID",
-                    "  ops.testagram.site  \\r\\n",
+                    "  ops.testagram.site  \r\n",
                 ],
                 check=True,
                 capture_output=True,
