@@ -35,8 +35,8 @@ func mailSMTPConfigurationError() error {
 	if port == "" {
 		port = "587"
 	}
-	if port != "587" {
-		return errors.New("MAILJET_SMTP_PORT must be 587 (STARTTLS)")
+	if port != "587" && port != "2525" {
+		return errors.New("MAILJET_SMTP_PORT must be 587 or 2525 (STARTTLS)")
 	}
 	if _, err := mailCipher(); err != nil {
 		return err
