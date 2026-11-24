@@ -279,7 +279,7 @@ else
 fi
 write_env_value TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 write_env_value TESTAGRAM_DKIM_SELECTOR "tg2026"
-write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ":2525"
+write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ""
 DKIM_PUBLIC_KEY="$(sudo openssl pkey -in "$MAIL_KEY_DIR/dkim-private.pem" -pubout -outform DER | base64 -w0)"
 echo "Publish DKIM TXT at tg2026._domainkey.testagram.site: v=DKIM1; k=rsa; p=$DKIM_PUBLIC_KEY"
 # The edge proxy token must match the Cloudflare API Worker credential. Never
@@ -1020,6 +1020,7 @@ verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federati
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_VERP_KEY "$TESTAGRAM_MAIL_VERP_KEY"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"
 if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
@@ -1034,20 +1035,8 @@ if ! sudo docker exec "$api_container" sh -ec 'test -r "$TESTAGRAM_DKIM_PRIVATE_
   echo "::error::API container cannot read the VPS-owned DKIM private key."
   exit 1
 fi
-# Verify the local host publication and the SMTP greeting, not merely Compose syntax.
-if ! timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/25; IFS= read -r -t 3 banner <&3; [[ "$banner" == 220* ]]'; then
-  echo "::error::Native SMTP feedback receiver is not answering on InstaBox host TCP/25."
-  exit 1
-fi
-if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
-  if ! timeout 12 openssl s_client -starttls smtp -connect 127.0.0.1:25 -servername mail.testagram.site -verify_return_error -brief </dev/null >/dev/null 2>&1; then
-    echo "::error::Native feedback SMTP STARTTLS handshake or certificate verification failed."
-    exit 1
-  fi
-  echo "Verified inbound SMTP STARTTLS certificate for mail.testagram.site."
-else
-  echo "Inbound SMTP STARTTLS remains disabled until the mail.testagram.site certificate is installed."
-fi
+# Bounce ingress is HTTP-only on InstaBox. The legacy SMTP feedback listener is disabled;
+# do not require a local TCP/25 greeting or a mail.testagram.site inbound TLS certificate.
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
