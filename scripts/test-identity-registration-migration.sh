@@ -642,6 +642,23 @@ END;
 $seed_historical_status$;
 SQL
 
+# Reproduce production's dual-ledger state: an existing archive plus a
+# second legacy-named provisioning table. Both ledgers must remain restricted.
+psql_ci <<'SQL'
+CREATE TABLE testagram_identity.historical_external_registration_provisioning (
+  id BIGINT PRIMARY KEY,
+  source_account_id TEXT,
+  canonical_user_id UUID,
+  status TEXT NOT NULL CHECK (status IN (
+    'pending','source_provider_created','linked','verification_sent',
+    'completed','compensation_required','failed'
+  ))
+);
+INSERT INTO testagram_identity.historical_external_registration_provisioning
+  (id,source_account_id,status)
+VALUES (9001,'already-archived-source-account','source_provider_created');
+SQL
+
 # Apply the forward-only retirement migrations after all legacy compatibility
 # fixtures have been exercised. This proves the live schema no longer exposes
 # provider-keyed tables/columns while preserving restricted historical evidence.
@@ -715,6 +732,7 @@ BEGIN
      OR to_regclass('testagram_identity.historical_external_identity_link_audit') IS NULL
      OR to_regclass('testagram_identity.historical_external_registration_consents') IS NULL
      OR to_regclass('testagram_identity.historical_external_registration_provisioning') IS NULL
+      OR to_regclass('testagram_identity.historical_external_registration_provisioning_recovered') IS NULL
      OR to_regclass('testagram_auth.historical_external_staff_roles') IS NULL
      OR to_regclass('testagram_auth.historical_external_staff_role_audit') IS NULL
      OR to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NULL
@@ -749,6 +767,7 @@ BEGIN
       'testagram_identity.historical_external_identity_link_audit'::regclass,
       'testagram_identity.historical_external_registration_consents'::regclass,
       'testagram_identity.historical_external_registration_provisioning'::regclass,
+      'testagram_identity.historical_external_registration_provisioning_recovered'::regclass,
       'testagram_auth.historical_external_staff_roles'::regclass,
       'testagram_auth.historical_external_staff_role_audit'::regclass,
       'testagram_auth.historical_external_staff_permission_overrides'::regclass,
@@ -768,6 +787,7 @@ BEGIN
       'testagram_identity.historical_external_identity_link_audit'::regclass,
       'testagram_identity.historical_external_registration_consents'::regclass,
       'testagram_identity.historical_external_registration_provisioning'::regclass,
+      'testagram_identity.historical_external_registration_provisioning_recovered'::regclass,
       'testagram_auth.historical_external_staff_roles'::regclass,
       'testagram_auth.historical_external_staff_role_audit'::regclass,
       'testagram_auth.historical_external_staff_permission_overrides'::regclass,
@@ -782,14 +802,28 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
     WHERE status='appwrite_created'
+  ) OR EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning_recovered
+    WHERE status='appwrite_created'
   ) THEN
     RAISE EXCEPTION 'provider-specific provisioning status remains in historical ledger';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM testagram_identity.historical_external_registration_provisioning
     WHERE status='source_provider_created'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM testagram_identity.historical_external_registration_provisioning_recovered
+    WHERE status='source_provider_created'
   ) THEN
-    RAISE EXCEPTION 'historical provider-created provisioning event was not preserved under a neutral status';
+    RAISE EXCEPTION 'both historical provider-created provisioning events were not preserved under neutral statuses';
+  END IF;
+  IF (SELECT count(*) FROM testagram_identity.historical_external_registration_provisioning) <> 1
+     OR (SELECT count(*) FROM testagram_identity.historical_external_registration_provisioning_recovered) <> 1 THEN
+    RAISE EXCEPTION 'both historical provisioning ledgers were not retained independently';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning_recovered' AND column_name='source_account_id')
+     OR EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning_recovered' AND column_name='appwrite_user_id') THEN
+    RAISE EXCEPTION 'recovered provisioning source identifier was not neutralized';
   END IF;
 
   IF NOT EXISTS (
@@ -832,7 +866,8 @@ BEGIN
 
   IF has_table_privilege('testagram_app','testagram_identity.historical_external_identity_accounts','SELECT')
      OR has_table_privilege('testagram_app','testagram_identity.historical_external_registration_provisioning','SELECT')
-     OR has_table_privilege('testagram_app','testagram_auth.historical_external_staff_roles','SELECT')
+     OR has_table_privilege('testagram_app','testagram_identity.historical_external_registration_provisioning_recovered','SELECT')
+      OR has_table_privilege('testagram_app','testagram_auth.historical_external_staff_roles','SELECT')
      OR has_table_privilege('testagram_app','testagram_auth.historical_external_sensitive_action_requests','SELECT') THEN
     RAISE EXCEPTION 'runtime role can still read archived historical identity or staff data';
   END IF;
