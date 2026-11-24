@@ -485,8 +485,11 @@ fi
 write_env_value TESTAGRAM_WEB_IMAGE "$web_image_digest"
 TESTAGRAM_WEB_IMAGE="$web_image_digest"
 export TESTAGRAM_WEB_IMAGE
+# Fail closed: the API may start before the Cloudflare bounce Worker is ready,
+# but the outbox sender must remain paused until the inbound route is verified.
+write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED false
 
-echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API..."
+echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API with outbound mail paused..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
@@ -1146,6 +1149,34 @@ TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET="$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" \
 CLOUDFLARE_BOUNCE_WORKER_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN" \
 CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
 bash "$BACKEND/scripts/deploy-cloudflare-bounce-worker.sh" "$BACKEND/cloudflare/email-bounce-worker"
+
+# Only now is the Cloudflare bounce route installed and its Worker-to-API
+# health probe verified. Re-enable the native sender and restart the API.
+write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED true
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --no-deps --force-recreate api
+api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+if [[ -z "$api_container" ]]; then
+  echo "::error::Backend API container disappeared while enabling native mail delivery."
+  exit 1
+fi
+api_health=""
+for attempt in $(seq 1 60); do
+  api_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$api_container" 2>/dev/null || true)"
+  [[ "$api_health" == "healthy" ]] && break
+  [[ "$api_health" == "unhealthy" ]] && break
+  sleep 2
+done
+if [[ "$api_health" != "healthy" ]]; then
+  echo "::error::Backend API did not become healthy after enabling native mail delivery; the outbox gate may remain closed in the running container."
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=120 api
+  exit 1
+fi
+api_actual_image_id="$(sudo docker inspect --format '{{.Image}}' "$api_container")"
+if [[ "$api_actual_image_id" != "$api_expected_image_id" ]]; then
+  echo "::error::API image changed unexpectedly while enabling native mail delivery."
+  exit 1
+fi
+echo "Native mail outbox delivery enabled only after Cloudflare bounce ingress and Worker-to-API health checks passed."
 echo "DEPLOY_EXIT=0"
 REMOTE_SCRIPT
 chmod 700 "$ROOT/deploy.sh"
