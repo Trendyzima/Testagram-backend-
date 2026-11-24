@@ -23,12 +23,15 @@ async function hmacHex(secret: string, payload: string): Promise<string> {
 
 export default {
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
-    const recipient = message.to.trim().toLowerCase();
+    const rawRecipient = message.to.trim();
+    const at = rawRecipient.lastIndexOf("@");
+    const recipient = at > 0 ? rawRecipient.slice(0, at) + "@" + rawRecipient.slice(at + 1).toLowerCase() : rawRecipient;
     if (!RECIPIENT.test(recipient)) {
       message.setReject("Unknown Testagram bounce address");
       return;
     }
-    if (!env.TESTAGRAM_BOUNCE_INGRESS_URL || env.TESTAGRAM_BOUNCE_INGRESS_SECRET.length < 32) {
+    const secret = env.TESTAGRAM_BOUNCE_INGRESS_SECRET;
+    if (!env.TESTAGRAM_BOUNCE_INGRESS_URL || typeof secret !== "string" || secret.length < 32) {
       throw new Error("Testagram bounce ingress is not configured");
     }
     if (message.rawSize <= 0 || message.rawSize > MAX_MESSAGE_BYTES) {
@@ -46,7 +49,7 @@ export default {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const bodyHash = toHex(await crypto.subtle.digest("SHA-256", raw));
     const payload = timestamp + "\n" + recipient + "\n" + bodyHash;
-    const signature = await hmacHex(env.TESTAGRAM_BOUNCE_INGRESS_SECRET, payload);
+    const signature = await hmacHex(secret, payload);
 
     const response = await fetch(env.TESTAGRAM_BOUNCE_INGRESS_URL, {
       method: "POST",
@@ -60,7 +63,8 @@ export default {
       redirect: "error",
     });
     if (!response.ok) {
-      // Throwing leaves the event failed rather than silently losing a bounce.
+      // Propagate handoff failures rather than acknowledging the message as processed.
+      // Verify Cloudflare SMTP retry behavior with a controlled failure test before production.
       throw new Error("Testagram bounce ingress returned HTTP " + response.status);
     }
   },
