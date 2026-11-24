@@ -74,6 +74,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("X-Testagram-Bounce-Endpoint", deploy)
         self.assertIn("-X DELETE", deploy)
         self.assertIn(".result.enabled == false", deploy)
+        self.assertIn(".result.previews_enabled == false", deploy)
+        self.assertIn("-X POST", deploy)
         self.assertIn("wrangler deploy --dry-run --config wrangler-probe.toml", workflow)
         self.assertIn("wrangler deploy --dry-run --config wrangler.toml", workflow)
 
