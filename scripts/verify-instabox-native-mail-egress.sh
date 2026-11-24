@@ -29,13 +29,7 @@ except OSError as exc:
     raise SystemExit(f"No usable reverse-DNS PTR exists for the InstaBox SMTP egress IPv4: {exc}")
 if ptr != "mail.testagram.site":
     raise SystemExit(f"SMTP egress PTR must be mail.testagram.site; observed {ptr!r}.")
-try:
-    forward = {entry[4][0] for entry in socket.getaddrinfo("mail.testagram.site", 25, socket.AF_INET, socket.SOCK_STREAM)}
-except OSError as exc:
-    raise SystemExit(f"mail.testagram.site does not resolve to an IPv4 address: {exc}")
-if str(addresses[0]) not in forward:
-    raise SystemExit(f"Forward A lookup for mail.testagram.site does not include the verified SMTP egress IPv4 {addresses[0]} (found {sorted(forward)}).")
 print(f"Verified InstaBox SMTP egress IPv4: {addresses[0]}")
 print(f"Verified PTR: {ptr}")
-print(f"Verified mail.testagram.site A record includes: {addresses[0]}")
+print("Forward A record will be reconciled only after this provider-confirmed egress identity passes.")
 PY
