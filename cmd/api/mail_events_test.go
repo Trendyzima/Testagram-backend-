@@ -8,8 +8,8 @@ import (
 )
 
 func TestMailjetWebhookRequiresValidBasicAuthentication(t *testing.T) {
-	t.Setenv("MAILJET_SMTP_USERNAME", "mailjet-api-key")
-	t.Setenv("MAILJET_SMTP_PASSWORD", "mailjet-secret")
+	t.Setenv("MAILJET_API_KEY", "mailjet-api-key")
+	t.Setenv("MAILJET_SECRET_KEY", "mailjet-secret")
 	svc := &service{}
 
 	req := httptest.NewRequest(http.MethodPost, "/internal/mailjet/events", strings.NewReader("[]"))
