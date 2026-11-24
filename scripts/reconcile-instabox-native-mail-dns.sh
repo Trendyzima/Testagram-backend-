@@ -50,11 +50,19 @@ get_records() {
   jq -c '.result // []' "$TMP_DIR/records.json"
 }
 write_record() {
-  local type="$1" name="$2" content="$3" proxied="${4:-false}"
+  local type="$1" name="$2" content="$3"
   local matches count record_id body url method
   matches="$(get_records "$type" "$name")"
+  if [[ "$type" == "TXT" ]]; then
+    case "$name" in
+      "$BOUNCE_HOST") matches="$(jq '[.[] | select(.content | startswith("v=spf1"))]' <<<"$matches")" ;;
+      "$SELECTOR") matches="$(jq '[.[] | select(.content | startswith("v=DKIM1"))]' <<<"$matches")" ;;
+      "$DMARC_HOST") matches="$(jq '[.[] | select(.content | startswith("v=DMARC1"))]' <<<"$matches")" ;;
+      *) matches="$(jq --arg content "$content" '[.[] | select(.content == $content)]' <<<"$matches")" ;;
+    esac
+  fi
   count="$(jq 'length' <<<"$matches")"
-  [[ "$count" -le 1 ]] || { echo "Multiple $type records exist at $name; refusing ambiguous DNS reconciliation." >&2; return 1; }
+  [[ "$count" -le 1 ]] || { echo "Multiple matching $type records exist at $name; refusing ambiguous DNS reconciliation." >&2; return 1; }
   if [[ "$type" == "A" ]]; then
     local cnames
     cnames="$(get_records CNAME "$name" | jq 'length')"
