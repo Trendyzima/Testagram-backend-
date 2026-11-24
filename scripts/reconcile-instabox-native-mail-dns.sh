@@ -86,7 +86,7 @@ write_record() {
 # Cloudflare Email Routing owns these MX records. Never replace them with
 # mail.testagram.site: InstaBox cannot receive inbound SMTP/25.
 mx_json="$(curl -fsS --connect-timeout 5 --max-time 15 -H 'accept: application/dns-json' --get --data-urlencode "name=$BOUNCE_HOST" --data 'type=MX' https://cloudflare-dns.com/dns-query)"
-jq -e '(.Status == 0) and any(.Answer[]?; .type == 15 and ((.data | ascii_downcase) | contains("mx.cloudflare.net")))' <<<"$mx_json" >/dev/null || { echo "Cloudflare Email Routing MX is not active for $BOUNCE_HOST; refusing to publish bounce-domain SPF." >&2; exit 1; }
+jq -e '(.Status == 0) and ([.Answer[]? | select(.type == 15)] as $mx | ($mx | length) >= 3 and all($mx[]; ((.data | ascii_downcase) | contains("mx.cloudflare.net"))))' <<<"$mx_json" >/dev/null || { echo "Cloudflare Email Routing MX is not active for $BOUNCE_HOST; refusing to publish bounce-domain SPF." >&2; exit 1; }
 
 # Publish the verified outbound host identity as DNS-only, never proxied.
 write_record A "$MAIL_HOST" "$PUBLIC_IPV4"
