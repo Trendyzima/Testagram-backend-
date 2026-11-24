@@ -80,11 +80,14 @@ $adult_check$;
 -- match the immutable application snapshot at approval time.
 DO $approval_fk$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_applications_sensitive_action_request_fk'
-      AND conrelid = 'testagram_identity.identity_applications'::regclass
-  ) THEN
+  -- The provider-keyed ledger is optional on native-only installations. The
+  -- native approval link is added later through native_sensitive_action_requests.
+  IF to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname = 'identity_applications_sensitive_action_request_fk'
+         AND conrelid = 'testagram_identity.identity_applications'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.identity_applications
       ADD CONSTRAINT identity_applications_sensitive_action_request_fk
       FOREIGN KEY (sensitive_action_request_id)
@@ -102,40 +105,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS identity_applications_sensitive_action_request
 -- staff records. NOT VALID preserves legacy rows while enforcing new writes.
 DO $reviewer_fks$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_application_reviews_reviewer_staff_fk'
-      AND conrelid = 'testagram_identity.identity_application_reviews'::regclass
-  ) THEN
-    ALTER TABLE testagram_identity.identity_application_reviews
-      ADD CONSTRAINT identity_application_reviews_reviewer_staff_fk
-      FOREIGN KEY (reviewer_appwrite_user_id)
-      REFERENCES testagram_auth.staff_roles(appwrite_user_id)
-      ON DELETE RESTRICT NOT VALID;
-  END IF;
+  -- Keep legacy provider-keyed reviewer links only when the legacy staff
+  -- directory is present. Native UUID reviewer constraints are added later.
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'identity_application_reviews_reviewer_staff_fk'
+        AND conrelid = 'testagram_identity.identity_application_reviews'::regclass
+    ) THEN
+      ALTER TABLE testagram_identity.identity_application_reviews
+        ADD CONSTRAINT identity_application_reviews_reviewer_staff_fk
+        FOREIGN KEY (reviewer_appwrite_user_id)
+        REFERENCES testagram_auth.staff_roles(appwrite_user_id)
+        ON DELETE RESTRICT NOT VALID;
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_approval_tokens_first_approver_staff_fk'
-      AND conrelid = 'testagram_identity.identity_approval_tokens'::regclass
-  ) THEN
-    ALTER TABLE testagram_identity.identity_approval_tokens
-      ADD CONSTRAINT identity_approval_tokens_first_approver_staff_fk
-      FOREIGN KEY (first_approver_appwrite_user_id)
-      REFERENCES testagram_auth.staff_roles(appwrite_user_id)
-      ON DELETE RESTRICT NOT VALID;
-  END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'identity_approval_tokens_first_approver_staff_fk'
+        AND conrelid = 'testagram_identity.identity_approval_tokens'::regclass
+    ) THEN
+      ALTER TABLE testagram_identity.identity_approval_tokens
+        ADD CONSTRAINT identity_approval_tokens_first_approver_staff_fk
+        FOREIGN KEY (first_approver_appwrite_user_id)
+        REFERENCES testagram_auth.staff_roles(appwrite_user_id)
+        ON DELETE RESTRICT NOT VALID;
+    END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_approval_tokens_second_approver_staff_fk'
-      AND conrelid = 'testagram_identity.identity_approval_tokens'::regclass
-  ) THEN
-    ALTER TABLE testagram_identity.identity_approval_tokens
-      ADD CONSTRAINT identity_approval_tokens_second_approver_staff_fk
-      FOREIGN KEY (second_approver_appwrite_user_id)
-      REFERENCES testagram_auth.staff_roles(appwrite_user_id)
-      ON DELETE RESTRICT NOT VALID;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'identity_approval_tokens_second_approver_staff_fk'
+        AND conrelid = 'testagram_identity.identity_approval_tokens'::regclass
+    ) THEN
+      ALTER TABLE testagram_identity.identity_approval_tokens
+        ADD CONSTRAINT identity_approval_tokens_second_approver_staff_fk
+        FOREIGN KEY (second_approver_appwrite_user_id)
+        REFERENCES testagram_auth.staff_roles(appwrite_user_id)
+        ON DELETE RESTRICT NOT VALID;
+    END IF;
   END IF;
 END;
 $reviewer_fks$;
