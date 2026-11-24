@@ -75,7 +75,7 @@ if ! jq -e --arg suffix "@$BOUNCE_DOMAIN" --arg address "$BOUNCE_ADDRESS" --arg 
      $domain_rules[0].source == "wrangler" and
      any($domain_rules[0].actions[]?; .type == "worker" and ((.value // []) | index($worker) != null)))
 ' "$tmp/existing-rules.json" >/dev/null; then
-  echo "::error::A conflicting Email Routing rule exists on $BOUNCE_DOMAIN. Only the existing Wrangler-managed $BOUNCE_ADDRESS rule targeting $worker may be updated automatically."
+  echo "::error::A conflicting Email Routing rule exists on $BOUNCE_DOMAIN. Only the existing Wrangler-managed $BOUNCE_ADDRESS rule targeting testagram-bounce-ingress may be updated automatically."
   exit 1
 fi
 
