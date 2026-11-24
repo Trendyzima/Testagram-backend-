@@ -234,7 +234,9 @@ func processNativeBounceReport(ctx context.Context, db *pgxpool.Pool, tokenHash,
 		return tx.Commit(ctx)
 	}
 
-	eventKeyInput := append(append([]byte(nil), tokenHash...), reportHash[:]...)\n\teventKey := sha256.Sum256(eventKeyInput)\n\teventID := "native-report:" + hex.EncodeToString(eventKey[:])
+	eventKeyInput := append(append([]byte(nil), tokenHash...), reportHash[:]...)
+	eventKey := sha256.Sum256(eventKeyInput)
+	eventID := "native-report:" + hex.EncodeToString(eventKey[:])
 	bounceType := ""
 	if report.EventType == "dsn.bounced" {
 		if strings.HasPrefix(report.Status, "5.") {
