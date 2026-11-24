@@ -6,7 +6,11 @@ The native mail transport sends directly from the InstaBox VPS. It uses
 addresses at `bounces.testagram.site`.
 
 Do not publish placeholder IP addresses or placeholder DKIM keys. The deployment
-script creates the private key on InstaBox and prints the matching public key. Inbound
+script creates the private key on InstaBox and prints the matching public key. It also generates a separate
+`TESTAGRAM_MAIL_VERP_KEY` on the VPS; this is distinct from the encrypted-outbox
+key and is never supplied by an external mail provider. Keep the VERP key stable
+while any return-path tokens remain valid (45-day token lifetime plus the
+retention window); rotating it early invalidates pending bounce correlations. Inbound
 SMTP advertises STARTTLS when a valid certificate and key are installed at
 `/data/home/testagram/mail-tls/fullchain.pem` and
 `/data/home/testagram/mail-tls/privkey.pem`.
