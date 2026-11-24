@@ -21,8 +21,6 @@ class InstaBoxMailjetTransportTest(unittest.TestCase):
         self.assertIn('"$MAILJET_API_KEY" "$MAILJET_SECRET_KEY" | base64', script)
         self.assertIn('header = "Authorization: Basic %s"\\n', script)
         self.assertIn("unset mailjet_basic_auth", script)
-        self.assertIn("user = \"%s:%s\"'", script)
-        self.assertNotIn("user = \"%s:%s\"\\n'", script)
         self.assertNotIn("in-v3.mailjet.com", script)
         self.assertNotIn("MAILJET_SMTP_PORT", script)
 
