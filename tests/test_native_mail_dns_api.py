@@ -8,7 +8,8 @@ SCRIPT = ROOT / "scripts/reconcile-native-mail-dns.sh"
 class NativeMailDNSAPITest(unittest.TestCase):
     def test_uses_cloudflare_api_and_scoped_token_without_persisting_it(self):
         source = SCRIPT.read_text(encoding="utf-8")
-        self.assertIn("api.cloudflare.com/client/v4/zones", source)
+        self.assertIn("api.cloudflare.com/client/v4", source)
+        self.assertIn('"$API/zones?name=$DOMAIN', source)
         self.assertIn("Authorization: Bearer $CLOUDFLARE_DNS_API_TOKEN", source)
         self.assertIn("mktemp -d", source)
         self.assertNotIn("echo $CLOUDFLARE_DNS_API_TOKEN", source)
