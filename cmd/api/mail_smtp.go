@@ -29,65 +29,118 @@ func mailProviderConfigurationError() error {
 
 func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
 	to, err := mail.ParseAddress(strings.TrimSpace(message.Recipient))
-	if err != nil || to.Address == "" { return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"} }
+	if err != nil || to.Address == "" {
+		return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"}
+	}
 	if strings.ContainsAny(message.Subject, "\r\n") || strings.TrimSpace(message.Subject) == "" || len(message.Subject) > 180 {
 		return "", permanentMailError{code: "MAIL_SUBJECT_INVALID"}
 	}
 	if len(message.HTML) == 0 || len(message.HTML) > 256*1024 || len(message.Text) > 256*1024 {
 		return "", permanentMailError{code: "MAIL_CONTENT_INVALID"}
 	}
+
 	var randomID [16]byte
-	if _, err := rand.Read(randomID[:]); err != nil { return "", err }
+	if _, err := rand.Read(randomID[:]); err != nil {
+		return "", err
+	}
 	messageID := hex.EncodeToString(randomID[:]) + "@testagram.site"
 	payload, err := buildNativeSMTPMessage(to, message, messageID)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
+
 	domain := to.Address[strings.LastIndex(to.Address, "@")+1:]
-	if domain == "" { return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"} }
+	if domain == "" {
+		return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"}
+	}
 	mxs, lookupErr := net.DefaultResolver.LookupMX(ctx, domain)
-	if lookupErr != nil || len(mxs) == 0 { mxs = []*net.MX{{Host: domain}} }
+	if lookupErr != nil || len(mxs) == 0 {
+		mxs = []*net.MX{{Host: domain}}
+	}
 	sort.Slice(mxs, func(i, j int) bool { return mxs[i].Pref < mxs[j].Pref })
+
 	var lastErr error
 	for _, mx := range mxs {
 		host := strings.TrimSuffix(mx.Host, ".")
-		if host == "" { continue }
+		if host == "" {
+			continue
+		}
 		_, sendErr := sendNativeSMTPToMX(ctx, host, to.Address, payload)
-		if sendErr == nil { return messageID, nil }
+		if sendErr == nil {
+			return messageID, nil
+		}
 		var permanent permanentMailError
-		if errors.As(sendErr, &permanent) { return "", sendErr }
+		if errors.As(sendErr, &permanent) {
+			return "", sendErr
+		}
 		var ambiguous ambiguousMailError
-		if errors.As(sendErr, &ambiguous) { return "", sendErr }
+		if errors.As(sendErr, &ambiguous) {
+			return "", sendErr
+		}
 		lastErr = sendErr
 	}
-	if lastErr == nil { lastErr = errors.New("recipient domain has no usable mail exchanger") }
+	if lastErr == nil {
+		lastErr = errors.New("recipient domain has no usable mail exchanger")
+	}
 	return "", fmt.Errorf("native mail delivery could not reach recipient MX: %w", lastErr)
 }
 
 func sendNativeSMTPToMX(ctx context.Context, host, recipient string, payload []byte) (string, error) {
-	conn, err := (&net.Dialer{Timeout: 12*time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(host, "25"))
-	if err != nil { return "", err }
+	conn, err := (&net.Dialer{Timeout: 12 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(host, "25"))
+	if err != nil {
+		return "", err
+	}
 	defer conn.Close()
-	if deadline, ok := ctx.Deadline(); ok { _ = conn.SetDeadline(deadline) } else { _ = conn.SetDeadline(time.Now().Add(25*time.Second)) }
+
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(25 * time.Second))
+	}
+
 	client, err := smtp.NewClient(conn, host)
-	if err != nil { return "", fmt.Errorf("recipient MX greeting failed: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("recipient MX greeting failed: %w", err)
+	}
 	defer client.Close()
-	if err := client.Hello("mail.testagram.site"); err != nil { return "", fmt.Errorf("native mail EHLO failed: %w", err) }
-	if ok, _ := client.Extension("STARTTLS"); !ok { return "", permanentMailError{code: "MAIL_MX_STARTTLS_UNAVAILABLE"} }
+
+	if err := client.Hello("mail.testagram.site"); err != nil {
+		return "", fmt.Errorf("native mail EHLO failed: %w", err)
+	}
+	if ok, _ := client.Extension("STARTTLS"); !ok {
+		return "", permanentMailError{code: "MAIL_MX_STARTTLS_UNAVAILABLE"}
+	}
 	if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
 		return "", fmt.Errorf("recipient MX STARTTLS failed: %w", err)
 	}
-	if err := client.Mail(nativeMailFrom); err != nil { return "", classifyNativeSMTPError("MAIL_MX_SENDER_REJECTED", err) }
-	if err := client.Rcpt(recipient); err != nil { return "", classifyNativeSMTPError("MAIL_MX_RECIPIENT_REJECTED", err) }
+	if err := client.Mail(nativeMailFrom); err != nil {
+		return "", classifyNativeSMTPError("MAIL_MX_SENDER_REJECTED", err)
+	}
+	if err := client.Rcpt(recipient); err != nil {
+		return "", classifyNativeSMTPError("MAIL_MX_RECIPIENT_REJECTED", err)
+	}
+
 	writer, err := client.Data()
-	if err != nil { return "", classifyNativeSMTPError("MAIL_MX_DATA_REJECTED", err) }
-	if _, err := writer.Write(payload); err != nil { _ = writer.Close(); return "", ambiguousMailError{cause: err} }
+	if err != nil {
+		return "", classifyNativeSMTPError("MAIL_MX_DATA_REJECTED", err)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		_ = writer.Close()
+		return "", ambiguousMailError{cause: err}
+	}
 	if err := writer.Close(); err != nil {
 		var smtpErr *textproto.Error
 		if errors.As(err, &smtpErr) {
-			if smtpErr.Code >= 500 { return "", permanentMailError{code: "MAIL_MX_DATA_REJECTED"} }
-			if smtpErr.Code >= 400 { return "", fmt.Errorf("recipient MX temporarily rejected message (%d): %w", smtpErr.Code, err) }
+			if smtpErr.Code >= 500 {
+				return "", permanentMailError{code: "MAIL_MX_DATA_REJECTED"}
+			}
+			if smtpErr.Code >= 400 {
+				return "", fmt.Errorf("recipient MX temporarily rejected message (%d): %w", smtpErr.Code, err)
+			}
 		}
 		return "", ambiguousMailError{cause: err}
 	}
+
 	_ = client.Quit()
 	return "", nil
 }
@@ -95,8 +148,12 @@ func sendNativeSMTPToMX(ctx context.Context, host, recipient string, payload []b
 func classifyNativeSMTPError(code string, err error) error {
 	var smtpErr *textproto.Error
 	if errors.As(err, &smtpErr) {
-		if smtpErr.Code >= 500 { return permanentMailError{code: code} }
-		if smtpErr.Code >= 400 { return fmt.Errorf("recipient MX temporary SMTP rejection (%d): %w", smtpErr.Code, err) }
+		if smtpErr.Code >= 500 {
+			return permanentMailError{code: code}
+		}
+		if smtpErr.Code >= 400 {
+			return fmt.Errorf("recipient MX temporary SMTP rejection (%d): %w", smtpErr.Code, err)
+		}
 	}
 	return fmt.Errorf("recipient MX SMTP command failed: %w", err)
 }
@@ -113,27 +170,43 @@ func buildNativeSMTPMessage(to *mail.Address, message queuedMail, messageID stri
 		"MIME-Version: 1.0",
 		"Content-Type: multipart/alternative; boundary=\"" + boundary + "\"",
 	}
+
 	for key, value := range message.Headers {
 		switch strings.ToLower(strings.TrimSpace(key)) {
 		case "list-unsubscribe", "list-unsubscribe-post":
-		default: return nil, errors.New("unsupported custom mail header")
+		default:
+			return nil, errors.New("unsupported custom mail header")
 		}
-		if strings.ContainsAny(key, "\r\n:") || strings.ContainsAny(value, "\r\n") { return nil, errors.New("unsafe custom mail header") }
+		if strings.ContainsAny(key, "\r\n:") || strings.ContainsAny(value, "\r\n") {
+			return nil, errors.New("unsafe custom mail header")
+		}
 		headers = append(headers, key+": "+value)
 	}
-	for _, header := range headers { out.WriteString(header + "\r\n") }
+	for _, header := range headers {
+		out.WriteString(header + "\r\n")
+	}
 	out.WriteString("\r\n")
+
 	if message.Text != "" {
 		out.WriteString("--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
 		qp := quotedprintable.NewWriter(&out)
-		if _, err := qp.Write([]byte(message.Text)); err != nil { return nil, err }
-		if err := qp.Close(); err != nil { return nil, err }
+		if _, err := qp.Write([]byte(message.Text)); err != nil {
+			return nil, err
+		}
+		if err := qp.Close(); err != nil {
+			return nil, err
+		}
 		out.WriteString("\r\n")
 	}
+
 	out.WriteString("--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
 	qp := quotedprintable.NewWriter(&out)
-	if _, err := qp.Write([]byte(message.HTML)); err != nil { return nil, err }
-	if err := qp.Close(); err != nil { return nil, err }
+	if _, err := qp.Write([]byte(message.HTML)); err != nil {
+		return nil, err
+	}
+	if err := qp.Close(); err != nil {
+		return nil, err
+	}
 	out.WriteString("\r\n--" + boundary + "--\r\n")
 	return out.Bytes(), nil
 }
