@@ -49,12 +49,12 @@ DO $grants$
 BEGIN
   GRANT USAGE ON SCHEMA testagram_mail TO testagram_app;
   GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_mail.return_path_tokens TO testagram_app;
-  GRANT SELECT,INSERT ON testagram_mail.inbound_reports TO testagram_app;
+  GRANT SELECT,INSERT,DELETE ON testagram_mail.inbound_reports TO testagram_app;
   GRANT USAGE,SELECT ON SEQUENCE testagram_mail_inbound_reports_id_seq TO testagram_app;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     GRANT USAGE ON SCHEMA testagram_mail TO service_role;
     GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_mail.return_path_tokens TO service_role;
-    GRANT SELECT,INSERT ON testagram_mail.inbound_reports TO service_role;
+    GRANT SELECT,INSERT,DELETE ON testagram_mail.inbound_reports TO service_role;
     GRANT USAGE,SELECT ON SEQUENCE testagram_mail_inbound_reports_id_seq TO service_role;
   END IF;
 END;
