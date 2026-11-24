@@ -12,9 +12,7 @@ WORKER_DIR="${1:?worker directory is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?Missing Cloudflare account ID}"
 : "${TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET:?Missing InstaBox-generated bounce ingress secret}"
 [[ "${#TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET}" -ge 32 ]] || { echo "::error::Bounce ingress secret is too short."; exit 1; }
-command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 || { echo "::error::Node.js 18+ and npm are required to deploy the Cloudflare Worker."; exit 1; }
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
-[[ "$node_major" =~ ^[0-9]+$ && "$node_major" -ge 18 ]] || { echo "::error::Cloudflare Wrangler requires Node.js 18 or later."; exit 1; }
+command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1 || { echo "::error::Docker is required to run the pinned Wrangler deployment container on InstaBox."; exit 1; }
 
 tmp="$(mktemp -d)"
 auth_header="Authorization: Bearer $CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
@@ -118,6 +116,21 @@ fi
 existing_bounce_rule_count="$(jq --arg suffix "@$BOUNCE_DOMAIN" '[.result[]? | select(any(.matchers[]?; .type == "literal" and ((.value | ascii_downcase) | endswith($suffix))))] | length' "$tmp/existing-rules.json")"
 
 export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
+WORKER_DIR="$(cd "$WORKER_DIR" && pwd)"
+WRANGLER_IMAGE="node:22-bookworm-slim"
+WRANGLER_NPM_CACHE="${HOME:-/root}/.cache/testagram-wrangler-npm"
+mkdir -p "$WRANGLER_NPM_CACHE"
+sudo docker pull "$WRANGLER_IMAGE"
+run_wrangler() {
+  sudo docker run --rm -i \
+    --env CLOUDFLARE_API_TOKEN \
+    --env CLOUDFLARE_ACCOUNT_ID \
+    --mount "type=bind,source=$WORKER_DIR,target=/worker" \
+    --mount "type=bind,source=$WRANGLER_NPM_CACHE,target=/root/.npm" \
+    --workdir /worker \
+    "$WRANGLER_IMAGE" \
+    sh -lc 'npm exec --yes --package=wrangler@4.113.0 -- wrangler "$@"' sh "$@"
+}
 cd "$WORKER_DIR"
 
 # The account-level workers.dev name is used only for the authenticated
@@ -132,16 +145,16 @@ fi
 # First install only: create the script and install its secret before adding
 # the inbound address. On later deploys, preserve the existing email rule.
 if [[ "$existing_bounce_rule_count" == "0" ]]; then
-  npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-bootstrap.toml
+  run_wrangler deploy --config wrangler-bootstrap.toml
   worker_probe_enabled=true
-  printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-bootstrap.toml
+  printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-bootstrap.toml
 fi
 
 # The probe config keeps the existing email address rule intact while briefly
 # enabling workers.dev. The HMAC secret is installed before the health call.
-npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-probe.toml
+run_wrangler deploy --config wrangler-probe.toml
 worker_probe_enabled=true
-printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
+printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
 
 health_timestamp="$(date +%s)"
 health_signature="$(python3 - "$health_timestamp" <<'PY'
@@ -162,8 +175,8 @@ fi
 
 # Only after the Worker-to-API probe passes do we deploy the final
 # email-only configuration: workers.dev disabled, inbound address enabled.
-npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler.toml
-printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler.toml
+run_wrangler deploy --config wrangler.toml
+printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler.toml
 
 # Verify that the temporary workers.dev endpoint is disabled after the probe.
 script_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/script-subdomain.json" -w '%{http_code}' "$script_subdomain_url" -H "$auth_header")"
