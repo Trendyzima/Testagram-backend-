@@ -103,16 +103,20 @@ psql_ci < migrations/20261106_social_core.sql
 psql_ci < migrations/20261106_social_core.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at) VALUES
@@ -718,7 +722,8 @@ for migration in \
   migrations/061_native_sensitive_action_integrity.sql \
   migrations/20261124_testagram_email_verification_otp.sql \
   migrations/20261124_testagram_social_email_consent.sql \
-  migrations/20261125_testagram_mail_delivery_events.sql; do
+  migrations/20261125_testagram_mail_delivery_events.sql \
+  migrations/20261126_testagram_native_mail_feedback.sql; do
   psql_ci < "$migration"
 done
 
@@ -988,6 +993,7 @@ psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci <<'SQL'
 DO $mail_role_repair$
 BEGIN
@@ -1118,6 +1124,7 @@ psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci <<'SQL'
 DO $mail_role_repair$
 BEGIN
