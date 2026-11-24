@@ -282,7 +282,7 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	}
 	loginBody, _ := json.Marshal(map[string]string{"email": email, "password": password})
 	login := call(http.MethodPost, "/api/auth/login", loginBody, map[string]string{"Content-Type": "application/json"})
-	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), "\""access_token\"") {
+	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), "access_token") {
 		t.Fatalf("verified native login was blocked by separate identity review: status=%d body=%s", login.Code, login.Body.String())
 	}
 }
