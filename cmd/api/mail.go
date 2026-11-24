@@ -33,7 +33,7 @@ type permanentMailError struct {
 }
 
 func (e permanentMailError) Error() string {
-	return "Mail provider definitively rejected the message"
+	return "Recipient mail server definitively rejected the message"
 }
 
 type ambiguousMailError struct {
@@ -384,9 +384,9 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	// A worker may have crashed after the mail provider accepted the request but before
+	// A worker may have crashed after the recipient MX accepted the message but before
 	// recording the response. Never reclaim an expired sending lease: its
-	// provider outcome is unknowable and automatic resend could duplicate mail.
+	// SMTP outcome is unknowable and automatic resend could duplicate mail.
 	if _, err := s.db.Exec(ctx, `
 		UPDATE testagram_mail.outbox
 		SET status='uncertain',lease_until=NULL,last_error_code='MAIL_LEASE_EXPIRED_OUTCOME_UNKNOWN',updated_at=now()
@@ -466,7 +466,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return true, err
 	}
 
-	// Re-check consent immediately before the provider call so queued social
+	// Re-check consent immediately before the direct SMTP send so queued social
 	// messages cannot be sent after a preference withdrawal.
 	if preferenceUserID != "" {
 		consentActive, err := socialMailConsentActive(ctx, s.db, preferenceUserID, preferenceCategory)
