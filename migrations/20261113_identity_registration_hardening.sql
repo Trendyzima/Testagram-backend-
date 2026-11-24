@@ -328,41 +328,54 @@ BEGIN
 END;
 $legacy_approval_trigger$;
 
--- Durable worker leases and reconciliation metadata. External Appwrite calls
--- cannot be part of a PostgreSQL transaction, so ambiguous outcomes must be
--- recoverable and observable rather than treated as exactly-once operations.
-ALTER TABLE testagram_identity.registration_provisioning
-  ADD COLUMN IF NOT EXISTS lease_owner TEXT,
-  ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS last_error_class TEXT NOT NULL DEFAULT ''
-    CHECK (length(last_error_class) <= 64);
-
-DO $lease_check$
+-- Durable worker leases and reconciliation metadata belong to the
+-- provider-keyed provisioning saga. After the archive migration renames that
+-- table, keep its historical copy untouched and do not recreate the live name.
+DO $legacy_provisioning_leases$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'registration_provisioning_lease_pair_check'
-      AND conrelid = 'testagram_identity.registration_provisioning'::regclass
-  ) THEN
-    ALTER TABLE testagram_identity.registration_provisioning
-      ADD CONSTRAINT registration_provisioning_lease_pair_check
-      CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)) NOT VALID;
+  IF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL THEN
+    EXECUTE $ddl$
+      ALTER TABLE testagram_identity.registration_provisioning
+        ADD COLUMN IF NOT EXISTS lease_owner TEXT,
+        ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS last_error_class TEXT NOT NULL DEFAULT ''
+          CHECK (length(last_error_class) <= 64)
+    $ddl$;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'registration_provisioning_lease_pair_check'
+        AND conrelid = 'testagram_identity.registration_provisioning'::regclass
+    ) THEN
+      EXECUTE $ddl$
+        ALTER TABLE testagram_identity.registration_provisioning
+          ADD CONSTRAINT registration_provisioning_lease_pair_check
+          CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)) NOT VALID
+      $ddl$;
+    END IF;
+
+    EXECUTE $ddl$
+      CREATE INDEX IF NOT EXISTS registration_provisioning_worker_idx
+        ON testagram_identity.registration_provisioning(next_attempt_at, created_at)
+        WHERE status IN ('pending','appwrite_created','linked','verification_sent')
+          AND reconciliation_required = FALSE
+    $ddl$;
+    EXECUTE $ddl$
+      CREATE INDEX IF NOT EXISTS registration_provisioning_reconciliation_idx
+        ON testagram_identity.registration_provisioning(updated_at)
+        WHERE reconciliation_required = TRUE OR status = 'compensation_required'
+    $ddl$;
+    EXECUTE $ddl$
+      COMMENT ON COLUMN testagram_identity.registration_provisioning.reconciliation_required IS
+        'True when an external Appwrite side effect has an ambiguous or incomplete outcome requiring operator/worker reconciliation.'
+    $ddl$;
   END IF;
 END;
-$lease_check$;
-
-CREATE INDEX IF NOT EXISTS registration_provisioning_worker_idx
-  ON testagram_identity.registration_provisioning(next_attempt_at, created_at)
-  WHERE status IN ('pending','appwrite_created','linked','verification_sent')
-    AND reconciliation_required = FALSE;
-
-CREATE INDEX IF NOT EXISTS registration_provisioning_reconciliation_idx
-  ON testagram_identity.registration_provisioning(updated_at)
-  WHERE reconciliation_required = TRUE OR status = 'compensation_required';
+$legacy_provisioning_leases$;
 
 -- Consent evidence is append-only. Retention/deletion, if legally required,
 -- must use a separate controlled process and must not rewrite acceptance data.
@@ -388,9 +401,20 @@ REVOKE UPDATE, DELETE, TRUNCATE
 
 COMMENT ON COLUMN testagram_identity.identity_applications.submission_key_sha256 IS
   'SHA-256 of the client idempotency key; raw key is never persisted.';
-COMMENT ON COLUMN testagram_identity.identity_applications.sensitive_action_request_id IS
-  'References the canonical two-person sensitive-action approval request for this application.';
-COMMENT ON COLUMN testagram_identity.registration_provisioning.reconciliation_required IS
-  'True when an external Appwrite side effect has an ambiguous or incomplete outcome requiring operator/worker reconciliation.';
+DO $legacy_request_comment$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_applications'
+      AND column_name='sensitive_action_request_id'
+  ) THEN
+    EXECUTE $ddl$
+      COMMENT ON COLUMN testagram_identity.identity_applications.sensitive_action_request_id IS
+        'Historical provider-keyed approval request link; new identity approval uses native_sensitive_action_request_id.'
+    $ddl$;
+  END IF;
+END;
+$legacy_request_comment$;
 
 COMMIT;
