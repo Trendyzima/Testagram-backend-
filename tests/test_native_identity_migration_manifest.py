@@ -92,6 +92,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         mail_events = (ROOT / "cmd/api/mail_events.go").read_text(encoding="utf-8")
         self.assertIn("MAILJET_SMTP_USERNAME", mail_events)
         self.assertIn("MAILJET_SMTP_PASSWORD", mail_events)
+        deploy_script = (ROOT / "scripts" / "start-instabox-deployment.sh").read_text(encoding="utf-8")
+        self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"', deploy_script)
         deploy_workflow = (ROOT / ".github" / "workflows" / "instabox-deploy.yml").read_text(encoding="utf-8")
         self.assertIn("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN", deploy_workflow)
         self.assertIn("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN", compose)
