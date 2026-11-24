@@ -7,9 +7,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
+		"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +90,7 @@ func (s *service) nativeBounceHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bounce correlation rejected", http.StatusUnprocessableEntity)
 			return
 		}
-		http.Error(w, fmt.Sprintf("bounce processing temporarily unavailable"), http.StatusServiceUnavailable)
+		http.Error(w, "bounce processing temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
