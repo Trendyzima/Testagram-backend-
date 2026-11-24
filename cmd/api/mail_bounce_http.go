@@ -18,9 +18,20 @@ import (
 const nativeBounceIngressPath = "/internal/mail/bounce"
 const nativeBounceIngressMaxSkew = 5 * time.Minute
 
+func canonicalNativeBounceRecipient(recipient string) string {
+	recipient = strings.TrimSpace(recipient)
+	at := strings.LastIndex(recipient, "@")
+	if at <= 0 {
+		return recipient
+	}
+	// VERP local parts contain a case-sensitive base64url token. Normalize only
+	// the DNS domain; lowercasing the entire address would corrupt the token.
+	return recipient[:at] + "@" + strings.ToLower(recipient[at+1:])
+}
+
 func nativeBounceIngressMAC(secret, timestamp, recipient string, body []byte) []byte {
 	bodyHash := sha256.Sum256(body)
-	payload := timestamp + "\n" + strings.ToLower(strings.TrimSpace(recipient)) + "\n" + hex.EncodeToString(bodyHash[:])
+	payload := timestamp + "\n" + canonicalNativeBounceRecipient(recipient) + "\n" + hex.EncodeToString(bodyHash[:])
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(payload))
 	return mac.Sum(nil)
