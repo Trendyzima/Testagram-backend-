@@ -227,7 +227,7 @@ func processNativeBounceReport(ctx context.Context, db *pgxpool.Pool, tokenHash,
 	if report.EventType == "dsn.bounced" {
 		// Only recipient-address failures are automatic hard-bounce suppressions.
 		// Policy and reputation 5.7.x failures must not permanently suppress users.
-		if report.Status == "5.1.1" || report.Status == "5.1.2" {
+		if report.Status == "5.1.1" {
 			bounceType = "hard"
 		} else {
 			bounceType = "unknown"
