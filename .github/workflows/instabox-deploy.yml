@@ -35,7 +35,7 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-      - name: Validate deployment shell syntax and PostgreSQL readiness regression
+      - name: Validate deployment shell syntax, PostgreSQL readiness, and Mailjet HTTPS transport
         shell: bash
         run: |
           bash -n scripts/start-instabox-deployment.sh
