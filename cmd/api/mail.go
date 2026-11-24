@@ -33,11 +33,22 @@ const (
 )
 
 type permanentMailError struct {
-	code string
+	code       string
+	httpStatus int
+	apiCode    int
 }
 
 func (e permanentMailError) Error() string {
-	return "Cloudflare definitively rejected the message"
+	switch {
+	case e.apiCode != 0 && e.httpStatus != 0:
+		return fmt.Sprintf("Cloudflare definitively rejected the message (HTTP %d, API code %d)", e.httpStatus, e.apiCode)
+	case e.apiCode != 0:
+		return fmt.Sprintf("Cloudflare definitively rejected the message (API code %d)", e.apiCode)
+	case e.httpStatus != 0:
+		return fmt.Sprintf("Cloudflare definitively rejected the message (HTTP %d)", e.httpStatus)
+	default:
+		return "Cloudflare definitively rejected the message"
+	}
 }
 
 type ambiguousMailError struct {
@@ -320,7 +331,7 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
 			return "", fmt.Errorf("Cloudflare Email Sending temporarily rejected an unreadable request (HTTP %d)", resp.StatusCode)
 		}
-		return "", permanentMailError{code: "CLOUDFLARE_REQUEST_REJECTED"}
+		return "", permanentMailError{code: fmt.Sprintf("CLOUDFLARE_HTTP_%d", resp.StatusCode), httpStatus: resp.StatusCode}
 	}
 	if resp.StatusCode >= 500 {
 		return "", ambiguousMailError{cause: fmt.Errorf("provider server error (HTTP %d)", resp.StatusCode)}
@@ -329,7 +340,19 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
 			return "", fmt.Errorf("Cloudflare Email Sending temporarily rejected the request (HTTP %d)", resp.StatusCode)
 		}
-		return "", permanentMailError{code: "CLOUDFLARE_REQUEST_REJECTED"}
+		rejection := permanentMailError{httpStatus: resp.StatusCode}
+		if len(result.Errors) > 0 {
+			rejection.apiCode = result.Errors[0].Code
+		}
+		switch {
+		case rejection.apiCode != 0:
+			rejection.code = fmt.Sprintf("CLOUDFLARE_API_%d", rejection.apiCode)
+		case rejection.httpStatus != 0:
+			rejection.code = fmt.Sprintf("CLOUDFLARE_HTTP_%d", rejection.httpStatus)
+		default:
+			rejection.code = "CLOUDFLARE_REQUEST_REJECTED"
+		}
+		return "", rejection
 	}
 	if strings.TrimSpace(result.Result.MessageID) == "" {
 		return "", ambiguousMailError{cause: errors.New("provider accepted the request without returning a message ID")}
@@ -575,6 +598,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		}
 		var permanent permanentMailError
 		if errors.As(sendErr, &permanent) {
+			log.Printf("mail outbox message %d permanently rejected by Cloudflare: %v", id, permanent)
 			code := permanent.code
 			if code == "" {
 				code = "CLOUDFLARE_REQUEST_REJECTED"
