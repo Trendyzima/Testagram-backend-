@@ -1002,3 +1002,89 @@ $mail_role_repair$;
 SQL
 
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
+
+# Regression: run the native identity migration chain without the optional
+# legacy staff_roles migration, matching the production Compose path. Native
+# approval tables must be created without synthesizing provider-keyed staff or
+# approval ledgers.
+psql_ci -c "CREATE DATABASE native_clean_migration_chain_test;"
+psql_native_clean() {
+  docker exec -i "$container" psql -U postgres -d native_clean_migration_chain_test -v ON_ERROR_STOP=1 "$@"
+}
+for migration in \
+  migrations/20261019_testagram_independent_auth.sql \
+  migrations/20261106_appwrite_identity_bridge.sql \
+  migrations/20261106_appwrite_identity_link_audit.sql \
+  migrations/20261114_appwrite_registration_consent.sql \
+  migrations/20261111_admin_security_controls.sql \
+  migrations/20261111_identity_registration_pipeline.sql \
+  migrations/20261113_identity_registration_hardening.sql \
+  migrations/20261113_native_identity_verification.sql \
+  migrations/20261114_native_identity_evidence.sql \
+  migrations/20261114_native_identity_integrity.sql \
+  migrations/20261115_identity_evidence_access_audit.sql \
+  migrations/20261115_native_identity_status_access.sql \
+  migrations/20261019_dual_backend_replication.sql \
+  migrations/20261019_testagram_local_accounts_posts.sql \
+  migrations/20261106_social_core.sql \
+  migrations/20261115_testagram_native_auth_cutover_foundation.sql \
+  migrations/20261116_native_approved_identity_provisioning.sql \
+  migrations/20261116_native_auth_runtime_grants.sql \
+  migrations/20261117_native_staff_reviewer_grants.sql \
+  migrations/20261118_native_admin_console.sql \
+  migrations/20261119_native_identity_approval_ledger.sql \
+  migrations/20261120_native_verification_decider.sql \
+  migrations/20261122_testagram_mail_outbox.sql \
+  migrations/20261123_testagram_mail_outbox_runtime_role.sql \
+  migrations/20261120_native_identity_historical_account_archive.sql \
+  migrations/20261120_native_identity_historical_staff_archive.sql \
+  migrations/20261120_native_identity_historical_admin_archive.sql \
+  migrations/20261120_native_identity_historical_attribution_archive.sql \
+  migrations/20261120_native_identity_approval_circuit.sql \
+  migrations/20261121_native_identity_intake_optional_fingerprint.sql \
+  migrations/20261121_native_staff_webauthn.sql \
+  migrations/061_native_sensitive_action_integrity.sql \
+  migrations/20261124_testagram_email_verification_otp.sql \
+  migrations/20261124_testagram_social_email_consent.sql \
+  migrations/20261125_testagram_mail_delivery_events.sql; do
+  psql_native_clean < "$migration"
+done
+psql_native_clean <<'SQL'
+DO $native_clean_migration_chain_acceptance$
+BEGIN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
+     OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL THEN
+    RAISE EXCEPTION 'native-only migration chain recreated provider-keyed staff or approval ledgers';
+  END IF;
+  IF to_regclass('testagram_auth.native_sensitive_action_requests') IS NULL
+     OR to_regclass('testagram_auth.native_sensitive_action_approvals') IS NULL
+     OR to_regclass('testagram_auth.native_admin_security_audit') IS NULL THEN
+    RAISE EXCEPTION 'native-only migration chain omitted a required native approval or audit ledger';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid='testagram_identity.identity_approval_tokens'::regclass
+      AND tgname='identity_approval_token_requires_two_person_approval'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'native-only migration chain omitted the two-person approval trigger';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_approval_tokens'
+      AND column_name='first_approver_user_id'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_approval_tokens'
+      AND column_name='second_approver_user_id'
+  ) THEN
+    RAISE EXCEPTION 'native-only migration chain omitted native approver UUID columns';
+  END IF;
+END;
+$native_clean_migration_chain_acceptance$;
+SQL
+echo "Native-only identity migration chain passed without legacy staff_roles or provider-keyed approval tables."
