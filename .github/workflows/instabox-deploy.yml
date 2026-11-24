@@ -104,10 +104,27 @@ jobs:
             echo "::error::Mailjet SMTP must use port 587 with STARTTLS."
             exit 1
           fi
-          if [[ ! "${AUTH_FROM_EMAIL:-}" =~ ^[^[:space:]@]+@testagram\.site$ ]]; then
-            echo "::error::AUTH_FROM_EMAIL must be a verified sender address at @testagram.site (for example no-reply@testagram.site)."
-            exit 1
-          fi
+          python3 - "${AUTH_FROM_EMAIL:-}" <<'PY'
+          import sys
+          from email.headerregistry import Address
+          from email.utils import getaddresses
+
+          configured = sys.argv[1].strip()
+          mailboxes = getaddresses([configured])
+          if len(mailboxes) != 1 or not mailboxes[0][1]:
+              print("::error::AUTH_FROM_EMAIL must contain exactly one valid sender mailbox.")
+              raise SystemExit(1)
+          try:
+              parsed = Address(addr_spec=mailboxes[0][1])
+          except ValueError:
+              print("::error::AUTH_FROM_EMAIL is not a valid mailbox address.")
+              raise SystemExit(1)
+          domain = parsed.domain.lower().rstrip(".")
+          if domain != "testagram.site" and not domain.endswith(".testagram.site"):
+              print("::error::AUTH_FROM_EMAIL must use a verified Testagram-owned testagram.site domain or subdomain.")
+              raise SystemExit(1)
+          print(f"Validated Testagram sender domain: {domain}")
+          PY
       - name: Validate edge proxy shared credential
         shell: bash
         run: |
