@@ -126,9 +126,15 @@ export default {
       body: raw,
       redirect: "error",
     });
+    if ([400, 413, 422].includes(response.status)) {
+      // These are permanent malformed/oversized/uncorrelated reports; do not
+      // retry them forever. Authentication and server failures remain retryable.
+      message.setReject("Testagram rejected an invalid or uncorrelated bounce report");
+      return;
+    }
     if (!response.ok) {
-      // Propagate handoff failures rather than acknowledging the message as processed.
-      // Verify Cloudflare SMTP retry behavior with a controlled failure test before production.
+      // Propagate transient/authentication failures rather than acknowledging
+      // the message. Verify Cloudflare SMTP retry behavior before production.
       throw new Error("Testagram bounce ingress returned HTTP " + response.status);
     }
   },
