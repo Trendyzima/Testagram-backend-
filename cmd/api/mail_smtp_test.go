@@ -11,10 +11,10 @@ func TestBuildSMTPMessageIncludesAlternativeBodiesAndUnsubscribeHeaders(t *testi
 	to, _ := mail.ParseAddress("person@example.test")
 	raw, err := buildSMTPMessage(from, to, queuedMail{
 		Subject: "Welcome to Testagram",
-		Text: "Hello and welcome",
-		HTML: "<p>Hello and welcome</p>",
+		Text:    "Hello and welcome",
+		HTML:    "<p>Hello and welcome</p>",
 		Headers: map[string]string{
-			"List-Unsubscribe": "<https://testagram.site/api/email/unsubscribe?token=abc>",
+			"List-Unsubscribe":      "<https://testagram.site/api/email/unsubscribe?token=abc>",
 			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
 		},
 	}, "testagram-123@testagram.site")
@@ -45,7 +45,7 @@ func TestBuildSMTPMessageRejectsHeaderInjection(t *testing.T) {
 	to, _ := mail.ParseAddress("person@example.test")
 	_, err := buildSMTPMessage(from, to, queuedMail{
 		Subject: "Hello",
-		HTML: "<p>Hi</p>",
+		HTML:    "<p>Hi</p>",
 		Headers: map[string]string{"X-Test": "safe\r\nBcc: victim@example.test"},
 	}, "testagram-123@testagram.site")
 	if err == nil {
