@@ -91,11 +91,12 @@ npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-p
 printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
 
 health_timestamp="$(date +%s)"
-health_signature="$(python3 - "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" "$health_timestamp" <<'PY'
+health_signature="$(python3 - "$health_timestamp" <<'PY'
 import hashlib
 import hmac
+import os
 import sys
-secret, timestamp = sys.argv[1], sys.argv[2]
+secret, timestamp = os.environ["TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET"], sys.argv[1]
 print(hmac.new(secret.encode(), ("health\n" + timestamp).encode(), hashlib.sha256).hexdigest())
 PY
 )"
