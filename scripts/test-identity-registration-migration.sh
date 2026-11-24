@@ -462,6 +462,44 @@ END;
 $native_identity$;
 SQL
 
+# Regression: preserve historical lifecycle event types when the older
+# evidence-access migration is replayed after those events have been written.
+psql_ci <<'SQL'
+DO $seed_historical_verification_events$
+DECLARE
+  session_id uuid;
+BEGIN
+  SELECT id INTO session_id
+  FROM testagram_identity.verification_sessions
+  LIMIT 1;
+
+  IF session_id IS NULL THEN
+    RAISE EXCEPTION 'verification session fixture is missing';
+  END IF;
+
+  INSERT INTO testagram_identity.verification_events
+    (session_id,event_type,actor_type,actor_reference,request_id)
+  VALUES
+    (session_id,'account_provisioned','applicant','ci-native-auth','ci-account-provisioned'),
+    (session_id,'email_verified','applicant','ci-native-auth','ci-email-verified');
+END;
+$seed_historical_verification_events$;
+SQL
+psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci <<'SQL'
+DO $verify_historical_verification_events$
+BEGIN
+  IF (
+    SELECT count(*) FROM testagram_identity.verification_events
+    WHERE event_type IN ('account_provisioned','email_verified')
+      AND request_id IN ('ci-account-provisioned','ci-email-verified')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'replaying evidence-access audit migration lost historical verification event types';
+  END IF;
+END;
+$verify_historical_verification_events$;
+SQL
+
 # Exercise the evidence retention state machine used by the storage worker.
 psql_ci <<'SQL'
 DO $evidence_retention$
@@ -618,6 +656,42 @@ psql_ci < migrations/20261120_native_identity_historical_account_archive.sql
 psql_ci < migrations/20261120_native_identity_historical_staff_archive.sql
 psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql
 psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql
+
+# Match the complete production runner manifest after provider-keyed
+# tables/columns have already been archived. Replaying every migration here
+# prevents a later legacy DDL statement from undoing the native cutover.
+for migration in \
+  migrations/20261107_federation_actor_consent.sql \
+  migrations/20261111_admin_security_controls.sql \
+  migrations/20261111_identity_registration_pipeline.sql \
+  migrations/20261113_identity_registration_hardening.sql \
+  migrations/20261113_native_identity_verification.sql \
+  migrations/20261114_native_identity_evidence.sql \
+  migrations/20261114_native_identity_integrity.sql \
+  migrations/20261115_identity_evidence_access_audit.sql \
+  migrations/20261115_native_identity_status_access.sql \
+  migrations/20261115_testagram_native_auth_cutover_foundation.sql \
+  migrations/20261116_native_approved_identity_provisioning.sql \
+  migrations/20261116_native_auth_runtime_grants.sql \
+  migrations/20261117_native_staff_reviewer_grants.sql \
+  migrations/20261118_native_admin_console.sql \
+  migrations/20261119_native_identity_approval_ledger.sql \
+  migrations/20261120_native_verification_decider.sql \
+  migrations/20261122_testagram_mail_outbox.sql \
+  migrations/20261123_testagram_mail_outbox_runtime_role.sql \
+  migrations/20261120_native_identity_historical_account_archive.sql \
+  migrations/20261120_native_identity_historical_staff_archive.sql \
+  migrations/20261120_native_identity_historical_admin_archive.sql \
+  migrations/20261120_native_identity_historical_attribution_archive.sql \
+  migrations/20261120_native_identity_approval_circuit.sql \
+  migrations/20261121_native_identity_intake_optional_fingerprint.sql \
+  migrations/20261121_native_staff_webauthn.sql \
+  migrations/061_native_sensitive_action_integrity.sql \
+  migrations/20261124_testagram_email_verification_otp.sql \
+  migrations/20261124_testagram_social_email_consent.sql \
+  migrations/20261125_testagram_mail_delivery_events.sql; do
+  psql_ci < "$migration"
+done
 
 psql_ci <<'SQL'
 DO $retirement_acceptance$

@@ -394,6 +394,48 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             self.assertNotRegex(source, r"'testagram_auth\.historical_external_[^']+'::regclass")
             self.assertIn("REVOKE ALL ON TABLE %s FROM PUBLIC", source)
 
+    def test_legacy_identity_migrations_replay_after_provider_ledgers_are_archived(self):
+        pipeline = (ROOT / "migrations" / "20261111_identity_registration_pipeline.sql").read_text(encoding="utf-8")
+        hardening = (ROOT / "migrations" / "20261113_identity_registration_hardening.sql").read_text(encoding="utf-8")
+        integrity = (ROOT / "migrations" / "20261114_native_identity_integrity.sql").read_text(encoding="utf-8")
+        evidence_audit = (ROOT / "migrations" / "20261115_identity_evidence_access_audit.sql").read_text(encoding="utf-8")
+        native_admin = (ROOT / "migrations" / "20261118_native_admin_console.sql").read_text(encoding="utf-8")
+        native_ledger = (ROOT / "migrations" / "20261119_native_identity_approval_ledger.sql").read_text(encoding="utf-8")
+        admin_archive = (ROOT / "migrations" / "20261120_native_identity_historical_admin_archive.sql").read_text(encoding="utf-8")
+        attribution_archive = (ROOT / "migrations" / "20261120_native_identity_historical_attribution_archive.sql").read_text(encoding="utf-8")
+        integration = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+
+        self.assertIn("historical_external_registration_provisioning", pipeline)
+        self.assertIn("to_regclass('testagram_identity.registration_provisioning') IS NOT NULL", pipeline)
+        self.assertIn("historical_external_sensitive_action_request_id", hardening)
+        self.assertIn("to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL", hardening)
+        self.assertIn("to_regclass('testagram_auth.staff_roles') IS NOT NULL", hardening)
+        self.assertIn("to_regclass('testagram_identity.registration_provisioning') IS NOT NULL", hardening)
+        self.assertIn("DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval", hardening)
+        self.assertIn("to_regclass('testagram_auth.staff_roles') IS NOT NULL", integrity)
+        self.assertIn("reviewer_appwrite_user_id", integrity)
+        self.assertIn("'evidence_access_attempted','account_provisioned','email_verified'", evidence_audit)
+        self.assertIn("to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL", native_ledger)
+        self.assertIn("to_regclass('testagram_auth.admin_security_audit') IS NOT NULL", native_ledger)
+        self.assertIn("reviewer_appwrite_user_id", native_admin)
+        self.assertIn("DO $legacy_reviewer_columns$", native_admin)
+        self.assertIn("DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval", admin_archive)
+
+        replay_marker = integration.index("# Match the complete production runner manifest")
+        replay_commands = (
+            'migrations/20261111_identity_registration_pipeline.sql',
+            'migrations/20261113_identity_registration_hardening.sql',
+            'migrations/20261114_native_identity_integrity.sql',
+            'migrations/20261118_native_admin_console.sql',
+            'migrations/20261119_native_identity_approval_ledger.sql',
+            'migrations/20261120_native_identity_historical_admin_archive.sql',
+            'migrations/20261120_native_identity_historical_attribution_archive.sql',
+            'migrations/20261120_native_identity_approval_circuit.sql',
+        )
+        positions = [integration.index(command, replay_marker) for command in replay_commands]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("DO $retirement_acceptance$", integration)
+
     def test_schema_ready_reuses_validated_named_diagnostics(self):
         self.assertIn("failed_checks=\"$(schema_diagnostics)\"", SOURCE)
         self.assertIn("psql -X -v ON_ERROR_STOP=1", SOURCE)

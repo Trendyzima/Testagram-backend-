@@ -10,7 +10,8 @@ ALTER TABLE testagram_identity.verification_events
   CHECK (event_type IN (
     'session_created','session_started','evidence_submitted','review_requested',
     'decision_verified','decision_failed','decision_escalated','session_expired',
-    'session_cancelled','evidence_access_attempted'
+    'session_cancelled','evidence_access_attempted','account_provisioned','email_verified',
+    'account_provisioned','email_verified'
   ));
 
 COMMENT ON COLUMN testagram_identity.verification_events.event_type IS

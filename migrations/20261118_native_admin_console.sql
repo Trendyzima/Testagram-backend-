@@ -7,16 +7,37 @@ BEGIN;
 -- Keep historical provider columns nullable for audit/reconciliation only.
 ALTER TABLE testagram_identity.identity_application_reviews
   ADD COLUMN IF NOT EXISTS reviewer_user_id UUID REFERENCES testagram_auth.staff_principals(user_id);
-ALTER TABLE testagram_identity.identity_application_reviews
-  ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL;
+ALTER TABLE testagram_identity.verification_reviews
+  ADD COLUMN IF NOT EXISTS reviewer_user_id UUID REFERENCES testagram_auth.staff_principals(user_id);
+
+-- Historical provider columns are nullable while they exist, but the archive
+-- migration later renames them. Do not expect or recreate them on replay.
+DO $legacy_reviewer_columns$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_application_reviews'
+      AND column_name='reviewer_appwrite_user_id'
+  ) THEN
+    ALTER TABLE testagram_identity.identity_application_reviews
+      ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='verification_reviews'
+      AND column_name='reviewer_appwrite_user_id'
+  ) THEN
+    ALTER TABLE testagram_identity.verification_reviews
+      ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL;
+  END IF;
+END;
+$legacy_reviewer_columns$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS identity_application_reviews_native_reviewer_uidx
   ON testagram_identity.identity_application_reviews(application_id,reviewer_user_id)
   WHERE reviewer_user_id IS NOT NULL;
-
-ALTER TABLE testagram_identity.verification_reviews
-  ADD COLUMN IF NOT EXISTS reviewer_user_id UUID REFERENCES testagram_auth.staff_principals(user_id);
-ALTER TABLE testagram_identity.verification_reviews
-  ALTER COLUMN reviewer_appwrite_user_id DROP NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS verification_reviews_native_reviewer_uidx
   ON testagram_identity.verification_reviews(session_id,reviewer_user_id)
   WHERE reviewer_user_id IS NOT NULL;

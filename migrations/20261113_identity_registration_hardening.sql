@@ -7,10 +7,26 @@ BEGIN;
 -- key with SHA-256 and never persist the raw key.
 ALTER TABLE testagram_identity.identity_applications
   ADD COLUMN IF NOT EXISTS submission_key_sha256 BYTEA,
-  ADD COLUMN IF NOT EXISTS sensitive_action_request_id UUID,
   ADD COLUMN IF NOT EXISTS adult_verification_provider TEXT,
   ADD COLUMN IF NOT EXISTS adult_verification_reference TEXT,
   ADD COLUMN IF NOT EXISTS adult_verification_checked_at TIMESTAMPTZ;
+
+-- The provider-keyed approval link is retained only as historical attribution.
+-- Once the archive migration has renamed it, never recreate the live legacy
+-- column on a later production migration replay.
+DO $legacy_request_column$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_applications'
+      AND column_name='historical_external_sensitive_action_request_id'
+  ) THEN
+    ALTER TABLE testagram_identity.identity_applications
+      ADD COLUMN IF NOT EXISTS sensitive_action_request_id UUID;
+  END IF;
+END;
+$legacy_request_column$;
 
 DO $preflight$
 BEGIN
@@ -80,11 +96,20 @@ $adult_check$;
 -- match the immutable application snapshot at approval time.
 DO $approval_fk$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_applications_sensitive_action_request_fk'
-      AND conrelid = 'testagram_identity.identity_applications'::regclass
-  ) THEN
+  -- This FK belongs only to the historical provider-keyed approval ledger.
+  -- The native UUID approval link is installed by the later native migration.
+  IF to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_applications'
+         AND column_name='sensitive_action_request_id'
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname = 'identity_applications_sensitive_action_request_fk'
+         AND conrelid = 'testagram_identity.identity_applications'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.identity_applications
       ADD CONSTRAINT identity_applications_sensitive_action_request_fk
       FOREIGN KEY (sensitive_action_request_id)
@@ -94,19 +119,39 @@ BEGIN
 END;
 $approval_fk$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS identity_applications_sensitive_action_request_idx
-  ON testagram_identity.identity_applications(sensitive_action_request_id)
-  WHERE sensitive_action_request_id IS NOT NULL;
+DO $legacy_request_index$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_applications'
+      AND column_name='sensitive_action_request_id'
+  ) THEN
+    EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS identity_applications_sensitive_action_request_idx
+      ON testagram_identity.identity_applications(sensitive_action_request_id)
+      WHERE sensitive_action_request_id IS NOT NULL';
+  END IF;
+END;
+$legacy_request_index$;
 
 -- Enforce that new reviewer and approver identities correspond to provisioned
 -- staff records. NOT VALID preserves legacy rows while enforcing new writes.
 DO $reviewer_fks$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_application_reviews_reviewer_staff_fk'
-      AND conrelid = 'testagram_identity.identity_application_reviews'::regclass
-  ) THEN
+  -- Provider-keyed reviewer foreign keys are retained only when their source
+  -- staff table and source-attribution columns still exist.
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_application_reviews'
+         AND column_name='reviewer_appwrite_user_id'
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='identity_application_reviews_reviewer_staff_fk'
+         AND conrelid='testagram_identity.identity_application_reviews'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.identity_application_reviews
       ADD CONSTRAINT identity_application_reviews_reviewer_staff_fk
       FOREIGN KEY (reviewer_appwrite_user_id)
@@ -114,11 +159,18 @@ BEGIN
       ON DELETE RESTRICT NOT VALID;
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_approval_tokens_first_approver_staff_fk'
-      AND conrelid = 'testagram_identity.identity_approval_tokens'::regclass
-  ) THEN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_approval_tokens'
+         AND column_name='first_approver_appwrite_user_id'
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='identity_approval_tokens_first_approver_staff_fk'
+         AND conrelid='testagram_identity.identity_approval_tokens'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.identity_approval_tokens
       ADD CONSTRAINT identity_approval_tokens_first_approver_staff_fk
       FOREIGN KEY (first_approver_appwrite_user_id)
@@ -126,11 +178,18 @@ BEGIN
       ON DELETE RESTRICT NOT VALID;
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'identity_approval_tokens_second_approver_staff_fk'
-      AND conrelid = 'testagram_identity.identity_approval_tokens'::regclass
-  ) THEN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_approval_tokens'
+         AND column_name='second_approver_appwrite_user_id'
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='identity_approval_tokens_second_approver_staff_fk'
+         AND conrelid='testagram_identity.identity_approval_tokens'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.identity_approval_tokens
       ADD CONSTRAINT identity_approval_tokens_second_approver_staff_fk
       FOREIGN KEY (second_approver_appwrite_user_id)
@@ -246,48 +305,77 @@ BEGIN
 END;
 $function$;
 
+-- Do not reattach the provider-keyed approval trigger after its source
+-- ledger has been archived. The native approval workflow has independent
+-- UUID-backed constraints and triggers.
 DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval
   ON testagram_identity.identity_approval_tokens;
-
-CREATE TRIGGER identity_approval_token_requires_two_person_approval
-BEFORE INSERT ON testagram_identity.identity_approval_tokens
-FOR EACH ROW EXECUTE FUNCTION testagram_identity.assert_two_person_identity_approval();
-
--- Durable worker leases and reconciliation metadata. External Appwrite calls
--- cannot be part of a PostgreSQL transaction, so ambiguous outcomes must be
--- recoverable and observable rather than treated as exactly-once operations.
-ALTER TABLE testagram_identity.registration_provisioning
-  ADD COLUMN IF NOT EXISTS lease_owner TEXT,
-  ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS last_error_class TEXT NOT NULL DEFAULT ''
-    CHECK (length(last_error_class) <= 64);
-
-DO $lease_check$
+DO $legacy_approval_trigger$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'registration_provisioning_lease_pair_check'
-      AND conrelid = 'testagram_identity.registration_provisioning'::regclass
-  ) THEN
-    ALTER TABLE testagram_identity.registration_provisioning
-      ADD CONSTRAINT registration_provisioning_lease_pair_check
-      CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)) NOT VALID;
+  IF to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     AND to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
+     AND to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_approval_tokens'
+         AND column_name='first_approver_appwrite_user_id'
+     ) THEN
+    EXECUTE 'CREATE TRIGGER identity_approval_token_requires_two_person_approval
+      BEFORE INSERT ON testagram_identity.identity_approval_tokens
+      FOR EACH ROW EXECUTE FUNCTION testagram_identity.assert_two_person_identity_approval()';
   END IF;
 END;
-$lease_check$;
+$legacy_approval_trigger$;
 
-CREATE INDEX IF NOT EXISTS registration_provisioning_worker_idx
-  ON testagram_identity.registration_provisioning(next_attempt_at, created_at)
-  WHERE status IN ('pending','appwrite_created','linked','verification_sent')
-    AND reconciliation_required = FALSE;
+-- Durable worker leases and reconciliation metadata belong to the
+-- provider-keyed provisioning saga. After the archive migration renames that
+-- table, keep its historical copy untouched and do not recreate the live name.
+DO $legacy_provisioning_leases$
+BEGIN
+  IF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL THEN
+    EXECUTE $ddl$
+      ALTER TABLE testagram_identity.registration_provisioning
+        ADD COLUMN IF NOT EXISTS lease_owner TEXT,
+        ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS last_error_class TEXT NOT NULL DEFAULT ''
+          CHECK (length(last_error_class) <= 64)
+    $ddl$;
 
-CREATE INDEX IF NOT EXISTS registration_provisioning_reconciliation_idx
-  ON testagram_identity.registration_provisioning(updated_at)
-  WHERE reconciliation_required = TRUE OR status = 'compensation_required';
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'registration_provisioning_lease_pair_check'
+        AND conrelid = 'testagram_identity.registration_provisioning'::regclass
+    ) THEN
+      EXECUTE $ddl$
+        ALTER TABLE testagram_identity.registration_provisioning
+          ADD CONSTRAINT registration_provisioning_lease_pair_check
+          CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)) NOT VALID
+      $ddl$;
+    END IF;
+
+    EXECUTE $ddl$
+      CREATE INDEX IF NOT EXISTS registration_provisioning_worker_idx
+        ON testagram_identity.registration_provisioning(next_attempt_at, created_at)
+        WHERE status IN ('pending','appwrite_created','linked','verification_sent')
+          AND reconciliation_required = FALSE
+    $ddl$;
+    EXECUTE $ddl$
+      CREATE INDEX IF NOT EXISTS registration_provisioning_reconciliation_idx
+        ON testagram_identity.registration_provisioning(updated_at)
+        WHERE reconciliation_required = TRUE OR status = 'compensation_required'
+    $ddl$;
+    EXECUTE $ddl$
+      COMMENT ON COLUMN testagram_identity.registration_provisioning.reconciliation_required IS
+        'True when an external Appwrite side effect has an ambiguous or incomplete outcome requiring operator/worker reconciliation.'
+    $ddl$;
+  END IF;
+END;
+$legacy_provisioning_leases$;
 
 -- Consent evidence is append-only. Retention/deletion, if legally required,
 -- must use a separate controlled process and must not rewrite acceptance data.
@@ -313,9 +401,20 @@ REVOKE UPDATE, DELETE, TRUNCATE
 
 COMMENT ON COLUMN testagram_identity.identity_applications.submission_key_sha256 IS
   'SHA-256 of the client idempotency key; raw key is never persisted.';
-COMMENT ON COLUMN testagram_identity.identity_applications.sensitive_action_request_id IS
-  'References the canonical two-person sensitive-action approval request for this application.';
-COMMENT ON COLUMN testagram_identity.registration_provisioning.reconciliation_required IS
-  'True when an external Appwrite side effect has an ambiguous or incomplete outcome requiring operator/worker reconciliation.';
+DO $legacy_request_comment$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='identity_applications'
+      AND column_name='sensitive_action_request_id'
+  ) THEN
+    EXECUTE $ddl$
+      COMMENT ON COLUMN testagram_identity.identity_applications.sensitive_action_request_id IS
+        'Historical provider-keyed approval request link; new identity approval uses native_sensitive_action_request_id.'
+    $ddl$;
+  END IF;
+END;
+$legacy_request_comment$;
 
 COMMIT;
