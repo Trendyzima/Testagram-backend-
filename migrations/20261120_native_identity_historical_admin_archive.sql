@@ -43,6 +43,12 @@ BEGIN
 END;
 $rename_tables$;
 
+-- The provider-keyed identity-approval trigger cannot remain attached after
+-- its source request/approval tables are moved into the historical namespace.
+-- Native approval enforcement is handled by native_sensitive_action_*.
+DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval
+  ON testagram_identity.identity_approval_tokens;
+
 DO $rename_columns$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='historical_external_staff_permission_overrides' AND column_name='appwrite_user_id') THEN
