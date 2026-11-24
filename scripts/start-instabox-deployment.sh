@@ -111,7 +111,7 @@ sudo docker info >/dev/null
 # A credential-free GET is intentionally used: it cannot send an email. Any
 # HTTP response proves DNS, TCP 443, TLS certificate verification, and HTTP routing.
 if mailjet_api_status="$(
-  printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nuser = "%s:%s"\n' \
+  printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nuser = "%s:%s"' \
     "$MAILJET_API_KEY" "$MAILJET_SECRET_KEY" |
     curl --config - --silent --show-error --output /dev/null --max-time 15 --write-out '%{http_code}'
 )"; then
