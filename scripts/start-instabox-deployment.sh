@@ -286,6 +286,9 @@ for key in TESTAGRAM_AUTH_JWT_SECRET MAILJET_SMTP_USERNAME MAILJET_SMTP_PASSWORD
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
+# Remove obsolete Cloudflare Email Sending credentials from the VPS environment.
+write_env_value CLOUDFLARE_EMAIL_ACCOUNT_ID ""
+write_env_value CLOUDFLARE_EMAIL_API_TOKEN ""
 write_env_value VIRTUAL_STORAGE_ENABLED true
 write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET testagram-identity-evidence-private
 write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
