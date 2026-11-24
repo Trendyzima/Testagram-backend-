@@ -105,7 +105,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("rawRecipient.slice(0, at)", worker)
         self.assertIn("rawRecipient.slice(at + 1).toLowerCase()", worker)
         self.assertIn("authentication-results", worker)
-        self.assertIn("mx\\\\.cloudflare", worker)
+        self.assertIn("mx\\.cloudflare", worker)
 
     def test_native_sender_has_no_external_mail_provider_requirement(self):
         smtp = (ROOT / "cmd/api/mail_smtp.go").read_text()
