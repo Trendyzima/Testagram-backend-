@@ -3,6 +3,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github/workflows/instabox-deploy.yml").read_text(encoding="utf-8")
+DEPLOY_SCRIPT = (ROOT / "scripts/start-instabox-deployment.sh").read_text(encoding="utf-8")
 
 
 class InstaBoxDeploymentPollingTests(unittest.TestCase):
@@ -19,6 +20,14 @@ class InstaBoxDeploymentPollingTests(unittest.TestCase):
         self.assertIn('has("exitCode")', step)
         self.assertIn("non-execution response", step)
         self.assertIn("Remote deployment failed. Review the machine deployment log.", step)
+
+    def test_env_writer_trims_surrounding_whitespace_before_sourcing(self):
+        start = DEPLOY_SCRIPT.index("write_env_value() {")
+        end = DEPLOY_SCRIPT.index("\n}", start) + 2
+        writer = DEPLOY_SCRIPT[start:end]
+        self.assertIn("tr -d '\\\\r\\\\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'", writer)
+        self.assertLess(writer.index("value=\"$(printf"), writer.index("escaped_value="))
+        self.assertIn("preserve internal characters", writer)
 
     def test_success_marker_is_still_required(self):
         step = WORKFLOW.split("- name: Wait for deployment and report logs", 1)[1].split("\n      - name:", 1)[0]
