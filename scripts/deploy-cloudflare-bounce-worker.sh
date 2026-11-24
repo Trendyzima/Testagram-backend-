@@ -48,7 +48,7 @@ fi
 mx_ready=false
 for attempt in $(seq 1 12); do
   mx_json="$(curl -fsS --connect-timeout 5 --max-time 10 -H 'accept: application/dns-json' --get --data-urlencode "name=$BOUNCE_DOMAIN" --data 'type=MX' https://cloudflare-dns.com/dns-query)" || mx_json='{}'
-  if jq -e '(.Status == 0) and ([.Answer[]? | select(.type == 15 and ((.data | ascii_downcase) | contains("mx.cloudflare.net")))] | length >= 3)' <<<"$mx_json" >/dev/null; then
+  if jq -e '(.Status == 0) and ([.Answer[]? | select(.type == 15)] as $mx | ($mx | length) >= 3 and all($mx[]; ((.data | ascii_downcase) | contains("mx.cloudflare.net"))))' <<<"$mx_json" >/dev/null; then
     mx_ready=true
     break
   fi
