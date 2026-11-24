@@ -69,6 +69,7 @@ One-time dashboard setup:
 
 Automated deployment:
 
+Wrangler runs inside the official Node 22 Bookworm-slim Docker image on InstaBox, so the host does not need Node.js/npm installed. Wrangler is pinned to `4.113.0`; the npm cache is persisted locally.
 - Before the API is started, InstaBox writes `TESTAGRAM_MAIL_DELIVERY_ENABLED=false` into its protected environment file. The outbox continues to queue messages but does not send them until the bounce Worker is ready.
 - `scripts/deploy-cloudflare-bounce-worker.sh` probes the public Testagram API
   endpoint and requires HTTP 401 plus `X-Testagram-Bounce-Endpoint: native-v1`, proving the request reached the actual Go handler.
