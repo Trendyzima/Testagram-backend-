@@ -242,16 +242,19 @@ write_env_value() {
 # Generate Testagram-owned DKIM material on the VPS. The private key never
 # enters GitHub Actions, the .env file, or a third-party mail provider.
 MAIL_KEY_DIR="$ROOT/mail-keys"
-mkdir -p "$MAIL_KEY_DIR"
-chmod 700 "$MAIL_KEY_DIR"
-if [[ ! -s "$MAIL_KEY_DIR/dkim-private.pem" ]]; then
-  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$MAIL_KEY_DIR/dkim-private.pem"
+sudo mkdir -p "$MAIL_KEY_DIR"
+sudo chmod 700 "$MAIL_KEY_DIR"
+if ! sudo test -s "$MAIL_KEY_DIR/dkim-private.pem"; then
+  sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$MAIL_KEY_DIR/dkim-private.pem"
 fi
-chmod 600 "$MAIL_KEY_DIR/dkim-private.pem"
+# The Go image runs as uid/gid 100; grant only that runtime identity access.
+sudo chown 100:100 "$MAIL_KEY_DIR" "$MAIL_KEY_DIR/dkim-private.pem"
+sudo chmod 700 "$MAIL_KEY_DIR"
+sudo chmod 600 "$MAIL_KEY_DIR/dkim-private.pem"
 write_env_value TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 write_env_value TESTAGRAM_DKIM_SELECTOR "tg2026"
 write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ":2525"
-DKIM_PUBLIC_KEY="$(openssl pkey -in "$MAIL_KEY_DIR/dkim-private.pem" -pubout -outform DER | base64 -w0)"
+DKIM_PUBLIC_KEY="$(sudo openssl pkey -in "$MAIL_KEY_DIR/dkim-private.pem" -pubout -outform DER | base64 -w0)"
 echo "Publish DKIM TXT at tg2026._domainkey.testagram.site: v=DKIM1; k=rsa; p=$DKIM_PUBLIC_KEY"
 # The edge proxy token must match the Cloudflare API Worker credential. Never
 # generate a replacement here: a mismatch would make the canonical API route fail closed.
