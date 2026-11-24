@@ -63,7 +63,7 @@ jobs:
           status="$(request GET "/user/tokens/verify" "$TMP/verify.json")"
           codes="$(error_codes "$TMP/verify.json")"
           token_state="$(jq -r '.result.status // "unknown"' "$TMP/verify.json" 2>/dev/null || echo unknown)"
-          echo "- Token verification: HTTP $status; state=$token_state; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Token verification: HTTP $status; state=$token_state; error_codes=$codes" | tee -a "$GITHUB_STEP_SUMMARY"
           if [[ "$status" != "200" || "$token_state" != "active" ]]; then
             echo "::error::Cloudflare token verification failed; see sanitized workflow summary."
             exit 1
@@ -75,32 +75,32 @@ jobs:
           status="$(request GET "/accounts/$account_id/email/sending/suppressions?per_page=1" "$TMP/email-access.json")"
           codes="$(error_codes "$TMP/email-access.json")"
           email_access_success="$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)"
-          echo "- Account Email Sending read-only probe: HTTP $status; API success=$email_access_success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Account Email Sending read-only probe: HTTP $status; API success=$email_access_success; error_codes=$codes" | tee -a "$GITHUB_STEP_SUMMARY"
 
           status="$(request GET "/zones?name=testagram.site&per_page=1" "$TMP/zone.json")"
           codes="$(error_codes "$TMP/zone.json")"
           zone_id="$(jq -r --arg account "$account_id" '.result[]? | select(.name == "testagram.site" and .account.id == $account and .status == "active") | .id' "$TMP/zone.json" 2>/dev/null | head -n1 || true)"
-          echo "- Active testagram.site zone lookup in configured account: HTTP $status; match=$([[ -n "$zone_id" ]] && echo yes || echo no); error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Active testagram.site zone lookup in configured account: HTTP $status; match=$([[ -n "$zone_id" ]] && echo yes || echo no); error_codes=$codes" | tee -a "$GITHUB_STEP_SUMMARY"
 
           if [[ -n "$zone_id" ]]; then
             status="$(request GET "/zones/$zone_id/email/sending/subdomains" "$TMP/sending-domains.json")"
             codes="$(error_codes "$TMP/sending-domains.json")"
             success="$(jq -r '.success // false' "$TMP/sending-domains.json" 2>/dev/null || echo false)"
-            echo "- Sending-domain inventory: HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Sending-domain inventory: HTTP $status; API success=$success; error_codes=$codes" | tee -a "$GITHUB_STEP_SUMMARY"
 
             if [[ "$status" == "200" && "$success" == "true" ]]; then
-              jq -r '.result[]? | "- Onboarded domain: " + (.name // "unknown") + "; sending_enabled=" + ((.enabled // false)|tostring)' "$TMP/sending-domains.json" >> "$GITHUB_STEP_SUMMARY"
+              jq -r '.result[]? | "- Onboarded domain: " + (.name // "unknown") + "; sending_enabled=" + ((.enabled // false)|tostring)' "$TMP/sending-domains.json" | tee -a "$GITHUB_STEP_SUMMARY"
               subdomain_tag="$(jq -r '.result[]? | select(.name == "testagram.site") | .tag' "$TMP/sending-domains.json" 2>/dev/null | head -n1 || true)"
               subdomain_enabled="$(jq -r '[.result[]? | select(.name == "testagram.site" and .enabled == true)] | length' "$TMP/sending-domains.json" 2>/dev/null || echo 0)"
 
               if [[ -z "$subdomain_tag" ]]; then
-                echo "- Exact sender-domain onboarding: testagram.site NOT FOUND." >> "$GITHUB_STEP_SUMMARY"
+                echo "- Exact sender-domain onboarding: testagram.site NOT FOUND." | tee -a "$GITHUB_STEP_SUMMARY"
                 echo "::warning::The exact testagram.site sender domain is not present; wildcard entries are not treated as apex-domain matches."
               elif [[ "$subdomain_enabled" != "1" ]]; then
-                echo "- Exact sender-domain onboarding: present but sending DISABLED." >> "$GITHUB_STEP_SUMMARY"
+                echo "- Exact sender-domain onboarding: present but sending DISABLED." | tee -a "$GITHUB_STEP_SUMMARY"
                 echo "::warning::Email Sending is disabled for testagram.site."
               else
-                echo "- Exact sender-domain onboarding: present and sending enabled." >> "$GITHUB_STEP_SUMMARY"
+                echo "- Exact sender-domain onboarding: present and sending enabled." | tee -a "$GITHUB_STEP_SUMMARY"
                 dns_status="$(request GET "/zones/$zone_id/email/sending/subdomains/$subdomain_tag/dns" "$TMP/sending-dns.json")"
                 dns_codes="$(error_codes "$TMP/sending-dns.json")"
                 dns_success="$(jq -r '.success // false' "$TMP/sending-dns.json" 2>/dev/null || echo false)"
@@ -115,7 +115,7 @@ jobs:
                       resolved_count=$((resolved_count+1))
                     fi
                   done <<< "$expected_dns"
-                  echo "- Sender DNS inventory: HTTP $dns_status; expected_records=$expected_count; records_resolving_via_1.1.1.1=$resolved_count; error_codes=$dns_codes" >> "$GITHUB_STEP_SUMMARY"
+                  echo "- Sender DNS inventory: HTTP $dns_status; expected_records=$expected_count; records_resolving_via_1.1.1.1=$resolved_count; error_codes=$dns_codes" | tee -a "$GITHUB_STEP_SUMMARY"
                   if [[ "$expected_count" -gt 0 && "$resolved_count" -eq "$expected_count" ]]; then
                     echo "- Sender DNS propagation: all expected record names returned answers." >> "$GITHUB_STEP_SUMMARY"
                   else
