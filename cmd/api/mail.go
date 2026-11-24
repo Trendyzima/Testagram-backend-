@@ -1,21 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	htmlstd "html"
-	"io"
 	"log"
-	"net/http"
 	"net/mail"
 	"net/url"
 	"os"
@@ -76,21 +72,6 @@ func mailPlainTextFromHTML(value string) string {
 	).Replace(value)
 	value = mailHTMLTagPattern.ReplaceAllString(value, "")
 	return strings.TrimSpace(htmlstd.UnescapeString(value))
-}
-
-type cloudflareMailResponse struct {
-	Success bool `json:"success"`
-	Errors  []struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	} `json:"errors"`
-	Result struct {
-		MessageID        string   `json:"message_id"`
-		Delivered        []string `json:"delivered"`
-		Queued           []string `json:"queued"`
-		PermanentBounces []string `json:"permanent_bounces"`
-		Suppressed       []string `json:"suppressed_recipients"`
-	} `json:"result"`
 }
 
 func mailRuntimeConfigurationError() error {
@@ -237,94 +218,6 @@ func createSocialUnsubscribeToken(ctx context.Context, executor mailQueueExecuto
 
 func (s *service) enqueueAuthEmail(ctx context.Context, recipient, subject, html string) error {
 	return enqueueAuthEmailWith(ctx, s.db, recipient, subject, html)
-}
-
-func (s *service) sendCloudflareMail(ctx context.Context, message queuedMail) (string, error) {
-	accountID := strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_ACCOUNT_ID"))
-	apiToken := strings.TrimSpace(os.Getenv("CLOUDFLARE_EMAIL_API_TOKEN"))
-	from := strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL"))
-	if accountID == "" || apiToken == "" || from == "" {
-		return "", errors.New("Cloudflare Email Sending is not configured")
-	}
-	if _, err := mail.ParseAddress(from); err != nil {
-		return "", errors.New("AUTH_FROM_EMAIL is invalid")
-	}
-	decoded, decodeErr := hex.DecodeString(accountID)
-	if decodeErr != nil || len(decoded) != 16 {
-		return "", errors.New("CLOUDFLARE_EMAIL_ACCOUNT_ID must be a 32-character hexadecimal account ID")
-	}
-	endpoint := "https://api.cloudflare.com/client/v4/accounts/" + accountID + "/email/sending/send"
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	return sendCloudflareMailRequest(ctx, client, endpoint, apiToken, from, message)
-}
-
-func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoint, apiToken, from string, message queuedMail) (string, error) {
-	if client == nil {
-		return "", errors.New("Cloudflare Email Sending HTTP client unavailable")
-	}
-	payload := map[string]any{
-		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
-	}
-	if len(message.Headers) > 0 {
-		payload["headers"] = message.Headers
-	}
-	if strings.TrimSpace(message.Text) != "" {
-		payload["text"] = message.Text
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiToken)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", ambiguousMailError{cause: err}
-	}
-	defer resp.Body.Close()
-	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	if readErr != nil {
-		return "", ambiguousMailError{cause: readErr}
-	}
-	var result cloudflareMailResponse
-	if err := json.Unmarshal(data, &result); err != nil {
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 || resp.StatusCode >= 500 {
-			return "", ambiguousMailError{cause: fmt.Errorf("unreadable provider response (HTTP %d)", resp.StatusCode)}
-		}
-		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
-			return "", fmt.Errorf("Cloudflare Email Sending temporarily rejected an unreadable request (HTTP %d)", resp.StatusCode)
-		}
-		return "", permanentMailError{code: "MAIL_PROVIDER_REJECTED"}
-	}
-	if resp.StatusCode >= 500 {
-		return "", ambiguousMailError{cause: fmt.Errorf("provider server error (HTTP %d)", resp.StatusCode)}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !result.Success {
-		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooEarly || resp.StatusCode == http.StatusTooManyRequests {
-			return "", fmt.Errorf("Cloudflare Email Sending temporarily rejected the request (HTTP %d)", resp.StatusCode)
-		}
-		return "", permanentMailError{code: "CLOUDFLARE_REQUEST_REJECTED"}
-	}
-	if strings.TrimSpace(result.Result.MessageID) == "" {
-		return "", ambiguousMailError{cause: errors.New("provider accepted the request without returning a message ID")}
-	}
-	if len(result.Result.PermanentBounces) > 0 || len(result.Result.Suppressed) > 0 {
-		return result.Result.MessageID, permanentMailError{code: "CLOUDFLARE_PERMANENT_RECIPIENT_FAILURE"}
-	}
-	if len(result.Result.Delivered) == 0 && len(result.Result.Queued) == 0 {
-		return result.Result.MessageID, ambiguousMailError{cause: errors.New("provider returned no recipient outcome")}
-	}
-	return result.Result.MessageID, nil
 }
 
 func (s *service) runMailOutboxWorker(ctx context.Context) {
