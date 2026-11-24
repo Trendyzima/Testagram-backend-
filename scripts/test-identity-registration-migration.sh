@@ -1008,6 +1008,39 @@ BEGIN
      OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','SELECT') THEN
     RAISE EXCEPTION 'corrective migration did not restore the exact mail outbox grants';
   END IF;
+
+  IF to_regclass('testagram_mail.return_path_tokens') IS NULL
+     OR to_regclass('testagram_mail.inbound_reports') IS NULL THEN
+    RAISE EXCEPTION 'native mail feedback migration did not create its required ledgers';
+  END IF;
+  IF NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','UPDATE')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','DELETE')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','DELETE') THEN
+    RAISE EXCEPTION 'native mail feedback runtime grants are incomplete';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_mail.delivery_events'::regclass
+      AND conname='testagram_mail_delivery_events_event_type_check'
+      AND pg_get_constraintdef(oid) LIKE '%dsn.delivered%'
+  ) THEN
+    RAISE EXCEPTION 'native mail delivery event types were not enabled';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_mail' AND table_name='delivery_events'
+      AND column_name='transport'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_mail' AND table_name='delivery_events'
+      AND column_name='report_sha256'
+  ) THEN
+    RAISE EXCEPTION 'provider-neutral native mail event metadata is missing';
+  END IF;
 END;
 $mail_role_repair$;
 SQL
