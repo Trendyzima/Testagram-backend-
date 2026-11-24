@@ -90,9 +90,17 @@ func mailRuntimeConfigurationError() error {
 	if err != nil {
 		return errors.New("native DKIM private key file is unavailable")
 	}
+	if !info.Mode().IsRegular() {
+		return errors.New("native DKIM private key path must be a regular file")
+	}
 	if info.Mode().Perm()&0077 != 0 {
 		return errors.New("native DKIM private key permissions must not allow group or other access")
 	}
+	file, err := os.Open(keyPath)
+	if err != nil {
+		return errors.New("native DKIM private key file is not readable")
+	}
+	_ = file.Close()
 	return nil
 }
 
