@@ -9,12 +9,13 @@ addresses at `bounces.testagram.site`.
 
 ## Hosting compatibility — production blocker
 
-**The current InstaBox machine is not a suitable direct-MX mail host.** Its
+**The current InstaBox published-port service is not suitable for direct-MX SMTP.** Its
 public-port gateway publishes web URLs and raw TCP ports only in the range
 1024–65535; it does not publish inbound TCP/25 or give this machine a dedicated
-public SMTP IPv4 address. An outbound HTTP-observed address must not be treated
-as an inbound mail-server address: it may be shared NAT egress. InstaBox machines
-can also auto-pause, which is unsuitable for an always-on MX/feedback listener.
+documented dedicated public SMTP IPv4/PTR identity. An outbound HTTP-observed
+address does not prove that inbound SMTP is routed to this machine and may be
+shared NAT egress. InstaBox machines can auto-pause by default; that behavior
+would also have to be disabled for a persistent mail service.
 
 The current native sender and feedback receiver are part of the Testagram backend
 process. Therefore either move that backend runtime onto a dedicated VPS, or
