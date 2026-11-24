@@ -1019,7 +1019,9 @@ BEGIN
      OR NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','DELETE')
      OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','SELECT')
      OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','INSERT')
-     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','DELETE') THEN
+     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','DELETE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.inbound_reports_id_seq','USAGE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.inbound_reports_id_seq','SELECT') THEN
     RAISE EXCEPTION 'native mail feedback runtime grants are incomplete';
   END IF;
   IF NOT EXISTS (
