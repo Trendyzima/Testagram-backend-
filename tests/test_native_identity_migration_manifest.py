@@ -394,6 +394,31 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             self.assertNotRegex(source, r"'testagram_auth\.historical_external_[^']+'::regclass")
             self.assertIn("REVOKE ALL ON TABLE %s FROM PUBLIC", source)
 
+    def test_legacy_identity_migrations_replay_after_provider_ledgers_are_archived(self):
+        hardening = (ROOT / "migrations" / "20261113_identity_registration_hardening.sql").read_text(encoding="utf-8")
+        native_ledger = (ROOT / "migrations" / "20261119_native_identity_approval_ledger.sql").read_text(encoding="utf-8")
+        admin_archive = (ROOT / "migrations" / "20261120_native_identity_historical_admin_archive.sql").read_text(encoding="utf-8")
+        attribution_archive = (ROOT / "migrations" / "20261120_native_identity_historical_attribution_archive.sql").read_text(encoding="utf-8")
+        integration = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+
+        self.assertIn("historical_external_sensitive_action_request_id", hardening)
+        self.assertIn("to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL", hardening)
+        self.assertIn("to_regclass('testagram_auth.staff_roles') IS NOT NULL", hardening)
+        self.assertIn("DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval", hardening)
+        self.assertIn("to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL", native_ledger)
+        self.assertIn("to_regclass('testagram_auth.admin_security_audit') IS NOT NULL", native_ledger)
+        self.assertIn("DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval", admin_archive)
+
+        replay = (
+            "psql_ci < migrations/20261113_identity_registration_hardening.sql",
+            "psql_ci < migrations/20261119_native_identity_approval_ledger.sql",
+            "psql_ci < migrations/20261120_native_identity_historical_admin_archive.sql",
+            "psql_ci < migrations/20261120_native_identity_historical_attribution_archive.sql",
+        )
+        positions = [integration.index(command, integration.index("# Match the production runner's replay order")) for command in replay]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("DO $retirement_acceptance$", integration)
+
     def test_schema_ready_reuses_validated_named_diagnostics(self):
         self.assertIn("failed_checks=\"$(schema_diagnostics)\"", SOURCE)
         self.assertIn("psql -X -v ON_ERROR_STOP=1", SOURCE)
