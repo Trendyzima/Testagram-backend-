@@ -59,6 +59,19 @@ if [[ "$mx_ready" != true ]]; then
   exit 1
 fi
 
+# Refuse to take over or shadow any pre-existing routing rule on this
+# subdomain. In particular, explicit plus-address rules take precedence
+# over the base address when subaddressing is enabled.
+existing_rules_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/existing-rules.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing/rules" -H "$auth_header")"
+if [[ "$existing_rules_status" != 200 ]] || ! jq -e '.success == true' "$tmp/existing-rules.json" >/dev/null; then
+  echo "::error::Could not inspect existing Email Routing rules before Worker deployment."
+  exit 1
+fi
+if jq -e --arg suffix "@$BOUNCE_DOMAIN" '[.result[]? | select(any(.matchers[]?; .type == "literal" and ((.value | ascii_downcase) | endswith($suffix))))] | length > 0' "$tmp/existing-rules.json" >/dev/null; then
+  echo "::error::A routing rule already exists on $BOUNCE_DOMAIN. Review it and remove or migrate it explicitly before Wrangler takes ownership."
+  exit 1
+fi
+
 export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
 cd "$WORKER_DIR"
 npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler.toml
