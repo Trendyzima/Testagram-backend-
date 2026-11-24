@@ -115,16 +115,17 @@ printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=w
 # Verify that the temporary workers.dev endpoint is disabled after the probe.
 script_subdomain_url="$API_BASE/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/testagram-bounce-ingress/subdomain"
 script_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/script-subdomain.json" -w '%{http_code}' "$script_subdomain_url" -H "$auth_header")"
-if [[ "$script_subdomain_status" == 200 ]] && jq -e '.success == true and .result.enabled == true' "$tmp/script-subdomain.json" >/dev/null; then
-  delete_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/delete-subdomain.json" -w '%{http_code}' -X DELETE "$script_subdomain_url" -H "$auth_header")"
-  if [[ "$delete_subdomain_status" != 200 ]] || ! jq -e '.success == true' "$tmp/delete-subdomain.json" >/dev/null; then
-    echo "::error::Could not remove the temporary workers.dev health endpoint."
+if [[ "$script_subdomain_status" == 200 ]] && jq -e '.success == true and (.result.enabled == true or .result.previews_enabled == true)' "$tmp/script-subdomain.json" >/dev/null; then
+  disable_subdomain_payload="$(jq -nc '{enabled:false,previews_enabled:false}')"
+  disable_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/disable-subdomain.json" -w '%{http_code}' -X POST "$script_subdomain_url" -H "$auth_header" -H 'Content-Type: application/json' --data "$disable_subdomain_payload")"
+  if [[ "$disable_subdomain_status" != 200 ]] || ! jq -e '.success == true and .result.enabled == false and .result.previews_enabled == false' "$tmp/disable-subdomain.json" >/dev/null; then
+    echo "::error::Could not disable the temporary workers.dev and preview URLs."
     exit 1
   fi
 fi
 script_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/script-subdomain.json" -w '%{http_code}' "$script_subdomain_url" -H "$auth_header")"
-if [[ "$script_subdomain_status" != 200 ]] || ! jq -e '.success == true and .result.enabled == false' "$tmp/script-subdomain.json" >/dev/null; then
-  echo "::error::The temporary workers.dev health endpoint remains enabled after cleanup."
+if [[ "$script_subdomain_status" != 200 ]] || ! jq -e '.success == true and .result.enabled == false and .result.previews_enabled == false' "$tmp/script-subdomain.json" >/dev/null; then
+  echo "::error::The temporary workers.dev or preview URL remains enabled after cleanup."
   exit 1
 fi
 
