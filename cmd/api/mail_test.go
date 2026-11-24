@@ -70,4 +70,3 @@ func TestMailCipherRejectsMissingOrWeakKey(t *testing.T) {
 		})
 	}
 }
-
