@@ -62,13 +62,14 @@ The DNS token is separate from the Worker token. Use the existing
 One-time dashboard setup:
 
 1. Open `testagram.site` in Cloudflare.
-2. Go to Compute → Email Service → Email Routing → Settings → Subdomains.
+2. Go to Email → Email Routing → Settings → Subdomains.
 3. Add `bounces.testagram.site`. Cloudflare provisions its MX, SPF and routing
    DKIM records. Do not enable Email Routing on the apex as part of this
    change and do not alter apex MX records.
 
 Automated deployment:
 
+- Before the API is started, InstaBox writes `TESTAGRAM_MAIL_DELIVERY_ENABLED=false` into its protected environment file. The outbox continues to queue messages but does not send them until the bounce Worker is ready.
 - `scripts/deploy-cloudflare-bounce-worker.sh` probes the public Testagram API
   endpoint and requires HTTP 401 plus `X-Testagram-Bounce-Endpoint: native-v1`, proving the request reached the actual Go handler.
 - It verifies `support_subaddress=true` through the Cloudflare Email Routing
