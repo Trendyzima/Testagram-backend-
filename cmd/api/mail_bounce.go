@@ -85,6 +85,8 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 				report.EventType = "dsn.delayed"
 			case "failed":
 				report.EventType = "dsn.bounced"
+			case "delivered":
+				report.EventType = "dsn.delivered"
 			}
 		case "message/feedback-report":
 			data, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
@@ -106,7 +108,7 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 	}
 
 	if report.Recipient == "" ||
-		(report.EventType != "dsn.delayed" && report.EventType != "dsn.bounced" && report.EventType != "arf.complaint") {
+		(report.EventType != "dsn.delayed" && report.EventType != "dsn.bounced" && report.EventType != "dsn.delivered" && report.EventType != "arf.complaint") {
 		return nativeBounceReport{}, errors.New("report lacks a supported action and recipient")
 	}
 	if report.Status != "" && !enhancedStatusCodePattern.MatchString(report.Status) {
@@ -231,6 +233,8 @@ func processNativeBounceReport(ctx context.Context, db *pgxpool.Pool, tokenHash,
 	}
 
 	switch report.EventType {
+	case "dsn.delivered":
+		_, err = tx.Exec(ctx, `UPDATE testagram_mail.outbox SET delivery_status='delivered',delivered_at=COALESCE(delivered_at,now()) WHERE id=$1`, outboxID)
 	case "dsn.delayed":
 		_, err = tx.Exec(ctx, `
 			UPDATE testagram_mail.outbox SET delivery_status='deferred' WHERE id=$1
