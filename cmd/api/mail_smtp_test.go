@@ -23,8 +23,8 @@ func TestBuildSMTPMessageIncludesAlternativeBodiesAndUnsubscribeHeaders(t *testi
 	}
 	got := string(raw)
 	for _, expected := range []string{
-		"From: no-reply@testagram.site",
-		"To: person@example.test",
+		"From: <no-reply@testagram.site>",
+		"To: <person@example.test>",
 		"Subject: ",
 		"Message-ID: <testagram-123@testagram.site>",
 		"X-MJ-CustomID: testagram-123@testagram.site",
