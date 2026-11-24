@@ -24,6 +24,7 @@ class NativeMailDNSAPITest(unittest.TestCase):
 
     def test_only_reconciles_dedicated_mail_records(self):
         source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("LEGACY DEDICATED-HOST RECONCILER ONLY", source)
         for name in ("mail.testagram.site", "bounces.testagram.site",
                      "tg2026._domainkey.testagram.site", "_dmarc.testagram.site"):
             self.assertIn(name, source)
