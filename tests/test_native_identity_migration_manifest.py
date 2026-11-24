@@ -320,7 +320,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
 
     def test_schema_preflight_checks_optional_intake_fingerprint(self):
         self.assertIn("column_name='evidence_fingerprint_sha256'", SOURCE)
-        self.assertIn("is_nullable='\\''YES'\\''", SOURCE)
+        self.assertIn("is_nullable='YES'", SOURCE)
         self.assertIn("identity_approval_token_requires_verified_evidence", SOURCE)
 
     def test_schema_preflight_matches_archived_external_and_native_approval_schema(self):
