@@ -4,7 +4,7 @@
 
 The Flutter client authenticates directly with the Testagram Backend. The Backend owns password verification, canonical account state, short-lived access JWTs, PostgreSQL-backed sessions, rotating refresh credentials, and server-side revocation. Flutter stores only the refresh credential in platform secure storage; access JWTs remain in memory and are refreshed through the shared session manager.
 
-New account intake is separate from sign-in. Public registration remains fail-closed until the identity application, private evidence storage, manual review, independent two-person approval, provisioning, and email verification have completed. The legacy direct-signup endpoint remains disabled. No external identity-provider runtime or fallback is permitted.
+Ordinary public signup is a separate native email/password flow at `/api/auth/signup`. It creates an unverified native account and queues a single-use email OTP and verification link; successful email verification activates the account. This flow does not require an identity application, private identity-evidence storage, staff WebAuthn, manual review, or two-person approval. It remains fail-closed only on its own native-auth prerequisites: valid input, configured native auth secret, PostgreSQL availability, rate-limit storage, password policy, and transactional email delivery. The separate sensitive identity-evidence application and staff-review workflow retains its private-storage, reviewer, WebAuthn and two-person-approval safeguards. `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED` gates that identity-review workflow only; it must never gate ordinary `/api/auth/signup`, `/api/auth/resend-verification`, or `/api/auth/verify-email`. No external identity-provider runtime or fallback is permitted.
 
 ## Automated checks
 
@@ -39,4 +39,4 @@ The Backend checks PostgreSQL staff roles and active verified credentials, then 
 
 ## Production boundary
 
-A green CI run or staging smoke does not enable public registration, grant staff access, deploy schema changes, rotate production secrets, or change production feature flags. Production activation requires a separately approved change and a verified deployment/rollback plan.
+A green CI run or staging smoke does not deploy schema changes, rotate production secrets, grant staff access, or change identity-review feature flags. Public native signup is enabled by the reviewed Backend deployment and its live `400 INVALID_PASSWORD` release probe; that probe proves the request reached password validation without creating an account or sending email. Real account creation, OTP delivery, email verification and sign-in must still be exercised with a controlled mailbox before the release is declared fully accepted. Identity-evidence intake remains independently gated and must not be enabled merely to make ordinary signup work.

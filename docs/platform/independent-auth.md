@@ -32,7 +32,7 @@ A failed server-side logout is not treated as a successful logout: the client pr
 
 ## Registration and verification
 
-Registration is a separate Testagram-owned identity application, evidence, independent review and two-person approval process. Provisioning creates the native identity only after both approval boundaries. Email verification then activates the native provisioning record. The public registration gate remains fail-closed until storage, email, policy, reviewer and provisioning acceptance is complete.
+Ordinary public signup is the native email/password flow implemented by `authRespond` in `cmd/api/auth.go`. It creates `testagram_auth.identities` in an unverified state and queues a single-use OTP plus verification link in the same transaction. Email verification activates the account; login remains blocked until then. This ordinary path does not call identity-application intake or require identity evidence, staff WebAuthn, manual review or two-person approval. Its own fail-closed prerequisites are native auth configuration, PostgreSQL, rate limiting, password validation and transactional email delivery. The separate sensitive identity-evidence application remains a distinct Testagram-owned workflow: evidence, independent review, two-person approval and native provisioning apply only to that application path. `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED` is not a public-signup switch and must never gate `/api/auth/signup`, `/api/auth/resend-verification` or `/api/auth/verify-email`.
 
 ## External identity-provider retirement
 
