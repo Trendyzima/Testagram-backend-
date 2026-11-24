@@ -19,16 +19,18 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
 
 schema_diagnostics() {
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-    sh -ec 'psql -X -A -t -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+    sh -ec 'psql -X -v ON_ERROR_STOP=1 -A -t -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 WITH checks(check_name, ok) AS (VALUES
   ('admin_rate_limits table', to_regclass('testagram_auth.admin_rate_limits') IS NOT NULL),
   ('admin_permissions table', to_regclass('testagram_auth.admin_permissions') IS NOT NULL),
-  ('historical_external_sensitive_action_requests table', to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NOT NULL),
-  ('historical_external_sensitive_action_approvals table', to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NOT NULL),
-  ('historical_external_admin_security_audit table', to_regclass('testagram_auth.historical_external_admin_security_audit') IS NOT NULL),
-  ('historical sensitive-action requests inaccessible to runtime', COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_sensitive_action_requests','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
-  ('historical sensitive-action approvals inaccessible to runtime', COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_sensitive_action_approvals','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
-  ('historical admin audit inaccessible to runtime', COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_admin_security_audit','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('legacy staff roles archived or absent', to_regclass('testagram_auth.historical_external_staff_roles') IS NOT NULL OR to_regclass('testagram_auth.staff_roles') IS NULL),
+  ('legacy staff role audit archived or absent', to_regclass('testagram_auth.historical_external_staff_role_audit') IS NOT NULL OR to_regclass('testagram_auth.staff_role_audit') IS NULL),
+  ('historical_external_sensitive_action_requests archived or absent', to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NOT NULL OR to_regclass('testagram_auth.sensitive_action_requests') IS NULL),
+  ('historical_external_sensitive_action_approvals archived or absent', to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NOT NULL OR to_regclass('testagram_auth.sensitive_action_approvals') IS NULL),
+  ('historical_external_admin_security_audit archived or absent', to_regclass('testagram_auth.historical_external_admin_security_audit') IS NOT NULL OR to_regclass('testagram_auth.admin_security_audit') IS NULL),
+  ('historical sensitive-action requests inaccessible to runtime', to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NULL OR COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_sensitive_action_requests','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('historical sensitive-action approvals inaccessible to runtime', to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NULL OR COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_sensitive_action_approvals','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('historical admin audit inaccessible to runtime', to_regclass('testagram_auth.historical_external_admin_security_audit') IS NULL OR COALESCE((SELECT NOT has_table_privilege(oid,'testagram_auth.historical_external_admin_security_audit','SELECT') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('identity_applications table', to_regclass('testagram_identity.identity_applications') IS NOT NULL),
   ('identity_application_reviews table', to_regclass('testagram_identity.identity_application_reviews') IS NOT NULL),
   ('identity_application_reviews.reviewer_user_id', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='reviewer_user_id')),
@@ -106,199 +108,16 @@ SQL
 }
 
 schema_ready() {
-  docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-    sh -ec 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
-      SELECT
-        to_regclass('\''testagram_auth.admin_rate_limits'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.admin_permissions'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.historical_external_sensitive_action_requests'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.historical_external_sensitive_action_approvals'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.historical_external_admin_security_audit'\'') IS NOT NULL
-        AND COALESCE((SELECT NOT has_table_privilege(oid,'\''testagram_auth.historical_external_sensitive_action_requests'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT NOT has_table_privilege(oid,'\''testagram_auth.historical_external_sensitive_action_approvals'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT NOT has_table_privilege(oid,'\''testagram_auth.historical_external_admin_security_audit'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND to_regclass('\''testagram_identity.identity_applications'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.identity_application_reviews'\'') IS NOT NULL
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''identity_application_reviews'\''
-            AND column_name='\''reviewer_user_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''verification_reviews'\''
-            AND column_name='\''reviewer_user_id'\''
-        )
-        AND to_regclass('\''testagram_identity.identity_approval_tokens'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.historical_external_registration_provisioning'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.verification_sessions'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.verification_events'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.verification_reviews'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.verification_evidence'\'') IS NOT NULL
-        AND to_regclass('\''testagram_identity.legal_consent_audit'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.sessions'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.rate_limits'\'') IS NOT NULL
-        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth\'' AND table_name='\''identities\'' AND column_name='\''verification_otp_hash\'')
-        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth\'' AND table_name='\''identities\'' AND column_name='\''verification_otp_expires_at\'')
-        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''identities'\'' AND column_name='\''verification_otp_attempts'\'')
-        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_local.email_notification_preferences'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_local.email_notification_preferences'\'','\''UPDATE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND to_regclass('\''testagram_local.email_notification_preferences\'') IS NOT NULL
-        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_local.email_notification_preferences\'','\''INSERT\'') FROM pg_roles WHERE rolname='\''testagram_app\''), false)
-        AND to_regclass('\''testagram_auth.password_reset_tokens'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.security_audit'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.legacy_account_reconciliation'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.staff_principals'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.staff_role_grants'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.native_staff_permission_overrides'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') IS NOT NULL
-        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\'' AND column_name='\''requested_by_service'\'')
-        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\'' AND column_name='\''review_stage'\'')
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_requests'\''
-            AND column_name='\''requested_by_service'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\'' AND table_name='\''identity_application_reviews'\''
-            AND column_name='\''review_stage'\''
-        )
-        AND to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') IS NOT NULL
-        AND to_regclass('\''testagram_auth.native_admin_security_audit'\'') IS NOT NULL
-        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') AND tgname='\''native_sensitive_action_request_immutable'\'' AND NOT tgisinternal)
-        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_requests'\'') AND tgname='\''native_sensitive_action_request_append_only'\'' AND NOT tgisinternal)
-        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') AND tgname='\''native_sensitive_action_approver_guard'\'' AND NOT tgisinternal)
-        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('\''testagram_auth.native_sensitive_action_approvals'\'') AND tgname='\''native_sensitive_action_approval_append_only'\'' AND NOT tgisinternal)
-         AND (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='\''testagram_auth'\'' AND table_name='\''native_sensitive_action_approvals'\'' AND column_name IN ('\''webauthn_rpid'\'','\''webauthn_credential_id'\''))
-        AND to_regclass('\''testagram_identity.native_registration_provisioning'\'') IS NOT NULL
-        AND to_regclass('\''testagram_mail.outbox'\'') IS NOT NULL
-        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_mail'\'' AND table_name='\''outbox'\'' AND column_name='\''preference_user_id'\'')
-        AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='\''testagram_mail'\'' AND table_name='\''outbox'\'' AND column_name='\''preference_category'\'')
-        AND (
-          SELECT count(*) = 10
-          FROM information_schema.columns
-          WHERE table_schema='\''testagram_mail'\''
-            AND table_name='\''outbox'\''
-            AND column_name IN (
-              '\''payload_ciphertext'\'', '\''payload_nonce'\'', '\''status'\'',
-              '\''attempts'\'', '\''available_at'\'', '\''lease_until'\'',
-              '\''sent_at'\'', '\''provider_message_id'\'', '\''last_error_code'\'',
-              '\''updated_at'\''
-            )
-        )
-        AND COALESCE((SELECT has_schema_privilege(oid,'\''testagram_mail'\'','\''USAGE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''INSERT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT has_table_privilege(oid,'\''testagram_mail.outbox'\'','\''UPDATE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT has_sequence_privilege(oid,'\''testagram_mail.outbox_id_seq'\'','\''USAGE'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND COALESCE((SELECT has_sequence_privilege(oid,'\''testagram_mail.outbox_id_seq'\'','\''SELECT'\'') FROM pg_roles WHERE rolname='\''testagram_app'\''), false)
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''identity_applications'\''
-            AND column_name='\''status_access_token_sha256'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''identity_applications'\''
-            AND column_name='\''evidence_fingerprint_sha256'\''
-            AND is_nullable='\''YES'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM pg_trigger
-          WHERE tgrelid=to_regclass('\''testagram_identity.identity_approval_tokens'\'')
-            AND tgname='\''identity_approval_token_requires_verified_evidence'\''
-            AND NOT tgisinternal
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''identity_approval_tokens'\''
-            AND column_name='\''consumed_by_native_user_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_auth'\''
-            AND table_name='\''native_sensitive_action_approvals'\''
-            AND column_name='\''approver_user_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_auth'\''
-            AND table_name='\''native_admin_security_audit'\''
-            AND column_name='\''actor_user_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''identity_approval_tokens'\''
-            AND column_name='\''first_approver_user_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''identity_approval_tokens'\''
-            AND column_name='\''second_approver_user_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''verification_sessions'\''
-            AND column_name='\''decided_by_user_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_identity'\''
-            AND table_name='\''identity_applications'\''
-            AND column_name='\''native_sensitive_action_request_id'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_auth'\''
-            AND table_name='\''identities'\''
-            AND column_name='\''password_reset_required'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM pg_trigger
-          WHERE tgrelid=to_regclass('\''testagram_identity.identity_approval_tokens'\'')
-            AND tgname='\''identity_approval_token_requires_two_person_approval'\''
-            AND NOT tgisinternal
-        )
-        AND EXISTS (
-          SELECT 1 FROM pg_trigger
-          WHERE tgrelid=to_regclass('\''testagram_identity.verification_events'\'')
-            AND tgname='\''verification_events_append_only'\''
-            AND NOT tgisinternal
-        )
-        AND EXISTS (
-          SELECT 1 FROM pg_trigger
-          WHERE tgrelid=to_regclass('\''testagram_identity.verification_reviews'\'')
-            AND tgname='\''verification_reviews_append_only'\''
-            AND NOT tgisinternal
-        )
-        AND EXISTS (
-          SELECT 1 FROM pg_trigger
-          WHERE tgrelid=to_regclass('\''testagram_identity.legal_consent_audit'\'')
-            AND tgname='\''legal_consent_audit_append_only'\''
-            AND NOT tgisinternal
-        )
-        AND EXISTS (
-          SELECT 1 FROM pg_constraint
-          WHERE conrelid=to_regclass('\''testagram_identity.verification_events'\'')
-            AND conname='\''verification_events_event_type_check'\''
-            AND pg_get_constraintdef(oid) LIKE '\''%evidence_access_attempted%'\''
-        )
-        AND EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_schema='\''testagram_local'\''
-            AND table_name='\''accounts'\''
-            AND column_name='\''federation_enabled'\''
-        )
-    "'
+  # Reuse the diagnostic predicates as the single source of truth. Keeping a
+  # second hand-escaped SQL copy caused quoting drift and a production syntax
+  # error before migration execution.
+  local failed_checks
+  failed_checks="$(schema_diagnostics)"
+  if [[ -z "$failed_checks" ]]; then
+    printf 't\n'
+  else
+    printf 'f\n'
+  fi
 }
 
 if [[ "$(schema_ready)" == "t" ]]; then

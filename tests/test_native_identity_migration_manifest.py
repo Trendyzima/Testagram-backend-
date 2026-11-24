@@ -314,13 +314,13 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
 
     def test_federation_actor_consent_is_preflighted_and_fail_closed(self):
         self.assertIn("Federation actor consent column", SOURCE)
-        self.assertIn("column_name='\\''federation_enabled'\\''", SOURCE)
+        self.assertIn("column_name='federation_enabled'", SOURCE)
         migration = (ROOT / "migrations" / "20261107_federation_actor_consent.sql").read_text(encoding="utf-8")
         self.assertIn("ADD COLUMN IF NOT EXISTS federation_enabled BOOLEAN NOT NULL DEFAULT FALSE", migration)
 
     def test_schema_preflight_checks_optional_intake_fingerprint(self):
-        self.assertIn("column_name='\\''evidence_fingerprint_sha256'\\''", SOURCE)
-        self.assertIn("is_nullable='\\''YES'\\''", SOURCE)
+        self.assertIn("column_name='evidence_fingerprint_sha256'", SOURCE)
+        self.assertIn("is_nullable='YES'", SOURCE)
         self.assertIn("identity_approval_token_requires_verified_evidence", SOURCE)
 
     def test_schema_preflight_matches_archived_external_and_native_approval_schema(self):
@@ -337,13 +337,18 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, SOURCE)
-        self.assertNotIn("to_regclass('testagram_auth.sensitive_action_requests')", SOURCE)
-        self.assertNotIn("to_regclass('testagram_auth.sensitive_action_approvals')", SOURCE)
-        self.assertNotIn("to_regclass('testagram_auth.admin_security_audit')", SOURCE)
+        self.assertIn("historical_external_sensitive_action_requests archived or absent", SOURCE)
+        self.assertIn("historical_external_sensitive_action_approvals archived or absent", SOURCE)
+        self.assertIn("historical_external_admin_security_audit archived or absent", SOURCE)
 
     def test_failed_schema_preflight_reports_named_acceptance_predicates(self):
         self.assertIn("schema_diagnostics()", SOURCE)
         self.assertIn("Failed schema acceptance predicates:", SOURCE)
+        self.assertIn("legacy staff roles archived or absent", SOURCE)
+        self.assertIn("legacy staff role audit archived or absent", SOURCE)
+        self.assertIn("historical_external_sensitive_action_requests archived or absent", SOURCE)
+        self.assertIn("historical_external_sensitive_action_approvals archived or absent", SOURCE)
+        self.assertIn("historical_external_admin_security_audit archived or absent", SOURCE)
         self.assertIn("identity application evidence fingerprint nullable", SOURCE)
         self.assertIn("identity evidence-complete approval trigger", SOURCE)
         self.assertIn("two-person identity approval trigger", SOURCE)
@@ -356,6 +361,39 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("APPLY-NATIVE-IDENTITY-MIGRATIONS", SOURCE)
         self.assertIn("pg_restore --exit-on-error", SOURCE)
         self.assertIn("schema_ready", SOURCE)
+
+
+    def test_legacy_admin_migration_does_not_recreate_missing_staff_roles(self):
+        migration = (ROOT / "migrations" / "20261111_admin_security_controls.sql").read_text(encoding="utf-8")
+        self.assertIn("IF to_regclass('testagram_auth.staff_roles') IS NOT NULL", migration)
+        self.assertIn("column_name='appwrite_user_id'", migration)
+        self.assertIn("column_name='role'", migration)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS testagram_auth.staff_roles", migration)
+        self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth.admin_permissions", migration)
+        self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth.admin_rate_limits", migration)
+        for legacy_table in (
+            "staff_role_permissions",
+            "staff_permission_overrides",
+            "sensitive_action_requests",
+            "sensitive_action_approvals",
+            "admin_security_audit",
+        ):
+            self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth." + legacy_table, migration)
+
+    def test_optional_legacy_archive_migrations_accept_absent_tables(self):
+        staff = (ROOT / "migrations" / "20261120_native_identity_historical_staff_archive.sql").read_text(encoding="utf-8")
+        admin = (ROOT / "migrations" / "20261120_native_identity_historical_admin_archive.sql").read_text(encoding="utf-8")
+        for source in (staff, admin):
+            self.assertIn("to_regclass(", source)
+            self.assertIn("lock_optional_historical_", source)
+            self.assertNotRegex(source, r"'testagram_auth\.historical_external_[^']+'::regclass")
+            self.assertIn("REVOKE ALL ON TABLE %s FROM PUBLIC", source)
+
+    def test_schema_ready_reuses_validated_named_diagnostics(self):
+        self.assertIn("failed_checks=\"$(schema_diagnostics)\"", SOURCE)
+        self.assertIn("psql -X -v ON_ERROR_STOP=1", SOURCE)
+        self.assertNotIn("psql -v ON_ERROR_STOP=1 -U", SOURCE.split("schema_ready() {", 1)[1].split("\n}", 1)[0])
+        self.assertIn("Failed schema acceptance predicates:", SOURCE)
 
 
 if __name__ == "__main__":

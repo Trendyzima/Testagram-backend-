@@ -89,10 +89,10 @@ BEGIN
     SELECT conrelid::regclass AS relation_name, conname
     FROM pg_constraint
     WHERE conrelid IN (
-      'testagram_auth.historical_external_staff_permission_overrides'::regclass,
-      'testagram_auth.historical_external_sensitive_action_requests'::regclass,
-      'testagram_auth.historical_external_sensitive_action_approvals'::regclass,
-      'testagram_auth.historical_external_admin_security_audit'::regclass
+      to_regclass('testagram_auth.historical_external_staff_permission_overrides'),
+      to_regclass('testagram_auth.historical_external_sensitive_action_requests'),
+      to_regclass('testagram_auth.historical_external_sensitive_action_approvals'),
+      to_regclass('testagram_auth.historical_external_admin_security_audit')
     )
       AND conname ILIKE '%appwrite%'
   LOOP
@@ -106,10 +106,10 @@ BEGIN
     FROM pg_index i
     JOIN pg_class c ON c.oid=i.indexrelid
     WHERE i.indrelid IN (
-      'testagram_auth.historical_external_staff_permission_overrides'::regclass,
-      'testagram_auth.historical_external_sensitive_action_requests'::regclass,
-      'testagram_auth.historical_external_sensitive_action_approvals'::regclass,
-      'testagram_auth.historical_external_admin_security_audit'::regclass
+      to_regclass('testagram_auth.historical_external_staff_permission_overrides'),
+      to_regclass('testagram_auth.historical_external_sensitive_action_requests'),
+      to_regclass('testagram_auth.historical_external_sensitive_action_approvals'),
+      to_regclass('testagram_auth.historical_external_admin_security_audit')
     )
       AND c.relname ILIKE '%appwrite%'
       AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=i.indexrelid)
@@ -120,41 +120,44 @@ BEGIN
 END;
 $rename_historical_identifiers$;
 
-REVOKE ALL ON TABLE
-  testagram_auth.historical_external_staff_permission_overrides,
-  testagram_auth.historical_external_sensitive_action_requests,
-  testagram_auth.historical_external_sensitive_action_approvals,
-  testagram_auth.historical_external_admin_security_audit
-FROM PUBLIC;
-
-DO $revoke_runtime$
+DO $lock_optional_historical_admin$
+DECLARE
+  relation_name TEXT;
+  relation_list TEXT[] := ARRAY[
+    'testagram_auth.historical_external_staff_permission_overrides',
+    'testagram_auth.historical_external_sensitive_action_requests',
+    'testagram_auth.historical_external_sensitive_action_approvals',
+    'testagram_auth.historical_external_admin_security_audit'
+  ];
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
-    REVOKE ALL ON TABLE
-      testagram_auth.historical_external_staff_permission_overrides,
-      testagram_auth.historical_external_sensitive_action_requests,
-      testagram_auth.historical_external_sensitive_action_approvals,
-      testagram_auth.historical_external_admin_security_audit
-    FROM testagram_app;
+  FOREACH relation_name IN ARRAY relation_list LOOP
+    IF to_regclass(relation_name) IS NOT NULL THEN
+      EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC', to_regclass(relation_name));
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+        EXECUTE format('REVOKE ALL ON TABLE %s FROM testagram_app', to_regclass(relation_name));
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+        EXECUTE format('REVOKE ALL ON TABLE %s FROM service_role', to_regclass(relation_name));
+      END IF;
+    END IF;
+  END LOOP;
+
+  IF to_regclass('testagram_auth.historical_external_staff_permission_overrides') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_auth.historical_external_staff_permission_overrides IS
+      'Read-restricted historical provider-keyed permission overrides. Native overrides use native_staff_permission_overrides.';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
-    REVOKE ALL ON TABLE
-      testagram_auth.historical_external_staff_permission_overrides,
-      testagram_auth.historical_external_sensitive_action_requests,
-      testagram_auth.historical_external_sensitive_action_approvals,
-      testagram_auth.historical_external_admin_security_audit
-    FROM service_role;
+  IF to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_auth.historical_external_sensitive_action_requests IS
+      'Read-restricted historical provider-keyed sensitive-action requests. Native approvals use native_sensitive_action_requests.';
+  END IF;
+  IF to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_auth.historical_external_sensitive_action_approvals IS
+      'Read-restricted historical provider-keyed approval decisions. Native approvals use native_sensitive_action_approvals.';
+  END IF;
+  IF to_regclass('testagram_auth.historical_external_admin_security_audit') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_auth.historical_external_admin_security_audit IS
+      'Read-restricted historical provider-keyed admin audit. Native audit uses native_admin_security_audit.';
   END IF;
 END;
-$revoke_runtime$;
-
-COMMENT ON TABLE testagram_auth.historical_external_staff_permission_overrides IS
-  'Read-restricted historical provider-keyed permission overrides. Native overrides use native_staff_permission_overrides.';
-COMMENT ON TABLE testagram_auth.historical_external_sensitive_action_requests IS
-  'Read-restricted historical provider-keyed sensitive-action requests. Native approvals use native_sensitive_action_requests.';
-COMMENT ON TABLE testagram_auth.historical_external_sensitive_action_approvals IS
-  'Read-restricted historical provider-keyed approval decisions. Native approvals use native_sensitive_action_approvals.';
-COMMENT ON TABLE testagram_auth.historical_external_admin_security_audit IS
-  'Read-restricted historical provider-keyed admin audit. Native audit uses native_admin_security_audit.';
-
+$lock_optional_historical_admin$;
 COMMIT;

@@ -871,6 +871,75 @@ END;
 $mail_role_repair$;
 SQL
 
+# Regression: upgrade a database where the historical staff-role table is absent.
+# The old admin migration must preserve shared catalog tables without recreating
+# obsolete staff authorization, and the optional archive migrations must be no-ops.
+psql_ci -c "CREATE DATABASE native_partial_legacy_test;"
+psql_partial() {
+  docker exec -i "$container" psql -U postgres -d native_partial_legacy_test -v ON_ERROR_STOP=1 "$@"
+}
+psql_partial <<'SQL'
+CREATE SCHEMA testagram_auth;
+SQL
+psql_partial < migrations/20261111_admin_security_controls.sql
+psql_partial < migrations/20261120_native_identity_historical_staff_archive.sql
+psql_partial < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_partial <<'SQL'
+DO $partial_legacy_acceptance$
+BEGIN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_staff_role_audit') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_permission_overrides') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
+     OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_staff_permission_overrides') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_admin_security_audit') IS NOT NULL THEN
+    RAISE EXCEPTION 'partial legacy upgrade unexpectedly created obsolete staff authorization state';
+  END IF;
+  IF to_regclass('testagram_auth.admin_permissions') IS NULL
+     OR to_regclass('testagram_auth.admin_rate_limits') IS NULL THEN
+    RAISE EXCEPTION 'partial legacy upgrade omitted required admin catalog tables';
+  END IF;
+END;
+$partial_legacy_acceptance$;
+SQL
+
+# Regression: a legacy table name may survive while its expected columns do not.
+# The migration must archive the table without attempting legacy FK/column DDL.
+psql_ci -c "CREATE DATABASE native_partial_staff_table_test;"
+psql_partial_staff() {
+  docker exec -i "$container" psql -U postgres -d native_partial_staff_table_test -v ON_ERROR_STOP=1 "$@"
+}
+psql_partial_staff <<'SQL'
+CREATE SCHEMA testagram_auth;
+CREATE TABLE testagram_auth.staff_roles (legacy_marker text);
+SQL
+psql_partial_staff < migrations/20261111_admin_security_controls.sql
+psql_partial_staff < migrations/20261120_native_identity_historical_staff_archive.sql
+psql_partial_staff < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_partial_staff <<'SQL'
+DO $partial_staff_table_acceptance$
+BEGIN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_staff_roles') IS NULL THEN
+    RAISE EXCEPTION 'incomplete legacy staff table was not safely archived';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_auth'
+      AND table_name='historical_external_staff_roles'
+      AND column_name='legacy_marker'
+  ) THEN
+    RAISE EXCEPTION 'incomplete legacy staff table data shape was not preserved';
+  END IF;
+END;
+$partial_staff_table_acceptance$;
+SQL
+
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
 
 # Exercise Cloudflare lifecycle reconciliation, duplicate-event protection, complaint suppression,

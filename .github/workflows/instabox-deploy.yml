@@ -31,7 +31,7 @@ jobs:
   validate:
     name: Validate InstaBox deployment inputs
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -49,6 +49,10 @@ jobs:
           python3 tests/test_instabox_image_digest_verification.py -v
           python3 tests/test_instabox_web_image_release_wiring.py -v
           python3 tests/test_instabox_deployment_polling.py -v
+      - name: Exercise native identity migrations against PostgreSQL
+        run: |
+          bash -n scripts/test-identity-registration-migration.sh
+          bash scripts/test-identity-registration-migration.sh
       - name: Compile watchdog safety module
         run: python3 -m py_compile scripts/instabox_watchdog.py
       - name: Run watchdog regression tests

@@ -63,8 +63,8 @@ BEGIN
     SELECT conrelid::regclass AS relation_name, conname
     FROM pg_constraint
     WHERE conrelid IN (
-      'testagram_auth.historical_external_staff_roles'::regclass,
-      'testagram_auth.historical_external_staff_role_audit'::regclass
+      to_regclass('testagram_auth.historical_external_staff_roles'),
+      to_regclass('testagram_auth.historical_external_staff_role_audit')
     )
       AND conname ILIKE '%appwrite%'
   LOOP
@@ -78,8 +78,8 @@ BEGIN
     FROM pg_index i
     JOIN pg_class c ON c.oid=i.indexrelid
     WHERE i.indrelid IN (
-      'testagram_auth.historical_external_staff_roles'::regclass,
-      'testagram_auth.historical_external_staff_role_audit'::regclass
+      to_regclass('testagram_auth.historical_external_staff_roles'),
+      to_regclass('testagram_auth.historical_external_staff_role_audit')
     )
       AND c.relname ILIKE '%appwrite%'
       AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=i.indexrelid)
@@ -90,31 +90,35 @@ BEGIN
 END;
 $rename_historical_identifiers$;
 
-REVOKE ALL ON TABLE
-  testagram_auth.historical_external_staff_roles,
-  testagram_auth.historical_external_staff_role_audit
-FROM PUBLIC;
-
-DO $revoke_runtime$
+DO $lock_optional_historical_staff$
+DECLARE
+  relation_name TEXT;
+  relation_list TEXT[] := ARRAY[
+    'testagram_auth.historical_external_staff_roles',
+    'testagram_auth.historical_external_staff_role_audit'
+  ];
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
-    REVOKE ALL ON TABLE
-      testagram_auth.historical_external_staff_roles,
-      testagram_auth.historical_external_staff_role_audit
-    FROM testagram_app;
+  FOREACH relation_name IN ARRAY relation_list LOOP
+    IF to_regclass(relation_name) IS NOT NULL THEN
+      EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC', to_regclass(relation_name));
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+        EXECUTE format('REVOKE ALL ON TABLE %s FROM testagram_app', to_regclass(relation_name));
+      END IF;
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+        EXECUTE format('REVOKE ALL ON TABLE %s FROM service_role', to_regclass(relation_name));
+      END IF;
+    END IF;
+  END LOOP;
+
+  IF to_regclass('testagram_auth.historical_external_staff_roles') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_auth.historical_external_staff_roles IS
+      'Read-restricted historical staff-role assignments. They never authorize native Testagram staff access.';
   END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
-    REVOKE ALL ON TABLE
-      testagram_auth.historical_external_staff_roles,
-      testagram_auth.historical_external_staff_role_audit
-    FROM service_role;
+  IF to_regclass('testagram_auth.historical_external_staff_role_audit') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_auth.historical_external_staff_role_audit IS
+      'Read-restricted historical staff-role audit evidence. Native staff authorization uses Testagram UUID principals and role grants.';
   END IF;
 END;
-$revoke_runtime$;
-
-COMMENT ON TABLE testagram_auth.historical_external_staff_roles IS
-  'Read-restricted historical staff-role assignments. They never authorize native Testagram staff access.';
-COMMENT ON TABLE testagram_auth.historical_external_staff_role_audit IS
-  'Read-restricted historical staff-role audit evidence. Native staff authorization uses Testagram UUID principals and role grants.';
+$lock_optional_historical_staff$;
 
 COMMIT;
