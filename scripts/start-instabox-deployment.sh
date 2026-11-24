@@ -14,7 +14,7 @@ for key in MAILJET_SMTP_USERNAME MAILJET_SMTP_PASSWORD AUTH_FROM_EMAIL TESTAGRAM
   [[ -n "${!key:-}" ]] || { echo "::error::Mailjet transactional mail requires $key."; exit 1; }
 done
 MAILJET_SMTP_PORT="${MAILJET_SMTP_PORT:-587}"
-[[ "$MAILJET_SMTP_PORT" == "587" || "$MAILJET_SMTP_PORT" == "2525" ]] || { echo "::error::Mailjet SMTP must use port 587 or 2525 with STARTTLS."; exit 1; }
+[[ "$MAILJET_SMTP_PORT" == "587" ]] || { echo "::error::Mailjet SMTP must use port 587 with STARTTLS."; exit 1; }
 [[ "$TESTAGRAM_MAIL_ENCRYPTION_KEY" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."; exit 1; }
 [[ "$AUTH_FROM_EMAIL" == "no-reply@testagram.site" ]] || { echo "::error::AUTH_FROM_EMAIL must be no-reply@testagram.site for this release."; exit 1; }
 # GitHub Actions variables may contain accidental surrounding whitespace or CRLF.
@@ -105,21 +105,16 @@ if ! sudo docker compose version >/dev/null 2>&1; then
 fi
 sudo docker info >/dev/null
 
-# Verify authenticated Mailjet SMTP connectivity before changing production services.
-# Port 587 is preferred; 2525 is Mailjet's documented STARTTLS alternative for
-# hosting networks that refuse 587. This sends no email and uses no credentials.
+# Verify Mailjet SMTP STARTTLS connectivity on port 587 before changing production services.
+# Production is intentionally pinned to port 587; do not silently switch to 2525.
+# This read-only TLS handshake sends no email and uses no SMTP credentials.
 MAILJET_SMTP_PORT=587
 if timeout 15 openssl s_client -starttls smtp -connect in-v3.mailjet.com:587 \
   -servername in-v3.mailjet.com -verify_return_error -brief </dev/null \
   > /tmp/testagram-mailjet-starttls.log 2>&1; then
-  echo "Verified outbound Mailjet SMTP STARTTLS connectivity on port 587."
-elif timeout 15 openssl s_client -starttls smtp -connect in-v3.mailjet.com:2525 \
-  -servername in-v3.mailjet.com -verify_return_error -brief </dev/null \
-  > /tmp/testagram-mailjet-starttls.log 2>&1; then
-  MAILJET_SMTP_PORT=2525
-  echo "Port 587 is unavailable; verified Mailjet SMTP STARTTLS connectivity on fallback port 2525."
+  echo "Verified outbound Mailjet SMTP STARTTLS connectivity on required port 587."
 else
-  echo "::error::InstaBox cannot reach Mailjet SMTP over STARTTLS on either supported port 587 or 2525."
+  echo "::error::InstaBox cannot reach Mailjet SMTP over STARTTLS on required port 587. No fallback port is permitted in production."
   tail -n 20 /tmp/testagram-mailjet-starttls.log || true
   exit 1
 fi

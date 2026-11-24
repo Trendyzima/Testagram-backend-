@@ -45,6 +45,7 @@ jobs:
           python3 tests/test_media_feature_gate_wiring.py -v
           python3 tests/test_native_identity_migration_manifest.py -v
           python3 tests/test_instabox_b2_credentials.py -v
+          python3 tests/test_instabox_mailjet_port.py -v
           python3 tests/test_instabox_edge_proxy_secret.py -v
           python3 tests/test_instabox_image_digest_verification.py -v
           python3 tests/test_instabox_web_image_release_wiring.py -v
