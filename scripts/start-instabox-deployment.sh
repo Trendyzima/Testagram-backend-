@@ -1008,6 +1008,14 @@ verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"
+if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
+  verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_TLS_CERT_FILE "/run/testagram-mail-tls/fullchain.pem"
+  verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_TLS_KEY_FILE "/run/testagram-mail-tls/privkey.pem"
+  if ! sudo docker exec "$api_container" sh -ec 'test -r "$TESTAGRAM_MAIL_TLS_CERT_FILE" && test -r "$TESTAGRAM_MAIL_TLS_KEY_FILE"'; then
+    echo "::error::API container cannot read the native feedback STARTTLS certificate/key."
+    exit 1
+  fi
+fi
 if ! sudo docker exec "$api_container" sh -ec 'test -r "$TESTAGRAM_DKIM_PRIVATE_KEY_FILE"'; then
   echo "::error::API container cannot read the VPS-owned DKIM private key."
   exit 1
