@@ -54,6 +54,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn('X-Testagram-Bounce-Endpoint', handler)
         self.assertLess(deploy.index("wrangler-probe.toml"), deploy.index("wrangler.toml"))
         self.assertIn('worker_health_status" != 204', deploy)
+        self.assertIn("X-Testagram-Bounce-Endpoint", deploy)
+        self.assertIn("-X DELETE", deploy)
         self.assertIn(".result.enabled == false", deploy)
 
     def test_cloudflare_bounce_ingress_is_inbound_only_and_authenticated(self):
