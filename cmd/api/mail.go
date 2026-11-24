@@ -531,7 +531,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		INSERT INTO testagram_mail.delivery_events(
 			provider_event_id,provider_message_id,event_type,recipient_fingerprint,transport,processed_at
 		)
-		VALUES('native-accepted:'||$1::text,COALESCE(NULLIF($2,''),'native-outbox-'||$1::text),
+		VALUES('native-accepted:'||$1::bigint::text,COALESCE(NULLIF($2,''),'native-outbox-'||$1::bigint::text),
 		       'smtp.accepted',$3,'native',now())
 		ON CONFLICT(provider_event_id) DO NOTHING
 	`, id, messageID, fingerprint)
