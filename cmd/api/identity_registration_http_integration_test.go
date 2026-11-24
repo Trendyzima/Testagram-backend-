@@ -254,4 +254,35 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	if eventCountAfter != eventCountBefore {
 		t.Fatalf("evidence replay duplicated audit events: before=%d after=%d", eventCountBefore, eventCountAfter)
 	}
+
+	// Ordinary native authentication must remain independent of the separate
+	// sensitive identity-evidence workflow. Even when an account is linked to
+	// an application awaiting review/provisioning, verified credentials are
+	// sufficient for sign-in; the review workflow remains separately gated.
+	password := "a-strong-password-value"
+	passwordHash, err := authPasswordHash(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nativeUserID string
+	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&nativeUserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
+		VALUES($1::uuid,$2,$3,$4,now())
+	`, nativeUserID, email, username, passwordHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_identity.native_registration_provisioning(application_id,user_id,status)
+		VALUES($1::uuid,$2::uuid,'verification_pending')
+	`, created.ApplicationID, nativeUserID); err != nil {
+		t.Fatal(err)
+	}
+	loginBody, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	login := call(http.MethodPost, "/api/auth/login", loginBody, map[string]string{"Content-Type": "application/json"})
+	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), "\""access_token\"") {
+		t.Fatalf("verified native login was blocked by separate identity review: status=%d body=%s", login.Code, login.Body.String())
+	}
 }
