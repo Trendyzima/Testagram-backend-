@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           bash -n scripts/start-instabox-deployment.sh
+          bash -n scripts/reconcile-native-mail-dns.sh
           python3 tests/test_r2_managed_domain_request.py -v
           python3 tests/test_instabox_postgres_readiness.py -v
           python3 tests/test_instabox_runtime_healthcheck_paths.py -v
