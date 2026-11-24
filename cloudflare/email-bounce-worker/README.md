@@ -44,9 +44,10 @@ that still requires explicit InstaBox confirmation.
 
 ## Automated deployment sequence
 
-1. InstaBox verifies outbound TCP/25 to Gmail and Outlook, cross-checks the
-   egress IPv4 against two independent reflectors, and verifies PTR is
-   `mail.testagram.site`.
+1. InstaBox pauses the native outbox sender before starting the new API, so
+   queued messages cannot leave before bounce ingress is ready. It verifies
+   outbound TCP/25 to Gmail and Outlook, cross-checks the egress IPv4 against
+   two independent reflectors, and verifies PTR is `mail.testagram.site`.
 2. The InstaBox DNS reconciler creates/updates DNS-only `mail.testagram.site`
    A, merges the InstaBox IPv4 and Cloudflare Email Routing include into the
    single SPF record on `bounces.testagram.site`, publishes Testagram's
@@ -68,7 +69,9 @@ that still requires explicit InstaBox confirmation.
 7. The script deploys the final `wrangler.toml` configuration with
    `workers_dev=false` and the literal `b@bounces.testagram.site` email rule.
    It reapplies the HMAC secret, verifies the email rule targets this Worker,
-   and confirms the temporary `workers.dev` HTTP endpoint is disabled.
+   and confirms the temporary `workers.dev` HTTP endpoint is disabled. Only
+   then does InstaBox re-enable the outbox sender and restart the API; queued
+   messages resume through Testagram's native SMTP transport.
 
 The Cloudflare account must already have a `workers.dev` subdomain configured
 under Workers & Pages. The deployment reads that account subdomain but does
