@@ -652,7 +652,8 @@ CREATE TABLE testagram_identity.historical_external_registration_provisioning (
   status TEXT NOT NULL CHECK (status IN (
     'pending','source_provider_created','linked','verification_sent',
     'completed','compensation_required','failed'
-  ))
+  )),
+  CONSTRAINT registration_provisioning_source_user_id_key UNIQUE(source_account_id)
 );
 INSERT INTO testagram_identity.historical_external_registration_provisioning
   (id,source_account_id,status)
@@ -824,6 +825,19 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning_recovered' AND column_name='source_account_id')
      OR EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning_recovered' AND column_name='appwrite_user_id') THEN
     RAISE EXCEPTION 'recovered provisioning source identifier was not neutralized';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.historical_external_registration_provisioning'::regclass
+      AND contype='u'
+      AND conname='registration_provisioning_source_user_id_key'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.historical_external_registration_provisioning_recovered'::regclass
+      AND contype='u'
+      AND conname LIKE 'registration_provisioning_source_user_id_key_recovered_%'
+  ) THEN
+    RAISE EXCEPTION 'canonical and recovered provisioning ledgers did not retain distinct unique constraints';
   END IF;
 
   IF NOT EXISTS (
