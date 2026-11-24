@@ -102,7 +102,9 @@ if ! sudo docker compose version >/dev/null 2>&1; then
 fi
 sudo docker info >/dev/null
 
-# Native Testagram mail connects directly to recipient MX hosts; no provider preflight or credentials are used.\n\nsync_repo() {
+# Native Testagram mail connects directly to recipient MX hosts; no provider preflight or credentials are used.
+
+sync_repo() {
   local url="$1" path="$2"
   if [[ -d "$path/.git" ]]; then
     git -C "$path" fetch --depth 1 origin main
