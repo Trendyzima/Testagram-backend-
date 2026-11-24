@@ -116,7 +116,7 @@ jobs:
               # Emit structural diagnostics only. Never print or expose the sender.
               has_at = "@" in configured
               has_comma = "," in configured
-              has_line_break = "\\n" in raw_configured or "\\r" in raw_configured
+              has_line_break = "\n" in raw_configured or "\r" in raw_configured
               print(
                   "::error::AUTH_FROM_EMAIL must be one bare mailbox such as "
                   "no-reply@testagram.site; "
