@@ -96,11 +96,11 @@ func TestParseNativeBounceRejectsOversizedReport(t *testing.T) {
 }
 
 func TestNativeBounceVERPTokenShape(t *testing.T) {
-	valid := "b+abcdefghijklmnopqrstuvwxyzABCDEF_123456-"
+	valid := "b+abcdefghijklmnopqrstuvwxyzABCDEF"
 	if !nativeBounceLocalPart.MatchString(valid) {
 		t.Fatal("valid opaque VERP token was rejected")
 	}
-	for _, invalid := range []string{"b+short", "b+abcdefghijklmnopqrstuvwxyzABCDEF_123456-!", "bounce+abcdefghijklmnopqrstuvwxyzABCDEF_123456-"} {
+	for _, invalid := range []string{"b+short", "b+abcdefghijklmnopqrstuvwxyzABCDE!", "bounce+abcdefghijklmnopqrstuvwxyzABCDEF"} {
 		if nativeBounceLocalPart.MatchString(invalid) {
 			t.Errorf("invalid VERP local part was accepted: %q", invalid)
 		}
