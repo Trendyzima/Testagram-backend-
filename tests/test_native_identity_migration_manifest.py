@@ -49,6 +49,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261124_testagram_email_verification_otp.sql",
             "20261124_testagram_social_email_consent.sql",
             "20261125_testagram_mail_delivery_events.sql",
+            "20261126_testagram_native_mail_feedback.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -67,7 +68,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         otp = "20261124_testagram_email_verification_otp.sql"
         consent = "20261124_testagram_social_email_consent.sql"
         delivery = "20261125_testagram_mail_delivery_events.sql"
-        for migration in (otp, consent, delivery):
+        feedback = "20261126_testagram_native_mail_feedback.sql"
+        for migration in (otp, consent, delivery, feedback):
             with self.subTest(migration=migration):
                 self.assertIn(
                     f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
@@ -233,6 +235,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261124_testagram_email_verification_otp.sql",
             "20261124_testagram_social_email_consent.sql",
             "20261125_testagram_mail_delivery_events.sql",
+            "20261126_testagram_native_mail_feedback.sql",
         ):
             with self.subTest(migration=migration):
                 self.assertIn(migration, script)
