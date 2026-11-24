@@ -77,8 +77,11 @@ Automated deployment:
   Review existing apex/subdomain routes and enable it manually in Email Routing
   Settings before deployment.
 - It verifies that the bounce subdomain publishes Cloudflare MX records.
-- It temporarily deploys the Worker with `wrangler-probe.toml` on the account's
-  existing `workers.dev` subdomain, without registering the email address.
+- On first install, it bootstraps the Worker on the account's existing
+  `workers.dev` subdomain without an email address, installs the HMAC secret,
+  then deploys `wrangler-probe.toml` with the email rule. On later deployments,
+  the probe config preserves the existing email rule while enabling the
+  temporary HTTP health endpoint.
 - It reads the internally generated `TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET`
   from InstaBox and sends it directly to Cloudflare using `wrangler secret
   put`. The value is not printed, committed, or sent to the GitHub runner.
