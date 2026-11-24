@@ -83,6 +83,12 @@ BEGIN
   -- The provider-keyed ledger is optional on native-only installations. The
   -- native approval link is added later through native_sensitive_action_requests.
   IF to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_applications'
+         AND column_name='sensitive_action_request_id'
+     )
      AND NOT EXISTS (
        SELECT 1 FROM pg_constraint
        WHERE conname = 'identity_applications_sensitive_action_request_fk'
