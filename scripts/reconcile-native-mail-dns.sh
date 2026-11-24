@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# LEGACY DEDICATED-HOST RECONCILER ONLY. Do not run this on InstaBox: it
+# owns the bounce MX for a separate public SMTP host. InstaBox must use
+# scripts/reconcile-instabox-native-mail-dns.sh, which preserves Cloudflare MX.
 # Reconcile only the dedicated native-mail DNS names in the authoritative Cloudflare zone.
 # The caller supplies a narrowly scoped Zone:DNS:Edit token; no root MX records are touched.
 set -Eeuo pipefail
