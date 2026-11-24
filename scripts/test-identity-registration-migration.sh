@@ -1087,4 +1087,20 @@ BEGIN
 END;
 $native_clean_migration_chain_acceptance$;
 SQL
+# Static regression guards: optional provider-keyed tables must never be referenced
+# by unconditional DDL on the native-only production migration path.
+assert_migration_guard() {
+  local file="$1" expected="$2"
+  if ! grep -Fq -- "$expected" "$file"; then
+    echo "Missing native-only migration guard in $file: $expected" >&2
+    exit 1
+  fi
+}
+assert_migration_guard migrations/20261113_identity_registration_hardening.sql "IF to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL"
+assert_migration_guard migrations/20261113_identity_registration_hardening.sql "column_name='sensitive_action_request_id'"
+assert_migration_guard migrations/20261113_identity_registration_hardening.sql "IF to_regclass('testagram_auth.staff_roles') IS NOT NULL THEN"
+assert_migration_guard migrations/20261114_native_identity_integrity.sql "IF to_regclass('testagram_auth.staff_roles') IS NOT NULL"
+assert_migration_guard migrations/20261119_native_identity_approval_ledger.sql "IF to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL THEN"
+assert_migration_guard migrations/20261119_native_identity_approval_ledger.sql "IF to_regclass('testagram_auth.admin_security_audit') IS NOT NULL THEN"
+
 echo "Native-only identity migration chain passed without legacy staff_roles or provider-keyed approval tables."
