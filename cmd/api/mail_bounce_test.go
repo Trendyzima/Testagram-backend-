@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"net"
 	"strings"
 	"testing"
 )
@@ -116,6 +119,43 @@ func TestParseNativeBounceRejectsExcessiveMIMEParts(t *testing.T) {
 	if _, err := parseNativeBounceReport([]byte(raw.String())); err == nil {
 		t.Fatal("report with excessive MIME parts was accepted")
 	}
+}
+
+func TestNativeBounceSMTPRejectsExternalRecipientsAndCannotRelay(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+	go handleNativeBounceSMTP(context.Background(), nil, serverConn, nil)
+
+	reader := bufio.NewReader(clientConn)
+	readReply := func(wantPrefix string) {
+		t.Helper()
+		line, err := reader.ReadString('\\n')
+		if err != nil {
+			t.Fatalf("read SMTP reply: %v", err)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(line), wantPrefix) {
+			t.Fatalf("SMTP reply=%q, want prefix %q", strings.TrimSpace(line), wantPrefix)
+		}
+	}
+	send := func(command string) {
+		t.Helper()
+		if _, err := clientConn.Write([]byte(command + "\\r\\n")); err != nil {
+			t.Fatalf("send SMTP command %q: %v", command, err)
+		}
+	}
+
+	readReply("220 ")
+	send("EHLO test-client.example")
+	readReply("250-mail.testagram.site")
+	readReply("250 SIZE")
+	send("MAIL FROM:<>")
+	readReply("250 Sender accepted")
+	send("RCPT TO:<attacker@example.test>")
+	readReply("550 Recipient not accepted")
+	send("DATA")
+	readReply("503 MAIL FROM and valid RCPT TO required")
+	send("QUIT")
+	readReply("221 Bye")
 }
 
 func TestNativeBounceVERPTokenShape(t *testing.T) {
