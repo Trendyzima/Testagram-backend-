@@ -67,8 +67,15 @@ if [[ "$existing_rules_status" != 200 ]] || ! jq -e '.success == true' "$tmp/exi
   echo "::error::Could not inspect existing Email Routing rules before Worker deployment."
   exit 1
 fi
-if jq -e --arg suffix "@$BOUNCE_DOMAIN" '[.result[]? | select(any(.matchers[]?; .type == "literal" and ((.value | ascii_downcase) | endswith($suffix))))] | length > 0' "$tmp/existing-rules.json" >/dev/null; then
-  echo "::error::A routing rule already exists on $BOUNCE_DOMAIN. Review it and remove or migrate it explicitly before Wrangler takes ownership."
+if ! jq -e --arg suffix "@$BOUNCE_DOMAIN" --arg address "$BOUNCE_ADDRESS" --arg worker "testagram-bounce-ingress" '
+  [.result[]? | select(any(.matchers[]?; .type == "literal" and ((.value | ascii_downcase) | endswith($suffix))))] as $domain_rules
+  | ($domain_rules | length) == 0 or
+    (($domain_rules | length) == 1 and
+     any($domain_rules[0].matchers[]?; .type == "literal" and .value == $address) and
+     $domain_rules[0].source == "wrangler" and
+     any($domain_rules[0].actions[]?; .type == "worker" and ((.value // []) | index($worker) != null)))
+' "$tmp/existing-rules.json" >/dev/null; then
+  echo "::error::A conflicting Email Routing rule exists on $BOUNCE_DOMAIN. Only the existing Wrangler-managed $BOUNCE_ADDRESS rule targeting $worker may be updated automatically."
   exit 1
 fi
 
