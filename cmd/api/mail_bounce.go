@@ -225,7 +225,9 @@ func processNativeBounceReport(ctx context.Context, db *pgxpool.Pool, tokenHash,
 	eventID := "native-report:" + hex.EncodeToString(eventKey[:])
 	bounceType := ""
 	if report.EventType == "dsn.bounced" {
-		if strings.HasPrefix(report.Status, "5.") {
+		// Only recipient-address failures are automatic hard-bounce suppressions.
+		// Policy and reputation 5.7.x failures must not permanently suppress users.
+		if report.Status == "5.1.1" || report.Status == "5.1.2" {
 			bounceType = "hard"
 		} else {
 			bounceType = "unknown"
