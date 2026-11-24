@@ -344,6 +344,11 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
     def test_failed_schema_preflight_reports_named_acceptance_predicates(self):
         self.assertIn("schema_diagnostics()", SOURCE)
         self.assertIn("Failed schema acceptance predicates:", SOURCE)
+        self.assertIn("legacy staff roles archived or absent", SOURCE)
+        self.assertIn("legacy staff role audit archived or absent", SOURCE)
+        self.assertIn("historical_external_sensitive_action_requests archived or absent", SOURCE)
+        self.assertIn("historical_external_sensitive_action_approvals archived or absent", SOURCE)
+        self.assertIn("historical_external_admin_security_audit archived or absent", SOURCE)
         self.assertIn("identity application evidence fingerprint nullable", SOURCE)
         self.assertIn("identity evidence-complete approval trigger", SOURCE)
         self.assertIn("two-person identity approval trigger", SOURCE)
