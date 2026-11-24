@@ -164,7 +164,11 @@ cleanup_restore_test
 trap - EXIT
 echo "Verified SHA-256 and completed a full restore test: $backup"
 
-docker compose --env-file "$env_file" -f "$compose_file" up -d postgres
+# The migration SQL files are bind-mounted individually. A git reset can replace their host inodes while
+# the long-lived PostgreSQL container still sees the old mounted inode. Recreate only the container
+# (the named data volume is preserved) after the verified backup/restore, so migrations execute
+# the exact files from the checked-out release rather than stale SQL from a previous deployment.
+docker compose --env-file "$env_file" -f "$compose_file" up -d --force-recreate postgres
 for file in \
   029_federation_actor_consent.sql \
   034_admin_security_controls.sql \
