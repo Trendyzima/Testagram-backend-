@@ -358,5 +358,35 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("schema_ready", SOURCE)
 
 
+    def test_legacy_admin_migration_does_not_recreate_missing_staff_roles(self):
+        migration = (ROOT / "migrations" / "20261111_admin_security_controls.sql").read_text(encoding="utf-8")
+        self.assertIn("IF to_regclass('testagram_auth.staff_roles') IS NOT NULL THEN", migration)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS testagram_auth.staff_roles", migration)
+        self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth.admin_permissions", migration)
+        self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth.admin_rate_limits", migration)
+        for legacy_table in (
+            "staff_role_permissions",
+            "staff_permission_overrides",
+            "sensitive_action_requests",
+            "sensitive_action_approvals",
+            "admin_security_audit",
+        ):
+            self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth." + legacy_table, migration)
+
+    def test_optional_legacy_archive_migrations_accept_absent_tables(self):
+        staff = (ROOT / "migrations" / "20261120_native_identity_historical_staff_archive.sql").read_text(encoding="utf-8")
+        admin = (ROOT / "migrations" / "20261120_native_identity_historical_admin_archive.sql").read_text(encoding="utf-8")
+        for source in (staff, admin):
+            self.assertIn("to_regclass(", source)
+            self.assertIn("lock_optional_historical_", source)
+            self.assertNotRegex(source, r"'testagram_auth\\.historical_external_[^']+'::regclass")
+            self.assertIn("REVOKE ALL ON TABLE %s FROM PUBLIC", source)
+
+    def test_schema_ready_reuses_validated_named_diagnostics(self):
+        self.assertIn("failed_checks=\"$(schema_diagnostics)\"", SOURCE)
+        self.assertNotIn("psql -v ON_ERROR_STOP=1 -U", SOURCE.split("schema_ready() {", 1)[1].split("\\n}", 1)[0])
+        self.assertIn("Failed schema acceptance predicates:", SOURCE)
+
+
 if __name__ == "__main__":
     unittest.main()
