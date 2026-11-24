@@ -11,14 +11,16 @@ InstaBox over HTTPS. It does not send application mail and is not an SMTP relay.
    Cloudflare provisions the subdomain's inbound MX, SPF and routing DKIM
    records. Do not enable Email Routing on the apex as part of this change,
    and do not change the existing `testagram.site` apex MX records.
-2. The production deployment script enables plus-addressing through the
-   Email Routing settings API (`support_subaddress=true`). It does not
-   enable or rewrite apex MX records.
+2. Review existing Email Routing rules, then enable subaddressing in Email
+   Routing → Settings. This is a **zone-wide** setting and affects plus-address
+   matching for every existing apex and subdomain rule, not only Testagram's
+   bounce address. The deployment checks that it is already enabled; it does
+   not toggle this setting or rewrite apex MX records.
 3. Create a dedicated Cloudflare API token and save it as the GitHub Actions
    production secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`. Required scopes:
    - Account: Workers Scripts Read and Write
    - Zone `testagram.site`: Zone Read
-   - Zone `testagram.site`: Zone Settings Write
+   - Zone `testagram.site`: Zone Settings Read
    - Zone `testagram.site`: Email Routing Rules Read and Write
 4. Keep the existing DNS-only token in GitHub secret
    `CLOUDFLARE_DNS_API_TOKEN` with Zone Read and DNS Edit scoped to
