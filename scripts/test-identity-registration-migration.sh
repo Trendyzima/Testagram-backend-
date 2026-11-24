@@ -847,6 +847,7 @@ BEGIN
     WHERE conrelid='testagram_identity.historical_external_registration_provisioning_recovered'::regclass
       AND contype='u'
       AND conname LIKE 'registration_provisioning_source_user_id_key_recovered_%'
+      AND octet_length(conname) <= 63
   ) THEN
     RAISE EXCEPTION 'canonical and recovered provisioning ledgers did not retain distinct unique constraints';
   END IF;
