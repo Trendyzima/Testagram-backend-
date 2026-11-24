@@ -17,6 +17,25 @@ SMTP advertises STARTTLS when a valid certificate and key are installed at
 Publish the records only after confirming the VPS public IPv4 address and that
 all outbound mail for the bounce subdomain comes from this VPS.
 
+## Automated Cloudflare DNS reconciliation
+
+The InstaBox deployment can reconcile the four dedicated mail DNS names through
+the Cloudflare API after the application deployment checks pass. Configure the
+GitHub Actions **production environment** secret
+`CLOUDFLARE_DNS_API_TOKEN` with a token restricted to the `testagram.site`
+zone. Grant **Zone / Zone / Read** and **Zone / DNS / Edit** permissions; do not
+use an account-wide token. The token is passed over the authenticated InstaBox
+control-plane request, used from a mode-0600 temporary curl config, and is not
+written into the VPS environment file or repository.
+
+The reconciler discovers the zone, reads existing records, and only touches
+`mail.testagram.site`, `bounces.testagram.site`,
+`tg2026._domainkey.testagram.site`, and `_dmarc.testagram.site`. It fails
+closed on ambiguous zone/record duplicates, leaves root MX records alone,
+forces the SMTP A record to DNS-only, uses an initial SPF soft-fail policy, and
+preserves any existing DMARC policy. It does not configure provider PTR/rDNS,
+issue TLS certificates, or verify Gmail/Outlook delivery.
+
 ## Required records
 
 | Type | Name | Value |
