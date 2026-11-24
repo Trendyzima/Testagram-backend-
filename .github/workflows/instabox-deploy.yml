@@ -109,10 +109,24 @@ jobs:
           from email.headerregistry import Address
           from email.utils import getaddresses
 
-          configured = sys.argv[1].strip()
+          raw_configured = sys.argv[1]
+          configured = raw_configured.strip()
           mailboxes = getaddresses([configured])
           if len(mailboxes) != 1 or not mailboxes[0][1]:
-              print("::error::AUTH_FROM_EMAIL must contain exactly one valid sender mailbox.")
+              # Emit structural diagnostics only. Never print or expose the sender.
+              has_at = "@" in configured
+              has_comma = "," in configured
+              has_line_break = "\\n" in raw_configured or "\\r" in raw_configured
+              print(
+                  "::error::AUTH_FROM_EMAIL must be one bare mailbox such as "
+                  "no-reply@testagram.site; "
+                  f"mailbox_count={len(mailboxes)}, "
+                  f"address_present={bool(len(mailboxes) == 1 and mailboxes[0][1])}, "
+                  f"has_at={has_at}, has_comma={has_comma}, "
+                  f"has_line_break={has_line_break}, "
+                  f"trimmed_length={len(configured)}. "
+                  "The sender value itself is intentionally not logged."
+              )
               raise SystemExit(1)
           try:
               parsed = Address(addr_spec=mailboxes[0][1])
