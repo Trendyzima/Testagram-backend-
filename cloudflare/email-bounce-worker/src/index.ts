@@ -4,7 +4,7 @@ export interface Env {
 }
 
 const MAX_MESSAGE_BYTES = 1 << 20;
-const RECIPIENT = /^b\+[A-Za-z0-9_-]{32}@bounces\.testagram\.site$/i;
+const RECIPIENT = /^b\+[A-Za-z0-9_-]{32}@bounces\.testagram\.site$/;
 
 function toHex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
