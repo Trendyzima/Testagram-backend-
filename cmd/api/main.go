@@ -623,6 +623,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("GET /api/email/unsubscribe", s.socialEmailUnsubscribe)
 	mux.HandleFunc("POST /api/email/unsubscribe", s.socialEmailUnsubscribe)
+	// Cloudflare is an inbound-only bounce transport; Testagram authenticates and processes the original MIME payload.
+	mux.HandleFunc("POST "+nativeBounceIngressPath, s.nativeBounceHTTP)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
