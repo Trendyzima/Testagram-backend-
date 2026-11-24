@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
@@ -16,8 +16,8 @@ import (
 	"mime"
 	"mime/multipart"
 	"net"
-	"os"
 	"net/mail"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -59,6 +59,7 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 
 	reader := multipart.NewReader(message.Body, params["boundary"])
 	var report nativeBounceReport
+	partCount := 0
 	for {
 		part, nextErr := reader.NextPart()
 		if errors.Is(nextErr, io.EOF) {
@@ -67,6 +68,11 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 		if nextErr != nil {
 			return nativeBounceReport{}, nextErr
 		}
+		partCount++
+		if partCount > 10 {
+			_ = part.Close()
+			return nativeBounceReport{}, errors.New("delivery report contains too many MIME parts")
+		}
 		partType, _, parseErr := mime.ParseMediaType(part.Header.Get("Content-Type"))
 		if parseErr != nil {
 			_ = part.Close()
@@ -74,7 +80,7 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 		}
 		switch partType {
 		case "message/delivery-status":
-			data, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
+			data, readErr := readNativeBouncePart(part)
 			_ = part.Close()
 			if readErr != nil {
 				return nativeBounceReport{}, readErr
@@ -93,7 +99,7 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 				report.EventType = "dsn.delivered"
 			}
 		case "message/feedback-report":
-			data, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
+			data, readErr := readNativeBouncePart(part)
 			_ = part.Close()
 			if readErr != nil {
 				return nativeBounceReport{}, readErr
@@ -119,6 +125,17 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 		return nativeBounceReport{}, errors.New("invalid enhanced status code")
 	}
 	return report, nil
+}
+
+func readNativeBouncePart(part *multipart.Part) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(part, (64<<10)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 64<<10 {
+		return nil, errors.New("delivery report MIME part exceeds 64 KiB")
+	}
+	return data, nil
 }
 
 func parseDSNFields(data []byte) map[string]string {
