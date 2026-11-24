@@ -96,7 +96,7 @@ import hashlib
 import hmac
 import sys
 secret, timestamp = sys.argv[1], sys.argv[2]
-print(hmac.new(secret.encode(), ("health\\n" + timestamp).encode(), hashlib.sha256).hexdigest())
+print(hmac.new(secret.encode(), ("health\n" + timestamp).encode(), hashlib.sha256).hexdigest())
 PY
 )"
 worker_health_url="https://testagram-bounce-ingress.$workers_subdomain.workers.dev/__health"
