@@ -46,6 +46,7 @@ jobs:
           python3 tests/test_media_feature_gate_wiring.py -v
           python3 tests/test_native_identity_migration_manifest.py -v
           python3 tests/test_native_mail_dns_api.py -v
+          python3 tests/test_instabox_native_mail_egress.py -v
           python3 tests/test_instabox_b2_credentials.py -v
           python3 tests/test_instabox_mailjet_port.py -v
           python3 tests/test_instabox_edge_proxy_secret.py -v
@@ -74,6 +75,7 @@ jobs:
       INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
       INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
       INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
+      TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4: ${{ vars.TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4 || '' }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
       TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED || 'false' }}
       TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED: ${{ vars.TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED || 'false' }}
