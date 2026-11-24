@@ -19,15 +19,15 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn('chmod 600 "$BASE_ENV"', script)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", (ROOT / "cmd/api/mail_return_path.go").read_text())
 
-    def test_native_bounce_receiver_is_wired_to_port_25(self):
+    def test_instabox_uses_http_bounce_ingress_not_unreachable_smtp_port(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         main = (ROOT / "cmd/api/main.go").read_text()
         bounce = (ROOT / "cmd/api/mail_bounce.go").read_text()
-        self.assertIn('"25:2525"', compose)
+        self.assertIn("TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR:-}", compose)
+        self.assertNotIn('"25:2525"', compose)
         self.assertIn("startNativeBounceSMTP(signalCtx, db, bounceAddr)", main)
         self.assertIn("nativeBounceDomain", bounce)
         self.assertIn("tls.Server(conn, tlsConfig)", bounce)
-        self.assertIn("TESTAGRAM_MAIL_TLS_CERT_FILE", compose)
         self.assertIn("recipient does not match the original message", bounce)
 
     def test_native_feedback_migration_is_mounted_and_applied(self):
