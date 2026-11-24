@@ -9,7 +9,7 @@ ALTER TABLE testagram_mail.delivery_events
   ADD CONSTRAINT testagram_mail_delivery_events_event_type_check
   CHECK (event_type IN (
     'mailjet.sent','mailjet.bounce','mailjet.blocked','mailjet.spam',
-    'smtp.accepted','dsn.delayed','dsn.bounced','arf.complaint','smtp.rejected'
+    'smtp.accepted','dsn.delayed','dsn.bounced','dsn.delivered','arf.complaint','smtp.rejected'
   ));
 
 ALTER TABLE testagram_mail.delivery_events
