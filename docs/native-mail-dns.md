@@ -31,13 +31,17 @@ and Outlook may reject or filter mail. Do not claim direct-MX production
 acceptance until the provider confirms the network identity and live delivery
 tests pass.
 
+## Read-only network diagnostic
+
+After the workflow update is merged, run `Deploy Testagram to InstaBox` manually with `diagnose_native_mail_egress=true` and `confirm_production_deploy=false`. This runs a read-only probe on the existing machine: two independent public IPv4 lookups, PTR, current `mail.testagram.site` A, and TCP/25 to Gmail and Outlook MX hosts. It sends no email and changes no DNS or services. Static/dedicated status still requires explicit InstaBox provider confirmation.
+
 ## Outbound DNS reconciliation
 
 `scripts/reconcile-instabox-native-mail-dns.sh` runs only after the egress
 identity and Testagram DKIM key are available. It:
 
 - Creates/updates `mail.testagram.site` A as DNS-only.
-- Merges `ip4:<INSTAbox_EGRESS_IPV4>` and
+- Merges `ip4:<INSTABOX_EGRESS_IPV4>` and
   `include:_spf.mx.cloudflare.net` into the single SPF TXT record on
   `bounces.testagram.site`, preserving existing mechanisms and the existing
   `all` qualifier.
