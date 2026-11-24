@@ -471,7 +471,13 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 				)
 			`, hash[:]).Scan(&tokenExists)
 			cancel()
-			if err != nil || !tokenExists {
+			if err != nil {
+				if !reply(451, "Temporary feedback lookup failure") {
+					return
+				}
+				continue
+			}
+			if !tokenExists {
 				if !reply(550, "Unknown or expired feedback token") {
 					return
 				}
@@ -525,7 +531,12 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 			err = processNativeBounceReport(processCtx, db, tokenHash, data.Bytes(), report)
 			cancel()
 			if err != nil {
-				if !reply(550, "Feedback could not be correlated") {
+				status := 451
+				if strings.Contains(err.Error(), "unknown or expired") ||
+					strings.Contains(err.Error(), "does not match") {
+					status = 550
+				}
+				if !reply(status, "Feedback processing failed") {
 					return
 				}
 				continue
