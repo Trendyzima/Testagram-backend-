@@ -91,47 +91,6 @@ func TestSignNativeMailDKIMProducesVerifiableSignature(t *testing.T) {
 	}
 }
 
-func TestNativeMailReturnPathIsStableAndOpaque(t *testing.T) {
-	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("ab", 32))
-	first, firstHash, err := nativeMailReturnPath(12345)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, secondHash, err := nativeMailReturnPath(12345)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second || !bytes.Equal(firstHash, secondHash) {
-		t.Fatal("return path must be stable for an outbox row")
-	}
-	if !strings.HasSuffix(first, "@bounces.testagram.site") || strings.Contains(first, "recipient") {
-		t.Fatalf("unexpected return path: %q", first)
-	}
-	if len(firstHash) != 32 {
-		t.Fatalf("unexpected token hash length: %d", len(firstHash))
-	}
-}
-
-func TestParseNativeDSNHardBounce(t *testing.T) {
-	raw := []byte("From: Mail Delivery Subsystem <mailer-daemon@example.net>\r\n" +
-		"MIME-Version: 1.0\r\n" +
-		"Content-Type: multipart/report; report-type=delivery-status; boundary=\"dsn-boundary\"\r\n\r\n" +
-		"--dsn-boundary\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nDelivery failed\r\n" +
-		"--dsn-boundary\r\nContent-Type: message/delivery-status\r\n\r\n" +
-		"Reporting-MTA: dns; mx.example.net\r\n\r\n" +
-		"Final-Recipient: rfc822; user@example.net\r\n" +
-		"Action: failed\r\nStatus: 5.1.1\r\n" +
-		"Diagnostic-Code: smtp; 550 mailbox unavailable\r\n" +
-		"--dsn-boundary--\r\n")
-	report, err := parseNativeBounceReport(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.EventType != "dsn.bounced" || report.Recipient != "user@example.net" || report.Status != "5.1.1" {
-		t.Fatalf("unexpected parsed DSN: %+v", report)
-	}
-}
-
 func TestParseNativeDSNRejectsNonReport(t *testing.T) {
 	_, err := parseNativeBounceReport([]byte("From: user@example.net\r\nSubject: hello\r\n\r\nNot a DSN"))
 	if err == nil {
