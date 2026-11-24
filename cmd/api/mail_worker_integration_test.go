@@ -13,6 +13,8 @@ func configureMailWorkerTest(t *testing.T) {
 	t.Helper()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
 	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("62", 32))
+	_, keyPath := writeTestDKIMKey(t, 0600)
+	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", keyPath)
 }
 
 func TestMailWorkerRetriesDefiniteFailureAndPreservesPayload(t *testing.T) {
