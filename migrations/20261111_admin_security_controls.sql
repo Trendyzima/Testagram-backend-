@@ -38,7 +38,17 @@ SET description = EXCLUDED.description, sensitive = EXCLUDED.sensitive;
 -- table or legacy staff identities on an upgrade from a partially retired DB.
 DO $legacy_staff_admin$
 BEGIN
-  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL THEN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_auth' AND table_name='staff_roles'
+         AND column_name='appwrite_user_id'
+     )
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_auth' AND table_name='staff_roles'
+         AND column_name='role'
+     ) THEN
     ALTER TABLE testagram_auth.staff_roles
       ADD COLUMN IF NOT EXISTS access_revoked_at timestamptz;
 
