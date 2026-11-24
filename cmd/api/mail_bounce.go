@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/mail"
+	"log"
 	"net/textproto"
 	"regexp"
 	"strings"
@@ -87,14 +88,13 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 
 func parseDSNFields(data []byte) map[string]string {
 	result := make(map[string]string)
-	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(data)))
-	for {
-		header, err := reader.ReadMIMEHeader()
-		if err != nil { break }
-		for key, values := range header {
-			if len(values) > 0 { result[strings.ToLower(key)] = strings.TrimSpace(values[0]) }
-		}
-		if _, err := reader.R.ReadString('\n'); err != nil { break }
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") { continue }
+		i := strings.IndexByte(line, ':')
+		if i <= 0 { continue }
+		key := strings.ToLower(strings.TrimSpace(line[:i]))
+		value := strings.TrimSpace(line[i+1:])
+		if key != "" { result[key] = value }
 	}
 	return result
 }
@@ -176,18 +176,25 @@ func processNativeBounceReport(ctx context.Context, db *pgxpool.Pool, tokenHash 
 	return tx.Commit(ctx)
 }
 
-func serveNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, addr string) error {
+func startNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, addr string) error {
 	listener, err := net.Listen("tcp", addr)
-	if err != nil { return fmt.Errorf("listen for native mail feedback on %s: %w",addr,err) }
-	go func(){ <-ctx.Done(); _ = listener.Close() }()
-	for {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			if ctx.Err()!=nil { return nil }
-			return acceptErr
+	if err != nil { return fmt.Errorf("listen for native mail feedback on %s: %w", addr, err) }
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				if ctx.Err() != nil { return }
+				log.Printf("native mail feedback listener stopped: %v", acceptErr)
+				return
+			}
+			go handleNativeBounceSMTP(ctx, db, conn)
 		}
-		go handleNativeBounceSMTP(ctx,db,conn)
-	}
+	}()
+	return nil
 }
 
 func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn) {
@@ -198,6 +205,7 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 	reply:=func(code int,message string) bool { _,e:=fmt.Fprintf(writer,"%d %s\r\n",code,message); if e!=nil{return false}; return writer.Flush()==nil }
 	if !reply(220,"mail.testagram.site Testagram native feedback receiver"){return}
 	mailFrom:=""
+	mailFromSeen:=false
 	var tokenHash []byte
 	for {
 		line,err:=reader.ReadString('\n')
@@ -209,7 +217,7 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 		case strings.HasPrefix(upper,"EHLO ") || strings.HasPrefix(upper,"HELO "):
 			_,_=writer.WriteString("250-mail.testagram.site\r\n250 SIZE 1048576\r\n"); if writer.Flush()!=nil{return}
 		case upper=="NOOP": if !reply(250,"OK"){return}
-		case upper=="RSET": mailFrom="";tokenHash=nil;if !reply(250,"Reset"){return}
+		case upper=="RSET": mailFrom="";mailFromSeen=false;tokenHash=nil;if !reply(250,"Reset"){return}
 		case upper=="QUIT": _=reply(221,"Bye");return
 		case strings.HasPrefix(upper,"STARTTLS"):
 			if !reply(454,"TLS not configured on this receiver"){return}
@@ -219,8 +227,10 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 			value:=smtpPathValue(command[len("MAIL FROM:"):])
 			if value!="" { if _,e:=mail.ParseAddress(value);e!=nil {if !reply(501,"Invalid sender"){return};continue} }
 			mailFrom=value
+			mailFromSeen=true
 			if !reply(250,"Sender accepted"){return}
 		case strings.HasPrefix(upper,"RCPT TO:"):
+			if !mailFromSeen || len(tokenHash)>0 { if !reply(503,"MAIL FROM required; one recipient per transaction"){return}; continue }
 			value:=smtpPathValue(command[len("RCPT TO:"):])
 			parsed,e:=mail.ParseAddress(value)
 			if e!=nil || !strings.EqualFold(parsed.Address[strings.LastIndex(parsed.Address,"@")+1:],nativeBounceDomain) {
@@ -233,7 +243,7 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 			tokenHash=hash[:]
 			if !reply(250,"Feedback recipient accepted"){return}
 		case upper=="DATA":
-			if mailFrom=="" || len(tokenHash)==0 {if !reply(503,"MAIL FROM and valid RCPT TO required"){return};continue}
+			if !mailFromSeen || len(tokenHash)==0 {if !reply(503,"MAIL FROM and valid RCPT TO required"){return};continue}
 			if !reply(354,"End data with <CRLF>.<CRLF>"){return}
 			var data bytes.Buffer
 			for {
