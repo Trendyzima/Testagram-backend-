@@ -89,7 +89,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
     def test_production_deploy_requires_explicit_manual_confirmation(self):
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         deploy_start = workflow.index("  deploy:")
-        deploy_end = workflow.find("\\n  ", deploy_start + 5)
+        deploy_end = workflow.find("\n  ", deploy_start + 5)
         deploy = workflow[deploy_start:] if deploy_end < 0 else workflow[deploy_start:deploy_end]
         self.assertIn("github.event_name == 'workflow_dispatch'", deploy)
         self.assertIn("inputs.confirm_production_deploy == true", deploy)
