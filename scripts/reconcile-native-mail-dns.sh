@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 
 : "${CLOUDFLARE_DNS_API_TOKEN:?CLOUDFLARE_DNS_API_TOKEN is required}"
-: "${DKIM_PUBLIC_KEY:?DKIM_PUBLIC_KEY must be the public key generated on InstaBox}"
+: "${DKIM_PUBLIC_KEY:?DKIM_PUBLIC_KEY must be the public key generated on the dedicated SMTP host}"
 API="https://api.cloudflare.com/client/v4"
 DOMAIN="testagram.site"
 MAIL_HOST="mail.testagram.site"
