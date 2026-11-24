@@ -129,7 +129,7 @@ func TestNativeBounceSMTPRejectsExternalRecipientsAndCannotRelay(t *testing.T) {
 	reader := bufio.NewReader(clientConn)
 	readReply := func(wantPrefix string) {
 		t.Helper()
-		line, err := reader.ReadString('\\n')
+		line, err := reader.ReadString('\n')
 		if err != nil {
 			t.Fatalf("read SMTP reply: %v", err)
 		}
@@ -139,7 +139,7 @@ func TestNativeBounceSMTPRejectsExternalRecipientsAndCannotRelay(t *testing.T) {
 	}
 	send := func(command string) {
 		t.Helper()
-		if _, err := clientConn.Write([]byte(command + "\\r\\n")); err != nil {
+		if _, err := clientConn.Write([]byte(command + "\r\n")); err != nil {
 			t.Fatalf("send SMTP command %q: %v", command, err)
 		}
 	}
