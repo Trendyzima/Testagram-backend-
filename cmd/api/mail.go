@@ -430,6 +430,21 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		}
 	}
 
+	returnPath, tokenHash, err := nativeMailReturnPath(id)
+	if err != nil {
+		_ = s.failMail(ctx, id, attempt, "MAIL_RETURN_PATH_GENERATION_FAILED")
+		return true, err
+	}
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO testagram_mail.return_path_tokens(token_hash,outbox_id)
+		VALUES($1,$2)
+		ON CONFLICT(outbox_id) DO NOTHING
+	`, tokenHash, id); err != nil {
+		_ = s.failMail(ctx, id, attempt, "MAIL_RETURN_PATH_PERSIST_FAILED")
+		return true, err
+	}
+	message.EnvelopeFrom = returnPath
+
 	sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	send := sendNativeSMTP
 	if s.mailSender != nil {
