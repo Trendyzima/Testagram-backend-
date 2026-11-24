@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-
 func TestNativeBounceReportCorrelatesAndDeduplicatesHardBounce(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
