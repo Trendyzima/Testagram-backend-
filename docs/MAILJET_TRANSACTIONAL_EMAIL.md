@@ -27,9 +27,9 @@ Mailjet SMTP host is `in-v3.mailjet.com`; Testagram uses port 587 with STARTTLS.
 
 Configure Mailjet Event API callbacks for `sent`, `bounce`, `blocked`, and `spam`, with grouped delivery (Version 2), pointing to:
 
-`https://<MAILJET_API_KEY>:<MAILJET_SECRET_KEY>@api.testagram.site/internal/mailjet/events`
+`https://<URL_ENCODED_MAILJET_API_KEY>:<URL_ENCODED_MAILJET_SECRET_KEY>@api.testagram.site/internal/mailjet/events`
 
-The callback uses HTTP Basic authentication with the Mailjet API key and Secret Key. Keep the URL private; do not paste it into tickets, source code, or public chat. Mailjet sends JSON event batches. Testagram only ingests messages tagged with its `X-MJ-CustomID` header and ignores unrelated Mailjet account traffic.
+The callback uses HTTP Basic authentication with the Mailjet API key and Secret Key (URL-encode both values when necessary). Keep the URL private; do not paste it into tickets, source code, or public chat. Mailjet sends JSON event batches. Testagram only ingests messages tagged with its `X-MJ-CustomID` header and ignores unrelated Mailjet account traffic.
 
 The endpoint persists events idempotently. The outbox worker reconciles sent, hard-bounce, blocked-recipient, and spam-complaint events against the exact queued message and recipient fingerprint. Hard bounces, recipient blocks, and spam complaints create recipient suppressions. Soft bounces do not create permanent suppressions.
 
