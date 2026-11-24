@@ -29,6 +29,10 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertIn("proxied:false", source)
         self.assertIn("priority:$priority", source)
         self.assertIn("v=spf1 ip4:$PUBLIC_IPV4 ~all", source)
+        self.assertIn('TESTAGRAM_NATIVE_MAIL_PUBLIC_IPV4:-', source)
+        self.assertNotIn("api.ipify.org", source)
+        self.assertIn("not a globally routable IPv4 address", source)
+        self.assertIn("refresh_total_pages", source)
 
     def test_fails_closed_on_ambiguous_zone_or_policy_records(self):
         source = SCRIPT.read_text(encoding="utf-8")
@@ -37,14 +41,14 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertIn('[[ "$relevant_count" -le 1 ]]', source)
         self.assertIn("refusing ambiguous reconciliation", source.lower())
 
-    def test_deployment_forwards_token_ephemerally_and_runs_dns_reconcile(self):
+    def test_instabox_deployment_does_not_publish_a_nat_egress_ip_as_mail_dns(self):
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
-        self.assertIn("CLOUDFLARE_DNS_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}", workflow)
-        self.assertIn("--arg cloudflare_dns_token", deploy)
-        self.assertIn("CLOUDFLARE_DNS_API_TOKEN:$cloudflare_dns_token", deploy)
-        self.assertIn('bash "$BACKEND/scripts/reconcile-native-mail-dns.sh"', deploy)
-        self.assertIn('echo "::warning::Native mail DNS was not changed', deploy)
+        self.assertNotIn("CLOUDFLARE_DNS_API_TOKEN", workflow)
+        self.assertNotIn("cloudflare_dns_token", deploy)
+        self.assertNotIn('bash "$BACKEND/scripts/reconcile-native-mail-dns.sh"', deploy)
+        self.assertIn("cannot expose TCP/25", deploy)
+        self.assertIn("dedicated SMTP host", deploy)
 
     def test_does_not_claim_to_configure_ptr_or_dmarc_reporting(self):
         source = SCRIPT.read_text(encoding="utf-8")
