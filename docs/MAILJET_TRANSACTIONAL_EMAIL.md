@@ -12,7 +12,7 @@ Production uses Mailjet Send API v3.1 over HTTPS:
 - Username: `MAILJET_API_KEY` (Mailjet public API key)
 - Password: `MAILJET_SECRET_KEY` (Mailjet private Secret Key)
 
-The application does not use SMTP and does not require outbound TCP 587 or 2525. The InstaBox deployment performs a read-only, certificate-verified TLS handshake to `api.mailjet.com:443` before modifying production services. This check sends no email and does not expose credentials.
+The application does not use SMTP and does not require outbound TCP 587 or 2525. The InstaBox deployment performs a read-only, certificate-verified GET to Mailjet's `/v3/REST/myprofile` endpoint over `api.mailjet.com:443` before modifying production services. This verifies both HTTPS egress and the configured API credentials. The request body is discarded, credentials are passed to curl through standard input rather than process arguments, and no email is sent.
 
 Set these GitHub production environment secrets/variables; never commit real values:
 
