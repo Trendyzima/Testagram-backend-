@@ -102,6 +102,17 @@ if ! sudo docker compose version >/dev/null 2>&1; then
 fi
 sudo docker info >/dev/null
 
+# Native direct-to-MX delivery requires outbound TCP/25. Check both major
+# mailbox networks before replacing the running production stack.
+for mx_host in gmail-smtp-in.l.google.com outlook-com.olc.protection.outlook.com; do
+  if ! timeout 12 bash -c "exec 3<>/dev/tcp/$mx_host/25"; then
+    echo "::error::InstaBox cannot establish outbound TCP/25 to $mx_host; native mail delivery cannot be accepted as production-ready."
+    exit 1
+  fi
+  echo "Verified outbound TCP/25 reachability to $mx_host."
+done
+
+
 # Native Testagram mail connects directly to recipient MX hosts; no provider preflight or credentials are used.
 
 sync_repo() {
