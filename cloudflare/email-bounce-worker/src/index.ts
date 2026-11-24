@@ -32,6 +32,13 @@ export default {
       message.setReject("Unknown Testagram bounce address");
       return;
     }
+    // Cloudflare prepends its own Authentication-Results header before
+    // invoking Email Workers. Do not trust sender-supplied auth-result headers.
+    const authenticationResults = message.headers.get("authentication-results") || "";
+    if (!/^mx\\.cloudflare\\.net\\s*;/i.test(authenticationResults.trim())) {
+      message.setReject("Missing Cloudflare authentication result");
+      return;
+    }
     const secret = env.TESTAGRAM_BOUNCE_INGRESS_SECRET;
     if (!env.TESTAGRAM_BOUNCE_INGRESS_URL || typeof secret !== "string" || secret.length < 32) {
       throw new Error("Testagram bounce ingress is not configured");
