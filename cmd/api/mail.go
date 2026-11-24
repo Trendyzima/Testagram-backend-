@@ -76,7 +76,24 @@ func mailPlainTextFromHTML(value string) string {
 }
 
 func mailRuntimeConfigurationError() error {
-	return mailProviderConfigurationError()
+	if err := mailProviderConfigurationError(); err != nil {
+		return err
+	}
+	if _, _, err := nativeMailReturnPath(1); err != nil {
+		return err
+	}
+	keyPath := strings.TrimSpace(os.Getenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE"))
+	if keyPath == "" {
+		return errors.New("TESTAGRAM_DKIM_PRIVATE_KEY_FILE is required for native mail delivery")
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		return errors.New("native DKIM private key file is unavailable")
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return errors.New("native DKIM private key permissions must not allow group or other access")
+	}
+	return nil
 }
 
 func mailCipher() (cipher.AEAD, error) {
