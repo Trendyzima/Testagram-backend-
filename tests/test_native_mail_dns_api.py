@@ -60,14 +60,20 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertIn('[[ "$relevant_count" -le 1 ]]', source)
         self.assertIn("refusing ambiguous reconciliation", source.lower())
 
-    def test_instabox_deployment_does_not_publish_a_nat_egress_ip_as_mail_dns(self):
+    def test_instabox_dns_reconciliation_requires_verified_static_egress(self):
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
-        self.assertNotIn("CLOUDFLARE_DNS_API_TOKEN", workflow)
-        self.assertNotIn("cloudflare_dns_token", deploy)
-        self.assertNotIn('bash "$BACKEND/scripts/reconcile-native-mail-dns.sh"', deploy)
-        self.assertIn("cannot expose TCP/25", deploy)
-        self.assertIn("Native mail DNS reconciliation intentionally skipped on InstaBox", deploy)
+        egress = (ROOT / "scripts/verify-instabox-native-mail-egress.sh").read_text()
+        dns = (ROOT / "scripts/reconcile-instabox-native-mail-dns.sh").read_text()
+        self.assertIn("CLOUDFLARE_DNS_API_TOKEN", workflow)
+        self.assertIn("cloudflare_dns_token", deploy)
+        self.assertIn('bash "$BACKEND/scripts/reconcile-instabox-native-mail-dns.sh"', deploy)
+        self.assertIn("TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4", workflow)
+        self.assertIn("socket.gethostbyaddr", egress)
+        self.assertIn('write_record A "$MAIL_HOST" "$PUBLIC_IPV4"', dns)
+        self.assertNotIn("write_record MX", dns)
+        self.assertIn('write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ""', deploy)
+        self.assertNotIn('write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ":2525"', deploy)
 
     def test_does_not_claim_to_configure_ptr_or_dmarc_reporting(self):
         source = SCRIPT.read_text(encoding="utf-8")
