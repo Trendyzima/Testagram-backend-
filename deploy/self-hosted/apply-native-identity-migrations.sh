@@ -19,7 +19,7 @@ docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
 
 schema_diagnostics() {
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres \
-    sh -ec 'psql -X -A -t -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+    sh -ec 'psql -X -v ON_ERROR_STOP=1 -A -t -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 WITH checks(check_name, ok) AS (VALUES
   ('admin_rate_limits table', to_regclass('testagram_auth.admin_rate_limits') IS NOT NULL),
   ('admin_permissions table', to_regclass('testagram_auth.admin_permissions') IS NOT NULL),
