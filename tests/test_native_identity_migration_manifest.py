@@ -379,7 +379,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         for source in (staff, admin):
             self.assertIn("to_regclass(", source)
             self.assertIn("lock_optional_historical_", source)
-            self.assertNotRegex(source, r"'testagram_auth\\.historical_external_[^']+'::regclass")
+            self.assertNotRegex(source, r"'testagram_auth\.historical_external_[^']+'::regclass")
             self.assertIn("REVOKE ALL ON TABLE %s FROM PUBLIC", source)
 
     def test_schema_ready_reuses_validated_named_diagnostics(self):
