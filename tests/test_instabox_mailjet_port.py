@@ -22,6 +22,11 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("ensure_random_secret TESTAGRAM_MAIL_ENCRYPTION_KEY", script)
         self.assertNotIn("secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY", WORKFLOW.read_text(encoding="utf-8"))
 
+    def test_native_deployment_script_has_real_line_break_before_sync(self):
+        script = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn(r"used.\\n\\nsync_repo()", script)
+        self.assertIn('\nsync_repo() {', script)
+
     def test_sender_delivers_directly_to_mx_with_starttls_and_no_auth(self):
         source = SMTP.read_text(encoding="utf-8")
         self.assertIn("LookupMX", source)
