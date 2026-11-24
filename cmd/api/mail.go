@@ -309,9 +309,6 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if err := mailRuntimeConfigurationError(); err != nil {
 		return false, nil
 	}
-	if err := s.reconcileMailjetEvents(ctx); err != nil {
-		return false, err
-	}
 	if err := s.cleanupMailOperationalRecords(ctx); err != nil {
 		return false, err
 	}
@@ -434,7 +431,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	send := sendMailjetAPI
+	send := sendNativeSMTP
 	if s.mailSender != nil {
 		send = s.mailSender
 	}
@@ -454,7 +451,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		if errors.As(sendErr, &permanent) {
 			code := permanent.code
 			if code == "" {
-				code = "MAIL_PROVIDER_REJECTED"
+				code = "MAIL_MX_REJECTED"
 			}
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
@@ -466,7 +463,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		}
 		code := "MAIL_DELIVERY_FAILED"
 		if strings.Contains(sendErr.Error(), "not configured") {
-			code = "MAIL_PROVIDER_NOT_CONFIGURED"
+			code = "MAIL_NATIVE_CONFIGURATION_ERROR"
 		}
 		if err := s.failMail(ctx, id, attempt, code); err != nil {
 			return true, err
