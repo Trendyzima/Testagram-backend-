@@ -202,6 +202,12 @@ func TestCloudflareMailRequestRejectsProviderErrorsAndSuppression(t *testing.T) 
 				if !errors.As(err, &permanent) {
 					t.Fatalf("error = %v, want permanentMailError", err)
 				}
+				if tt.name == "provider rejects request permanently" {
+					if permanent.apiCode != 10001 || permanent.httpStatus != http.StatusBadRequest ||
+						permanent.code != "CLOUDFLARE_API_10001" {
+						t.Fatalf("provider rejection diagnostics = %#v, want HTTP 400 / API 10001", permanent)
+					}
+				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
