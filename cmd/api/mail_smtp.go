@@ -14,12 +14,14 @@ import (
 	"net/mail"
 	"net/smtp"
 	"net/textproto"
+	"os"
 	"sort"
 	"strings"
 	"time"
 )
 
-const nativeMailFrom = "no-reply@testagram.site"\nconst nativeBounceDomain = "bounces.testagram.site"
+const nativeMailFrom = "no-reply@testagram.site"
+const nativeBounceDomain = "bounces.testagram.site"
 
 // Kept for existing readiness callers. Native delivery has no provider credentials.
 func mailProviderConfigurationError() error {
