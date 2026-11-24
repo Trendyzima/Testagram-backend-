@@ -7,7 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
-		"io"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
