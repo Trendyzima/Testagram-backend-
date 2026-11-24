@@ -262,6 +262,20 @@ fi
 sudo chown 100:100 "$MAIL_KEY_DIR" "$MAIL_KEY_DIR/dkim-private.pem"
 sudo chmod 700 "$MAIL_KEY_DIR"
 sudo chmod 600 "$MAIL_KEY_DIR/dkim-private.pem"
+MAIL_TLS_DIR="$ROOT/mail-tls"
+sudo mkdir -p "$MAIL_TLS_DIR"
+sudo chown 100:100 "$MAIL_TLS_DIR"
+sudo chmod 700 "$MAIL_TLS_DIR"
+if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
+  sudo chown 100:100 "$MAIL_TLS_DIR/fullchain.pem" "$MAIL_TLS_DIR/privkey.pem"
+  sudo chmod 600 "$MAIL_TLS_DIR/fullchain.pem" "$MAIL_TLS_DIR/privkey.pem"
+  write_env_value TESTAGRAM_MAIL_TLS_CERT_FILE "/run/testagram-mail-tls/fullchain.pem"
+  write_env_value TESTAGRAM_MAIL_TLS_KEY_FILE "/run/testagram-mail-tls/privkey.pem"
+else
+  write_env_value TESTAGRAM_MAIL_TLS_CERT_FILE ""
+  write_env_value TESTAGRAM_MAIL_TLS_KEY_FILE ""
+  echo "Inbound SMTP STARTTLS is disabled until a valid mail.testagram.site certificate is installed in $MAIL_TLS_DIR."
+fi
 write_env_value TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 write_env_value TESTAGRAM_DKIM_SELECTOR "tg2026"
 write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ":2525"
