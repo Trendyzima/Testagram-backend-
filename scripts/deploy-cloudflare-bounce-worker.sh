@@ -82,7 +82,7 @@ printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=w
 
 # Verify the route exists and targets a Worker before declaring setup complete.
 rules_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/rules.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing/rules" -H "$auth_header")"
-if [[ "$rules_status" != 200 ]] || ! jq -e --arg address "$BOUNCE_ADDRESS" '[.result[]? | select(any(.matchers[]?; .type == "literal" and .value == $address))] as $matches | ($matches | length) == 1 and $matches[0].source == "wrangler" and any($matches[0].actions[]?; .type == "worker")' "$tmp/rules.json" >/dev/null; then
+if [[ "$rules_status" != 200 ]] || ! jq -e --arg address "$BOUNCE_ADDRESS" --arg worker "testagram-bounce-ingress" '[.result[]? | select(any(.matchers[]?; .type == "literal" and .value == $address))] as $matches | ($matches | length) == 1 and $matches[0].source == "wrangler" and any($matches[0].actions[]?; .type == "worker" and ((.value // []) | index($worker) != null))' "$tmp/rules.json" >/dev/null; then
   echo "::error::Cloudflare did not confirm exactly one Worker routing rule for $BOUNCE_ADDRESS."
   exit 1
 fi
