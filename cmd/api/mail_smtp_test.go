@@ -27,6 +27,7 @@ func TestBuildSMTPMessageIncludesAlternativeBodiesAndUnsubscribeHeaders(t *testi
 		"To: person@example.test",
 		"Subject: ",
 		"Message-ID: <testagram-123@testagram.site>",
+		"X-MJ-CustomID: testagram-123@testagram.site",
 		"multipart/alternative",
 		"Hello and welcome",
 		"<p>Hello and welcome</p>",
