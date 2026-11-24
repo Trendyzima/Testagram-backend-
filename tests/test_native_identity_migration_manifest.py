@@ -365,7 +365,9 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
 
     def test_legacy_admin_migration_does_not_recreate_missing_staff_roles(self):
         migration = (ROOT / "migrations" / "20261111_admin_security_controls.sql").read_text(encoding="utf-8")
-        self.assertIn("IF to_regclass('testagram_auth.staff_roles') IS NOT NULL THEN", migration)
+        self.assertIn("IF to_regclass('testagram_auth.staff_roles') IS NOT NULL", migration)
+        self.assertIn("column_name='appwrite_user_id'", migration)
+        self.assertIn("column_name='role'", migration)
         self.assertNotIn("CREATE TABLE IF NOT EXISTS testagram_auth.staff_roles", migration)
         self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth.admin_permissions", migration)
         self.assertIn("CREATE TABLE IF NOT EXISTS testagram_auth.admin_rate_limits", migration)
