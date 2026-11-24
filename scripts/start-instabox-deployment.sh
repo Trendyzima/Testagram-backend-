@@ -227,6 +227,7 @@ EOF
   chmod 600 "$BASE_ENV"
 fi
 normalize_env_file "$BASE_ENV"
+chmod 600 "$BASE_ENV"
 
 # Keep the two Federation directions independently keyed, including on existing VPS installs.
 read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
