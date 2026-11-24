@@ -60,6 +60,37 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertNotIn("env.EMAIL.send", worker)
         self.assertIn('addresses = ["b@bounces.testagram.site"]', wrangler)
 
+    def test_instabox_dns_and_cloudflare_bounce_worker_are_deployed_without_smtp_ingress(self):
+        deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        dns = (ROOT / "scripts/reconcile-instabox-native-mail-dns.sh").read_text()
+        worker_deploy = (ROOT / "scripts/deploy-cloudflare-bounce-worker.sh").read_text()
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        self.assertIn("verify-instabox-native-mail-egress.sh", deploy)
+        self.assertIn("reconcile-instabox-native-mail-dns.sh", deploy)
+        self.assertIn("deploy-cloudflare-bounce-worker.sh", deploy)
+        self.assertIn("CLOUDFLARE_DNS_API_TOKEN", workflow)
+        self.assertIn("CLOUDFLARE_BOUNCE_WORKER_API_TOKEN", workflow)
+        self.assertIn("TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4", workflow)
+        self.assertIn("proxied:false", dns)
+        self.assertIn("include:_spf.mx.cloudflare.net", dns)
+        self.assertIn("ip4:$PUBLIC_IPV4", dns)
+        self.assertIn("tg2026._domainkey.testagram.site", dns)
+        self.assertNotIn('write_record MX', dns)
+        self.assertIn('"support_subaddress":true', worker_deploy)
+        self.assertIn("wrangler deploy", worker_deploy)
+        self.assertIn("wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET", worker_deploy)
+        self.assertIn("bounces.testagram.site", worker_deploy)
+        self.assertIn("api.testagram.site/internal/mail/bounce", worker_deploy)
+
+    def test_verp_hmac_preserves_case_sensitive_token(self):
+        handler = (ROOT / "cmd/api/mail_bounce_http.go").read_text()
+        worker = (ROOT / "cloudflare/email-bounce-worker/src/index.ts").read_text()
+        self.assertIn("canonicalNativeBounceRecipient", handler)
+        self.assertIn("recipient[:at]", handler)
+        self.assertNotIn("message.to.trim().toLowerCase()", worker)
+        self.assertIn("rawRecipient.slice(0, at)", worker)
+        self.assertIn("rawRecipient.slice(at + 1).toLowerCase()", worker)
+
     def test_native_sender_has_no_external_mail_provider_requirement(self):
         smtp = (ROOT / "cmd/api/mail_smtp.go").read_text()
         script = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
