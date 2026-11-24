@@ -12,8 +12,9 @@ import (
 func configureMailWorkerTest(t *testing.T) {
 	t.Helper()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
-	t.Setenv("CLOUDFLARE_EMAIL_ACCOUNT_ID", "0123456789abcdef0123456789abcdef")
-	t.Setenv("CLOUDFLARE_EMAIL_API_TOKEN", "ci-provider-token")
+	t.Setenv("MAILJET_SMTP_USERNAME", "ci-api-key")
+	t.Setenv("MAILJET_SMTP_PASSWORD", "ci-secret-key")
+	t.Setenv("MAILJET_SMTP_PORT", "587")
 	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
 }
 
@@ -52,7 +53,7 @@ func TestMailWorkerRetriesDefiniteFailureAndPreservesPayload(t *testing.T) {
 	if err := db.QueryRow(ctx, "SELECT status,last_error_code,attempts,payload_ciphertext FROM testagram_mail.outbox WHERE id=$1", id).Scan(&status, &errorCode, &attempts, &ciphertext); err != nil {
 		t.Fatal(err)
 	}
-	if status != "pending" || errorCode != "CLOUDFLARE_DELIVERY_FAILED" || attempts != 1 || len(ciphertext) == 0 {
+	if status != "pending" || errorCode != "MAIL_DELIVERY_FAILED" || attempts != 1 || len(ciphertext) == 0 {
 		t.Fatalf("retry state=(%s,%s,%d,payload=%d)", status, errorCode, attempts, len(ciphertext))
 	}
 	if _, err := db.Exec(ctx, "UPDATE testagram_mail.outbox SET available_at=now()-interval '10 years' WHERE id=$1", id); err != nil {
@@ -101,7 +102,7 @@ func TestMailWorkerQuarantinesAmbiguousOutcomeWithoutResending(t *testing.T) {
 	if err := db.QueryRow(ctx, "SELECT status,last_error_code,attempts,payload_ciphertext FROM testagram_mail.outbox WHERE id=$1", id).Scan(&status, &code, &attempts, &ciphertext); err != nil {
 		t.Fatal(err)
 	}
-	if status != "uncertain" || code != "CLOUDFLARE_OUTCOME_UNKNOWN" || attempts != 1 || len(ciphertext) == 0 {
+	if status != "uncertain" || code != "MAIL_OUTCOME_UNKNOWN" || attempts != 1 || len(ciphertext) == 0 {
 		t.Fatalf("uncertain state=(%s,%s,%d,payload=%d)", status, code, attempts, len(ciphertext))
 	}
 	worked, err = svc.processOneMail(ctx)
