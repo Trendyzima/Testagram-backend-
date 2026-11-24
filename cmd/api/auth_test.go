@@ -270,32 +270,40 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 	}
 }
 
-func TestPublicRegistrationDoesNotRequireAdminIdentityReview(t *testing.T) {
-	// Private evidence storage and staff WebAuthn are deliberately disabled in
-	// this scenario. Ordinary signup must still reach only the native auth-store
-	// readiness boundary, never an identity-review or evidence-storage gate.
+func TestPublicSignupRemainsFailClosedUntilIdentityApproval(t *testing.T) {
+	// The public signup route must fail closed even when identity-review
+	// infrastructure is disabled or the native auth store is unavailable.
 	t.Setenv("DATA_CENTRE_MEDIA_ENABLED", "false")
 	t.Setenv("FRESH_MEDIA_ENABLED", "false")
 	t.Setenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED", "false")
-	old, had := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
-	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", old)
-		} else {
-			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
-		}
-	})
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", "")
+
 	handler := (&service{}).routes()
-	for _, path := range []string{"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email"} {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value","token":"a-valid-looking-token"}`))
+	signupReq := httptest.NewRequest(http.MethodPost, "/api/auth/signup",
+		strings.NewReader(`{"email":"applicant@example.com","username":"applicant_01","password":"short"}`))
+	signupRec := httptest.NewRecorder()
+	handler.ServeHTTP(signupRec, signupReq)
+	if signupRec.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(signupRec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+		t.Fatalf("public signup did not remain fail-closed: status=%d body=%s", signupRec.Code, signupRec.Body.String())
+	}
+	if strings.Contains(signupRec.Body.String(), "INVALID_PASSWORD") ||
+		strings.Contains(signupRec.Body.String(), "AUTH_STORE_UNAVAILABLE") ||
+		strings.Contains(signupRec.Body.String(), "Check your email") {
+		t.Fatalf("public signup passed the identity gate or exposed a success path: status=%d body=%s", signupRec.Code, signupRec.Body.String())
+	}
+
+	// Existing unverified accounts must still be able to reach their normal
+	// resend/verification handlers; the new gate applies only to new signup.
+	for _, path := range []string{"/api/auth/resend-verification", "/api/auth/verify-email"} {
+		req := httptest.NewRequest(http.MethodPost, path,
+			strings.NewReader(`{"email":"applicant@example.com","token":"a-valid-looking-token"}`))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
-		if strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-			t.Fatalf("POST %s is still blocked by admin identity review: status=%d body=%s", path, rec.Code, rec.Body.String())
-		}
-		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "AUTH_STORE_UNAVAILABLE") {
-			t.Fatalf("POST %s did not reach the independent auth-store readiness gate: status=%d body=%s", path, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusServiceUnavailable ||
+			!strings.Contains(rec.Body.String(), "AUTH_STORE_UNAVAILABLE") ||
+			strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+			t.Fatalf("POST %s was incorrectly affected by the public-signup gate: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
 }
