@@ -309,6 +309,9 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if err := mailRuntimeConfigurationError(); err != nil {
 		return false, nil
 	}
+	if err := s.reconcileMailjetEvents(ctx); err != nil {
+		return false, err
+	}
 		if err := s.cleanupMailOperationalRecords(ctx); err != nil {
 		return false, err
 	}
