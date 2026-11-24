@@ -30,12 +30,10 @@ CREATE TABLE IF NOT EXISTS testagram_mail.delivery_events (
   provider_event_id TEXT NOT NULL UNIQUE,
   provider_message_id TEXT NOT NULL,
   event_type TEXT NOT NULL CHECK (event_type IN (
-    'cf.email.sending.message.delivered',
-    'cf.email.sending.message.deferred',
-    'cf.email.sending.message.bounced',
-    'cf.email.sending.message.failed',
-    'cf.email.sending.message.rejected',
-    'cf.email.sending.message.complained'
+    'mailjet.sent',
+    'mailjet.bounce',
+    'mailjet.blocked',
+    'mailjet.spam'
   )),
   recipient_fingerprint BYTEA NOT NULL,
   smtp_status_code TEXT,
