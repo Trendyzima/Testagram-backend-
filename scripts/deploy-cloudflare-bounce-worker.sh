@@ -17,8 +17,23 @@ node_major="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$node_major" =~ ^[0-9]+$ && "$node_major" -ge 18 ]] || { echo "::error::Cloudflare Wrangler requires Node.js 18 or later."; exit 1; }
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 auth_header="Authorization: Bearer $CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
+script_subdomain_url="$API_BASE/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/testagram-bounce-ingress/subdomain"
+worker_probe_enabled=false
+cleanup_worker_probe() {
+  local exit_code=$?
+  if [[ "$worker_probe_enabled" == true ]]; then
+    local payload
+    payload="$(jq -nc '{enabled:false,previews_enabled:false}')"
+    if ! curl -fsS --connect-timeout 5 --max-time 15 -X POST "$script_subdomain_url" -H "$auth_header" -H 'Content-Type: application/json' --data "$payload" >/dev/null; then
+      echo "::error::Automatic cleanup could not disable the temporary workers.dev URL; disable the testagram-bounce-ingress subdomain and previews in Cloudflare." >&2
+      [[ "$exit_code" -ne 0 ]] || exit_code=1
+    fi
+  fi
+  rm -rf "$tmp"
+  return "$exit_code"
+}
+trap cleanup_worker_probe EXIT
 
 fetch_all_email_routing_rules() {
   local output="$1" page=1 pages=1 status
@@ -112,12 +127,14 @@ fi
 # the inbound address. On later deploys, preserve the existing email rule.
 if [[ "$existing_bounce_rule_count" == "0" ]]; then
   npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-bootstrap.toml
+  worker_probe_enabled=true
   printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-bootstrap.toml
 fi
 
 # The probe config keeps the existing email address rule intact while briefly
 # enabling workers.dev. The HMAC secret is installed before the health call.
 npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-probe.toml
+worker_probe_enabled=true
 printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
 
 health_timestamp="$(date +%s)"
@@ -143,7 +160,6 @@ npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler.t
 printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler.toml
 
 # Verify that the temporary workers.dev endpoint is disabled after the probe.
-script_subdomain_url="$API_BASE/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/testagram-bounce-ingress/subdomain"
 script_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/script-subdomain.json" -w '%{http_code}' "$script_subdomain_url" -H "$auth_header")"
 if [[ "$script_subdomain_status" == 200 ]] && jq -e '.success == true and (.result.enabled == true or .result.previews_enabled == true)' "$tmp/script-subdomain.json" >/dev/null; then
   disable_subdomain_payload="$(jq -nc '{enabled:false,previews_enabled:false}')"
@@ -158,6 +174,7 @@ if [[ "$script_subdomain_status" != 200 ]] || ! jq -e '.success == true and .res
   echo "::error::The temporary workers.dev or preview URL remains enabled after cleanup."
   exit 1
 fi
+worker_probe_enabled=false
 
 # Verify the route exists and targets a Worker before declaring setup complete.
 if ! fetch_all_email_routing_rules "$tmp/rules.json" || ! jq -e --arg address "$BOUNCE_ADDRESS" --arg worker "testagram-bounce-ingress" '[.result[]? | select(any(.matchers[]?; .type == "literal" and .value == $address))] as $matches | ($matches | length) == 1 and $matches[0].source == "wrangler" and any($matches[0].actions[]?; .type == "worker" and ((.value // []) | index($worker) != null))' "$tmp/rules.json" >/dev/null; then
