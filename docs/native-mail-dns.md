@@ -23,7 +23,7 @@ all outbound mail for the bounce subdomain comes from this VPS.
 |---|---|---|
 | A | `mail.testagram.site` | The actual InstaBox public IPv4 address |
 | MX | `bounces.testagram.site` | Priority 10, target `mail.testagram.site.` |
-| TXT | `bounces.testagram.site` | `v=spf1 ip4:<INSTABOX_PUBLIC_IPV4> -all` |
+| TXT | `bounces.testagram.site` | `v=spf1 ip4:<INSTABOX_PUBLIC_IPV4> ~all` during initial rollout; tighten to `-all` only after confirming no other senders use the bounce subdomain. |
 | TXT | `tg2026._domainkey.testagram.site` | `v=DKIM1; k=rsa; p=<PUBLIC_KEY_FROM_DEPLOY_LOG>` |
 | TXT | `_dmarc.testagram.site` | `v=DMARC1; p=none; adkim=r; aspf=r; rua=mailto:<MONITORED_REPORT_MAILBOX>` |
 
