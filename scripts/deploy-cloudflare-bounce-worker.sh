@@ -22,9 +22,9 @@ auth_header="Authorization: Bearer $CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
 
 # Prove the public API route reaches the new HMAC-protected handler before
 # registering an email route that could begin delivering real bounce traffic.
-probe_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp/api-probe" -w '%{http_code}' -X POST "$INGRESS_URL" -H 'Content-Type: message/rfc822' --data-binary '')"
-if [[ "$probe_status" != 401 ]]; then
-  echo "::error::Testagram bounce API probe expected HTTP 401 without HMAC headers; received HTTP $probe_status."
+probe_status="$(curl -sS --connect-timeout 5 --max-time 15 -D "$tmp/api-probe.headers" -o "$tmp/api-probe.body" -w '%{http_code}' -X POST "$INGRESS_URL" -H 'Content-Type: message/rfc822' --data-binary '')"
+if [[ "$probe_status" != 401 ]] || ! grep -qi '^X-Testagram-Bounce-Endpoint:[[:space:]]*native-v1' "$tmp/api-probe.headers"; then
+  echo "::error::Testagram bounce API probe did not reach the native handler (expected HTTP 401 and X-Testagram-Bounce-Endpoint: native-v1; received HTTP $probe_status)."
   exit 1
 fi
 
