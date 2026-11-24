@@ -70,7 +70,7 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 			return nativeBounceReport{}, nextErr
 		}
 		partCount++
-		if partCount > 10 {
+		if partCount > maxNativeBounceParts {
 			_ = part.Close()
 			return nativeBounceReport{}, errors.New("delivery report contains too many MIME parts")
 		}
