@@ -1,0 +1,8 @@
+name = "testagram-bounce-ingress"
+main = "src/index.ts"
+compatibility_date = "2026-11-25"
+workers_dev = true
+preview_urls = false
+
+[vars]
+TESTAGRAM_BOUNCE_INGRESS_URL = "https://api.testagram.site/internal/mail/bounce"
