@@ -95,6 +95,29 @@ func TestParseNativeBounceRejectsOversizedReport(t *testing.T) {
 	}
 }
 
+func TestParseNativeBounceRejectsOversizedMIMEPart(t *testing.T) {
+	raw := []byte("Content-Type: multipart/report; report-type=delivery-status; boundary=x\\r\\n\\r\\n" +
+		"--x\\r\\nContent-Type: message/delivery-status\\r\\n\\r\\n" +
+		"Final-Recipient: rfc822; user@example.test\\r\\n" +
+		"Action: failed\\r\\nStatus: 5.1.1\\r\\n" +
+		strings.Repeat("X", (64<<10)+1) + "\\r\\n--x--\\r\\n")
+	if _, err := parseNativeBounceReport(raw); err == nil {
+		t.Fatal("oversized MIME report part was accepted")
+	}
+}
+
+func TestParseNativeBounceRejectsExcessiveMIMEParts(t *testing.T) {
+	var raw strings.Builder
+	raw.WriteString("Content-Type: multipart/report; report-type=delivery-status; boundary=x\\r\\n\\r\\n")
+	for i := 0; i < 11; i++ {
+		raw.WriteString("--x\\r\\nContent-Type: text/plain\\r\\n\\r\\npart\\r\\n")
+	}
+	raw.WriteString("--x--\\r\\n")
+	if _, err := parseNativeBounceReport([]byte(raw.String())); err == nil {
+		t.Fatal("report with excessive MIME parts was accepted")
+	}
+}
+
 func TestNativeBounceVERPTokenShape(t *testing.T) {
 	valid := "b+abcdefghijklmnopqrstuvwxyzABCDEF"
 	if !nativeBounceLocalPart.MatchString(valid) {
