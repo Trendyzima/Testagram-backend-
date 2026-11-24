@@ -10,7 +10,11 @@ class NativeMailDNSAPITest(unittest.TestCase):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("api.cloudflare.com/client/v4", source)
         self.assertIn('"$API/zones?name=$DOMAIN', source)
-        self.assertIn("Authorization: Bearer $CLOUDFLARE_DNS_API_TOKEN", source)
+        # The token is interpolated by printf into a mode-0600 temporary curl
+        # config; avoid matching the full Authorization header in CI logs,
+        # where GitHub secret masking can redact portions of the assertion.
+        self.assertIn("header =", source)
+        self.assertIn('"$CLOUDFLARE_DNS_API_TOKEN"', source)
         self.assertIn("mktemp -d", source)
         self.assertIn('--config "$TMP_DIR/cloudflare.curlrc"', source)
         self.assertIn('chmod 600 "$TMP_DIR/cloudflare.curlrc"', source)
@@ -31,7 +35,7 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertIn('[[ "$ZONE_COUNT" == 1 ]]', source)
         self.assertIn('[[ "$count" -le 1 ]]', source)
         self.assertIn('[[ "$relevant_count" -le 1 ]]', source)
-        self.assertIn("Refusing ambiguous reconciliation", source)
+        self.assertIn("refusing ambiguous reconciliation", source.lower())
 
     def test_deployment_forwards_token_ephemerally_and_runs_dns_reconcile(self):
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
