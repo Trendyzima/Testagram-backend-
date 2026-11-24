@@ -32,7 +32,7 @@ export default {
     const signature = (request.headers.get("X-Testagram-Health-Signature") || "").toLowerCase();
     const signedAt = Number(timestamp);
     if (
-      !/^\\d{10}$/.test(timestamp) ||
+      !/^\d{10}$/.test(timestamp) ||
       !Number.isSafeInteger(signedAt) ||
       Math.abs(Math.floor(Date.now() / 1000) - signedAt) > 300 ||
       env.TESTAGRAM_BOUNCE_INGRESS_SECRET.length < 32
@@ -40,7 +40,7 @@ export default {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    const expected = await hmacHex(env.TESTAGRAM_BOUNCE_INGRESS_SECRET, "health\\n" + timestamp);
+    const expected = await hmacHex(env.TESTAGRAM_BOUNCE_INGRESS_SECRET, "health\n" + timestamp);
     if (signature.length !== expected.length) {
       return new Response("Unauthorized", { status: 401 });
     }
