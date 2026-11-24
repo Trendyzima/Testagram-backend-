@@ -652,11 +652,23 @@ CREATE TABLE testagram_identity.historical_external_registration_provisioning (
   status TEXT NOT NULL CHECK (status IN (
     'pending','source_provider_created','linked','verification_sent',
     'completed','compensation_required','failed'
-  ))
+  )),
+  CONSTRAINT registration_provisioning_source_user_id_key UNIQUE(source_account_id)
 );
 INSERT INTO testagram_identity.historical_external_registration_provisioning
   (id,source_account_id,status)
 VALUES (9001,'already-archived-source-account','source_provider_created');
+SQL
+
+# Simulate the exact partially-applied production state from the first deploy:
+# the legacy table and source-account column were renamed before the migration
+# stopped while renaming its unique constraint/index. Re-running the fixed
+# migration must finish safely from this state.
+psql_ci <<'SQL'
+ALTER TABLE testagram_identity.registration_provisioning
+  RENAME TO historical_external_registration_provisioning_recovered;
+ALTER TABLE testagram_identity.historical_external_registration_provisioning_recovered
+  RENAME COLUMN appwrite_user_id TO source_account_id;
 SQL
 
 # Apply the forward-only retirement migrations after all legacy compatibility
@@ -824,6 +836,20 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning_recovered' AND column_name='source_account_id')
      OR EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning_recovered' AND column_name='appwrite_user_id') THEN
     RAISE EXCEPTION 'recovered provisioning source identifier was not neutralized';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.historical_external_registration_provisioning'::regclass
+      AND contype='u'
+      AND conname='registration_provisioning_source_user_id_key'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_identity.historical_external_registration_provisioning_recovered'::regclass
+      AND contype='u'
+      AND conname LIKE 'registration_provisioning_source_user_id_key_recovered_%'
+      AND octet_length(conname) <= 63
+  ) THEN
+    RAISE EXCEPTION 'canonical and recovered provisioning ledgers did not retain distinct unique constraints';
   END IF;
 
   IF NOT EXISTS (

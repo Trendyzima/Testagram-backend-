@@ -110,12 +110,22 @@ BEGIN
       AND conname ILIKE '%appwrite%'
   LOOP
     replacement_name := replace(item.conname,'appwrite','source');
+    -- A second recovered ledger can coexist with the established archive.
+    -- Constraint-backed unique indexes are schema-wide names, so neutralizing
+    -- both tables to the same name would collide. Give recovered objects a
+    -- deterministic, PostgreSQL-safe suffix while preserving their semantics.
+    IF right(item.relation_name::text,10) = '_recovered' THEN
+      replacement_name := left(replacement_name,44) || '_recovered_' ||
+        substr(md5(item.relation_name::text || ':' || item.conname),1,8);
+    END IF;
     EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
       item.relation_name,item.conname,replacement_name);
   END LOOP;
 
   FOR item IN
-    SELECT i.indexrelid::regclass AS index_name, c.relname
+    SELECT i.indrelid::regclass AS relation_name,
+           i.indexrelid::regclass AS index_name,
+           c.relname
     FROM pg_index i
     JOIN pg_class c ON c.oid=i.indexrelid
     WHERE i.indrelid IN (
@@ -129,6 +139,10 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=i.indexrelid)
   LOOP
     replacement_name := replace(item.relname,'appwrite','source');
+    IF right(item.relation_name::text,10) = '_recovered' THEN
+      replacement_name := left(replacement_name,44) || '_recovered_' ||
+        substr(md5(item.relation_name::text || ':' || item.relname),1,8);
+    END IF;
     EXECUTE format('ALTER INDEX %s RENAME TO %I',item.index_name,replacement_name);
   END LOOP;
 END;
