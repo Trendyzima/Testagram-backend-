@@ -35,11 +35,21 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+      - name: Set up Node.js for Cloudflare Worker validation
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the inbound bounce Worker without deploying
+        working-directory: cloudflare/email-bounce-worker
+        run: npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --dry-run --config wrangler.toml
       - name: Validate deployment shell syntax, PostgreSQL readiness, and native Testagram mail transport
         shell: bash
         run: |
           bash -n scripts/start-instabox-deployment.sh
           bash -n scripts/reconcile-native-mail-dns.sh
+          bash -n scripts/verify-instabox-native-mail-egress.sh
+          bash -n scripts/reconcile-instabox-native-mail-dns.sh
+          bash -n scripts/deploy-cloudflare-bounce-worker.sh
           python3 tests/test_r2_managed_domain_request.py -v
           python3 tests/test_instabox_postgres_readiness.py -v
           python3 tests/test_instabox_runtime_healthcheck_paths.py -v
