@@ -58,10 +58,11 @@ that still requires explicit InstaBox confirmation.
 4. The Cloudflare deployment script verifies Email Routing is enabled,
    `support_subaddress=true`, all bounce-subdomain MX targets belong to
    Cloudflare, and no existing routing rule would be taken over.
-5. It temporarily deploys the Worker with `wrangler-probe.toml` on the
-   account's existing `workers.dev` subdomain, without creating the email
-   address route. It installs the InstaBox-generated HMAC secret directly
-   into Cloudflare.
+5. On first install, it bootstraps the Worker on the account's existing
+   `workers.dev` subdomain without an email address, installs the
+   InstaBox-generated HMAC secret, then deploys `wrangler-probe.toml` with the
+   email address rule. On later deployments, the probe config preserves the
+   existing rule while enabling the temporary HTTP health endpoint.
 6. A signed health request invokes the actual Cloudflare Worker runtime. The
    Worker calls the public Testagram API and requires the native endpoint
    marker plus the expected unsigned-request HTTP 401. The Worker returns
