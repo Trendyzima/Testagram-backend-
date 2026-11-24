@@ -34,6 +34,12 @@ cleanup_worker_probe() {
   return "$exit_code"
 }
 trap cleanup_worker_probe EXIT
+# Recover safely if a previous interrupted rollout left the temporary
+# workers.dev or preview endpoint enabled for this script.
+preexisting_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 15 -o "$tmp/preexisting-subdomain.json" -w '%{http_code}' "$script_subdomain_url" -H "$auth_header" || true)"
+if [[ "$preexisting_subdomain_status" == 200 ]] && jq -e '.success == true and (.result.enabled == true or .result.previews_enabled == true)' "$tmp/preexisting-subdomain.json" >/dev/null; then
+  worker_probe_enabled=true
+fi
 
 fetch_all_email_routing_rules() {
   local output="$1" page=1 pages=1 status
