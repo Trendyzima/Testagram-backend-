@@ -45,6 +45,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         final_config = (ROOT / "cloudflare/email-bounce-worker/wrangler.toml").read_text()
         probe_config = (ROOT / "cloudflare/email-bounce-worker/wrangler-probe.toml").read_text()
         deploy = (ROOT / "scripts/deploy-cloudflare-bounce-worker.sh").read_text()
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         handler = (ROOT / "cmd/api/mail_bounce_http.go").read_text()
         self.assertIn('workers_dev = true', probe_config)
         self.assertIn('workers_dev = false', final_config)
@@ -57,6 +58,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("X-Testagram-Bounce-Endpoint", deploy)
         self.assertIn("-X DELETE", deploy)
         self.assertIn(".result.enabled == false", deploy)
+        self.assertIn("wrangler deploy --dry-run --config wrangler-probe.toml", workflow)
+        self.assertIn("wrangler deploy --dry-run --config wrangler.toml", workflow)
 
     def test_cloudflare_bounce_ingress_is_inbound_only_and_authenticated(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
