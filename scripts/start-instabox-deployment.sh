@@ -981,6 +981,17 @@ verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federati
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"
+if ! sudo docker exec "$api_container" sh -ec 'test -r "$TESTAGRAM_DKIM_PRIVATE_KEY_FILE"'; then
+  echo "::error::API container cannot read the VPS-owned DKIM private key."
+  exit 1
+fi
+# Verify the local host publication and the SMTP greeting, not merely Compose syntax.
+if ! timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/25; IFS= read -r -t 3 banner <&3; [[ "$banner" == 220* ]]'; then
+  echo "::error::Native SMTP feedback receiver is not answering on InstaBox host TCP/25."
+  exit 1
+fi
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
