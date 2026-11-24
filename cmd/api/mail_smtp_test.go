@@ -62,8 +62,10 @@ func TestMailjetSMTPConfigurationRequiresCredentialsAndSTARTTLSPort(t *testing.T
 	if err := mailSMTPConfigurationError(); err == nil {
 		t.Fatal("non-TLS SMTP port was accepted")
 	}
-	t.Setenv("MAILJET_SMTP_PORT", "587")
-	if err := mailSMTPConfigurationError(); err != nil {
-		t.Fatalf("valid Mailjet SMTP configuration rejected: %v", err)
+	for _, port := range []string{"587", "2525"} {
+		t.Setenv("MAILJET_SMTP_PORT", port)
+		if err := mailSMTPConfigurationError(); err != nil {
+			t.Errorf("valid Mailjet STARTTLS port %s rejected: %v", port, err)
+		}
 	}
 }
