@@ -74,11 +74,49 @@ fi
 
 export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
 cd "$WORKER_DIR"
-npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler.toml
+
+# First deploy the same Worker temporarily on workers.dev, without registering
+# the inbound email address. This lets us prove the Cloudflare runtime can
+# reach the exact public Testagram API route before accepting bounce traffic.
+workers_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/workers-subdomain.json" -w '%{http_code}' "$API_BASE/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" -H "$auth_header")"
+workers_subdomain="$(jq -r '.result.subdomain // empty' "$tmp/workers-subdomain.json")"
+if [[ "$workers_subdomain_status" != 200 || ! "$workers_subdomain" =~ ^[a-z0-9-]+$ ]]; then
+  echo "::error::A Cloudflare workers.dev account subdomain is required for the temporary authenticated Worker health probe. Configure it under Workers & Pages, then retry."
+  exit 1
+fi
+npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-probe.toml
 
 # Transfer the InstaBox-generated secret directly to Cloudflare over the
 # Wrangler API. It is never printed, placed in Git, or copied to the runner.
+printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
+
+health_timestamp="$(date +%s)"
+health_signature="$(python3 - "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" "$health_timestamp" <<'PY'
+import hashlib
+import hmac
+import sys
+secret, timestamp = sys.argv[1], sys.argv[2]
+print(hmac.new(secret.encode(), ("health\\n" + timestamp).encode(), hashlib.sha256).hexdigest())
+PY
+)"
+worker_health_url="https://testagram-bounce-ingress.$workers_subdomain.workers.dev/__health"
+worker_health_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/worker-health.txt" -w '%{http_code}' -X POST "$worker_health_url" -H "User-Agent: Mozilla/5.0 TestagramBounceHealth/1.0" -H "X-Testagram-Health-Timestamp: $health_timestamp" -H "X-Testagram-Health-Signature: $health_signature")"
+if [[ "$worker_health_status" != 204 ]]; then
+  echo "::error::The deployed Cloudflare Worker could not verify the public Testagram bounce API endpoint (expected authenticated 204 health result, received HTTP $worker_health_status)."
+  exit 1
+fi
+
+# Only after the Worker-to-API probe passes do we deploy the final
+# email-only configuration: workers.dev disabled, inbound address enabled.
+npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler.toml
 printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler.toml
+
+# Verify that the temporary workers.dev endpoint is disabled after the probe.
+script_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/script-subdomain.json" -w '%{http_code}' "$API_BASE/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/testagram-bounce-ingress/subdomain" -H "$auth_header")"
+if [[ "$script_subdomain_status" != 200 ]] || ! jq -e '.success == true and .result.enabled == false' "$tmp/script-subdomain.json" >/dev/null; then
+  echo "::error::The temporary workers.dev health endpoint was not disabled after the probe."
+  exit 1
+fi
 
 # Verify the route exists and targets a Worker before declaring setup complete.
 rules_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/rules.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing/rules" -H "$auth_header")"
@@ -86,4 +124,4 @@ if [[ "$rules_status" != 200 ]] || ! jq -e --arg address "$BOUNCE_ADDRESS" --arg
   echo "::error::Cloudflare did not confirm exactly one Worker routing rule for $BOUNCE_ADDRESS."
   exit 1
 fi
-echo "Verified Cloudflare inbound bounce route, plus-addressing, Testagram HTTPS endpoint, and Worker HMAC secret handoff."
+echo "Verified Cloudflare Worker-to-API HTTPS reachability, disabled the temporary workers.dev probe URL, and installed the inbound-only bounce route and HMAC secret."
