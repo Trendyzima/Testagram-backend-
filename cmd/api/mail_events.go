@@ -54,8 +54,8 @@ func (s *service) mailjetDeliveryEvents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	username, password, ok := r.BasicAuth()
-	expectedUser := strings.TrimSpace(os.Getenv("MAILJET_SMTP_USERNAME"))
-	expectedPass := os.Getenv("MAILJET_SMTP_PASSWORD")
+	expectedUser := strings.TrimSpace(os.Getenv("MAILJET_API_KEY"))
+	expectedPass := os.Getenv("MAILJET_SECRET_KEY")
 	if !ok || expectedUser == "" || expectedPass == "" ||
 		len(username) != len(expectedUser) || len(password) != len(expectedPass) ||
 		subtle.ConstantTimeCompare([]byte(username), []byte(expectedUser)) != 1 ||

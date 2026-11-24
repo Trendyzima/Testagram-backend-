@@ -1,71 +1,118 @@
 package main
 
 import (
-	"net/mail"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-func TestBuildSMTPMessageIncludesAlternativeBodiesAndUnsubscribeHeaders(t *testing.T) {
-	from, _ := mail.ParseAddress("no-reply@testagram.site")
-	to, _ := mail.ParseAddress("person@example.test")
-	raw, err := buildSMTPMessage(from, to, queuedMail{
-		Subject: "Welcome to Testagram",
-		Text:    "Hello and welcome",
-		HTML:    "<p>Hello and welcome</p>",
+func TestMailjetAPIConfigurationRequiresCredentials(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
+	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+	t.Setenv("MAILJET_API_KEY", "api-key")
+	t.Setenv("MAILJET_SECRET_KEY", "secret")
+
+	if err := mailProviderConfigurationError(); err != nil {
+		t.Fatalf("valid Mailjet API configuration rejected: %v", err)
+	}
+	t.Setenv("MAILJET_SECRET_KEY", "")
+	if err := mailProviderConfigurationError(); err == nil {
+		t.Fatal("missing Mailjet secret was accepted")
+	}
+}
+
+func TestSendMailjetAPIUsesHTTPSBasicAuthAndPreservesEventCorrelation(t *testing.T) {
+	t.Setenv("MAILJET_API_KEY", "api-key")
+	t.Setenv("MAILJET_SECRET_KEY", "secret")
+	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "api-key" || pass != "secret" {
+			t.Errorf("unexpected Mailjet API authentication")
+		}
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("unexpected request method or content type")
+		}
+
+		var body mailjetSendRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Messages) != 1 {
+			t.Fatalf("message count = %d", len(body.Messages))
+		}
+		msg := body.Messages[0]
+		if msg.From.Email != "no-reply@testagram.site" || msg.To[0].Email != "person@example.test" {
+			t.Fatalf("unexpected sender or recipient: %#v", msg)
+		}
+		if msg.CustomID == "" || !strings.HasPrefix(msg.CustomID, "testagram-") || len(msg.CustomID) > 64 {
+			t.Fatalf("invalid custom correlation ID: %q", msg.CustomID)
+		}
+		if msg.Headers["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+			t.Fatalf("unsubscribe headers were not forwarded: %#v", msg.Headers)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Messages":[{"Status":"success","To":[{"MessageID":12345}]}]}`))
+	}))
+	defer server.Close()
+
+	customID, err := sendMailjetAPIWithClient(context.Background(), queuedMail{
+		Recipient: "person@example.test",
+		Subject:   "Testagram notice",
+		Text:      "Hello",
+		HTML:      "<p>Hello</p>",
 		Headers: map[string]string{
-			"List-Unsubscribe":      "<https://testagram.site/api/email/unsubscribe?token=abc>",
+			"List-Unsubscribe":      "<https://testagram.site/unsubscribe>",
 			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
 		},
-	}, "testagram-123@testagram.site")
+	}, server.Client(), server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := string(raw)
-	for _, expected := range []string{
-		"From: <no-reply@testagram.site>",
-		"To: <person@example.test>",
-		"Subject: ",
-		"Message-ID: <testagram-123@testagram.site>",
-		"X-MJ-CustomID: testagram-123@testagram.site",
-		"multipart/alternative",
-		"Hello and welcome",
-		"<p>Hello and welcome</p>",
-		"List-Unsubscribe: <https://testagram.site/api/email/unsubscribe?token=abc>",
-		"List-Unsubscribe-Post: List-Unsubscribe=One-Click",
-	} {
-		if !strings.Contains(got, expected) {
-			t.Errorf("SMTP message missing %q: %s", expected, got)
-		}
+	if !strings.HasPrefix(customID, "testagram-") {
+		t.Fatalf("returned correlation ID = %q", customID)
 	}
 }
 
-func TestBuildSMTPMessageRejectsHeaderInjection(t *testing.T) {
-	from, _ := mail.ParseAddress("no-reply@testagram.site")
-	to, _ := mail.ParseAddress("person@example.test")
-	_, err := buildSMTPMessage(from, to, queuedMail{
-		Subject: "Hello",
-		HTML:    "<p>Hi</p>",
-		Headers: map[string]string{"X-Test": "safe\r\nBcc: victim@example.test"},
-	}, "testagram-123@testagram.site")
-	if err == nil {
-		t.Fatal("unsafe custom header was accepted")
-	}
-}
-
-func TestMailjetSMTPConfigurationRequiresCredentialsAndSTARTTLSPort(t *testing.T) {
-	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
+func TestSendMailjetAPIQuarantinesAmbiguousServerFailure(t *testing.T) {
+	t.Setenv("MAILJET_API_KEY", "api-key")
+	t.Setenv("MAILJET_SECRET_KEY", "secret")
 	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
-	t.Setenv("MAILJET_SMTP_USERNAME", "api-key")
-	t.Setenv("MAILJET_SMTP_PASSWORD", "secret")
-	t.Setenv("MAILJET_SMTP_PORT", "25")
-	if err := mailSMTPConfigurationError(); err == nil {
-		t.Fatal("non-TLS SMTP port was accepted")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	_, err := sendMailjetAPIWithClient(context.Background(), queuedMail{
+		Recipient: "person@example.test",
+		Subject:   "Test",
+		HTML:      "<p>Hi</p>",
+	}, server.Client(), server.URL)
+	var ambiguous ambiguousMailError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("HTTP 500 must be quarantined as ambiguous, got %v", err)
 	}
-	for _, port := range []string{"587", "2525"} {
-		t.Setenv("MAILJET_SMTP_PORT", port)
-		if err := mailSMTPConfigurationError(); err != nil {
-			t.Errorf("valid Mailjet STARTTLS port %s rejected: %v", port, err)
-		}
+}
+
+func TestSendMailjetAPIRejectsUnsafeCustomHeaders(t *testing.T) {
+	t.Setenv("MAILJET_API_KEY", "api-key")
+	t.Setenv("MAILJET_SECRET_KEY", "secret")
+	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+
+	_, err := sendMailjetAPIWithClient(context.Background(), queuedMail{
+		Recipient: "person@example.test",
+		Subject:   "Test",
+		HTML:      "<p>Hi</p>",
+		Headers:   map[string]string{"X-Test": "safe"},
+	}, http.DefaultClient, "https://api.mailjet.com/v3.1/send")
+	if err == nil {
+		t.Fatal("unsupported custom header was accepted")
 	}
 }

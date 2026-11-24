@@ -12,9 +12,8 @@ import (
 func configureMailWorkerTest(t *testing.T) {
 	t.Helper()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
-	t.Setenv("MAILJET_SMTP_USERNAME", "ci-api-key")
-	t.Setenv("MAILJET_SMTP_PASSWORD", "ci-secret-key")
-	t.Setenv("MAILJET_SMTP_PORT", "587")
+	t.Setenv("MAILJET_API_KEY", "ci-api-key")
+	t.Setenv("MAILJET_SECRET_KEY", "ci-secret-key")
 	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
 }
 
