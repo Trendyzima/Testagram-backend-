@@ -6,7 +6,10 @@ The native mail transport sends directly from the InstaBox VPS. It uses
 addresses at `bounces.testagram.site`.
 
 Do not publish placeholder IP addresses or placeholder DKIM keys. The deployment
-script creates the private key on InstaBox and prints the matching public key.
+script creates the private key on InstaBox and prints the matching public key. Inbound
+SMTP advertises STARTTLS when a valid certificate and key are installed at
+`/data/home/testagram/mail-tls/fullchain.pem` and
+`/data/home/testagram/mail-tls/privkey.pem`.
 Publish the records only after confirming the VPS public IPv4 address and that
 all outbound mail for the bounce subdomain comes from this VPS.
 
@@ -37,6 +40,9 @@ aggregate reports and verifying alignment.
 - Permit outbound TCP/25 from InstaBox to recipient MX hosts.
 - Permit inbound TCP/25 to InstaBox and forward it to the API container's
   feedback listener on port 2525.
+- Install a valid certificate for `mail.testagram.site` in the two VPS paths above;
+  the deployment script mounts them read-only and enables STARTTLS automatically.
+  Without those files, the receiver deliberately does not advertise STARTTLS.
 - Confirm the provider does not block port 25 in either direction.
 
 Do not proxy SMTP through an HTTP/CDN proxy. The MX target must resolve directly
