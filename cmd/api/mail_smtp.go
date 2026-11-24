@@ -4,179 +4,202 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"mime"
+	"mime/quotedprintable"
+	"net"
 	"net/mail"
-	"os"
+	"net/smtp"
+	"net/textproto"
+	"sort"
 	"strings"
 	"time"
 )
 
-const mailjetSendAPIURL = "https://api.mailjet.com/v3.1/send"
+const nativeMailFrom = "no-reply@testagram.site"
 
 func mailProviderConfigurationError() error {
-	apiKey := strings.TrimSpace(os.Getenv("MAILJET_API_KEY"))
-	secret := strings.TrimSpace(os.Getenv("MAILJET_SECRET_KEY"))
-	from := strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL"))
-	if apiKey == "" || secret == "" || from == "" {
-		return errors.New("Mailjet API is not configured")
-	}
-	if _, err := mail.ParseAddress(from); err != nil {
-		return errors.New("AUTH_FROM_EMAIL is invalid")
-	}
-	if _, err := mailCipher(); err != nil {
-		return err
-	}
-	return nil
+	// The name is retained for compatibility with existing readiness callers.
+	// Native delivery has no provider account, API key, SMTP username, or password.
+	_, err := mailCipher()
+	return err
 }
 
-type mailjetSendRequest struct {
-	Messages []mailjetSendMessage `json:"Messages"`
-}
-
-type mailjetSendMessage struct {
-	From     mailjetAddress    `json:"From"`
-	To       []mailjetAddress  `json:"To"`
-	Subject  string            `json:"Subject"`
-	TextPart string            `json:"TextPart,omitempty"`
-	HTMLPart string            `json:"HTMLPart,omitempty"`
-	CustomID string            `json:"CustomID"`
-	Headers  map[string]string `json:"Headers,omitempty"`
-}
-
-type mailjetAddress struct {
-	Email string `json:"Email"`
-	Name  string `json:"Name,omitempty"`
-}
-
-type mailjetSendResponse struct {
-	Messages []struct {
-		Status string `json:"Status"`
-		Errors []struct {
-			ErrorCode string `json:"ErrorCode"`
-		} `json:"Errors"`
-		To []struct {
-			MessageID json.Number `json:"MessageID"`
-		} `json:"To"`
-	} `json:"Messages"`
-}
-
-func sendMailjetAPI(ctx context.Context, message queuedMail) (string, error) {
-	client := &http.Client{Timeout: 25 * time.Second}
-	return sendMailjetAPIWithClient(ctx, message, client, mailjetSendAPIURL)
-}
-
-// sendMailjetAPIWithClient is split out so transport and ambiguous-outcome
-// handling can be tested without contacting Mailjet or sending real mail.
-func sendMailjetAPIWithClient(ctx context.Context, message queuedMail, client *http.Client, endpoint string) (string, error) {
-	apiKey := strings.TrimSpace(os.Getenv("MAILJET_API_KEY"))
-	secret := strings.TrimSpace(os.Getenv("MAILJET_SECRET_KEY"))
-	fromValue := strings.TrimSpace(os.Getenv("AUTH_FROM_EMAIL"))
-	if apiKey == "" || secret == "" || fromValue == "" {
-		return "", errors.New("Mailjet API is not configured")
-	}
-
-	from, err := mail.ParseAddress(fromValue)
-	if err != nil {
-		return "", permanentMailError{code: "MAIL_SENDER_INVALID"}
-	}
-	to, err := mail.ParseAddress(message.Recipient)
-	if err != nil {
+func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
+	to, err := mail.ParseAddress(strings.TrimSpace(message.Recipient))
+	if err != nil || to.Address == "" {
 		return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"}
 	}
-	if strings.ContainsAny(message.Subject, "\r\n") || len(message.Subject) == 0 || len(message.Subject) > 180 {
+	if strings.ContainsAny(message.Subject, "\r\n") || strings.TrimSpace(message.Subject) == "" || len(message.Subject) > 180 {
 		return "", permanentMailError{code: "MAIL_SUBJECT_INVALID"}
 	}
 	if len(message.HTML) == 0 || len(message.HTML) > 256*1024 || len(message.Text) > 256*1024 {
 		return "", permanentMailError{code: "MAIL_CONTENT_INVALID"}
 	}
-
-	var randomID [16]byte
-	if _, err := rand.Read(randomID[:]); err != nil {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", err
 	}
-	customID := "testagram-" + hex.EncodeToString(randomID[:])
+	messageID := hex.EncodeToString(nonce[:]) + "@testagram.site"
+	payload, err := buildNativeSMTPMessage(to, message, messageID)
+	if err != nil {
+		return "", err
+	}
 
-	headers := make(map[string]string, len(message.Headers))
-	for key, value := range message.Headers {
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "list-unsubscribe":
-			key = "List-Unsubscribe"
-		case "list-unsubscribe-post":
-			key = "List-Unsubscribe-Post"
-		default:
-			return "", errors.New("unsupported custom mail header")
+	domain := to.Address[strings.LastIndex(to.Address, "@")+1:]
+	if domain == "" {
+		return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"}
+	}
+	mxs, lookupErr := net.DefaultResolver.LookupMX(ctx, domain)
+	if lookupErr != nil || len(mxs) == 0 {
+		// RFC 5321 permits an implicit MX when no MX record exists.
+		mxs = []*net.MX{{Host: domain, Pref: 0}}
+	}
+	sort.Slice(mxs, func(i, j int) bool { return mxs[i].Pref < mxs[j].Pref })
+
+	var lastErr error
+	for _, mx := range mxs {
+		host := strings.TrimSuffix(mx.Host, ".")
+		if host == "" {
+			continue
 		}
-		if strings.ContainsAny(key, "\r\n:") || strings.ContainsAny(value, "\r\n") {
-			return "", errors.New("unsafe custom mail header")
+		id, sendErr := sendNativeSMTPToMX(ctx, host, to.Address, payload)
+		if sendErr == nil {
+			return id, nil
 		}
-		headers[key] = value
+		var permanent permanentMailError
+		if errors.As(sendErr, &permanent) {
+			return "", sendErr
+		}
+		var ambiguous ambiguousMailError
+		if errors.As(sendErr, &ambiguous) {
+			return "", sendErr
+		}
+		lastErr = sendErr
 	}
+	if lastErr == nil {
+		lastErr = errors.New("recipient domain has no usable mail exchanger")
+	}
+	return "", fmt.Errorf("native mail delivery could not reach recipient MX: %w", lastErr)
+}
 
-	payload, err := json.Marshal(mailjetSendRequest{Messages: []mailjetSendMessage{{
-		From:     mailjetAddress{Email: from.Address, Name: "Testagram"},
-		To:       []mailjetAddress{{Email: to.Address}},
-		Subject:  message.Subject,
-		TextPart: message.Text,
-		HTMLPart: message.HTML,
-		CustomID: customID,
-		Headers:  headers,
-	}}})
+func sendNativeSMTPToMX(ctx context.Context, host, recipient string, payload []byte) (string, error) {
+	dialer := &net.Dialer{Timeout: 12 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, "25"))
 	if err != nil {
 		return "", err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return "", err
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(25 * time.Second))
 	}
-	req.SetBasicAuth(apiKey, secret)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
+	client, err := smtp.NewClient(conn, host)
 	if err != nil {
-		// The request may have reached Mailjet even if the response was lost.
-		// Quarantine it rather than risk sending a duplicate security email.
+		return "", fmt.Errorf("recipient MX SMTP greeting failed: %w", err)
+	}
+	defer client.Close()
+	if ok, _ := client.Extension("STARTTLS"); !ok {
+		return "", permanentMailError{code: "MAIL_MX_STARTTLS_UNAVAILABLE"}
+	}
+	if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+		return "", fmt.Errorf("recipient MX STARTTLS failed: %w", err)
+	}
+	from, _ := mail.ParseAddress(nativeMailFrom)
+	if err := client.Mail(from.Address); err != nil {
+		return "", classifyNativeSMTPError("MAIL_MX_SENDER_REJECTED", err)
+	}
+	if err := client.Rcpt(recipient); err != nil {
+		return "", classifyNativeSMTPError("MAIL_MX_RECIPIENT_REJECTED", err)
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return "", classifyNativeSMTPError("MAIL_MX_DATA_REJECTED", err)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		_ = writer.Close()
 		return "", ambiguousMailError{cause: err}
 	}
-	defer resp.Body.Close()
+	if err := writer.Close(); err != nil {
+		var smtpErr *textproto.Error
+		if errors.As(err, &smtpErr) {
+			if smtpErr.Code >= 500 {
+				return "", permanentMailError{code: "MAIL_MX_DATA_REJECTED"}
+			}
+			if smtpErr.Code >= 400 {
+				return "", fmt.Errorf("recipient MX temporarily rejected message (%d): %w", smtpErr.Code, err)
+			}
+		}
+		return "", ambiguousMailError{cause: err}
+	}
+	_ = client.Quit()
+	return messageIDFromPayload(payload), nil
+}
 
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if readErr != nil {
-		return "", ambiguousMailError{cause: readErr}
+func classifyNativeSMTPError(code string, err error) error {
+	var smtpErr *textproto.Error
+	if errors.As(err, &smtpErr) {
+		if smtpErr.Code >= 500 {
+			return permanentMailError{code: code}
+		}
+		if smtpErr.Code >= 400 {
+			return fmt.Errorf("recipient MX temporary SMTP rejection (%d): %w", smtpErr.Code, err)
+		}
 	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		// A 429 response is an explicit rejection, so the existing bounded
-		// retry policy can safely schedule another attempt.
-		return "", fmt.Errorf("Mailjet API rate limited the request")
-	}
-	if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500 {
-		return "", ambiguousMailError{cause: fmt.Errorf("Mailjet API returned HTTP %d", resp.StatusCode)}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", permanentMailError{code: "MAILJET_API_REJECTED"}
-	}
+	return fmt.Errorf("recipient MX SMTP command failed: %w", err)
+}
 
-	var result mailjetSendResponse
-	if err := json.Unmarshal(body, &result); err != nil || len(result.Messages) != 1 {
-		return "", ambiguousMailError{cause: errors.New("Mailjet API returned an invalid success response")}
+func buildNativeSMTPMessage(to *mail.Address, message queuedMail, messageID string) ([]byte, error) {
+	var out bytes.Buffer
+	boundary := "testagram-" + strings.ReplaceAll(messageID, "@", "-")
+	headers := []string{
+		"From: Testagram <" + nativeMailFrom + ">",
+		"To: " + to.String(),
+		"Subject: " + mime.QEncoding.Encode("UTF-8", message.Subject),
+		"Date: " + time.Now().UTC().Format(time.RFC1123Z),
+		"Message-ID: <" + messageID + ">",
+		"MIME-Version: 1.0",
+		"Content-Type: multipart/alternative; boundary=\"" + boundary + "\"",
 	}
-	resultMessage := result.Messages[0]
-	if !strings.EqualFold(resultMessage.Status, "success") {
-		return "", permanentMailError{code: "MAILJET_MESSAGE_REJECTED"}
+	for key, value := range message.Headers {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "list-unsubscribe", "list-unsubscribe-post":
+		default:
+			return nil, errors.New("unsupported custom mail header")
+		}
+		if strings.ContainsAny(key, "\r\n:") || strings.ContainsAny(value, "\r\n") {
+			return nil, errors.New("unsafe custom mail header")
+		}
+		headers = append(headers, key+": "+value)
 	}
-	if len(resultMessage.To) != 1 || strings.TrimSpace(resultMessage.To[0].MessageID.String()) == "" ||
-		resultMessage.To[0].MessageID.String() == "0" {
-		return "", ambiguousMailError{cause: errors.New("Mailjet API success response omitted the message identifier")}
+	for _, header := range headers {
+		out.WriteString(header + "\r\n")
 	}
+	out.WriteString("\r\n")
+	if message.Text != "" {
+		out.WriteString("--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
+		qp := quotedprintable.NewWriter(&out)
+		if _, err := qp.Write([]byte(message.Text)); err != nil { return nil, err }
+		if err := qp.Close(); err != nil { return nil, err }
+		out.WriteString("\r\n")
+	}
+	out.WriteString("--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
+	qp := quotedprintable.NewWriter(&out)
+	if _, err := qp.Write([]byte(message.HTML)); err != nil { return nil, err }
+	if err := qp.Close(); err != nil { return nil, err }
+	out.WriteString("\r\n--" + boundary + "--\r\n")
+	return out.Bytes(), nil
+}
 
-	// Mailjet returns this CustomID in its Event API payload. The outbox stores
-	// it in provider_message_id so the existing event reconciliation matches
-	// the exact queued message and recipient fingerprint.
-	return customID, nil
+func messageIDFromPayload(payload []byte) string {
+	for _, line := range strings.Split(string(payload), "\r\n") {
+		if strings.HasPrefix(strings.ToLower(line), "message-id: <") && strings.HasSuffix(line, ">") {
+			return strings.TrimSuffix(strings.TrimPrefix(line, "Message-ID: <"), ">")
+		}
+	}
+	return ""
 }
