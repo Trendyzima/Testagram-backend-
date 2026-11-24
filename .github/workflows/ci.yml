@@ -683,10 +683,11 @@ jobs:
           trigger = deploy.split("permissions:", 1)[0]
           assert "workflow_dispatch:" in trigger and "push:" in trigger and "branches: [main]" in trigger, "workflow must validate main-branch pushes and support manual production dispatch"
           assert "pull_request:" in trigger and "needs: validate" in deploy, "pull requests must validate first and deployment must depend on successful validation"
-          assert "confirm_production_deploy" in trigger and "inputs.confirm_production_deploy == true" in deploy, "manual production deployments must retain explicit confirmation"
-          assert "github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true" in deploy, "every production deployment must require explicit manual confirmation"
-          assert "github.event_name == 'push'" not in deploy, "main pushes must never deploy automatically"
-          assert "github.event_name == 'pull_request' ||" not in deploy, "pull requests must never deploy to production"
+          deploy_job_header = deploy.split("  deploy:", 1)[1].split("    name:", 1)[0]
+          assert "confirm_production_deploy" in trigger and "inputs.confirm_production_deploy == true" in deploy_job_header, "manual production deployments must retain explicit confirmation"
+          assert "github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true" in deploy_job_header, "every production deployment must require explicit manual confirmation"
+          assert "github.event_name == 'push'" not in deploy_job_header, "main pushes must never deploy automatically"
+          assert "github.event_name == 'pull_request' ||" not in deploy_job_header, "pull requests must never deploy to production"
           assert "github.ref == 'refs/heads/main'" in deploy and "environment: production" in deploy, "production deployment must be restricted to main and the production environment"
           assert "confirm_native_identity_migrations" in trigger and "default: false" in trigger and "CONFIRM_NATIVE_IDENTITY_MIGRATIONS" in deploy, "native identity migrations must remain explicitly disabled by default"
           assert "confirm_identity_registration" not in trigger and "confirm_identity_registration" not in deploy, "public registration must not depend on a separate manual confirmation"
