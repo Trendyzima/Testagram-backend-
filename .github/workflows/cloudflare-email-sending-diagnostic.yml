@@ -61,36 +61,79 @@ jobs:
             exit 1
           fi
 
-          status="$(request GET "/zones?name=testagram.site&per_page=1" "$TMP/zone.json")"
-          codes="$(error_codes "$TMP/zone.json")"
-          zone_id="$(jq -r '.result[0].id // empty' "$TMP/zone.json" 2>/dev/null || true)"
           account_id="$CLOUDFLARE_ACCOUNT_ID"
-          echo "- testagram.site zone lookup: HTTP $status; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$status" != "200" || -z "$zone_id" || -z "$account_id" ]]; then
-            echo "::error::Could not resolve the Testagram zone/account using this token; see sanitized workflow summary."
+          if [[ ! "$account_id" =~ ^[A-Fa-f0-9]{32}$ ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is not a 32-character hexadecimal account ID."
             exit 1
           fi
+
+          # The zone lookup is independent of the account-level Email Sending
+          # probe. A missing Zone:Read grant must not hide the account probe.
+          status="$(request GET "/zones?name=testagram.site&per_page=1" "$TMP/zone.json")"
+          codes="$(error_codes "$TMP/zone.json")"
+          zone_id="$(jq -r --arg account "$account_id" '.result[]? | select(.name == "testagram.site" and .account.id == $account and .status == "active") | .id' "$TMP/zone.json" 2>/dev/null | head -n1 || true)"
+          echo "- Active testagram.site zone lookup in configured account: HTTP $status; match=$([[ -n "$zone_id" ]] && echo yes || echo no); error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
 
           status="$(request GET "/accounts/$account_id/email/sending/suppressions?per_page=1" "$TMP/email-access.json")"
           codes="$(error_codes "$TMP/email-access.json")"
           success="$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)"
-          echo "- Account Email Sending READ probe (read-only suppressions list; does not prove WRITE): HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Account Email Sending read-only API probe (suppression inventory; does not prove send permission): HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
 
-          status="$(request GET "/zones/$zone_id/email/sending/subdomains" "$TMP/sending-domains.json")"
-          codes="$(error_codes "$TMP/sending-domains.json")"
-          success="$(jq -r '.success // false' "$TMP/sending-domains.json" 2>/dev/null || echo false)"
-          echo "- Sending-domain inventory: HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
-          if [[ "$status" == "200" && "$success" == "true" ]]; then
-            jq -r '.result[]? | "- Domain: " + (.name // "unknown") + "; enabled=" + ((.enabled // false)|tostring) + "; status=" + (if (.enabled // false) then "enabled" else "disabled" end)' "$TMP/sending-domains.json" >> "$GITHUB_STEP_SUMMARY"
-            if ! jq -e '.result | length > 0' "$TMP/sending-domains.json" >/dev/null; then
-              echo "- Sender-domain onboarding: no sending subdomains returned." >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            echo "- Sender-domain onboarding: unavailable to this token or account." >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$zone_id" ]]; then
+            status="$(request GET "/zones/$zone_id/email/sending/subdomains" "$TMP/sending-domains.json")"
+            codes="$(error_codes "$TMP/sending-domains.json")"
+            success="$(jq -r '.success // false' "$TMP/sending-domains.json" 2>/dev/null || echo false)"
+            echo "- Sending-domain inventory: HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+            if [[ "$status" == "200" && "$success" == "true" ]]; then
+              jq -r '.result[]? | "- Onboarded domain: " + (.name // "unknown") + "; sending_enabled=" + ((.enabled // false)|tostring)' "$TMP/sending-domains.json" >> "$GITHUB_STEP_SUMMARY"
+              subdomain_tag="$(jq -r '.result[]? | select(.name == "testagram.site") | .tag' "$TMP/sending-domains.json" 2>/dev/null | head -n1 || true)"
+              subdomain_enabled="$(jq -r '[.result[]? | select(.name == "testagram.site" and .enabled == true)] | length' "$TMP/sending-domains.json" 2>/dev/null || echo 0)"
+              if [[ -z "$subdomain_tag" ]]; then
+                echo "- Exact sender-domain onboarding for testagram.site: NOT FOUND (a wildcard is not treated as an apex-domain match)." >> "$GITHUB_STEP_SUMMARY"
+                echo "::warning::The exact testagram.site sending domain is not present in the Email Sending inventory."
+              elif [[ "$subdomain_enabled" != "1" ]]; then
+                echo "- Exact sender-domain onboarding for testagram.site: present but sending is DISABLED." >> "$GITHUB_STEP_SUMMARY"
+                echo "::warning::Email Sending is disabled for testagram.site."
+              else
+                echo "- Exact sender-domain onboarding for testagram.site: present and sending enabled." >> "$GITHUB_STEP_SUMMARY"
+                dns_status="$(request GET "/zones/$zone_id/email/sending/subdomains/$subdomain_tag/dns" "$TMP/sending-dns.json")"
+                dns_codes="$(error_codes "$TMP/sending-dns.json")"
+                dns_success="$(jq -r '.success // false' "$TMP/sending-dns.json" 2>/dev/null || echo false)"
+                if [[ "$dns_status" == "200" && "$dns_success" == "true" ]]; then
+                  expected_dns="$(jq -r '.result[]? | [.name // "",.type // ""] | @tsv' "$TMP/sending-dns.json")"
+                  expected_count="$(printf '%s\n' "$expected_dns" | awk 'NF==2 {n++} END {print n+0}')"
+                  resolved_count=0
+                  while IFS=          if [[ "$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)" != "true" ]]; then
+            echo "::warning::The read-only Email Sending authorization probe was rejected; numeric error codes identify the authorization blocker."
           fi
 
-          if [[ "$status" != "200" || "$success" != "true" ]]; then
-            echo "::warning::Sending-domain inventory could not be confirmed. Review the numeric Cloudflare error codes."
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "No POST request was made to /email/sending/send. The suppressions request tests read access only. Cloudflare does not expose a read-only test for Email Sending Write: that permission can only be conclusively verified by an explicitly approved POST send. No POST request was made by this diagnostic." >> "$GITHUB_STEP_SUMMARY"
+\t' read -r record_name record_type; do
+                    [[ -z "$record_name" || -z "$record_type" ]] && continue
+                    if dig @1.1.1.1 +time=3 +tries=1 +short "$record_name" "$record_type" 2>/dev/null | grep -q .; then
+                      resolved_count=$((resolved_count+1))
+                    fi
+                  done <<< "$expected_dns"
+                  echo "- Sender DNS inventory: HTTP $dns_status; expected_records=$expected_count; records_resolving_via_1.1.1.1=$resolved_count; error_codes=$dns_codes" >> "$GITHUB_STEP_SUMMARY"
+                  if [[ "$expected_count" -gt 0 && "$resolved_count" -eq "$expected_count" ]]; then
+                    echo "- Sender DNS propagation check: all expected record names returned answers." >> "$GITHUB_STEP_SUMMARY"
+                  else
+                    echo "- Sender DNS propagation check: INCOMPLETE; inspect Cloudflare Email Sending DNS settings." >> "$GITHUB_STEP_SUMMARY"
+                    echo "::warning::Not all expected sender DNS records resolved through the public resolver."
+                  fi
+                else
+                  echo "- Sender DNS inventory: unavailable; HTTP $dns_status; error_codes=$dns_codes" >> "$GITHUB_STEP_SUMMARY"
+                  echo "::warning::Could not retrieve expected sender DNS records."
+                fi
+              fi
+            else
+              echo "- Sender-domain onboarding: unavailable to this token or account." >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::Sending-domain inventory could not be confirmed. Review numeric Cloudflare error codes."
+            fi
+          else
+            echo "- Sender-domain onboarding: not checked because the active zone could not be resolved in the configured account." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Zone lookup failed or account mismatch; account-level Email Sending probe was still performed."
           fi
           if [[ "$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)" != "true" ]]; then
             echo "::warning::The read-only Email Sending authorization probe was rejected; numeric error codes identify the authorization blocker."
