@@ -13,29 +13,66 @@ CREATE INDEX IF NOT EXISTS identity_applications_native_sensitive_request_idx
 
 
 
-ALTER TABLE testagram_auth.sensitive_action_approvals
-  ADD COLUMN IF NOT EXISTS approver_user_id UUID
-    REFERENCES testagram_auth.staff_principals(user_id) ON DELETE RESTRICT;
-ALTER TABLE testagram_auth.sensitive_action_approvals
-  ALTER COLUMN approver_appwrite_user_id DROP NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS sensitive_action_approvals_native_reviewer_uidx
-  ON testagram_auth.sensitive_action_approvals(request_id,approver_user_id)
-  WHERE approver_user_id IS NOT NULL;
+-- The provider-keyed ledgers are archived later in the migration chain.
+-- On subsequent production replays, do not recreate or alter those retired
+-- tables/columns; keep only the parallel native UUID approval fields live.
+DO $legacy_approval_columns$
+BEGIN
+  IF to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL THEN
+    ALTER TABLE testagram_auth.sensitive_action_approvals
+      ADD COLUMN IF NOT EXISTS approver_user_id UUID
+        REFERENCES testagram_auth.staff_principals(user_id) ON DELETE RESTRICT;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema='testagram_auth' AND table_name='sensitive_action_approvals'
+        AND column_name='approver_appwrite_user_id'
+    ) THEN
+      ALTER TABLE testagram_auth.sensitive_action_approvals
+        ALTER COLUMN approver_appwrite_user_id DROP NOT NULL;
+    END IF;
+    CREATE UNIQUE INDEX IF NOT EXISTS sensitive_action_approvals_native_reviewer_uidx
+      ON testagram_auth.sensitive_action_approvals(request_id,approver_user_id)
+      WHERE approver_user_id IS NOT NULL;
+  END IF;
 
-ALTER TABLE testagram_auth.admin_security_audit
-  ADD COLUMN IF NOT EXISTS actor_user_id UUID
-    REFERENCES testagram_auth.identities(user_id) ON DELETE RESTRICT;
-ALTER TABLE testagram_auth.admin_security_audit
-  ALTER COLUMN actor_appwrite_user_id DROP NOT NULL;
+  IF to_regclass('testagram_auth.admin_security_audit') IS NOT NULL THEN
+    ALTER TABLE testagram_auth.admin_security_audit
+      ADD COLUMN IF NOT EXISTS actor_user_id UUID
+        REFERENCES testagram_auth.identities(user_id) ON DELETE RESTRICT;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema='testagram_auth' AND table_name='admin_security_audit'
+        AND column_name='actor_appwrite_user_id'
+    ) THEN
+      ALTER TABLE testagram_auth.admin_security_audit
+        ALTER COLUMN actor_appwrite_user_id DROP NOT NULL;
+    END IF;
+  END IF;
+END;
+$legacy_approval_columns$;
 
 ALTER TABLE testagram_identity.identity_approval_tokens
   ADD COLUMN IF NOT EXISTS first_approver_user_id UUID
     REFERENCES testagram_auth.staff_principals(user_id) ON DELETE RESTRICT,
   ADD COLUMN IF NOT EXISTS second_approver_user_id UUID
     REFERENCES testagram_auth.staff_principals(user_id) ON DELETE RESTRICT;
-ALTER TABLE testagram_identity.identity_approval_tokens
-  ALTER COLUMN first_approver_appwrite_user_id DROP NOT NULL,
-  ALTER COLUMN second_approver_appwrite_user_id DROP NOT NULL;
+DO $legacy_token_columns$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens'
+      AND column_name='first_approver_appwrite_user_id'
+  ) AND EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity' AND table_name='identity_approval_tokens'
+      AND column_name='second_approver_appwrite_user_id'
+  ) THEN
+    ALTER TABLE testagram_identity.identity_approval_tokens
+      ALTER COLUMN first_approver_appwrite_user_id DROP NOT NULL,
+      ALTER COLUMN second_approver_appwrite_user_id DROP NOT NULL;
+  END IF;
+END;
+$legacy_token_columns$;
 CREATE UNIQUE INDEX IF NOT EXISTS identity_approval_tokens_native_signers_uidx
   ON testagram_identity.identity_approval_tokens(application_id,first_approver_user_id,second_approver_user_id)
   WHERE first_approver_user_id IS NOT NULL AND second_approver_user_id IS NOT NULL;
@@ -118,21 +155,31 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON TABLE testagram_auth.sensitive_action_approvals,
-  testagram_auth.admin_security_audit,
-  testagram_identity.identity_approval_tokens FROM PUBLIC;
-DO $grants$
+REVOKE ALL ON TABLE testagram_identity.identity_approval_tokens FROM PUBLIC;
+DO $legacy_privileges$
 BEGIN
+  IF to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL THEN
+    REVOKE ALL ON TABLE testagram_auth.sensitive_action_approvals FROM PUBLIC;
+  END IF;
+  IF to_regclass('testagram_auth.admin_security_audit') IS NOT NULL THEN
+    REVOKE ALL ON TABLE testagram_auth.admin_security_audit FROM PUBLIC;
+  END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
-    GRANT SELECT,INSERT ON testagram_auth.sensitive_action_approvals,
-      testagram_auth.admin_security_audit TO testagram_app;
-    GRANT USAGE,SELECT ON SEQUENCE
-      testagram_auth.sensitive_action_approvals_id_seq,
-      testagram_auth.admin_security_audit_id_seq
-      TO testagram_app;
+    IF to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL THEN
+      GRANT SELECT,INSERT ON testagram_auth.sensitive_action_approvals TO testagram_app;
+      IF to_regclass('testagram_auth.sensitive_action_approvals_id_seq') IS NOT NULL THEN
+        GRANT USAGE,SELECT ON SEQUENCE testagram_auth.sensitive_action_approvals_id_seq TO testagram_app;
+      END IF;
+    END IF;
+    IF to_regclass('testagram_auth.admin_security_audit') IS NOT NULL THEN
+      GRANT SELECT,INSERT ON testagram_auth.admin_security_audit TO testagram_app;
+      IF to_regclass('testagram_auth.admin_security_audit_id_seq') IS NOT NULL THEN
+        GRANT USAGE,SELECT ON SEQUENCE testagram_auth.admin_security_audit_id_seq TO testagram_app;
+      END IF;
+    END IF;
     GRANT SELECT,INSERT,UPDATE ON testagram_identity.identity_approval_tokens TO testagram_app;
   END IF;
 END;
-$grants$;
+$legacy_privileges$;
 
 COMMIT;
