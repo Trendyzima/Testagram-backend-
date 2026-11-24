@@ -12,6 +12,9 @@ WORKER_DIR="${1:?worker directory is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?Missing Cloudflare account ID}"
 : "${TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET:?Missing InstaBox-generated bounce ingress secret}"
 [[ "${#TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET}" -ge 32 ]] || { echo "::error::Bounce ingress secret is too short."; exit 1; }
+command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 || { echo "::error::Node.js 18+ and npm are required to deploy the Cloudflare Worker."; exit 1; }
+node_major="$(node -p 'process.versions.node.split(".")[0]')"
+[[ "$node_major" =~ ^[0-9]+$ && "$node_major" -ge 18 ]] || { echo "::error::Cloudflare Wrangler requires Node.js 18 or later."; exit 1; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -45,7 +48,7 @@ fi
 mx_ready=false
 for attempt in $(seq 1 12); do
   mx_json="$(curl -fsS --connect-timeout 5 --max-time 10 -H 'accept: application/dns-json' --get --data-urlencode "name=$BOUNCE_DOMAIN" --data 'type=MX' https://cloudflare-dns.com/dns-query)" || mx_json='{}'
-  if jq -e '(.Status == 0) and any(.Answer[]?; .type == 15 and ((.data | ascii_downcase) | contains("mx.cloudflare.net")))' <<<"$mx_json" >/dev/null; then
+  if jq -e '(.Status == 0) and ([.Answer[]? | select(.type == 15 and ((.data | ascii_downcase) | contains("mx.cloudflare.net")))] | length >= 3)' <<<"$mx_json" >/dev/null; then
     mx_ready=true
     break
   fi
@@ -66,7 +69,7 @@ printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=w
 
 # Verify the route exists and targets a Worker before declaring setup complete.
 rules_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/rules.json" -w '%{http_code}' "$API_BASE/zones/$zone_id/email/routing/rules" -H "$auth_header")"
-if [[ "$rules_status" != 200 ]] || ! jq -e --arg address "$BOUNCE_ADDRESS" '[.result[]? | select(any(.matchers[]?; .type == "literal" and .value == $address) and any(.actions[]?; .type == "worker"))] | length == 1' "$tmp/rules.json" >/dev/null; then
+if [[ "$rules_status" != 200 ]] || ! jq -e --arg address "$BOUNCE_ADDRESS" '[.result[]? | select(any(.matchers[]?; .type == "literal" and .value == $address))] as $matches | ($matches | length) == 1 and $matches[0].source == "wrangler" and any($matches[0].actions[]?; .type == "worker")' "$tmp/rules.json" >/dev/null; then
   echo "::error::Cloudflare did not confirm exactly one Worker routing rule for $BOUNCE_ADDRESS."
   exit 1
 fi
