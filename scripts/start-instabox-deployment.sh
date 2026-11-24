@@ -110,15 +110,18 @@ sudo docker info >/dev/null
 # Verify outbound HTTPS/TLS reachability to Mailjet before changing production services.
 # A credential-free GET is intentionally used: it cannot send an email. Any
 # HTTP response proves DNS, TCP 443, TLS certificate verification, and HTTP routing.
-if mailjet_http_status="$(curl --silent --show-error --output /dev/null --max-time 15 \
-  --write-out '%{http_code}' https://api.mailjet.com:443/v3.1/send)"; then
-  [[ "$mailjet_http_status" =~ ^[1-5][0-9]{2}$ ]] || {
-    echo "::error::Mailjet HTTPS preflight returned no valid HTTP status."
+if mailjet_api_status="$(
+  printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nuser = "%s:%s"\n' \
+    "$MAILJET_API_KEY" "$MAILJET_SECRET_KEY" |
+    curl --config - --silent --show-error --output /dev/null --max-time 15 --write-out '%{http_code}'
+)"; then
+  [[ "$mailjet_api_status" == "200" ]] || {
+    echo "::error::Mailjet read-only API credential check returned HTTP $mailjet_api_status."
     exit 1
   }
-  echo "Verified Mailjet HTTPS/TLS connectivity on TCP 443 (HTTP $mailjet_http_status; unauthenticated probe only)."
+  echo "Verified Mailjet HTTPS/TLS connectivity and API credentials with the read-only profile endpoint."
 else
-  echo "::error::InstaBox cannot establish verified HTTPS connectivity to api.mailjet.com:443."
+  echo "::error::InstaBox cannot authenticate to Mailjet over verified HTTPS on api.mailjet.com:443."
   exit 1
 fi
 
