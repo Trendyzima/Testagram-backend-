@@ -1143,14 +1143,11 @@ echo "Data Centre overlay status: $overlay_status"
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
 sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
 printf '%s\n' "$overlay_status" > "$ROOT/overlay-status.txt"
-# Publish native mail DNS only after the application stack has passed its live
-# deployment checks. The token is transient and is never written to the VPS .env.
-if [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]]; then
-  CLOUDFLARE_DNS_API_TOKEN="$CLOUDFLARE_DNS_API_TOKEN" DKIM_PUBLIC_KEY="$DKIM_PUBLIC_KEY" \
-    bash "$BACKEND/scripts/reconcile-native-mail-dns.sh"
-else
-  echo "::warning::Native mail DNS was not changed: configure CLOUDFLARE_DNS_API_TOKEN with Zone:DNS:Edit access for testagram.site."
-fi
+# InstaBox public ports are an HTTPS/raw-TCP gateway, not a dedicated public
+# IPv4 listener for SMTP/25. Do not publish the machine's NAT egress address as
+# mail.testagram.site. Native-mail DNS must be reconciled from the dedicated
+# SMTP host after its public address, port-25 ingress and DKIM key are verified.
+echo "::warning::Native mail DNS reconciliation intentionally skipped on InstaBox: its public-port gateway cannot expose TCP/25 or provide a dedicated SMTP IPv4/PTR identity."
 echo "DEPLOY_EXIT=0"
 REMOTE_SCRIPT
 chmod 700 "$ROOT/deploy.sh"
