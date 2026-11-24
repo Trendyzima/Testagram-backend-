@@ -21,6 +21,7 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertNotIn('"testagram.site" ""', source)
         self.assertIn("proxied:false", source)
         self.assertIn("priority:$priority", source)
+        self.assertIn("v=spf1 ip4:$PUBLIC_IPV4 ~all", source)
 
     def test_fails_closed_on_ambiguous_zone_or_policy_records(self):
         source = SCRIPT.read_text(encoding="utf-8")
@@ -41,6 +42,7 @@ class NativeMailDNSAPITest(unittest.TestCase):
     def test_does_not_claim_to_configure_ptr_or_dmarc_reporting(self):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("PTR/rDNS is a VPS-provider setting", source)
+        self.assertIn("Preserving the existing DMARC policy", source)
         self.assertNotIn("rua=mailto:", source)
 
 
