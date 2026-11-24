@@ -439,6 +439,21 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 				continue
 			}
 			hash := sha256.Sum256([]byte(match[1]))
+			lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			var tokenExists bool
+			err = db.QueryRow(lookupCtx, `
+				SELECT EXISTS (
+					SELECT 1 FROM testagram_mail.return_path_tokens
+					WHERE token_hash=$1 AND expires_at>now()
+				)
+			`, hash[:]).Scan(&tokenExists)
+			cancel()
+			if err != nil || !tokenExists {
+				if !reply(550, "Unknown or expired feedback token") {
+					return
+				}
+				continue
+			}
 			tokenHash = hash[:]
 			if !reply(250, "Feedback recipient accepted") {
 				return
