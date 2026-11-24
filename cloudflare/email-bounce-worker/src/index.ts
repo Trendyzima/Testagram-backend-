@@ -35,8 +35,14 @@ export default {
     // Cloudflare prepends its own Authentication-Results header before
     // invoking Email Workers. Do not trust sender-supplied auth-result headers.
     const authenticationResults = message.headers.get("authentication-results") || "";
-    if (!/^mx\.cloudflare\.net\s*;/i.test(authenticationResults.trim())) {
-      message.setReject("Missing Cloudflare authentication result");
+    const trustedAuthenticationResult = authenticationResults
+      .split(/,\s*(?=[A-Za-z0-9.-]+\s*;)/, 1)[0]
+      .trim();
+    if (
+      !/^mx\.cloudflare\.net\s*;/i.test(trustedAuthenticationResult) ||
+      !/\bdmarc=pass\b/i.test(trustedAuthenticationResult)
+    ) {
+      message.setReject("Cloudflare DMARC authentication did not pass");
       return;
     }
     const secret = env.TESTAGRAM_BOUNCE_INGRESS_SECRET;
