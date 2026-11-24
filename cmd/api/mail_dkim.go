@@ -88,9 +88,8 @@ func signNativeMailDKIM(message []byte) ([]byte, error) {
 		return nil, fmt.Errorf("DKIM signing failed: %w", err)
 	}
 
-	dkimHeader := "DKIM-Signature: " +
-		strings.TrimSpace(strings.TrimSuffix(unsigned, "b=")) +
-		"b=" + base64.StdEncoding.EncodeToString(signature) + "\r\n"
+	dkimHeader := "DKIM-Signature: " + unsigned +
+		base64.StdEncoding.EncodeToString(signature) + "\r\n"
 	result := make([]byte, 0, len(message)+len(dkimHeader))
 	result = append(result, []byte(dkimHeader)...)
 	result = append(result, message...)
