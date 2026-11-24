@@ -82,6 +82,20 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("bounces.testagram.site", worker_deploy)
         self.assertIn("api.testagram.site/internal/mail/bounce", worker_deploy)
 
+    def test_read_only_instabox_egress_diagnostic_cannot_deploy(self):
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        job_start = workflow.index("  diagnose-native-mail-egress:")
+        job_end = workflow.index("  deploy:", job_start)
+        diagnostic = workflow[job_start:job_end]
+        self.assertIn("inputs.diagnose_native_mail_egress == true", diagnostic)
+        self.assertIn("inputs.confirm_production_deploy != true", diagnostic)
+        self.assertIn("/v1/machines/$INSTABOX_MACHINE_ID/exec", diagnostic)
+        self.assertIn("socket.create_connection", diagnostic)
+        self.assertIn("socket.gethostbyaddr", diagnostic)
+        self.assertNotIn("CLOUDFLARE_DNS_API_TOKEN", diagnostic)
+        self.assertNotIn("wrangler deploy", diagnostic)
+        self.assertNotIn("docker compose", diagnostic)
+
     def test_verp_hmac_preserves_case_sensitive_token(self):
         handler = (ROOT / "cmd/api/mail_bounce_http.go").read_text()
         worker = (ROOT / "cloudflare/email-bounce-worker/src/index.ts").read_text()
