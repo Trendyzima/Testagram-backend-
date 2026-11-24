@@ -94,6 +94,9 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 			report.Status = strings.TrimSpace(fields["status"])
 			report.Diagnostic = safeReportField(fields["diagnostic-code"], 512)
 			report.RemoteMTA = safeReportField(fields["remote-mta"], 255)
+			if report.RemoteMTA == "" {
+				report.RemoteMTA = safeReportField(fields["reporting-mta"], 255)
+			}
 			switch strings.ToLower(strings.TrimSpace(fields["action"])) {
 			case "delayed":
 				report.EventType = "dsn.delayed"
