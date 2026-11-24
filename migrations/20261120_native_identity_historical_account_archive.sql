@@ -164,7 +164,7 @@ BEGIN
 
       status_constraint_name := CASE
         WHEN relation_name LIKE '%_recovered'
-          THEN 'historical_external_registration_provisioning_recovered_status_check'
+          THEN 'historical_external_reg_provisioning_recovered_status_check'
         ELSE 'historical_external_registration_provisioning_status_check'
       END;
       IF NOT EXISTS (
