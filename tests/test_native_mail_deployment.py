@@ -14,6 +14,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("/data/home/testagram/mail-keys:/run/testagram-mail:ro", compose)
         self.assertIn("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", compose)
         self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY", script)
+        self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_ENCRYPTION_KEY", script)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", compose)
         self.assertIn('chmod 600 "$BASE_ENV"', script)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", (ROOT / "cmd/api/mail_return_path.go").read_text())
