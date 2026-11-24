@@ -12,7 +12,7 @@ class InstaBoxNativeMailEgressTests(unittest.TestCase):
         self.assertIn("checkip.amazonaws.com", script)
         self.assertIn("socket.gethostbyaddr", script)
         self.assertIn("mail.testagram.site", script)
-        self.assertIn("socket.getaddrinfo", script)
+        self.assertIn("socket.gethostbyaddr", script)
         self.assertIn("address.is_global", script)
 
     def test_deploy_requires_the_confirmed_egress_ip(self):
