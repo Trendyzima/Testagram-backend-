@@ -144,6 +144,7 @@ func classifySMTPCommandError(code string, err error) error {
 func buildSMTPMessage(from, to *mail.Address, message queuedMail, messageID string) ([]byte, error) {
 	var out bytes.Buffer
 	headers := []string{
+		"X-MJ-CustomID: " + messageID,
 		"From: " + from.String(),
 		"To: " + to.String(),
 		"Subject: " + mime.QEncoding.Encode("UTF-8", message.Subject),
