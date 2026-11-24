@@ -289,6 +289,19 @@ func (s *service) cleanupMailOperationalRecords(ctx context.Context) error {
 		return err
 	}
 	_, err = s.db.Exec(ctx, `
+		DELETE FROM testagram_mail.return_path_tokens
+		WHERE token_hash IN (
+			SELECT token_hash
+			FROM testagram_mail.return_path_tokens
+			WHERE expires_at < now() - interval '30 days'
+			ORDER BY expires_at
+			LIMIT 500
+		)
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
 		WITH expired AS (
 			SELECT id
 			FROM testagram_mail.inbound_reports
