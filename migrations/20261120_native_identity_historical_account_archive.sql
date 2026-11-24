@@ -37,7 +37,14 @@ BEGIN
       RENAME TO historical_external_registration_provisioning;
   ELSIF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL
      AND to_regclass('testagram_identity.historical_external_registration_provisioning') IS NOT NULL THEN
-    RAISE EXCEPTION 'both historical and legacy provisioning tables exist; reconcile explicitly';
+    -- Preserve both ledgers separately. The established archive name remains
+    -- stable; the second provider-keyed copy is retained under a distinct,
+    -- restricted historical name. Never merge, overwrite, or discard rows.
+    IF to_regclass('testagram_identity.historical_external_registration_provisioning_recovered') IS NOT NULL THEN
+      RAISE EXCEPTION 'a recovered historical provisioning archive already exists; inspect the new legacy ledger before proceeding';
+    END IF;
+    ALTER TABLE testagram_identity.registration_provisioning
+      RENAME TO historical_external_registration_provisioning_recovered;
   END IF;
 END;
 $rename_tables$;
@@ -55,6 +62,9 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning' AND column_name='appwrite_user_id') THEN
     ALTER TABLE testagram_identity.historical_external_registration_provisioning RENAME COLUMN appwrite_user_id TO source_account_id;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='historical_external_registration_provisioning_recovered' AND column_name='appwrite_user_id') THEN
+    ALTER TABLE testagram_identity.historical_external_registration_provisioning_recovered RENAME COLUMN appwrite_user_id TO source_account_id;
   END IF;
 END;
 $rename_columns$;
@@ -94,7 +104,8 @@ BEGIN
       to_regclass('testagram_identity.historical_external_identity_accounts'),
       to_regclass('testagram_identity.historical_external_identity_link_audit'),
       to_regclass('testagram_identity.historical_external_registration_consents'),
-      to_regclass('testagram_identity.historical_external_registration_provisioning')
+      to_regclass('testagram_identity.historical_external_registration_provisioning'),
+      to_regclass('testagram_identity.historical_external_registration_provisioning_recovered')
     )
       AND conname ILIKE '%appwrite%'
   LOOP
@@ -111,7 +122,8 @@ BEGIN
       to_regclass('testagram_identity.historical_external_identity_accounts'),
       to_regclass('testagram_identity.historical_external_identity_link_audit'),
       to_regclass('testagram_identity.historical_external_registration_consents'),
-      to_regclass('testagram_identity.historical_external_registration_provisioning')
+      to_regclass('testagram_identity.historical_external_registration_provisioning'),
+      to_regclass('testagram_identity.historical_external_registration_provisioning_recovered')
     )
       AND c.relname ILIKE '%appwrite%'
       AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid=i.indexrelid)
@@ -126,30 +138,47 @@ $rename_historical_identifiers$;
 -- while neutralizing the label in the restricted historical ledger.
 DO $neutralize_historical_status$
 DECLARE
+  relation_name TEXT;
   constraint_name TEXT;
+  relation_names TEXT[] := ARRAY[
+    'testagram_identity.historical_external_registration_provisioning',
+    'testagram_identity.historical_external_registration_provisioning_recovered'
+  ];
+  status_constraint_name TEXT;
 BEGIN
-  FOR constraint_name IN
-    SELECT conname FROM pg_constraint
-    WHERE conrelid=to_regclass('testagram_identity.historical_external_registration_provisioning')
-      AND contype='c'
-      AND pg_get_constraintdef(oid) LIKE '%appwrite_created%'
-  LOOP
-    EXECUTE format('ALTER TABLE testagram_identity.historical_external_registration_provisioning DROP CONSTRAINT %I',constraint_name);
+  FOREACH relation_name IN ARRAY relation_names LOOP
+    IF to_regclass(relation_name) IS NOT NULL THEN
+      FOR constraint_name IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid=to_regclass(relation_name)
+          AND contype='c'
+          AND pg_get_constraintdef(oid) LIKE '%appwrite_created%'
+      LOOP
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',relation_name,constraint_name);
+      END LOOP;
+
+      EXECUTE format(
+        'UPDATE %s SET status=''source_provider_created'' WHERE status=''appwrite_created''',
+        relation_name
+      );
+
+      status_constraint_name := CASE
+        WHEN relation_name LIKE '%_recovered'
+          THEN 'historical_external_registration_provisioning_recovered_status_check'
+        ELSE 'historical_external_registration_provisioning_status_check'
+      END;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid=to_regclass(relation_name)
+          AND conname=status_constraint_name
+      ) THEN
+        EXECUTE format(
+          'ALTER TABLE %s ADD CONSTRAINT %I CHECK (status IN (''pending'',''source_provider_created'',''linked'',''verification_sent'',''completed'',''compensation_required'',''failed''))',
+          relation_name,status_constraint_name
+        );
+      END IF;
+    END IF;
   END LOOP;
-
-  UPDATE testagram_identity.historical_external_registration_provisioning
-  SET status='source_provider_created'
-  WHERE status='appwrite_created';
-
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conrelid=to_regclass('testagram_identity.historical_external_registration_provisioning')
-      AND conname='historical_external_registration_provisioning_status_check'
-  ) THEN
-    ALTER TABLE testagram_identity.historical_external_registration_provisioning
-      ADD CONSTRAINT historical_external_registration_provisioning_status_check
-      CHECK (status IN ('pending','source_provider_created','linked','verification_sent','completed','compensation_required','failed'));
-  END IF;
 END;
 $neutralize_historical_status$;
 
@@ -171,7 +200,8 @@ DECLARE
     'testagram_identity.historical_external_identity_accounts',
     'testagram_identity.historical_external_identity_link_audit',
     'testagram_identity.historical_external_registration_consents',
-    'testagram_identity.historical_external_registration_provisioning'
+    'testagram_identity.historical_external_registration_provisioning',
+    'testagram_identity.historical_external_registration_provisioning_recovered'
   ];
 BEGIN
   FOREACH relation_name IN ARRAY relation_names LOOP
@@ -205,6 +235,10 @@ BEGIN
   IF to_regclass('testagram_identity.historical_external_registration_provisioning') IS NOT NULL THEN
     COMMENT ON TABLE testagram_identity.historical_external_registration_provisioning IS
       'Read-restricted historical external-provider provisioning state. Native account provisioning uses native_registration_provisioning.';
+  END IF;
+  IF to_regclass('testagram_identity.historical_external_registration_provisioning_recovered') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_identity.historical_external_registration_provisioning_recovered IS
+      'Additional read-restricted historical provisioning ledger retained separately after a duplicate legacy table was found. Not used by runtime authentication.';
   END IF;
 END;
 $comment_historical_identity_tables$;
