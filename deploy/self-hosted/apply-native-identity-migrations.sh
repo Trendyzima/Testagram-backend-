@@ -112,9 +112,9 @@ schema_ready() {
   local failed_checks
   failed_checks="$(schema_diagnostics)"
   if [[ -z "$failed_checks" ]]; then
-    printf 't\\n'
+    printf 't\n'
   else
-    printf 'f\\n'
+    printf 'f\n'
   fi
 }
 
