@@ -16,6 +16,26 @@ func TestNativeMailConfigurationNeedsNoProviderCredentials(t *testing.T) {
 	}
 }
 
+func TestNativeMailRuntimeRequiresVERPAndDKIMConfiguration(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", "")
+	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", "")
+	if err := mailRuntimeConfigurationError(); err == nil {
+		t.Fatal("runtime accepted missing dedicated VERP and DKIM keys")
+	}
+
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("62", 32))
+	if err := mailRuntimeConfigurationError(); err == nil {
+		t.Fatal("runtime accepted missing DKIM private key")
+	}
+
+	_, keyPath := writeTestDKIMKey(t, 0600)
+	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", keyPath)
+	if err := mailRuntimeConfigurationError(); err != nil {
+		t.Fatalf("runtime rejected valid native mail keys: %v", err)
+	}
+}
+
 func TestBuildNativeSMTPMessagePreservesUnsubscribeHeaders(t *testing.T) {
 	to, err := mail.ParseAddress("person@example.test")
 	if err != nil {
