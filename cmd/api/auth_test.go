@@ -271,6 +271,12 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 }
 
 func TestPublicRegistrationDoesNotRequireAdminIdentityReview(t *testing.T) {
+	// Private evidence storage and staff WebAuthn are deliberately disabled in
+	// this scenario. Ordinary signup must still reach only the native auth-store
+	// readiness boundary, never an identity-review or evidence-storage gate.
+	t.Setenv("DATA_CENTRE_MEDIA_ENABLED", "false")
+	t.Setenv("FRESH_MEDIA_ENABLED", "false")
+	t.Setenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED", "false")
 	old, had := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
 	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
 	t.Cleanup(func() {
