@@ -37,6 +37,8 @@ After the workflow update is merged, run `Deploy Testagram to InstaBox` manually
 
 ## Outbound DNS reconciliation
 
+`scripts/reconcile-native-mail-dns.sh` is a legacy dedicated-SMTP-host tool; do not run it on InstaBox because it manages a separate host's bounce MX. Use only the InstaBox-specific reconciler below.
+
 `scripts/reconcile-instabox-native-mail-dns.sh` runs only after the egress
 identity and Testagram DKIM key are available. It:
 
