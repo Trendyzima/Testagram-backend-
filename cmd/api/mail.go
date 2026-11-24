@@ -312,7 +312,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	if err := s.reconcileMailjetEvents(ctx); err != nil {
 		return false, err
 	}
-		if err := s.cleanupMailOperationalRecords(ctx); err != nil {
+	if err := s.cleanupMailOperationalRecords(ctx); err != nil {
 		return false, err
 	}
 
