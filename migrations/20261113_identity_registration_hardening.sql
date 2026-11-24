@@ -162,7 +162,8 @@ BEGIN
   IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
      AND EXISTS (
        SELECT 1 FROM information_schema.columns
-       WHERE table_schema='testagram_identity.identity_approval_tokens'
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_approval_tokens'
          AND column_name='first_approver_appwrite_user_id'
      )
      AND NOT EXISTS (
@@ -180,7 +181,8 @@ BEGIN
   IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
      AND EXISTS (
        SELECT 1 FROM information_schema.columns
-       WHERE table_schema='testagram_identity.identity_approval_tokens'
+       WHERE table_schema='testagram_identity'
+         AND table_name='identity_approval_tokens'
          AND column_name='second_approver_appwrite_user_id'
      )
      AND NOT EXISTS (
