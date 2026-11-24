@@ -51,11 +51,11 @@ func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
 		return "", err
 	}
 
-	if dkimPayload, signErr := signNativeMailDKIM(payload); signErr == nil {
-		payload = dkimPayload
-	} else if strings.TrimSpace(os.Getenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE")) != "" {
+	dkimPayload, signErr := signNativeMailDKIM(payload)
+	if signErr != nil {
 		return "", fmt.Errorf("native DKIM signing failed: %w", signErr)
 	}
+	payload = dkimPayload
 
 	domain := to.Address[strings.LastIndex(to.Address, "@")+1:]
 	if domain == "" {
