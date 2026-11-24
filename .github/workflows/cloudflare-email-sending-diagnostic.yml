@@ -2,6 +2,11 @@ name: Cloudflare Email Sending authorization diagnostic
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - diagnostics/cloudflare-email-sending-readonly
+    paths:
+      - .github/workflows/cloudflare-email-sending-diagnostic.yml
 
 permissions: {}
 
