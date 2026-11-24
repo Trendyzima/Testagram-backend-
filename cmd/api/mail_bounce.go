@@ -27,6 +27,7 @@ import (
 )
 
 const maxNativeBounceBytes = 1 << 20
+const maxNativeBounceParts = 10
 
 var nativeBounceLocalPart = regexp.MustCompile(`^b\+([A-Za-z0-9_-]{32})$`)
 var enhancedStatusCodePattern = regexp.MustCompile(`^[245]\.\d\.\d{1,3}$`)
@@ -84,6 +85,9 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 			_ = part.Close()
 			if readErr != nil {
 				return nativeBounceReport{}, readErr
+			}
+			if len(data) > 64<<10 {
+				return nativeBounceReport{}, errors.New("bounce report MIME part exceeds size limit")
 			}
 			fields := parseDSNFields(data)
 			report.Recipient = addressFromDSN(fields["final-recipient"])
