@@ -104,7 +104,7 @@ jobs:
             echo "::error::Mailjet SMTP must use port 587 with STARTTLS."
             exit 1
           fi
-          if [[ "${AUTH_FROM_EMAIL:-}" != *@testagram.site ]]; then
+          if [[ "${AUTH_FROM_EMAIL:-}" != "no-reply@testagram.site" ]]; then
             echo "::error::AUTH_FROM_EMAIL must be a verified @testagram.site sender."
             exit 1
           fi
