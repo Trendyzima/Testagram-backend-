@@ -291,6 +291,20 @@ func (s *service) cleanupMailOperationalRecords(ctx context.Context) error {
 	_, err = s.db.Exec(ctx, `
 		WITH expired AS (
 			SELECT id
+			FROM testagram_mail.inbound_reports
+			WHERE received_at < now() - interval '180 days'
+			ORDER BY received_at,id
+			LIMIT 500
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM testagram_mail.inbound_reports WHERE id IN (SELECT id FROM expired)
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+		WITH expired AS (
+			SELECT id
 			FROM testagram_mail.social_unsubscribe_tokens
 			WHERE expires_at < now() - interval '30 days'
 			   OR used_at < now() - interval '90 days'
@@ -486,13 +500,32 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	}
-	_, err = s.db.Exec(ctx, `
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return true, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		UPDATE testagram_mail.outbox
 		SET status='sent',sent_at=now(),lease_until=NULL,provider_message_id=NULLIF($2,''),last_error_code=NULL,
-		    payload_ciphertext='',payload_nonce='',updated_at=now()
+		    delivery_status='accepted',payload_ciphertext='',payload_nonce='',updated_at=now()
 		WHERE id=$1 AND status='sending'
 	`, id, messageID)
-	return true, err
+	if err != nil {
+		return true, err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_mail.delivery_events(
+			provider_event_id,provider_message_id,event_type,recipient_fingerprint,transport,processed_at
+		)
+		VALUES('native-accepted:'||$1::text,COALESCE(NULLIF($2,''),'native-outbox-'||$1::text),
+		       'smtp.accepted',$3,'native',now())
+		ON CONFLICT(provider_event_id) DO NOTHING
+	`, id, messageID, fingerprint)
+	if err != nil {
+		return true, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 func (s *service) failMail(ctx context.Context, id int64, attempt int, code string) error {
