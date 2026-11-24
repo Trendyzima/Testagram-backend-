@@ -68,20 +68,28 @@ CREATE INDEX IF NOT EXISTS identity_approval_tokens_expiry_idx
   ON testagram_identity.identity_approval_tokens(expires_at)
   WHERE consumed_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS testagram_identity.registration_provisioning (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  application_id UUID NOT NULL UNIQUE REFERENCES testagram_identity.identity_applications(id) ON DELETE RESTRICT,
-  idempotency_key_sha256 BYTEA NOT NULL UNIQUE CHECK (octet_length(idempotency_key_sha256) = 32),
-  appwrite_user_id TEXT UNIQUE,
-  canonical_user_id UUID UNIQUE,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','appwrite_created','linked','verification_sent','completed','compensation_required','failed')),
-  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 20),
-  last_error_code TEXT NOT NULL DEFAULT '' CHECK (length(last_error_code) <= 64),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK ((status IN ('linked','verification_sent','completed')) = (appwrite_user_id IS NOT NULL AND canonical_user_id IS NOT NULL))
-);
+-- The provider-keyed provisioning saga is retained as historical evidence
+-- after the native cutover. Do not recreate its live table name on replays.
+DO $legacy_registration_provisioning$
+BEGIN
+  IF to_regclass('testagram_identity.historical_external_registration_provisioning') IS NULL THEN
+    CREATE TABLE IF NOT EXISTS testagram_identity.registration_provisioning (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      application_id UUID NOT NULL UNIQUE REFERENCES testagram_identity.identity_applications(id) ON DELETE RESTRICT,
+      idempotency_key_sha256 BYTEA NOT NULL UNIQUE CHECK (octet_length(idempotency_key_sha256) = 32),
+      appwrite_user_id TEXT UNIQUE,
+      canonical_user_id UUID UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','appwrite_created','linked','verification_sent','completed','compensation_required','failed')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 20),
+      last_error_code TEXT NOT NULL DEFAULT '' CHECK (length(last_error_code) <= 64),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK ((status IN ('linked','verification_sent','completed')) = (appwrite_user_id IS NOT NULL AND canonical_user_id IS NOT NULL))
+    );
+  END IF;
+END;
+$legacy_registration_provisioning$;
 
 CREATE TABLE IF NOT EXISTS testagram_identity.legal_consent_audit (
   id BIGSERIAL PRIMARY KEY,
@@ -101,9 +109,15 @@ REVOKE ALL ON TABLE
   testagram_identity.identity_applications,
   testagram_identity.identity_application_reviews,
   testagram_identity.identity_approval_tokens,
-  testagram_identity.registration_provisioning,
   testagram_identity.legal_consent_audit
 FROM PUBLIC;
+DO $legacy_provisioning_revoke$
+BEGIN
+  IF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL THEN
+    REVOKE ALL ON TABLE testagram_identity.registration_provisioning FROM PUBLIC;
+  END IF;
+END;
+$legacy_provisioning_revoke$;
 
 DO $grants$
 BEGIN
@@ -111,7 +125,9 @@ BEGIN
     GRANT SELECT, INSERT, UPDATE ON testagram_identity.identity_applications TO testagram_app;
     GRANT SELECT, INSERT ON testagram_identity.identity_application_reviews TO testagram_app;
     GRANT SELECT, INSERT, UPDATE ON testagram_identity.identity_approval_tokens TO testagram_app;
-    GRANT SELECT, INSERT, UPDATE ON testagram_identity.registration_provisioning TO testagram_app;
+    IF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL THEN
+      GRANT SELECT, INSERT, UPDATE ON testagram_identity.registration_provisioning TO testagram_app;
+    END IF;
     GRANT SELECT, INSERT ON testagram_identity.legal_consent_audit TO testagram_app;
     GRANT USAGE, SELECT ON SEQUENCE testagram_identity.legal_consent_audit_id_seq TO testagram_app;
   END IF;
@@ -120,7 +136,9 @@ BEGIN
     GRANT SELECT, INSERT, UPDATE ON testagram_identity.identity_applications TO service_role;
     GRANT SELECT, INSERT ON testagram_identity.identity_application_reviews TO service_role;
     GRANT SELECT, INSERT, UPDATE ON testagram_identity.identity_approval_tokens TO service_role;
-    GRANT SELECT, INSERT, UPDATE ON testagram_identity.registration_provisioning TO service_role;
+    IF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL THEN
+      GRANT SELECT, INSERT, UPDATE ON testagram_identity.registration_provisioning TO service_role;
+    END IF;
     GRANT SELECT, INSERT ON testagram_identity.legal_consent_audit TO service_role;
     GRANT USAGE, SELECT ON SEQUENCE testagram_identity.legal_consent_audit_id_seq TO service_role;
   END IF;
@@ -131,8 +149,14 @@ COMMENT ON TABLE testagram_identity.identity_applications IS
   'Registration applications. Store only opaque evidence references and a non-reversible fingerprint digest; never store identity-document bytes here.';
 COMMENT ON TABLE testagram_identity.identity_approval_tokens IS
   'Single-use approval-token redemption ledger. Application handlers must consume token_sha256 and JTI atomically with provisioning state transitions.';
-COMMENT ON TABLE testagram_identity.registration_provisioning IS
-  'Idempotent Appwrite-to-canonical-account provisioning saga state; external Appwrite calls require compensating cleanup on database failure.';
+DO $legacy_provisioning_comment$
+BEGIN
+  IF to_regclass('testagram_identity.registration_provisioning') IS NOT NULL THEN
+    COMMENT ON TABLE testagram_identity.registration_provisioning IS
+      'Historical provider-keyed provisioning saga state; native account activation uses native_registration_provisioning.';
+  END IF;
+END;
+$legacy_provisioning_comment$;
 COMMENT ON TABLE testagram_identity.legal_consent_audit IS
   'Append-only versioned Terms, Privacy and age-confirmation acceptance evidence.';
 
