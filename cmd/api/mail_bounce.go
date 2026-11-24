@@ -26,7 +26,35 @@ import (
 const maxNativeBounceBytes = 1 << 20
 
 var nativeBounceLocalPart = regexp.MustCompile(`^b\+([A-Za-z0-9_-]{32})$`)
-var enhancedStatusCodePattern = regexp.MustCompile(`^[245]\.\d\.\d{1,3}$`)
+var enhancedStatusCodePattern = regexp.MustCompile(`^[245]\.\d\.\d{1,3}package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"mime"
+	"mime/multipart"
+	"net"
+	"net/mail"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const maxNativeBounceBytes = 1 << 20
+
+var nativeBounceLocalPart = regexp.MustCompile(`^b\+([A-Za-z0-9_-]{32})$`)
+)\nvar nativeBounceConnectionSlots = make(chan struct{}, 64)
 
 type nativeBounceReport struct {
 	Recipient  string
@@ -302,7 +330,15 @@ func startNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, addr string) e
 				log.Printf("native mail feedback listener stopped: %v", acceptErr)
 				return
 			}
-			go handleNativeBounceSMTP(ctx, db, conn)
+			select {
+			case nativeBounceConnectionSlots <- struct{}{}:
+				go func() {
+					defer func() { <-nativeBounceConnectionSlots }()
+					handleNativeBounceSMTP(ctx, db, conn)
+				}()
+			default:
+				_ = conn.Close()
+			}
 		}
 	}()
 	return nil
