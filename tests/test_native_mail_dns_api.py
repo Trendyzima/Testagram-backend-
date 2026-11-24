@@ -12,6 +12,8 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertIn('"$API/zones?name=$DOMAIN', source)
         self.assertIn("Authorization: Bearer $CLOUDFLARE_DNS_API_TOKEN", source)
         self.assertIn("mktemp -d", source)
+        self.assertIn('--config "$TMP_DIR/cloudflare.curlrc"', source)
+        self.assertIn('chmod 600 "$TMP_DIR/cloudflare.curlrc"', source)
         self.assertNotIn("echo $CLOUDFLARE_DNS_API_TOKEN", source)
 
     def test_only_reconciles_dedicated_mail_records(self):
