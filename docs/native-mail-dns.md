@@ -76,11 +76,21 @@ Automated deployment:
   Review existing apex/subdomain routes and enable it manually in Email Routing
   Settings before deployment.
 - It verifies that the bounce subdomain publishes Cloudflare MX records.
-- It deploys `cloudflare/email-bounce-worker` using Wrangler 4.113.0 and
-  creates the literal Worker rule for `b@bounces.testagram.site`.
+- It temporarily deploys the Worker with `wrangler-probe.toml` on the account's
+  existing `workers.dev` subdomain, without registering the email address.
 - It reads the internally generated `TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET`
   from InstaBox and sends it directly to Cloudflare using `wrangler secret
   put`. The value is not printed, committed, or sent to the GitHub runner.
+- It sends a signed health request to the temporary Worker. The Worker calls
+  the public Testagram API and requires HTTP 401 plus
+  `X-Testagram-Bounce-Endpoint: native-v1`; it returns 204 only if the API
+  handler was reached.
+- It deploys the final `wrangler.toml` with `workers_dev=false` and the literal
+  `b@bounces.testagram.site` email rule, re-applies the HMAC secret, verifies
+  that the rule targets this Worker, and confirms the temporary workers.dev
+  endpoint is disabled.
+- The Cloudflare account must already have a workers.dev subdomain configured
+  under Workers & Pages. The deployment reads it but does not create or rename it.
 
 Required GitHub configuration:
 
@@ -104,7 +114,7 @@ Testagram sets each outbound envelope sender to
 subaddressing maps that recipient to the base Worker rule while preserving
 the original recipient in the email event.
 
-The Worker requires Cloudflare's prepended `Authentication-Results: mx.cloudflare.net;` header with `dmarc=pass` with `dmarc=pass` and relies on Cloudflare's inbound SPF/DKIM/DMARC validation; sender-supplied authentication-result headers are not trusted. It preserves the case-sensitive VERP local part, lowercases only the
+The Worker requires Cloudflare's prepended `Authentication-Results: mx.cloudflare.net;` header with `dmarc=pass` and relies on Cloudflare's inbound SPF/DKIM/DMARC validation; sender-supplied authentication-result headers are not trusted. It preserves the case-sensitive VERP local part, lowercases only the
 DNS domain, preserves the raw RFC 5322 bytes, and enforces a 1 MiB limit. It
 signs timestamp, canonical recipient and SHA-256 body digest with HMAC-SHA-256
 and posts the original MIME to `POST /internal/mail/bounce` over HTTPS.
