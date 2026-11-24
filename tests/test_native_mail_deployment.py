@@ -68,6 +68,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertNotIn("MAILJET_SMTP_PASSWORD", env_example)
         self.assertNotIn("AUTH_FROM_EMAIL", env_example)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", env_example)
+        self.assertIn("TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET", env_example)
         self.assertIn("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", env_example)
         self.assertIn("LookupMX", smtp)
         self.assertIn("client.StartTLS", smtp)
