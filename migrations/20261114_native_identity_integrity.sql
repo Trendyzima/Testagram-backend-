@@ -5,11 +5,20 @@ BEGIN;
 
 DO $reviewer_fk$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname='verification_reviews_reviewer_staff_fk'
-      AND conrelid='testagram_identity.verification_reviews'::regclass
-  ) THEN
+  -- This provider-keyed FK is created only before its source staff table and
+  -- reviewer column are archived. Native reviewer UUIDs have separate FKs.
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='verification_reviews'
+         AND column_name='reviewer_appwrite_user_id'
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='verification_reviews_reviewer_staff_fk'
+         AND conrelid='testagram_identity.verification_reviews'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.verification_reviews
       ADD CONSTRAINT verification_reviews_reviewer_staff_fk
       FOREIGN KEY (reviewer_appwrite_user_id)
@@ -69,11 +78,18 @@ BEGIN
       ) NOT VALID;
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname='verification_sessions_decider_staff_fk'
-      AND conrelid='testagram_identity.verification_sessions'::regclass
-  ) THEN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='testagram_identity'
+         AND table_name='verification_sessions'
+         AND column_name='decided_by_appwrite_user_id'
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='verification_sessions_decider_staff_fk'
+         AND conrelid='testagram_identity.verification_sessions'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.verification_sessions
       ADD CONSTRAINT verification_sessions_decider_staff_fk
       FOREIGN KEY (decided_by_appwrite_user_id)
@@ -118,8 +134,19 @@ BEGIN
 END;
 $session_evidence$;
 
-CREATE INDEX IF NOT EXISTS verification_reviews_reviewer_idx
-  ON testagram_identity.verification_reviews(reviewer_appwrite_user_id,created_at DESC);
+DO $legacy_reviewer_index$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_identity'
+      AND table_name='verification_reviews'
+      AND column_name='reviewer_appwrite_user_id'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS verification_reviews_reviewer_idx
+      ON testagram_identity.verification_reviews(reviewer_appwrite_user_id,created_at DESC)';
+  END IF;
+END;
+$legacy_reviewer_index$;
 
 CREATE OR REPLACE FUNCTION testagram_identity.reject_verification_audit_mutation()
 RETURNS trigger
