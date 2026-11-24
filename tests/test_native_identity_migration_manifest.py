@@ -414,7 +414,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("DROP TRIGGER IF EXISTS identity_approval_token_requires_two_person_approval", hardening)
         self.assertIn("to_regclass('testagram_auth.staff_roles') IS NOT NULL", integrity)
         self.assertIn("reviewer_appwrite_user_id", integrity)
-        self.assertIn("'account_provisioned','email_verified'", evidence_audit)
+        self.assertIn("'evidence_access_attempted','account_provisioned','email_verified'", evidence_audit)
         self.assertIn("to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL", native_ledger)
         self.assertIn("to_regclass('testagram_auth.admin_security_audit') IS NOT NULL", native_ledger)
         self.assertIn("reviewer_appwrite_user_id", native_admin)
