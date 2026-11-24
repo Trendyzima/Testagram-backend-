@@ -12,10 +12,31 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
 const testagramDKIMDomain = "testagram.site"
+
+var nativeDKIMSelectorPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,63}package main
+
+import (
+	"bytes"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+)
+
+)
 
 func signNativeMailDKIM(message []byte) ([]byte, error) {
 	path := strings.TrimSpace(os.Getenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE"))
@@ -26,7 +47,7 @@ func signNativeMailDKIM(message []byte) ([]byte, error) {
 	if selector == "" {
 		selector = "tg2026"
 	}
-	if len(selector) > 63 || strings.ContainsAny(selector, ".; \r\n") {
+	if !nativeDKIMSelectorPattern.MatchString(selector) {
 		return nil, errors.New("invalid DKIM selector")
 	}
 
