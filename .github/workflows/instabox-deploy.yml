@@ -81,6 +81,7 @@ jobs:
   diagnose-native-mail-egress:
     name: Read-only InstaBox native mail network diagnostic
     needs: validate
+    environment: production
     if: github.event_name == 'workflow_dispatch' && inputs.diagnose_native_mail_egress == true && inputs.confirm_production_deploy != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
