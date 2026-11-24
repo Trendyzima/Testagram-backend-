@@ -81,14 +81,15 @@ jobs:
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
       TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN: ${{ secrets.TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-      MAILJET_API_KEY: ${{ secrets.MAILJET_API_KEY }}
-      MAILJET_SECRET_KEY: ${{ secrets.MAILJET_SECRET_KEY }}
-      AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
-      TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
-      - name: Validate native Testagram mail configuration\n        shell: bash\n        run: |\n          set -euo pipefail\n          ! grep -Eq 'MAILJET_API_KEY|MAILJET_SECRET_KEY|api\\.mailjet\\.com' scripts/start-instabox-deployment.sh deploy/self-hosted/docker-compose.yml\n      - name: Validate edge proxy shared credential
+      - name: Validate native Testagram mail configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -Eq 'MAILJET_API_KEY|MAILJET_SECRET_KEY|api\.mailjet\.com' scripts/start-instabox-deployment.sh deploy/self-hosted/docker-compose.yml
+      - name: Validate edge proxy shared credential
         shell: bash
         run: |
           if [[ ! "${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
