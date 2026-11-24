@@ -102,10 +102,7 @@ delivery-state and suppression logic.
 The temporary HTTP health endpoint is HMAC-protected and is disabled after
 deployment. The final Worker is configured for email events only.
 
-If the API returns a non-2xx response, the Worker throws rather than
-acknowledging success. Cloudflare's SMTP retry behavior for Worker failures
-must be verified with a controlled outage test; do not assume retries without
-evidence. Cloudflare validates inbound SPF/DKIM/DMARC before invoking the
+Permanent API rejections (400, 413, 422) are rejected at SMTP level; authentication failures, rate limits, server errors and network failures throw rather than being acknowledged. Cloudflare's SMTP retry behavior for Worker failures must be verified with a controlled outage test; do not assume retries without evidence. Cloudflare validates inbound SPF/DKIM/DMARC before invoking the
 Worker, so real Gmail and Outlook DSNs must be tested through the full path.
 
 ## Production acceptance
