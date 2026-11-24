@@ -69,8 +69,10 @@ Automated deployment:
 
 - `scripts/deploy-cloudflare-bounce-worker.sh` probes the public Testagram API
   endpoint and requires the expected unauthenticated response (HTTP 401).
-- It enables `support_subaddress=true` through the Cloudflare Email Routing
-  settings API without changing the apex MX or Email Routing enabled state.
+- It verifies `support_subaddress=true` through the Cloudflare Email Routing
+  settings API. This setting is zone-wide; the deployment does not toggle it.
+  Review existing apex/subdomain routes and enable it manually in Email Routing
+  Settings before deployment.
 - It verifies that the bounce subdomain publishes Cloudflare MX records.
 - It deploys `cloudflare/email-bounce-worker` using Wrangler 4.113.0 and
   creates the literal Worker rule for `b@bounces.testagram.site`.
@@ -84,7 +86,7 @@ Required GitHub configuration:
   after InstaBox confirms the static dedicated egress IP and matching PTR.
 - Secret `CLOUDFLARE_DNS_API_TOKEN`: Zone Read + DNS Edit on `testagram.site`.
 - Secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`: Account Workers Scripts Read and Write;
-  Zone Read; Zone Settings Write; and Email Routing Rules Read/Write on
+  Zone Read; Zone Settings Read; and Email Routing Rules Read/Write on
   `testagram.site`.
 - Secret `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account containing the zone
   and Worker.
