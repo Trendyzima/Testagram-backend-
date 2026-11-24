@@ -462,6 +462,44 @@ END;
 $native_identity$;
 SQL
 
+# Regression: preserve historical lifecycle event types when the older
+# evidence-access migration is replayed after those events have been written.
+psql_ci <<'SQL'
+DO $seed_historical_verification_events$
+DECLARE
+  session_id uuid;
+BEGIN
+  SELECT id INTO session_id
+  FROM testagram_identity.verification_sessions
+  LIMIT 1;
+
+  IF session_id IS NULL THEN
+    RAISE EXCEPTION 'verification session fixture is missing';
+  END IF;
+
+  INSERT INTO testagram_identity.verification_events
+    (session_id,event_type,actor_type,actor_reference,request_id)
+  VALUES
+    (session_id,'account_provisioned','applicant','ci-native-auth','ci-account-provisioned'),
+    (session_id,'email_verified','applicant','ci-native-auth','ci-email-verified');
+END;
+$seed_historical_verification_events$;
+SQL
+psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci <<'SQL'
+DO $verify_historical_verification_events$
+BEGIN
+  IF (
+    SELECT count(*) FROM testagram_identity.verification_events
+    WHERE event_type IN ('account_provisioned','email_verified')
+      AND request_id IN ('ci-account-provisioned','ci-email-verified')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'replaying evidence-access audit migration lost historical verification event types';
+  END IF;
+END;
+$verify_historical_verification_events$;
+SQL
+
 # Exercise the evidence retention state machine used by the storage worker.
 psql_ci <<'SQL'
 DO $evidence_retention$
