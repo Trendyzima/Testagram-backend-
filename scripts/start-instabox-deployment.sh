@@ -10,11 +10,6 @@ if [[ -n "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" && ! "$TESTAGRAM_EDGE_RECOVE
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
 [[ "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_WEB_IMAGE must be the approved immutable digest before remote deployment starts."; exit 1; }
-for key in MAILJET_API_KEY MAILJET_SECRET_KEY AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY; do
-  [[ -n "${!key:-}" ]] || { echo "::error::Mailjet transactional mail requires $key."; exit 1; }
-done
-[[ "$TESTAGRAM_MAIL_ENCRYPTION_KEY" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."; exit 1; }
-[[ "$AUTH_FROM_EMAIL" == "no-reply@testagram.site" ]] || { echo "::error::AUTH_FROM_EMAIL must be no-reply@testagram.site for this release."; exit 1; }
 # GitHub Actions variables may contain accidental surrounding whitespace or CRLF.
 # Normalize the edges but reject every value other than the exact boolean literals.
 normalize_boolean() {
@@ -107,42 +102,7 @@ if ! sudo docker compose version >/dev/null 2>&1; then
 fi
 sudo docker info >/dev/null
 
-# Verify outbound HTTPS/TLS reachability to Mailjet before changing production services.
-# A credential-free GET is intentionally used: it cannot send an email. Any
-# HTTP response proves DNS, TCP 443, TLS certificate verification, and HTTP routing.
-# Encode Basic Auth before passing it to curl's stdin config. This avoids
-# exposing the API credentials in process arguments and keeps curl config syntax safe.
-# Match the exact normalization used when these values are persisted to the VPS
-# .env file and consumed by the Go API. Never log either normalized value.
-normalize_mailjet_credential() {
-  printf '%s' "$1" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
-}
-mailjet_api_key="$(normalize_mailjet_credential "$MAILJET_API_KEY")"
-mailjet_secret_key="$(normalize_mailjet_credential "$MAILJET_SECRET_KEY")"
-if [[ -z "$mailjet_api_key" || -z "$mailjet_secret_key" ]]; then
-  echo "::error::Mailjet API credentials are empty after safe whitespace normalization."
-  exit 1
-fi
-mailjet_basic_auth="$(printf '%s:%s' "$mailjet_api_key" "$mailjet_secret_key" | base64 | tr -d '\r\n')"
-if mailjet_api_status="$(
-  printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nheader = "Authorization: Basic %s"\n' \
-    "$mailjet_basic_auth" |
-    curl --config - --silent --show-error --output /dev/null --max-time 15 --write-out '%{http_code}'
-)"; then
-  unset mailjet_basic_auth mailjet_api_key mailjet_secret_key
-  [[ "$mailjet_api_status" == "200" ]] || {
-    echo "::error::Mailjet read-only API credential check returned HTTP $mailjet_api_status."
-    exit 1
-  }
-  echo "Verified Mailjet HTTPS/TLS connectivity and API credentials with the read-only profile endpoint."
-else
-  unset mailjet_basic_auth mailjet_api_key mailjet_secret_key
-  echo "::error::InstaBox cannot authenticate to Mailjet over verified HTTPS on api.mailjet.com:443."
-  exit 1
-fi
-
-
-sync_repo() {
+# Native Testagram mail connects directly to recipient MX hosts; no provider preflight or credentials are used.\n\nsync_repo() {
   local url="$1" path="$2"
   if [[ -d "$path/.git" ]]; then
     git -C "$path" fetch --depth 1 origin main
@@ -219,10 +179,7 @@ B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
 TESTAGRAM_AUTH_JWT_SECRET=${TESTAGRAM_AUTH_JWT_SECRET:-}
 AUTH_PUBLIC_BASE_URL=$AUTH_PUBLIC_BASE_URL
-MAILJET_API_KEY=${MAILJET_API_KEY:-}
-MAILJET_SECRET_KEY=${MAILJET_SECRET_KEY:-}
-AUTH_FROM_EMAIL=${AUTH_FROM_EMAIL:-no-reply@testagram.site}
-TESTAGRAM_MAIL_ENCRYPTION_KEY=${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
+TESTAGRAM_MAIL_ENCRYPTION_KEY=
 ALGORITHM_URL=http://algorithm:8092
 ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
 FEDERATION_INTERNAL_URL=http://federation:8081
@@ -313,12 +270,15 @@ ensure_random_secret() {
   printf -v "$key" '%s' "$value"
 }
 ensure_random_secret FEDERATION_INGRESS_TOKEN
+# Generate the native mail payload-encryption key once and persist it in the VPS .env.
+# It is not a GitHub secret and is never sent to a mail provider.
+ensure_random_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
 # Identity-application evidence is owned by the private Data Centre media service.
 # Backend-local object storage is not an evidence fallback. This restriction
 # applies only to evidence-based identity applications; it does not gate the
 # independent native /api/auth/signup + email verification account flow.
 write_env_value AUTH_PUBLIC_BASE_URL "$AUTH_PUBLIC_BASE_URL"
-for key in TESTAGRAM_AUTH_JWT_SECRET MAILJET_API_KEY MAILJET_SECRET_KEY AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY TESTAGRAM_WEBAUTHN_READINESS_TOKEN TESTAGRAM_WEBAUTHN_RPID TESTAGRAM_WEBAUTHN_ORIGINS; do
+for key in TESTAGRAM_AUTH_JWT_SECRET TESTAGRAM_WEBAUTHN_READINESS_TOKEN TESTAGRAM_WEBAUTHN_RPID TESTAGRAM_WEBAUTHN_ORIGINS; do
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
@@ -999,8 +959,6 @@ verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
-verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api MAILJET_API_KEY "$MAILJET_API_KEY"
-verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api MAILJET_SECRET_KEY "$MAILJET_SECRET_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
@@ -1160,7 +1118,7 @@ payload="$(jq -nc \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
   --arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}" \
-  '{cmd:$cmd,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,MAILJET_API_KEY:$mailjet_api_key,MAILJET_SECRET_KEY:$mailjet_secret_key,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST \
   -H "X-API-Key: $INSTABOX_API_KEY" \
   -H "Content-Type: application/json" \
