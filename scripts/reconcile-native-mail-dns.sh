@@ -39,13 +39,21 @@ api_write() {
 
 [[ "$DKIM_PUBLIC_KEY" =~ ^[A-Za-z0-9+/=]+$ ]] || { echo "Generated DKIM public key is not valid base64." >&2; exit 1; }
 [[ ${#DKIM_PUBLIC_KEY} -ge 300 ]] || { echo "Generated DKIM public key is unexpectedly short." >&2; exit 1; }
-PUBLIC_IPV4="$(curl --silent --show-error --fail --connect-timeout 10 --max-time 20 -4 https://api.ipify.org)"
-[[ "$PUBLIC_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "Could not determine the InstaBox public IPv4 address." >&2; exit 1; }
+# Never infer a mail-server address from an outbound HTTP request. On hosted
+# sandbox platforms this can be a shared NAT egress IP that cannot receive SMTP.
+# Run this reconciler only from the dedicated host that actually runs the SMTP
+# listener, and provide its provider-assigned public IPv4 explicitly.
+PUBLIC_IPV4="${TESTAGRAM_NATIVE_MAIL_PUBLIC_IPV4:-}"
+if [[ -z "$PUBLIC_IPV4" ]]; then
+  echo "TESTAGRAM_NATIVE_MAIL_PUBLIC_IPV4 is unset; refusing to publish native-mail DNS." >&2
+  exit 1
+fi
+[[ "$PUBLIC_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "The configured native-mail IPv4 address is malformed." >&2; exit 1; }
 python3 - "$PUBLIC_IPV4" <<'PY'
 import ipaddress,sys
 ip=ipaddress.ip_address(sys.argv[1])
-if ip.version != 4 or ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-    raise SystemExit("The detected mail address is not a globally routable IPv4 address.")
+if ip.version != 4 or not ip.is_global:
+    raise SystemExit("The configured mail address is not a globally routable IPv4 address.")
 PY
 
 api_get "$API/zones?name=$DOMAIN&status=active&per_page=50" "$TMP_DIR/zones.json"
@@ -112,11 +120,16 @@ upsert_record() {
   fi
   api_write "$method" "$url" "$body" "$TMP_DIR/write.json"
   echo "Reconciled $type $name."
-  # Refresh the in-memory snapshot for subsequent duplicate checks.
-  api_get "$API/zones/$ZONE_ID/dns_records?per_page=100&page=1" "$TMP_DIR/refresh.json"
-  if [[ "$page" == 1 ]]; then
-    jq -c '.result[]' "$TMP_DIR/refresh.json" > "$TMP_DIR/records.jsonl"
-  fi
+  # Refresh every page so later checks never operate on a truncated snapshot.
+  : > "$TMP_DIR/records.jsonl"
+  refresh_page=1
+  while :; do
+    api_get "$API/zones/$ZONE_ID/dns_records?per_page=100&page=$refresh_page" "$TMP_DIR/refresh.json"
+    jq -c '.result[]' "$TMP_DIR/refresh.json" >> "$TMP_DIR/records.jsonl"
+    refresh_total_pages="$(jq -r '.result_info.total_pages // 1' "$TMP_DIR/refresh.json")"
+    [[ "$refresh_page" -lt "$refresh_total_pages" ]] || break
+    ((refresh_page+=1))
+  done
 }
 
 upsert_record A "$MAIL_HOST" "$PUBLIC_IPV4"
