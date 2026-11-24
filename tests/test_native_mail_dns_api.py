@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +35,23 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertNotIn("api.ipify.org", source)
         self.assertIn("not a globally routable IPv4 address", source)
         self.assertIn("refresh_total_pages", source)
+
+    def test_dns_reconciler_refuses_to_guess_public_ip_before_network_access(self):
+        env = os.environ.copy()
+        env["CLOUDFLARE_DNS_API_TOKEN"] = "test-only-token"
+        env["DKIM_PUBLIC_KEY"] = "A" * 400
+        env.pop("TESTAGRAM_NATIVE_MAIL_PUBLIC_IPV4", None)
+        result = subprocess.run(
+            ["bash", str(SCRIPT)],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("TESTAGRAM_NATIVE_MAIL_PUBLIC_IPV4 is unset", result.stderr)
+        self.assertNotIn("Cloudflare API GET failed", result.stderr)
 
     def test_fails_closed_on_ambiguous_zone_or_policy_records(self):
         source = SCRIPT.read_text(encoding="utf-8")
