@@ -384,6 +384,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
 
     def test_schema_ready_reuses_validated_named_diagnostics(self):
         self.assertIn("failed_checks=\"$(schema_diagnostics)\"", SOURCE)
+        self.assertIn("psql -X -v ON_ERROR_STOP=1", SOURCE)
         self.assertNotIn("psql -v ON_ERROR_STOP=1 -U", SOURCE.split("schema_ready() {", 1)[1].split("\n}", 1)[0])
         self.assertIn("Failed schema acceptance predicates:", SOURCE)
 
