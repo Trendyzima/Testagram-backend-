@@ -29,6 +29,15 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertIn('[[ "$relevant_count" -le 1 ]]', source)
         self.assertIn("Refusing ambiguous reconciliation", source)
 
+    def test_deployment_forwards_token_ephemerally_and_runs_dns_reconcile(self):
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        self.assertIn("CLOUDFLARE_DNS_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}", workflow)
+        self.assertIn("--arg cloudflare_dns_token", deploy)
+        self.assertIn("CLOUDFLARE_DNS_API_TOKEN:$cloudflare_dns_token", deploy)
+        self.assertIn('bash "$BACKEND/scripts/reconcile-native-mail-dns.sh"', deploy)
+        self.assertIn('echo "::warning::Native mail DNS was not changed', deploy)
+
     def test_does_not_claim_to_configure_ptr_or_dmarc_reporting(self):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("PTR/rDNS is a VPS-provider setting", source)
