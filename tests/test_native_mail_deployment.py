@@ -15,8 +15,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", compose)
         self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY", script)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", compose)
-        self.assertIn("TESTAGRAM_MAIL_VERP_KEY", compose)
-        self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY", script)
+        self.assertIn('chmod 600 "$BASE_ENV"', script)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", (ROOT / "cmd/api/mail_return_path.go").read_text())
 
     def test_native_bounce_receiver_is_wired_to_port_25(self):
@@ -46,6 +45,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         env_example = (ROOT / "deploy/self-hosted/.env.example").read_text()
         self.assertNotIn("MAILJET_SMTP_USERNAME", env_example)
         self.assertNotIn("MAILJET_SMTP_PASSWORD", env_example)
+        self.assertNotIn("AUTH_FROM_EMAIL", env_example)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", env_example)
         self.assertIn("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", env_example)
         self.assertIn("LookupMX", smtp)
