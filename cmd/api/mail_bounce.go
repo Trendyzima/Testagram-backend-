@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -309,6 +310,17 @@ func startNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, addr string) e
 		certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
 		if err != nil {
 			return fmt.Errorf("load native mail feedback TLS certificate: %w", err)
+		}
+		leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+		if err != nil {
+			return fmt.Errorf("parse native mail feedback TLS certificate: %w", err)
+		}
+		if err := leaf.VerifyHostname("mail.testagram.site"); err != nil {
+			return fmt.Errorf("native mail feedback TLS certificate must cover mail.testagram.site: %w", err)
+		}
+		now := time.Now()
+		if now.Before(leaf.NotBefore) || !now.Before(leaf.NotAfter) {
+			return errors.New("native mail feedback TLS certificate is not currently valid")
 		}
 		tlsConfig = &tls.Config{
 			Certificates: []tls.Certificate{certificate},
