@@ -1454,6 +1454,13 @@ func main() {
 	go svc.runStorageCleanupWorker(signalCtx)
 	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
 	go svc.runMailOutboxWorker(signalCtx)
+
+	if bounceAddr := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR")); bounceAddr != "" {
+		if err := startNativeBounceSMTP(signalCtx, db, bounceAddr); err != nil {
+			log.Fatalf("start Testagram native mail feedback receiver: %v", err)
+		}
+		log.Printf("Testagram native SMTP feedback receiver listening on %s", bounceAddr)
+	}
 	if replicationApplyEnabled {
 		if replicationStore == nil {
 			log.Fatal("REPLICATION_APPLY_ENABLED requires replication configuration and database access")
