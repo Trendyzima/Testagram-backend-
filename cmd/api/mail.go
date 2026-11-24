@@ -295,7 +295,7 @@ func sendCloudflareMailRequest(ctx context.Context, client *http.Client, endpoin
 		return "", errors.New("Cloudflare Email Sending HTTP client unavailable")
 	}
 	payload := map[string]any{
-		"to": message.Recipient, "from": from, "subject": message.Subject, "html": message.HTML,
+		"to": []string{message.Recipient}, "from": from, "subject": message.Subject, "html": message.HTML,
 	}
 	if len(message.Headers) > 0 {
 		payload["headers"] = message.Headers
