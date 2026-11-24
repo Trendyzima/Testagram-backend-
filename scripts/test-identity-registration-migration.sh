@@ -871,6 +871,43 @@ END;
 $mail_role_repair$;
 SQL
 
+# Regression: upgrade a database where the historical staff-role table is absent.
+# The old admin migration must preserve shared catalog tables without recreating
+# obsolete staff authorization, and the optional archive migrations must be no-ops.
+psql_ci -c "CREATE DATABASE native_partial_legacy_test;"
+psql_partial() {
+  docker exec -i "$container" psql -U postgres -d native_partial_legacy_test -v ON_ERROR_STOP=1 "$@"
+}
+psql_partial <<'SQL'
+CREATE SCHEMA testagram_auth;
+SQL
+psql_partial < migrations/20261111_admin_security_controls.sql
+psql_partial < migrations/20261120_native_identity_historical_staff_archive.sql
+psql_partial < migrations/20261120_native_identity_historical_admin_archive.sql
+psql_partial <<'SQL'
+DO $partial_legacy_acceptance$
+BEGIN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_staff_roles') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_staff_role_audit') IS NOT NULL
+     OR to_regclass('testagram_auth.staff_permission_overrides') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_requests') IS NOT NULL
+     OR to_regclass('testagram_auth.sensitive_action_approvals') IS NOT NULL
+     OR to_regclass('testagram_auth.admin_security_audit') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_staff_permission_overrides') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_requests') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_sensitive_action_approvals') IS NOT NULL
+     OR to_regclass('testagram_auth.historical_external_admin_security_audit') IS NOT NULL THEN
+    RAISE EXCEPTION 'partial legacy upgrade unexpectedly created obsolete staff authorization state';
+  END IF;
+  IF to_regclass('testagram_auth.admin_permissions') IS NULL
+     OR to_regclass('testagram_auth.admin_rate_limits') IS NULL THEN
+    RAISE EXCEPTION 'partial legacy upgrade omitted required admin catalog tables';
+  END IF;
+END;
+$partial_legacy_acceptance$;
+SQL
+
 echo "Native identity migrations, evidence-access audit and registration invariants passed."
 
 # Exercise Cloudflare lifecycle reconciliation, duplicate-event protection, complaint suppression,
