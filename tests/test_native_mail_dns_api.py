@@ -67,7 +67,7 @@ class NativeMailDNSAPITest(unittest.TestCase):
         self.assertNotIn("cloudflare_dns_token", deploy)
         self.assertNotIn('bash "$BACKEND/scripts/reconcile-native-mail-dns.sh"', deploy)
         self.assertIn("cannot expose TCP/25", deploy)
-        self.assertIn("dedicated SMTP host", deploy)
+        self.assertIn("Native mail DNS reconciliation intentionally skipped on InstaBox", deploy)
 
     def test_does_not_claim_to_configure_ptr_or_dmarc_reporting(self):
         source = SCRIPT.read_text(encoding="utf-8")
