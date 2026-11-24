@@ -314,12 +314,12 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
 
     def test_federation_actor_consent_is_preflighted_and_fail_closed(self):
         self.assertIn("Federation actor consent column", SOURCE)
-        self.assertIn("column_name='\\''federation_enabled'\\''", SOURCE)
+        self.assertIn("column_name='federation_enabled'", SOURCE)
         migration = (ROOT / "migrations" / "20261107_federation_actor_consent.sql").read_text(encoding="utf-8")
         self.assertIn("ADD COLUMN IF NOT EXISTS federation_enabled BOOLEAN NOT NULL DEFAULT FALSE", migration)
 
     def test_schema_preflight_checks_optional_intake_fingerprint(self):
-        self.assertIn("column_name='\\''evidence_fingerprint_sha256'\\''", SOURCE)
+        self.assertIn("column_name='evidence_fingerprint_sha256'", SOURCE)
         self.assertIn("is_nullable='\\''YES'\\''", SOURCE)
         self.assertIn("identity_approval_token_requires_verified_evidence", SOURCE)
 
@@ -337,9 +337,9 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 self.assertIn(expected, SOURCE)
-        self.assertNotIn("to_regclass('testagram_auth.sensitive_action_requests')", SOURCE)
-        self.assertNotIn("to_regclass('testagram_auth.sensitive_action_approvals')", SOURCE)
-        self.assertNotIn("to_regclass('testagram_auth.admin_security_audit')", SOURCE)
+        self.assertIn("historical_external_sensitive_action_requests archived or absent", SOURCE)
+        self.assertIn("historical_external_sensitive_action_approvals archived or absent", SOURCE)
+        self.assertIn("historical_external_admin_security_audit archived or absent", SOURCE)
 
     def test_failed_schema_preflight_reports_named_acceptance_predicates(self):
         self.assertIn("schema_diagnostics()", SOURCE)
