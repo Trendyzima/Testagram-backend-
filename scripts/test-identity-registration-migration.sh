@@ -660,6 +660,17 @@ INSERT INTO testagram_identity.historical_external_registration_provisioning
 VALUES (9001,'already-archived-source-account','source_provider_created');
 SQL
 
+# Simulate the exact partially-applied production state from the first deploy:
+# the legacy table and source-account column were renamed before the migration
+# stopped while renaming its unique constraint/index. Re-running the fixed
+# migration must finish safely from this state.
+psql_ci <<'SQL'
+ALTER TABLE testagram_identity.registration_provisioning
+  RENAME TO historical_external_registration_provisioning_recovered;
+ALTER TABLE testagram_identity.historical_external_registration_provisioning_recovered
+  RENAME COLUMN appwrite_user_id TO source_account_id;
+SQL
+
 # Apply the forward-only retirement migrations after all legacy compatibility
 # fixtures have been exercised. This proves the live schema no longer exposes
 # provider-keyed tables/columns while preserving restricted historical evidence.
