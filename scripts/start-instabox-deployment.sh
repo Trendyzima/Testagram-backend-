@@ -315,11 +315,9 @@ ensure_random_secret() {
   printf -v "$key" '%s' "$value"
 }
 ensure_random_secret FEDERATION_INGRESS_TOKEN
-# Generate the native mail payload-encryption key once and persist it in the VPS .env.
-# It is not a GitHub secret and is never sent to a mail provider.
-ensure_random_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
-# VERP tokens use an independent first-party key. Keep this key stable for at
-# least the maximum return-path lifetime; changing it invalidates outstanding tokens.
+# Both native mail keys are independent 32-byte hex secrets persisted only on InstaBox.
+# The encryption key protects queued payloads; the VERP key signs opaque bounce tokens.
+# Keep the VERP key stable until every outstanding return-path token has expired.
 ensure_hex_secret() {
   local key="$1" value
   value="$(read_env_value "$key")"
@@ -329,6 +327,7 @@ ensure_hex_secret() {
   fi
   printf -v "$key" '%s' "$value"
 }
+ensure_hex_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
 ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY
 # Purge obsolete external mail-provider credentials from older VPS .env files.
 sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d' "$BASE_ENV"
