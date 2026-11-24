@@ -70,7 +70,7 @@ One-time dashboard setup:
 Automated deployment:
 
 - `scripts/deploy-cloudflare-bounce-worker.sh` probes the public Testagram API
-  endpoint and requires the expected unauthenticated response (HTTP 401).
+  endpoint and requires HTTP 401 plus `X-Testagram-Bounce-Endpoint: native-v1`, proving the request reached the actual Go handler.
 - It verifies `support_subaddress=true` through the Cloudflare Email Routing
   settings API. This setting is zone-wide; the deployment does not toggle it.
   Review existing apex/subdomain routes and enable it manually in Email Routing
