@@ -56,6 +56,10 @@ jobs:
             jq -c '[.errors[]?.code | select(type == "number")]' "$1" 2>/dev/null || echo '[]'
           }
 
+          error_messages() {
+            jq -r '[.errors[]?.message // empty] | map(select(type == "string")) | join("; ") | .[0:240]' "$1" 2>/dev/null || true
+          }
+
           echo "## Cloudflare Email Sending diagnostic" >> "$GITHUB_STEP_SUMMARY"
           echo "- Mode: read-only; no email sent and no Cloudflare configuration changed." >> "$GITHUB_STEP_SUMMARY"
           echo "- Credentials: existing GitHub secrets; values are never printed." >> "$GITHUB_STEP_SUMMARY"
@@ -75,7 +79,18 @@ jobs:
           status="$(request GET "/accounts/$account_id/email/sending/suppressions?per_page=1" "$TMP/email-access.json")"
           codes="$(error_codes "$TMP/email-access.json")"
           email_access_success="$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)"
-          echo "- Account Email Sending read-only probe: HTTP $status; API success=$email_access_success; error_codes=$codes" | tee -a "$GITHUB_STEP_SUMMARY"
+          message="$(error_messages "$TMP/email-access.json")"
+          echo "- Account Email Sending read-only probe: HTTP $status; API success=$email_access_success; error_codes=$codes; message=$message" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Account Read is a separate permission. If present, this exposes
+          # whether Email Sending is entitled on the configured account.
+          entitlement_status="$(request GET "/accounts/$account_id/entitlements" "$TMP/entitlements.json")"
+          entitlement_codes="$(error_codes "$TMP/entitlements.json")"
+          entitlement_success="$(jq -r '.success // false' "$TMP/entitlements.json" 2>/dev/null || echo false)"
+          echo "- Account entitlement inventory: HTTP $entitlement_status; API success=$entitlement_success; error_codes=$entitlement_codes" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ "$entitlement_status" == "200" && "$entitlement_success" == "true" ]]; then
+            email_entitlements="$(jq -c '[.result[]? | select(((.feature.key // .id // "") | ascii_downcase | contains("email")))] | map({id,feature_key:(.feature.key // ""),feature_name:(.feature.name // ""),allocation})' "$TMP/entitlements.json" 2>/dev/null || echo '[]')"
+            echo "- Email-related account entitlements: $email_entitlements" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
           status="$(request GET "/zones?name=testagram.site&per_page=1" "$TMP/zone.json")"
           codes="$(error_codes "$TMP/zone.json")"
@@ -86,7 +101,8 @@ jobs:
             status="$(request GET "/zones/$zone_id/email/sending/subdomains" "$TMP/sending-domains.json")"
             codes="$(error_codes "$TMP/sending-domains.json")"
             success="$(jq -r '.success // false' "$TMP/sending-domains.json" 2>/dev/null || echo false)"
-            echo "- Sending-domain inventory: HTTP $status; API success=$success; error_codes=$codes" | tee -a "$GITHUB_STEP_SUMMARY"
+            message="$(error_messages "$TMP/sending-domains.json")"
+            echo "- Sending-domain inventory: HTTP $status; API success=$success; error_codes=$codes; message=$message" | tee -a "$GITHUB_STEP_SUMMARY"
 
             if [[ "$status" == "200" && "$success" == "true" ]]; then
               jq -r '.result[]? | "- Onboarded domain: " + (.name // "unknown") + "; sending_enabled=" + ((.enabled // false)|tostring)' "$TMP/sending-domains.json" | tee -a "$GITHUB_STEP_SUMMARY"
