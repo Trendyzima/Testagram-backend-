@@ -57,6 +57,11 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
                 self.assertIn(name, manifest)
                 self.assertIn(name, applied)
 
+    def test_postgres_is_recreated_after_verified_backup_to_refresh_bind_mounted_migrations(self):
+        recreate = 'docker compose --env-file "$env_file" -f "$compose_file" up -d --force-recreate postgres'
+        self.assertIn(recreate, SOURCE)
+        self.assertLess(SOURCE.index("Verified SHA-256 and completed a full restore test"), SOURCE.index(recreate))
+
     def test_email_otp_and_social_email_consent_migrations_are_mounted_and_verified(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
         otp = "20261124_testagram_email_verification_otp.sql"
