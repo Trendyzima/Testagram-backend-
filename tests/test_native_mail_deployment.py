@@ -60,6 +60,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         worker = (ROOT / "cloudflare/email-bounce-worker/src/index.ts").read_text()
         final_config = (ROOT / "cloudflare/email-bounce-worker/wrangler.toml").read_text()
         probe_config = (ROOT / "cloudflare/email-bounce-worker/wrangler-probe.toml").read_text()
+        bootstrap_config = (ROOT / "cloudflare/email-bounce-worker/wrangler-bootstrap.toml").read_text()
         deploy = (ROOT / "scripts/deploy-cloudflare-bounce-worker.sh").read_text()
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         handler = (ROOT / "cmd/api/mail_bounce_http.go").read_text()
@@ -76,6 +77,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn(".result.enabled == false", deploy)
         self.assertIn(".result.previews_enabled == false", deploy)
         self.assertIn("-X POST", deploy)
+        self.assertIn("wrangler deploy --dry-run --config wrangler-bootstrap.toml", workflow)
         self.assertIn("wrangler deploy --dry-run --config wrangler-probe.toml", workflow)
         self.assertIn("wrangler deploy --dry-run --config wrangler.toml", workflow)
 
