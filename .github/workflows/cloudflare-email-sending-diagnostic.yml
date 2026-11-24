@@ -1,0 +1,98 @@
+name: Cloudflare Email Sending authorization diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: testagram-cloudflare-email-sending-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Verify Cloudflare token, Email Sending access and sender-domain onboarding
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run sanitized read-only Cloudflare checks
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "::error::Required GitHub secret CLOUDFLARE_API_TOKEN is missing."
+            exit 1
+          fi
+
+          API="https://api.cloudflare.com/client/v4"
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+
+          # Store responses in temporary files. Never print response bodies,
+          # request headers, token values, or free-form Cloudflare messages.
+          request() {
+            local method="$1" path="$2" output="$3"
+            curl --silent --show-error --output "$output" --write-out '%{http_code}' \
+              --connect-timeout 10 --max-time 30 \
+              -X "$method" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              -H "Accept: application/json" \
+              "$API$path"
+          }
+
+          error_codes() {
+            jq -c '[.errors[]?.code | select(type == "number")]' "$1" 2>/dev/null || echo '[]'
+          }
+
+          echo "## Cloudflare Email Sending diagnostic" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mode: read-only; no email sent and no Cloudflare configuration changed." >> "$GITHUB_STEP_SUMMARY"
+
+          status="$(request GET "/user/tokens/verify" "$TMP/verify.json")"
+          codes="$(error_codes "$TMP/verify.json")"
+          token_state="$(jq -r '.result.status // "unknown"' "$TMP/verify.json" 2>/dev/null || echo unknown)"
+          echo "- Token verification: HTTP $status; state=$token_state; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" != "200" || "$token_state" != "active" ]]; then
+            echo "::error::Cloudflare token verification failed; see sanitized workflow summary."
+            exit 1
+          fi
+
+          status="$(request GET "/zones?name=testagram.site&per_page=1" "$TMP/zone.json")"
+          codes="$(error_codes "$TMP/zone.json")"
+          zone_id="$(jq -r '.result[0].id // empty' "$TMP/zone.json" 2>/dev/null || true)"
+          account_id="$(jq -r '.result[0].account.id // empty' "$TMP/zone.json" 2>/dev/null || true)"
+          echo "- testagram.site zone lookup: HTTP $status; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" != "200" || -z "$zone_id" || -z "$account_id" ]]; then
+            echo "::error::Could not resolve the Testagram zone/account using this token; see sanitized workflow summary."
+            exit 1
+          fi
+
+          status="$(request GET "/accounts/$account_id/email/sending/suppressions?per_page=1" "$TMP/email-access.json")"
+          codes="$(error_codes "$TMP/email-access.json")"
+          success="$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)"
+          echo "- Account Email Sending authorization probe (read-only suppressions list): HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+
+          status="$(request GET "/zones/$zone_id/email/sending/subdomains" "$TMP/sending-domains.json")"
+          codes="$(error_codes "$TMP/sending-domains.json")"
+          success="$(jq -r '.success // false' "$TMP/sending-domains.json" 2>/dev/null || echo false)"
+          echo "- Sending-domain inventory: HTTP $status; API success=$success; error_codes=$codes" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$status" == "200" && "$success" == "true" ]]; then
+            jq -r '.result[]? | "- Domain: " + (.name // "unknown") + "; enabled=" + ((.enabled // false)|tostring) + "; status=" + (if (.enabled // false) then "enabled" else "disabled" end)' "$TMP/sending-domains.json" >> "$GITHUB_STEP_SUMMARY"
+            if ! jq -e '.result | length > 0' "$TMP/sending-domains.json" >/dev/null; then
+              echo "- Sender-domain onboarding: no sending subdomains returned." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "- Sender-domain onboarding: unavailable to this token or account." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [[ "$status" != "200" || "$success" != "true" ]]; then
+            echo "::warning::Sending-domain inventory could not be confirmed. Review the numeric Cloudflare error codes."
+          fi
+          if [[ "$(jq -r '.success // false' "$TMP/email-access.json" 2>/dev/null || echo false)" != "true" ]]; then
+            echo "::warning::The read-only Email Sending authorization probe was rejected; numeric error codes identify the authorization blocker."
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "No POST request was made to /email/sending/send. A successful read-only probe is evidence of account Email Sending API access, but only a separately approved controlled send can prove end-to-end delivery." >> "$GITHUB_STEP_SUMMARY"
