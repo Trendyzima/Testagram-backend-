@@ -22,6 +22,55 @@ async function hmacHex(secret: string, payload: string): Promise<string> {
 }
 
 export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method !== "POST" || url.pathname !== "/__health") {
+      return new Response("Not found", { status: 404 });
+    }
+
+    const timestamp = request.headers.get("X-Testagram-Health-Timestamp") || "";
+    const signature = (request.headers.get("X-Testagram-Health-Signature") || "").toLowerCase();
+    const signedAt = Number(timestamp);
+    if (
+      !/^\\d{10}$/.test(timestamp) ||
+      !Number.isSafeInteger(signedAt) ||
+      Math.abs(Math.floor(Date.now() / 1000) - signedAt) > 300 ||
+      env.TESTAGRAM_BOUNCE_INGRESS_SECRET.length < 32
+    ) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const expected = await hmacHex(env.TESTAGRAM_BOUNCE_INGRESS_SECRET, "health\\n" + timestamp);
+    if (signature.length !== expected.length) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    let mismatch = 0;
+    for (let index = 0; index < expected.length; index += 1) {
+      mismatch |= signature.charCodeAt(index) ^ expected.charCodeAt(index);
+    }
+    if (mismatch !== 0) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    try {
+      const probe = await fetch(env.TESTAGRAM_BOUNCE_INGRESS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "message/rfc822" },
+        body: new Uint8Array(0),
+        redirect: "error",
+      });
+      if (
+        probe.status !== 401 ||
+        probe.headers.get("X-Testagram-Bounce-Endpoint") !== "native-v1"
+      ) {
+        return new Response("Testagram bounce endpoint probe failed", { status: 503 });
+      }
+      return new Response(null, { status: 204 });
+    } catch {
+      return new Response("Testagram bounce endpoint unreachable", { status: 503 });
+    }
+  },
+
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
     const rawRecipient = message.to.trim();
     const at = rawRecipient.lastIndexOf("@");
