@@ -83,7 +83,7 @@ Required GitHub configuration:
 - Repository variable `TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4`: set only
   after InstaBox confirms the static dedicated egress IP and matching PTR.
 - Secret `CLOUDFLARE_DNS_API_TOKEN`: Zone Read + DNS Edit on `testagram.site`.
-- Secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`: Account Workers Scripts Write;
+- Secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`: Account Workers Scripts Read and Write;
   Zone Read; Zone Settings Write; and Email Routing Rules Read/Write on
   `testagram.site`.
 - Secret `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account containing the zone
