@@ -282,6 +282,7 @@ write_env_value TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-privat
 write_env_value TESTAGRAM_DKIM_SELECTOR "tg2026"
 write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ""
 DKIM_PUBLIC_KEY="$(sudo openssl pkey -in "$MAIL_KEY_DIR/dkim-private.pem" -pubout -outform DER | base64 -w0)"
+TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4="$TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4" DKIM_PUBLIC_KEY="$DKIM_PUBLIC_KEY" CLOUDFLARE_DNS_API_TOKEN="$CLOUDFLARE_DNS_API_TOKEN" bash "$BACKEND/scripts/reconcile-instabox-native-mail-dns.sh"
 echo "Publish DKIM TXT at tg2026._domainkey.testagram.site: v=DKIM1; k=rsa; p=$DKIM_PUBLIC_KEY"
 # The edge proxy token must match the Cloudflare API Worker credential. Never
 # generate a replacement here: a mismatch would make the canonical API route fail closed.
@@ -1134,11 +1135,12 @@ echo "Data Centre overlay status: $overlay_status"
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
 sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
 printf '%s\n' "$overlay_status" > "$ROOT/overlay-status.txt"
-# InstaBox public ports are an HTTPS/raw-TCP gateway, not a dedicated public
-# IPv4 listener for SMTP/25. Do not publish the machine's NAT egress address as
-# mail.testagram.site. Native-mail DNS must be reconciled from the dedicated
-# SMTP host after its public address, port-25 ingress and DKIM key are verified.
-echo "::warning::Native mail DNS reconciliation intentionally skipped on InstaBox: its public-port gateway cannot expose TCP/25 or provide a dedicated SMTP IPv4/PTR identity."
+# The verified InstaBox egress identity is now published for outbound SMTP only.
+# Cloudflare Email Routing owns bounces.testagram.site MX; no inbound SMTP is exposed.
+TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET="$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" \
+CLOUDFLARE_BOUNCE_WORKER_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN" \
+CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
+bash "$BACKEND/scripts/deploy-cloudflare-bounce-worker.sh" "$BACKEND/cloudflare/email-bounce-worker"
 echo "DEPLOY_EXIT=0"
 REMOTE_SCRIPT
 chmod 700 "$ROOT/deploy.sh"
