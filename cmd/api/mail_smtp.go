@@ -14,7 +14,6 @@ import (
 	"net/mail"
 	"net/smtp"
 	"net/textproto"
-	"os"
 	"sort"
 	"strings"
 	"time"
