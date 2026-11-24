@@ -4,6 +4,8 @@
 
 The Testagram Backend owns the application, verification session, private evidence metadata, reviewer decisions, two-person approval ledger, canonical account and native provisioning state. No Flutter client, Data Centre service, CDN, Federation service or Algorithm service can create a canonical user.
 
+The generic public `/api/auth/signup` route remains fail-closed with `503 IDENTITY_REVIEW_REQUIRED` until identity evidence review and two-person approval are complete. It must not create an unverified account or queue an OTP. Canonical account creation is restricted to the application-scoped native provisioning path after all evidence, consent, independent-review and two-person approval checks pass.
+
 ## Application journey
 
 1. Flutter submits an idempotent application request with accepted age, Terms and Privacy declarations.
