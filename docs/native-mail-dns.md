@@ -88,7 +88,9 @@ Automated deployment:
 - It deploys the final `wrangler.toml` with `workers_dev=false` and the literal
   `b@bounces.testagram.site` email rule, re-applies the HMAC secret, verifies
   that the rule targets this Worker, and confirms the temporary workers.dev
-  endpoint is disabled.
+  endpoint is disabled. Only then does the deployment re-enable the outbox
+  sender and restart the API; queued messages resume over Testagram's native
+  SMTP transport.
 - The Cloudflare account must already have a workers.dev subdomain configured
   under Workers & Pages. The deployment reads it but does not create or rename it.
 
