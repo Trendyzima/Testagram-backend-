@@ -174,7 +174,7 @@ services:
       TESTAGRAM_WEBAUTHN_ORIGINS: ${TESTAGRAM_WEBAUTHN_ORIGINS:-}
       # Canonical API gate; unset/empty remains closed even if a client build exposes the form.
       AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
-      TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:?Native Testagram mail key must be generated in the VPS .env}
+      TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${EDGE_PROXY_SHARED_TOKEN:?Set EDGE_PROXY_SHARED_TOKEN in .env}
       ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
