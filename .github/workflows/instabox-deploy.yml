@@ -125,7 +125,7 @@ jobs:
           if [[ "$early_dc_media_enabled" == true ]]; then
             echo "Private media profile explicitly enabled; dedicated provider provisioning will run."
           else
-            echo "Core-only deployment selected. Private media provisioning is skipped and identity registration remains fail-closed."
+            echo "Core-only deployment selected. Private media provisioning is skipped; ordinary native email-verified signup remains enabled while evidence-based identity applications stay fail-closed."
           fi
 
       - name: Resolve and start the InstaBox machine
