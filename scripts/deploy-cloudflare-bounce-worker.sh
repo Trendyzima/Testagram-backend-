@@ -78,23 +78,30 @@ if ! jq -e --arg suffix "@$BOUNCE_DOMAIN" --arg address "$BOUNCE_ADDRESS" --arg 
   echo "::error::A conflicting Email Routing rule exists on $BOUNCE_DOMAIN. Only the existing Wrangler-managed $BOUNCE_ADDRESS rule targeting testagram-bounce-ingress may be updated automatically."
   exit 1
 fi
+existing_bounce_rule_count="$(jq --arg suffix "@$BOUNCE_DOMAIN" '[.result[]? | select(any(.matchers[]?; .type == "literal" and ((.value | ascii_downcase) | endswith($suffix))))] | length' "$tmp/existing-rules.json")"
 
 export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
 cd "$WORKER_DIR"
 
-# First deploy the same Worker temporarily on workers.dev, without registering
-# the inbound email address. This lets us prove the Cloudflare runtime can
-# reach the exact public Testagram API route before accepting bounce traffic.
+# The account-level workers.dev name is used only for the authenticated
+# health probe. The per-script HTTP route is disabled again after verification.
 workers_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/workers-subdomain.json" -w '%{http_code}' "$API_BASE/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" -H "$auth_header")"
 workers_subdomain="$(jq -r '.result.subdomain // empty' "$tmp/workers-subdomain.json")"
 if [[ "$workers_subdomain_status" != 200 || ! "$workers_subdomain" =~ ^[a-z0-9-]+$ ]]; then
   echo "::error::A Cloudflare workers.dev account subdomain is required for the temporary authenticated Worker health probe. Configure it under Workers & Pages, then retry."
   exit 1
 fi
-npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-probe.toml
 
-# Transfer the InstaBox-generated secret directly to Cloudflare over the
-# Wrangler API. It is never printed, placed in Git, or copied to the runner.
+# First install only: create the script and install its secret before adding
+# the inbound address. On later deploys, preserve the existing email rule.
+if [[ "$existing_bounce_rule_count" == "0" ]]; then
+  npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-bootstrap.toml
+  printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-bootstrap.toml
+fi
+
+# The probe config keeps the existing email address rule intact while briefly
+# enabling workers.dev. The HMAC secret is installed before the health call.
+npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --config wrangler-probe.toml
 printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | npm exec --yes --package=wrangler@4.113.0 -- wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
 
 health_timestamp="$(date +%s)"
