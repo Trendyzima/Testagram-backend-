@@ -95,10 +95,17 @@ func TestParseNativeBounceRejectsOversizedReport(t *testing.T) {
 	}
 }
 
-func TestNativeBounceAddressParserRequiresExpectedDomainAndTokenShape(t *testing.T) {
-	valid := "b+abcdefghijklmnopqrstuvwxyzABCDEF_123456-@bounces.testagram.site"
-	parsed, err := parseNativeBounceAddress(valid)
-	if err == nil || parsed != "" {
-		t.Fatal("unexpected helper should not be referenced by this unit test")
+func TestNativeBounceVERPTokenShape(t *testing.T) {
+	valid := "b+abcdefghijklmnopqrstuvwxyzABCDEF_123456-"
+	if !nativeBounceLocalPart.MatchString(valid) {
+		t.Fatal("valid opaque VERP token was rejected")
+	}
+	for _, invalid := range []string{"b+short", "b+abcdefghijklmnopqrstuvwxyzABCDEF_123456-!", "bounce+abcdefghijklmnopqrstuvwxyzABCDEF_123456-"} {
+		if nativeBounceLocalPart.MatchString(invalid) {
+			t.Errorf("invalid VERP local part was accepted: %q", invalid)
+		}
+	}
+	if nativeBounceDomain != "bounces.testagram.site" {
+		t.Fatalf("unexpected native bounce domain: %q", nativeBounceDomain)
 	}
 }
