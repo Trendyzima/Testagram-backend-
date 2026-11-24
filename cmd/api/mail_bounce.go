@@ -122,19 +122,29 @@ func parseNativeBounceReport(raw []byte) (nativeBounceReport, error) {
 
 func parseDSNFields(data []byte) map[string]string {
 	result := make(map[string]string)
+	lastKey := ""
 	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
-		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			if lastKey != "" {
+				result[lastKey] += " " + strings.TrimSpace(line)
+			}
 			continue
 		}
 		i := strings.IndexByte(line, ':')
 		if i <= 0 {
+			lastKey = ""
 			continue
 		}
 		key := strings.ToLower(strings.TrimSpace(line[:i]))
-		value := strings.TrimSpace(line[i+1:])
-		if key != "" {
-			result[key] = value
+		if key == "" {
+			lastKey = ""
+			continue
 		}
+		result[key] = strings.TrimSpace(line[i+1:])
+		lastKey = key
 	}
 	return result
 }
@@ -327,7 +337,7 @@ func startNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, addr string) e
 			case nativeBounceConnectionSlots <- struct{}{}:
 				go func() {
 					defer func() { <-nativeBounceConnectionSlots }()
-					handleNativeBounceSMTP(ctx, db, conn)
+					handleNativeBounceSMTP(ctx, db, conn, tlsConfig)
 				}()
 			default:
 				_ = conn.Close()
@@ -356,11 +366,12 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 	tlsActive := false
 	var tokenHash []byte
 	for {
-		line, err := reader.ReadString('\n')
+		lineBytes, err := reader.ReadSlice('\n')
 		if err != nil {
 			return
 		}
-		if len(line) > 8192 {
+		line := string(lineBytes)
+		if len(line) > 512 {
 			_ = reply(500, "Line too long")
 			return
 		}
@@ -482,10 +493,15 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 			}
 			var data bytes.Buffer
 			for {
-				part, err := reader.ReadString('\n')
+				partBytes, err := reader.ReadSlice('\n')
 				if err != nil {
 					return
 				}
+				if len(partBytes) > 1000 {
+					_ = reply(552, "SMTP data line exceeds limit")
+					return
+				}
+				part := string(partBytes)
 				if part == ".\r\n" || part == ".\n" {
 					break
 				}
