@@ -19,6 +19,8 @@ class InstaBoxMailjetTransportTest(unittest.TestCase):
         self.assertIn("MAILJET_SECRET_KEY", script)
         self.assertIn("curl --config - --silent --show-error", script)
         self.assertIn('"$MAILJET_API_KEY" "$MAILJET_SECRET_KEY"', script)
+        self.assertIn('user = "%s:%s\'', script)
+        self.assertNotIn('user = "%s:%s"\\n\'', script)
         self.assertNotIn("in-v3.mailjet.com", script)
         self.assertNotIn("MAILJET_SMTP_PORT", script)
 
