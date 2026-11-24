@@ -179,6 +179,8 @@ services:
       TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR: ${TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR:-:2525}
       TESTAGRAM_DKIM_PRIVATE_KEY_FILE: ${TESTAGRAM_DKIM_PRIVATE_KEY_FILE:-/run/testagram-mail/dkim-private.pem}
       TESTAGRAM_DKIM_SELECTOR: ${TESTAGRAM_DKIM_SELECTOR:-tg2026}
+      TESTAGRAM_MAIL_TLS_CERT_FILE: ${TESTAGRAM_MAIL_TLS_CERT_FILE:-}
+      TESTAGRAM_MAIL_TLS_KEY_FILE: ${TESTAGRAM_MAIL_TLS_KEY_FILE:-}
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${EDGE_PROXY_SHARED_TOKEN:?Set EDGE_PROXY_SHARED_TOKEN in .env}
       ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
@@ -249,6 +251,7 @@ services:
       MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}
     volumes:
       - /data/home/testagram/mail-keys:/run/testagram-mail:ro
+      - /data/home/testagram/mail-tls:/run/testagram-mail-tls:ro
     depends_on:
       postgres:
         condition: service_healthy
