@@ -19,6 +19,22 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn('chmod 600 "$BASE_ENV"', script)
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", (ROOT / "cmd/api/mail_return_path.go").read_text())
 
+    def test_outbound_mail_stays_paused_until_cloudflare_bounce_route_is_verified(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        mail = (ROOT / "cmd/api/mail.go").read_text()
+        self.assertIn("TESTAGRAM_MAIL_DELIVERY_ENABLED", compose)
+        self.assertIn('EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_DELIVERY_ENABLED")), "false")', mail)
+        pause = deploy.index("write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED false")
+        api_start = deploy.index("up -d --force-recreate object-storage object-init api")
+        worker = deploy.index("deploy-cloudflare-bounce-worker.sh")
+        enable = deploy.index("write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED true")
+        api_restart = deploy.index("--no-deps --force-recreate api", enable)
+        self.assertLess(pause, api_start)
+        self.assertLess(api_start, worker)
+        self.assertLess(worker, enable)
+        self.assertLess(enable, api_restart)
+
     def test_instabox_uses_http_bounce_ingress_not_unreachable_smtp_port(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
         main = (ROOT / "cmd/api/main.go").read_text()
