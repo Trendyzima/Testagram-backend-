@@ -50,12 +50,21 @@ BEGIN
   GRANT USAGE ON SCHEMA testagram_mail TO testagram_app;
   GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_mail.return_path_tokens TO testagram_app;
   GRANT SELECT,INSERT,DELETE ON testagram_mail.inbound_reports TO testagram_app;
-  GRANT USAGE,SELECT ON SEQUENCE testagram_mail_inbound_reports_id_seq TO testagram_app;
+  IF pg_get_serial_sequence('testagram_mail.inbound_reports','id') IS NULL THEN
+    RAISE EXCEPTION 'native inbound report identity sequence is missing';
+  END IF;
+  EXECUTE format(
+    'GRANT USAGE,SELECT ON SEQUENCE %s TO testagram_app',
+    pg_get_serial_sequence('testagram_mail.inbound_reports','id')
+  );
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
     GRANT USAGE ON SCHEMA testagram_mail TO service_role;
     GRANT SELECT,INSERT,UPDATE,DELETE ON testagram_mail.return_path_tokens TO service_role;
     GRANT SELECT,INSERT,DELETE ON testagram_mail.inbound_reports TO service_role;
-    GRANT USAGE,SELECT ON SEQUENCE testagram_mail_inbound_reports_id_seq TO service_role;
+    EXECUTE format(
+      'GRANT USAGE,SELECT ON SEQUENCE %s TO service_role',
+      pg_get_serial_sequence('testagram_mail.inbound_reports','id')
+    );
   END IF;
 END;
 $grants$;
