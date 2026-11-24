@@ -61,11 +61,10 @@ func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
 	if domain == "" {
 		return "", permanentMailError{code: "MAIL_RECIPIENT_INVALID"}
 	}
-	mxs, lookupErr := net.DefaultResolver.LookupMX(ctx, domain)
-	if lookupErr != nil || len(mxs) == 0 {
-		mxs = []*net.MX{{Host: domain}}
+	mxs, lookupErr := nativeMailMXHosts(ctx, domain, net.DefaultResolver.LookupMX)
+	if lookupErr != nil {
+		return "", lookupErr
 	}
-	sort.Slice(mxs, func(i, j int) bool { return mxs[i].Pref < mxs[j].Pref })
 
 	var lastErr error
 	for _, mx := range mxs {
@@ -95,6 +94,28 @@ func sendNativeSMTP(ctx context.Context, message queuedMail) (string, error) {
 		lastErr = errors.New("recipient domain has no usable mail exchanger")
 	}
 	return "", fmt.Errorf("native mail delivery could not reach recipient MX: %w", lastErr)
+}
+
+func nativeMailMXHosts(
+	ctx context.Context,
+	domain string,
+	lookup func(context.Context, string) ([]*net.MX, error),
+) ([]*net.MX, error) {
+	mxs, err := lookup(ctx, domain)
+	if err != nil {
+		var dnsErr *net.DNSError
+		if !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+			return nil, fmt.Errorf("recipient MX lookup failed: %w", err)
+		}
+		// RFC 5321 fallback: if a domain has no MX records, try its address
+		// records. Do not treat transient resolver failures as "no MX".
+		return []*net.MX{{Host: domain}}, nil
+	}
+	if len(mxs) == 0 {
+		return []*net.MX{{Host: domain}}, nil
+	}
+	sort.Slice(mxs, func(i, j int) bool { return mxs[i].Pref < mxs[j].Pref })
+	return mxs, nil
 }
 
 func sendNativeSMTPToMX(ctx context.Context, host, recipient string, payload []byte) (string, error) {
