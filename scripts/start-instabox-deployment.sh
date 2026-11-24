@@ -112,19 +112,31 @@ sudo docker info >/dev/null
 # HTTP response proves DNS, TCP 443, TLS certificate verification, and HTTP routing.
 # Encode Basic Auth before passing it to curl's stdin config. This avoids
 # exposing the API credentials in process arguments and keeps curl config syntax safe.
-mailjet_basic_auth="$(printf '%s:%s' "$MAILJET_API_KEY" "$MAILJET_SECRET_KEY" | base64 | tr -d '\r\n')"
+# Match the exact normalization used when these values are persisted to the VPS
+# .env file and consumed by the Go API. Never log either normalized value.
+normalize_mailjet_credential() {
+  printf '%s' "$1" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+mailjet_api_key="$(normalize_mailjet_credential "$MAILJET_API_KEY")"
+mailjet_secret_key="$(normalize_mailjet_credential "$MAILJET_SECRET_KEY")"
+if [[ -z "$mailjet_api_key" || -z "$mailjet_secret_key" ]]; then
+  echo "::error::Mailjet API credentials are empty after safe whitespace normalization."
+  exit 1
+fi
+mailjet_basic_auth="$(printf '%s:%s' "$mailjet_api_key" "$mailjet_secret_key" | base64 | tr -d '\r\n')"
 if mailjet_api_status="$(
   printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nheader = "Authorization: Basic %s"\n' \
     "$mailjet_basic_auth" |
     curl --config - --silent --show-error --output /dev/null --max-time 15 --write-out '%{http_code}'
 )"; then
-  unset mailjet_basic_auth
+  unset mailjet_basic_auth mailjet_api_key mailjet_secret_key
   [[ "$mailjet_api_status" == "200" ]] || {
     echo "::error::Mailjet read-only API credential check returned HTTP $mailjet_api_status."
     exit 1
   }
   echo "Verified Mailjet HTTPS/TLS connectivity and API credentials with the read-only profile endpoint."
 else
+  unset mailjet_basic_auth mailjet_api_key mailjet_secret_key
   echo "::error::InstaBox cannot authenticate to Mailjet over verified HTTPS on api.mailjet.com:443."
   exit 1
 fi
