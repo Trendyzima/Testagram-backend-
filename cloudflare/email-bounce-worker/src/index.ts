@@ -25,7 +25,9 @@ export default {
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
     const rawRecipient = message.to.trim();
     const at = rawRecipient.lastIndexOf("@");
-    const recipient = at > 0 ? rawRecipient.slice(0, at) + "@" + rawRecipient.slice(at + 1).toLowerCase() : rawRecipient;
+    const recipient = at > 0
+      ? rawRecipient.slice(0, at) + "@" + rawRecipient.slice(at + 1).toLowerCase()
+      : rawRecipient;
     if (!RECIPIENT.test(recipient)) {
       message.setReject("Unknown Testagram bounce address");
       return;
