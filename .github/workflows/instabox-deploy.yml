@@ -88,54 +88,7 @@ jobs:
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
-      - name: Validate production transactional email credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${MAILJET_API_KEY:-}" || -z "${MAILJET_SECRET_KEY:-}" ]]; then
-            echo "::error::Missing MAILJET_API_KEY or MAILJET_SECRET_KEY production secret. Configure both in the GitHub production environment before deploying."
-            exit 1
-          fi
-          if [[ ! "${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
-            echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."
-            exit 1
-          fi
-          python3 - "${AUTH_FROM_EMAIL:-}" <<'PY'
-          import sys
-          from email.headerregistry import Address
-          from email.utils import getaddresses
-
-          raw_configured = sys.argv[1]
-          configured = raw_configured.strip()
-          mailboxes = getaddresses([configured])
-          if len(mailboxes) != 1 or not mailboxes[0][1]:
-              # Emit structural diagnostics only. Never print or expose the sender.
-              has_at = "@" in configured
-              has_comma = "," in configured
-              has_line_break = "\n" in raw_configured or "\r" in raw_configured
-              print(
-                  "::error::AUTH_FROM_EMAIL must be one bare mailbox such as "
-                  "no-reply@testagram.site; "
-                  f"mailbox_count={len(mailboxes)}, "
-                  f"address_present={bool(len(mailboxes) == 1 and mailboxes[0][1])}, "
-                  f"has_at={has_at}, has_comma={has_comma}, "
-                  f"has_line_break={has_line_break}, "
-                  f"trimmed_length={len(configured)}. "
-                  "The sender value itself is intentionally not logged."
-              )
-              raise SystemExit(1)
-          try:
-              parsed = Address(addr_spec=mailboxes[0][1])
-          except ValueError:
-              print("::error::AUTH_FROM_EMAIL is not a valid mailbox address.")
-              raise SystemExit(1)
-          domain = parsed.domain.lower().rstrip(".")
-          if domain != "testagram.site" and not domain.endswith(".testagram.site"):
-              print("::error::AUTH_FROM_EMAIL must use a verified Testagram-owned testagram.site domain or subdomain.")
-              raise SystemExit(1)
-          print(f"Validated Testagram sender domain: {domain}")
-          PY
-      - name: Validate edge proxy shared credential
+      - name: Validate native Testagram mail configuration\n        shell: bash\n        run: |\n          set -euo pipefail\n          ! grep -Eq 'MAILJET_API_KEY|MAILJET_SECRET_KEY|api\\.mailjet\\.com' scripts/start-instabox-deployment.sh deploy/self-hosted/docker-compose.yml\n      - name: Validate edge proxy shared credential
         shell: bash
         run: |
           if [[ ! "${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
@@ -527,10 +480,6 @@ jobs:
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-          MAILJET_API_KEY: ${{ secrets.MAILJET_API_KEY }}
-          MAILJET_SECRET_KEY: ${{ secrets.MAILJET_SECRET_KEY }}
-          AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
-          TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}
           MPESA_ENV: ${{ vars.MPESA_ENV }}
           MPESA_SHORTCODE: ${{ secrets.MPESA_SHORTCODE }}
