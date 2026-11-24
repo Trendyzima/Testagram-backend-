@@ -81,9 +81,8 @@ jobs:
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
       TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN: ${{ secrets.TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-      MAILJET_SMTP_USERNAME: ${{ secrets.MAILJET_API_KEY }}
-      MAILJET_SMTP_PASSWORD: ${{ secrets.MAILJET_SECRET_KEY }}
-      MAILJET_SMTP_PORT: '587'
+      MAILJET_API_KEY: ${{ secrets.MAILJET_API_KEY }}
+      MAILJET_SECRET_KEY: ${{ secrets.MAILJET_SECRET_KEY }}
       AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
     steps:
@@ -93,16 +92,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${MAILJET_SMTP_USERNAME:-}" || -z "${MAILJET_SMTP_PASSWORD:-}" ]]; then
-            echo "::error::Missing MAILJET_SMTP_USERNAME or MAILJET_SMTP_PASSWORD production secret. Configure both in the GitHub production environment before deploying."
+          if [[ -z "${MAILJET_API_KEY:-}" || -z "${MAILJET_SECRET_KEY:-}" ]]; then
+            echo "::error::Missing MAILJET_API_KEY or MAILJET_SECRET_KEY production secret. Configure both in the GitHub production environment before deploying."
             exit 1
           fi
           if [[ ! "${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
             echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."
-            exit 1
-          fi
-          if [[ "${MAILJET_SMTP_PORT:-587}" != "587" ]]; then
-            echo "::error::Mailjet SMTP must use port 587 with STARTTLS."
             exit 1
           fi
           python3 - "${AUTH_FROM_EMAIL:-}" <<'PY'
@@ -532,10 +527,9 @@ jobs:
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-          MAILJET_SMTP_USERNAME: ${{ secrets.MAILJET_API_KEY }}
-          MAILJET_SMTP_PASSWORD: ${{ secrets.MAILJET_SECRET_KEY }}
-          MAILJET_SMTP_PORT: '587'
-          AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
+          MAILJET_API_KEY: ${{ secrets.MAILJET_API_KEY }}
+          MAILJET_SECRET_KEY: ${{ secrets.MAILJET_SECRET_KEY }}
+              AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
           TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}
           MPESA_ENV: ${{ vars.MPESA_ENV }}
