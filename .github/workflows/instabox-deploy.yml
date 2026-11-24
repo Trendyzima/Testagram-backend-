@@ -80,7 +80,6 @@ jobs:
       CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
-      TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${{ secrets.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN }}
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
@@ -480,7 +479,6 @@ jobs:
           CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
           TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
-          TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN: ${{ secrets.TESTAGRAM_CLOUDFLARE_EVENTS_TOKEN }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}
           MPESA_ENV: ${{ vars.MPESA_ENV }}
           MPESA_SHORTCODE: ${{ secrets.MPESA_SHORTCODE }}
