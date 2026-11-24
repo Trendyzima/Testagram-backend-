@@ -82,6 +82,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("wrangler deploy", worker_deploy)
         self.assertIn("wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET", worker_deploy)
         self.assertIn("bounces.testagram.site", worker_deploy)
+        self.assertIn("existing-rules.json", worker_deploy)
+        self.assertIn("pre-existing routing rule", worker_deploy)
         self.assertIn("api.testagram.site/internal/mail/bounce", worker_deploy)
 
     def test_read_only_instabox_egress_diagnostic_cannot_deploy(self):
