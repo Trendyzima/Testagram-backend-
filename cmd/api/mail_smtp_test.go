@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/mail"
 	"strings"
 	"testing"
@@ -33,6 +36,44 @@ func TestNativeMailRuntimeRequiresVERPAndDKIMConfiguration(t *testing.T) {
 	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", keyPath)
 	if err := mailRuntimeConfigurationError(); err != nil {
 		t.Fatalf("runtime rejected valid native mail keys: %v", err)
+	}
+}
+
+func TestNativeMailMXHostsSortsRecipientMXByPreference(t *testing.T) {
+	hosts, err := nativeMailMXHosts(context.Background(), "example.test", func(context.Context, string) ([]*net.MX, error) {
+		return []*net.MX{{Host: "secondary.example.test.", Pref: 20}, {Host: "primary.example.test.", Pref: 10}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 2 || hosts[0].Host != "primary.example.test." || hosts[1].Host != "secondary.example.test." {
+		t.Fatalf("MX hosts were not preference-sorted: %#v", hosts)
+	}
+}
+
+func TestNativeMailMXHostsUsesAddressFallbackOnlyWhenMXIsAbsent(t *testing.T) {
+	for _, lookup := range []func(context.Context, string) ([]*net.MX, error){
+		func(context.Context, string) ([]*net.MX, error) { return nil, nil },
+		func(context.Context, string) ([]*net.MX, error) {
+			return nil, &net.DNSError{Err: "no such host", Name: "example.test", IsNotFound: true}
+		},
+	} {
+		hosts, err := nativeMailMXHosts(context.Background(), "example.test", lookup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(hosts) != 1 || hosts[0].Host != "example.test" {
+			t.Fatalf("missing-MX fallback is incorrect: %#v", hosts)
+		}
+	}
+}
+
+func TestNativeMailMXHostsDoesNotHideTransientDNSFailures(t *testing.T) {
+	_, err := nativeMailMXHosts(context.Background(), "example.test", func(context.Context, string) ([]*net.MX, error) {
+		return nil, errors.New("temporary resolver timeout")
+	})
+	if err == nil || !strings.Contains(err.Error(), "MX lookup failed") {
+		t.Fatalf("transient DNS failure was hidden: %v", err)
 	}
 }
 
