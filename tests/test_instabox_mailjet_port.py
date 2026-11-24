@@ -9,8 +9,9 @@ COMPOSE=ROOT/"deploy"/"self-hosted"/"docker-compose.yml"
 class InstaBoxMailjetTransportTest(unittest.TestCase):
  def test_deployment_uses_mailjet_https_api_on_port_443(self):
   script=SCRIPT.read_text(encoding="utf-8")
-  self.assertIn("api.mailjet.com:443",script);self.assertIn("MAILJET_API_KEY",script);self.assertIn("MAILJET_SECRET_KEY",script)
-  self.assertNotIn("in-v3.mailjet.com",script);self.assertNotIn("MAILJET_SMTP_PORT",script)
+  self.assertIn("https://api.mailjet.com:443/v3.1/send",script);self.assertIn("MAILJET_API_KEY",script);self.assertIn("MAILJET_SECRET_KEY",script)
+  self.assertIn("curl --silent --show-error",script)
+        self.assertNotIn("in-v3.mailjet.com",script);self.assertNotIn("MAILJET_SMTP_PORT",script)
  def test_workflow_maps_existing_mailjet_production_secrets(self):
   workflow=WORKFLOW.read_text(encoding="utf-8")
   self.assertIn("MAILJET_API_KEY: ${{ secrets.MAILJET_API_KEY }}",workflow);self.assertIn("MAILJET_SECRET_KEY: ${{ secrets.MAILJET_SECRET_KEY }}",workflow)
