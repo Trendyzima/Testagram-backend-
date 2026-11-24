@@ -36,11 +36,14 @@ if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]
   echo "::error::FRESH_MEDIA_ENABLED and DATA_CENTRE_MEDIA_ENABLED must both be true or both be false; refusing an ambiguous media profile."
   exit 1
 fi
-# Core VPS services are deployable while private media is deliberately disabled.
-# Native identity registration remains fail-closed until its independent
-# Data Centre storage, policy, and verification-readiness checks pass.
+# Ordinary Testagram account creation uses the native /api/auth/signup flow:
+# it creates an unverified account and queues email OTP/link verification.
+# It must never depend on private identity-evidence storage or staff review.
+# The separate evidence-based /api/identity/applications workflow remains
+# fail-closed in its own handler until private evidence storage and review
+# readiness are available; disabling media must not disable ordinary signup.
 if [[ "$DATA_CENTRE_MEDIA_ENABLED" != "true" ]]; then
-  echo "Private Data Centre media is disabled; identity registration remains fail-closed. Core service deployment may continue."
+  echo "Private identity-evidence applications remain unavailable; native self-service email-verified signup remains enabled."
 fi
 if [[ "$TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED" == "true" ]]; then
   [[ "$DATA_CENTRE_MEDIA_ENABLED" == "true" ]] || { echo "::error::Identity review cannot be enabled without the private Data Centre evidence-storage profile."; exit 1; }
@@ -272,9 +275,10 @@ ensure_random_secret() {
   printf -v "$key" '%s' "$value"
 }
 ensure_random_secret FEDERATION_INGRESS_TOKEN
-# Native identity evidence is owned by the private Data Centre media service.
-# Backend-local object storage is not an identity-evidence fallback; registration
-# remains fail-closed until the dedicated Data Centre profile is ready.
+# Identity-application evidence is owned by the private Data Centre media service.
+# Backend-local object storage is not an evidence fallback. This restriction
+# applies only to evidence-based identity applications; it does not gate the
+# independent native /api/auth/signup + email verification account flow.
 write_env_value AUTH_PUBLIC_BASE_URL "$AUTH_PUBLIC_BASE_URL"
 for key in TESTAGRAM_AUTH_JWT_SECRET CLOUDFLARE_EMAIL_ACCOUNT_ID CLOUDFLARE_EMAIL_API_TOKEN AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY TESTAGRAM_WEBAUTHN_READINESS_TOKEN TESTAGRAM_WEBAUTHN_RPID TESTAGRAM_WEBAUTHN_ORIGINS; do
   value="${!key:-}"
