@@ -178,7 +178,7 @@ services:
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
       TESTAGRAM_MAIL_VERP_KEY: ${TESTAGRAM_MAIL_VERP_KEY:-}
       TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET: ${TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET:-}
-      TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR: ${TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR:-:2525}
+      TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR: ${TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR:-}
       TESTAGRAM_DKIM_PRIVATE_KEY_FILE: ${TESTAGRAM_DKIM_PRIVATE_KEY_FILE:-/run/testagram-mail/dkim-private.pem}
       TESTAGRAM_DKIM_SELECTOR: ${TESTAGRAM_DKIM_SELECTOR:-tg2026}
       TESTAGRAM_MAIL_TLS_CERT_FILE: ${TESTAGRAM_MAIL_TLS_CERT_FILE:-}
@@ -259,7 +259,7 @@ services:
         condition: service_healthy
       object-init:
         condition: service_completed_successfully
-    ports: ["127.0.0.1:8080:8080", "25:2525"]
+    ports: ["127.0.0.1:8080:8080"]
     expose: ["8080", "8082"]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8082/readyz"]
