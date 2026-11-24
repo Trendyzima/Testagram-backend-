@@ -52,6 +52,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("client.StartTLS", smtp)
         self.assertNotIn("MAILJET_API_KEY", script)
         self.assertNotIn("MAILJET_SECRET_KEY", script)
+        self.assertIn("native DKIM signing failed", smtp)
+        self.assertIn("TESTAGRAM_MAIL_VERP_KEY", (ROOT / "cmd/api/mail.go").read_text())
 
 
 if __name__ == "__main__":
