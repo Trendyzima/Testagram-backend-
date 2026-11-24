@@ -257,7 +257,7 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 			cancel()
 			if e!=nil {if !reply(550,"Feedback could not be correlated"){return};continue}
 			if !reply(250,"Feedback recorded"){return}
-			mailFrom="";tokenHash=nil
+			tokenHash=nil
 		default:
 			if !reply(502,"Command not supported"){return}
 		}
