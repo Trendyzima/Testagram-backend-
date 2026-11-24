@@ -19,7 +19,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
 
     def test_vps_generates_and_persists_mail_encryption_key(self):
         script = SCRIPT.read_text(encoding="utf-8")
-        self.assertIn("ensure_random_secret TESTAGRAM_MAIL_ENCRYPTION_KEY", script)
+        self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_ENCRYPTION_KEY", script)
+        self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY", script)
         self.assertNotIn("secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY", WORKFLOW.read_text(encoding="utf-8"))
 
     def test_native_deployment_script_has_real_line_break_before_sync(self):
