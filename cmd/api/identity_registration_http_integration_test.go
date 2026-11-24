@@ -285,4 +285,20 @@ func TestNativeIdentityApplicationHTTPJourneyIntegration(t *testing.T) {
 	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), "access_token") {
 		t.Fatalf("verified native login was blocked by separate identity review: status=%d body=%s", login.Code, login.Body.String())
 	}
+	var loginResult struct {
+		Data nativeSessionTokens `json:"data"`
+	}
+	if err := json.Unmarshal(login.Body.Bytes(), &loginResult); err != nil {
+		t.Fatal(err)
+	}
+	if loginResult.Data.AccessToken == "" || loginResult.Data.RefreshToken == "" {
+		t.Fatalf("native login returned incomplete session tokens: %#v", loginResult.Data)
+	}
+	if _, status, err := verifyNativeAccessToken(ctx, db, loginResult.Data.AccessToken); err != nil || status != http.StatusOK {
+		t.Fatalf("access-token validation was blocked by pending identity review: status=%d err=%v", status, err)
+	}
+	rotated, err := svc.rotateNativeRefresh(ctx, loginResult.Data.RefreshToken, "identity-review-independent-login", "192.0.2.42")
+	if err != nil || rotated.AccessToken == "" || rotated.RefreshToken == "" {
+		t.Fatalf("refresh-token rotation was blocked by pending identity review: err=%v", err)
+	}
 }
