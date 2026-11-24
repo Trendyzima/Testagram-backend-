@@ -226,7 +226,12 @@ write_env_value() {
   # A literal carriage return in .env breaks shell parsing and aborts deployment.
   # .env values are single-line by contract, so strip both line-ending bytes
   # before escaping and writing them; never let a value inject another setting.
-  value="$(printf '%s' "$value" | tr -d '\r\n')"
+  # Treat deployment values as single-line shell/.env data. GitHub Actions
+  # secrets and variables are occasionally pasted with surrounding whitespace;
+  # retaining it creates invalid assignments when this file is sourced (for
+  # example, TESTAGRAM_WEBAUTHN_RPID= ops.testagram.site executes the hostname).
+  # Trim only the edges; preserve internal characters and never log the value.
+  value="$(printf '%s' "$value" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   escaped_value="$(printf '%s' "$value" | sed 's/[\\&|]/\\&/g')"
   if grep -q "^${key}=" "$BASE_ENV"; then
     sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$BASE_ENV"
