@@ -14,13 +14,14 @@ DMARC_HOST="_dmarc.testagram.site"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 chmod 700 "$TMP_DIR"
-export CLOUDFLARE_DNS_API_TOKEN
 umask 077
+printf 'header = "Authorization: Bearer %s"\\n' "$CLOUDFLARE_DNS_API_TOKEN" > "$TMP_DIR/cloudflare.curlrc"
+chmod 600 "$TMP_DIR/cloudflare.curlrc"
 
 api_get() {
   local url="$1" output="$2" status
   status="$(curl --silent --show-error --connect-timeout 10 --max-time 45 \
-    -o "$output" -w '%{http_code}' -H "Authorization: Bearer $CLOUDFLARE_DNS_API_TOKEN" \
+    -o "$output" -w '%{http_code}' --config "$TMP_DIR/cloudflare.curlrc" \
     -H 'Content-Type: application/json' "$url")"
   [[ "$status" == 200 ]] || { echo "Cloudflare API GET failed (HTTP $status)." >&2; return 1; }
   jq -e '.success == true' "$output" >/dev/null || { echo "Cloudflare API returned an unsuccessful response." >&2; return 1; }
@@ -30,7 +31,7 @@ api_write() {
   local method="$1" url="$2" body="$3" output="$4" status
   status="$(curl --silent --show-error --connect-timeout 10 --max-time 45 \
     -o "$output" -w '%{http_code}' -X "$method" \
-    -H "Authorization: Bearer $CLOUDFLARE_DNS_API_TOKEN" \
+    --config "$TMP_DIR/cloudflare.curlrc" \
     -H 'Content-Type: application/json' --data "$body" "$url")"
   [[ "$status" == 200 || "$status" == 201 ]] || { echo "Cloudflare DNS write failed (HTTP $status)." >&2; jq -c '{errors:[.errors[]? | {code,message}]}' "$output" >&2 || true; return 1; }
   jq -e '.success == true' "$output" >/dev/null || { echo "Cloudflare rejected a DNS record change." >&2; jq -c '{errors:[.errors[]? | {code,message}]}' "$output" >&2 || true; return 1; }
