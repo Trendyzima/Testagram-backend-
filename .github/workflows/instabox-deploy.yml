@@ -80,13 +80,34 @@ jobs:
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
       TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN: ${{ secrets.TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-      CLOUDFLARE_EMAIL_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
+      MAILJET_SMTP_USERNAME: ${{ secrets.MAILJET_API_KEY }}
+      MAILJET_SMTP_PASSWORD: ${{ secrets.MAILJET_SECRET_KEY }}
+      MAILJET_SMTP_PORT: '587'
+      AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
+      - name: Validate production transactional email credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${MAILJET_SMTP_USERNAME:-}" || -z "${MAILJET_SMTP_PASSWORD:-}" ]]; then
+            echo "::error::Missing MAILJET_SMTP_USERNAME or MAILJET_SMTP_PASSWORD production secret. Configure both in the GitHub production environment before deploying."
+            exit 1
+          fi
+          if [[ ! "${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+            echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."
+            exit 1
+          fi
+          if [[ "${MAILJET_SMTP_PORT:-587}" != "587" ]]; then
+            echo "::error::Mailjet SMTP must use port 587 with STARTTLS."
+            exit 1
+          fi
+          if [[ "${AUTH_FROM_EMAIL:-}" != "no-reply@testagram.site" ]]; then
+            echo "::error::AUTH_FROM_EMAIL must be a verified @testagram.site sender."
+            exit 1
+          fi
       - name: Validate edge proxy shared credential
         shell: bash
         run: |
@@ -479,8 +500,9 @@ jobs:
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-          CLOUDFLARE_EMAIL_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_EMAIL_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MAILJET_SMTP_USERNAME: ${{ secrets.MAILJET_SMTP_USERNAME }}
+          MAILJET_SMTP_PASSWORD: ${{ secrets.MAILJET_SMTP_PASSWORD }}
+          MAILJET_SMTP_PORT: '587'
           AUTH_FROM_EMAIL: ${{ vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
           TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}

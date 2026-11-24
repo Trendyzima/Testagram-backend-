@@ -11,13 +11,13 @@ import (
 	"time"
 )
 
-func TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *testing.T) {
+func TestMailjetDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("4c", 32))
-	t.Setenv("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-	t.Setenv("CLOUDFLARE_EMAIL_ACCOUNT_ID", "0123456789abcdef0123456789abcdef")
-	t.Setenv("CLOUDFLARE_EMAIL_API_TOKEN", "ci-provider-token")
+	t.Setenv("MAILJET_SMTP_USERNAME", "ci-api-key")
+	t.Setenv("MAILJET_SMTP_PASSWORD", "ci-secret-key")
+	t.Setenv("MAILJET_SMTP_PORT", "587")
 	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
 	svc := &service{db: db}
 
@@ -33,43 +33,46 @@ func TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *t
 	if err := db.QueryRow(ctx, "SELECT id FROM testagram_mail.outbox WHERE recipient_fingerprint=$1 ORDER BY id DESC LIMIT 1", fingerprint).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
+	customID := "testagram-ci-mail-message"
 	defer func() {
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.delivery_events WHERE provider_message_id='ci-mail-message'")
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.delivery_events WHERE provider_message_id=$1", customID)
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.recipient_suppressions WHERE recipient_fingerprint=$1", fingerprint)
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", id)
 	}()
 
-	send := func(eventID, kind string) *httptest.ResponseRecorder {
-		payload, _ := json.Marshal(map[string]any{
-			"type":   kind,
-			"source": map[string]any{"type": "email.sending", "domain": "testagram.site"},
-			"payload": map[string]any{
-				"eventId": eventID, "messageId": "ci-mail-message", "recipient": recipient,
-				"terminal": true, "delivery": map[string]any{"status": "delivered", "smtpStatusCode": "250"},
-			},
-			"metadata": map[string]any{"eventSchemaVersion": 1},
-		})
-		req := httptest.NewRequest(http.MethodPost, "/internal/mail/events", strings.NewReader(string(payload)))
-		req.Header.Set("Authorization", "Bearer 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	send := func(eventType string, eventTime int64) (*httptest.ResponseRecorder, string) {
+		event := mailjetDeliveryEvent{
+			Event: eventType, Time: eventTime, MessageGUID: "ci-mailjet-guid",
+			MessageID: json.Number("123456"), CustomID: customID, Email: recipient,
+			HardBounce: false, ErrorRelatedTo: "recipient",
+		}
+		payload, err := json.Marshal([]mailjetDeliveryEvent{event})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/internal/mailjet/events", strings.NewReader(string(payload)))
+		req.SetBasicAuth("ci-api-key", "ci-secret-key")
 		rec := httptest.NewRecorder()
-		svc.cloudflareMailEvent(rec, req)
-		return rec
+		svc.mailjetDeliveryEvents(rec, req)
+		return rec, mailjetEventFingerprint(event)
 	}
 
-	if got := send("ci-event-1", "cf.email.sending.message.delivered"); got.Code != http.StatusAccepted {
+	firstTime := time.Now().Unix()
+	if got, eventID := send("sent", firstTime); got.Code != http.StatusOK {
 		t.Fatalf("delivery event status=%d body=%s", got.Code, got.Body.String())
+	} else {
+		var processed bool
+		if err := db.QueryRow(ctx, "SELECT processed_at IS NOT NULL FROM testagram_mail.delivery_events WHERE provider_event_id=$1", eventID).Scan(&processed); err != nil {
+			t.Fatal(err)
+		}
+		if processed {
+			t.Fatal("early event was processed before the outbox custom message ID existed")
+		}
 	}
-	var processed bool
-	if err := db.QueryRow(ctx, "SELECT processed_at IS NOT NULL FROM testagram_mail.delivery_events WHERE provider_event_id='ci-event-1'").Scan(&processed); err != nil {
+	if _, err := db.Exec(ctx, "UPDATE testagram_mail.outbox SET provider_message_id=$2,available_at=now()-interval '10 years' WHERE id=$1", id, customID); err != nil {
 		t.Fatal(err)
 	}
-	if processed {
-		t.Fatal("early event was processed before the outbox provider message ID existed")
-	}
-	if _, err := db.Exec(ctx, "UPDATE testagram_mail.outbox SET provider_message_id='ci-mail-message',available_at=now()-interval '10 years' WHERE id=$1", id); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.reconcileCloudflareMailEvents(ctx); err != nil {
+	if err := svc.reconcileMailjetEvents(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -79,18 +82,19 @@ func TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *t
 	if state != "delivered" {
 		t.Fatalf("delivery state=%q", state)
 	}
-	if got := send("ci-event-1", "cf.email.sending.message.delivered"); got.Code != http.StatusAccepted {
-		t.Fatalf("duplicate event status=%d", got.Code)
-	}
-	var count int
-	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.delivery_events WHERE provider_event_id='ci-event-1'").Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("duplicate event rows=%d", count)
+	if got, eventID := send("sent", firstTime); got.Code != http.StatusOK {
+		t.Fatalf("duplicate event status=%d body=%s", got.Code, got.Body.String())
+	} else {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.delivery_events WHERE provider_event_id=$1", eventID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("duplicate event rows=%d", count)
+		}
 	}
 
-	if got := send("ci-event-2", "cf.email.sending.message.complained"); got.Code != http.StatusAccepted {
+	if got, _ := send("spam", firstTime+1); got.Code != http.StatusOK {
 		t.Fatalf("complaint event status=%d body=%s", got.Code, got.Body.String())
 	}
 	if err := db.QueryRow(ctx, "SELECT delivery_status FROM testagram_mail.outbox WHERE id=$1", id).Scan(&state); err != nil {
