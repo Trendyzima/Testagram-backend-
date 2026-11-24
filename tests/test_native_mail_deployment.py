@@ -84,6 +84,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("bounces.testagram.site", worker_deploy)
         self.assertIn("existing-rules.json", worker_deploy)
         self.assertIn("pre-existing routing rule", worker_deploy)
+        self.assertIn('--arg worker "testagram-bounce-ingress"', worker_deploy)
         self.assertIn("api.testagram.site/internal/mail/bounce", worker_deploy)
 
     def test_production_deploy_requires_explicit_manual_confirmation(self):
