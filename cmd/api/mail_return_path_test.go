@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -58,8 +57,5 @@ func TestNativeMailReturnPathRejectsInvalidIDsAndKeys(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", "not-a-hex-key")
 	if _, _, err := nativeMailReturnPath(1); err == nil {
 		t.Fatal("invalid VERP key was accepted")
-	}
-	if _, err := hex.DecodeString("ab"); err != nil {
-		t.Fatal(err)
 	}
 }
