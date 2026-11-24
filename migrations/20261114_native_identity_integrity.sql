@@ -5,11 +5,13 @@ BEGIN;
 
 DO $reviewer_fk$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname='verification_reviews_reviewer_staff_fk'
-      AND conrelid='testagram_identity.verification_reviews'::regclass
-  ) THEN
+  -- Legacy provider-keyed staff records are optional on native-only installs.
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='verification_reviews_reviewer_staff_fk'
+         AND conrelid='testagram_identity.verification_reviews'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.verification_reviews
       ADD CONSTRAINT verification_reviews_reviewer_staff_fk
       FOREIGN KEY (reviewer_appwrite_user_id)
@@ -69,11 +71,12 @@ BEGIN
       ) NOT VALID;
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname='verification_sessions_decider_staff_fk'
-      AND conrelid='testagram_identity.verification_sessions'::regclass
-  ) THEN
+  IF to_regclass('testagram_auth.staff_roles') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='verification_sessions_decider_staff_fk'
+         AND conrelid='testagram_identity.verification_sessions'::regclass
+     ) THEN
     ALTER TABLE testagram_identity.verification_sessions
       ADD CONSTRAINT verification_sessions_decider_staff_fk
       FOREIGN KEY (decided_by_appwrite_user_id)
