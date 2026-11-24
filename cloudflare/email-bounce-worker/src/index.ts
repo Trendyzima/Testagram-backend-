@@ -35,7 +35,7 @@ export default {
     // Cloudflare prepends its own Authentication-Results header before
     // invoking Email Workers. Do not trust sender-supplied auth-result headers.
     const authenticationResults = message.headers.get("authentication-results") || "";
-    if (!/^mx\\.cloudflare\\.net\\s*;/i.test(authenticationResults.trim())) {
+    if (!/^mx\.cloudflare\.net\s*;/i.test(authenticationResults.trim())) {
       message.setReject("Missing Cloudflare authentication result");
       return;
     }
