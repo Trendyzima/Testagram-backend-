@@ -317,6 +317,18 @@ ensure_random_secret FEDERATION_INGRESS_TOKEN
 # Generate the native mail payload-encryption key once and persist it in the VPS .env.
 # It is not a GitHub secret and is never sent to a mail provider.
 ensure_random_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
+# VERP tokens use an independent first-party key. Keep this key stable for at
+# least the maximum return-path lifetime; changing it invalidates outstanding tokens.
+ensure_hex_secret() {
+  local key="$1" value
+  value="$(read_env_value "$key")"
+  if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+    value="$(openssl rand -hex 32)"
+    write_env_value "$key" "$value"
+  fi
+  printf -v "$key" '%s' "$value"
+}
+ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY
 # Purge obsolete external mail-provider credentials from older VPS .env files.
 sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d' "$BASE_ENV"
 # Identity-application evidence is owned by the private Data Centre media service.
@@ -1006,6 +1018,7 @@ verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federati
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_VERP_KEY "$TESTAGRAM_MAIL_VERP_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"
 if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
