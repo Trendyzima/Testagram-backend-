@@ -334,7 +334,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	// A worker may have crashed after the SMTP relay accepted DATA but before
+	// A worker may have crashed after the mail provider accepted the request but before
 	// recording the response. Never reclaim an expired sending lease: its
 	// provider outcome is unknowable and automatic resend could duplicate mail.
 	if _, err := s.db.Exec(ctx, `
@@ -454,7 +454,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		if errors.As(sendErr, &permanent) {
 			code := permanent.code
 			if code == "" {
-				code = "CLOUDFLARE_REQUEST_REJECTED"
+				code = "MAIL_PROVIDER_REJECTED"
 			}
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
