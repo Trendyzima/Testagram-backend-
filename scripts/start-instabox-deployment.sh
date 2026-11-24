@@ -273,6 +273,8 @@ ensure_random_secret FEDERATION_INGRESS_TOKEN
 # Generate the native mail payload-encryption key once and persist it in the VPS .env.
 # It is not a GitHub secret and is never sent to a mail provider.
 ensure_random_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
+# Purge obsolete external mail-provider credentials from older VPS .env files.
+sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d' "$BASE_ENV"
 # Identity-application evidence is owned by the private Data Centre media service.
 # Backend-local object storage is not an evidence fallback. This restriction
 # applies only to evidence-based identity applications; it does not gate the
@@ -1088,10 +1090,6 @@ payload="$(jq -nc \
   --arg web_image "$TESTAGRAM_WEB_IMAGE" \
   --arg auth_jwt_secret "${TESTAGRAM_AUTH_JWT_SECRET:-}" \
   --arg auth_public_base_url "$AUTH_PUBLIC_BASE_URL" \
-  --arg mailjet_api_key "$MAILJET_API_KEY" \
-  --arg mailjet_secret_key "$MAILJET_SECRET_KEY" \
-  --arg auth_from_email "$AUTH_FROM_EMAIL" \
-  --arg mail_encryption_key "$TESTAGRAM_MAIL_ENCRYPTION_KEY" \
   --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
   --arg edge_proxy_token "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" \
   --arg edge_recovery_readiness_token "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" \
