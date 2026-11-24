@@ -15,9 +15,9 @@ func nativeMailReturnPath(outboxID int64) (string, []byte, error) {
 	if outboxID <= 0 {
 		return "", nil, errors.New("invalid mail outbox identifier")
 	}
-	key, err := hex.DecodeString(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_ENCRYPTION_KEY")))
+	key, err := hex.DecodeString(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_VERP_KEY")))
 	if err != nil || len(key) != 32 {
-		return "", nil, errors.New("mail encryption key unavailable")
+		return "", nil, errors.New("mail VERP key unavailable")
 	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(fmt.Sprintf("testagram-mail-verp-v1:%d", outboxID)))
