@@ -40,7 +40,7 @@ func TestMailjetEventFingerprintIsStableAndEventSpecific(t *testing.T) {
 	event := mailjetDeliveryEvent{
 		Event: "bounce", Time: 1795500000, MessageGUID: "mailjet-guid",
 		CustomID: "testagram-0123456789abcdef0123456789abcdef@testagram.site",
-		Email: "Person@example.test", HardBounce: true,
+		Email:    "Person@example.test", HardBounce: true,
 	}
 	first := mailjetEventFingerprint(event)
 	second := mailjetEventFingerprint(event)
