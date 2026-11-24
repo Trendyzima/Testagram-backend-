@@ -16,6 +16,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
             self.assertNotIn("MAILJET_API_KEY", content, str(path))
             self.assertNotIn("MAILJET_SECRET_KEY", content, str(path))
             self.assertNotIn("api.mailjet.com", content, str(path))
+            self.assertNotIn("AUTH_FROM_EMAIL", content, str(path))
 
     def test_vps_generates_and_persists_mail_encryption_key(self):
         script = SCRIPT.read_text(encoding="utf-8")
@@ -28,6 +29,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn('JoinHostPort(host, "25")', source)
         self.assertIn("client.StartTLS", source)
         self.assertNotIn("client.Auth", source)
+        self.assertIn("no-reply@testagram.site", source)
 
 if __name__ == "__main__":
     unittest.main()
