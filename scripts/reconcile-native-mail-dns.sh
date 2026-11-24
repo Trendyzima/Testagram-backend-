@@ -15,7 +15,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 chmod 700 "$TMP_DIR"
 umask 077
-printf 'header = "Authorization: Bearer %s"\\n' "$CLOUDFLARE_DNS_API_TOKEN" > "$TMP_DIR/cloudflare.curlrc"
+printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_DNS_API_TOKEN" > "$TMP_DIR/cloudflare.curlrc"
 chmod 600 "$TMP_DIR/cloudflare.curlrc"
 
 api_get() {
