@@ -90,6 +90,10 @@ upsert_record() {
     [[ "$relevant_count" -le 1 ]] || { echo "Multiple policy TXT records exist at $name; refusing ambiguous reconciliation." >&2; return 1; }
   fi
   [[ "$count" -le 1 ]] || { echo "Multiple $type records exist at $name; refusing ambiguous reconciliation." >&2; return 1; }
+  if [[ "$type" == "TXT" && "$name" == "$DMARC_HOST" && "$count" == 1 ]]; then
+    echo "Preserving the existing DMARC policy at $name; no policy downgrade or reporting change was made."
+    return 0
+  fi
   if [[ "$type" == "MX" ]]; then
     body="$(jq -nc --arg type "$type" --arg name "$name" --arg content "$content" --argjson priority "$priority" '{type:$type,name:$name,content:$content,priority:$priority,ttl:1}')"
   elif [[ "$type" == "A" ]]; then
@@ -116,7 +120,7 @@ upsert_record() {
 
 upsert_record A "$MAIL_HOST" "$PUBLIC_IPV4"
 upsert_record MX "$BOUNCE_HOST" "$MAIL_HOST" 10
-upsert_record TXT "$BOUNCE_HOST" "v=spf1 ip4:$PUBLIC_IPV4 -all"
+upsert_record TXT "$BOUNCE_HOST" "v=spf1 ip4:$PUBLIC_IPV4 ~all"
 upsert_record TXT "$SELECTOR" "v=DKIM1; k=rsa; p=$DKIM_PUBLIC_KEY"
 upsert_record TXT "$DMARC_HOST" "v=DMARC1; p=none; adkim=r; aspf=r"
 
