@@ -105,6 +105,20 @@ if ! sudo docker compose version >/dev/null 2>&1; then
 fi
 sudo docker info >/dev/null
 
+# Verify InstaBox can reach Mailjet over authenticated-submission TLS before
+# building or recreating production services. This sends no email and uses no
+# credentials; it only completes the SMTP STARTTLS handshake.
+if ! timeout 15 openssl s_client -starttls smtp -connect in-v3.mailjet.com:587 \
+  -servername in-v3.mailjet.com -verify_return_error -brief </dev/null \
+  > /tmp/testagram-mailjet-starttls.log 2>&1; then
+  echo "::error::InstaBox cannot complete a verified Mailjet SMTP STARTTLS handshake on port 587."
+  tail -n 20 /tmp/testagram-mailjet-starttls.log || true
+  exit 1
+fi
+rm -f /tmp/testagram-mailjet-starttls.log
+echo "Verified outbound Mailjet SMTP STARTTLS connectivity from InstaBox."
+
+
 sync_repo() {
   local url="$1" path="$2"
   if [[ -d "$path/.git" ]]; then
