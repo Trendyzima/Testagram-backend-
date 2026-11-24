@@ -177,9 +177,9 @@ jobs:
 
   deploy:
     needs: validate
-    # A merge/push to main is the production approval boundary. Pull requests
-    # validate only; manual dispatch still requires explicit confirmation.
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true))
+    # Every production deployment requires an explicit manual confirmation.
+    # Pushes/merges to main run validation only and never deploy automatically.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true
     name: Deploy backend and private services
     runs-on: ubuntu-latest
     environment: production
