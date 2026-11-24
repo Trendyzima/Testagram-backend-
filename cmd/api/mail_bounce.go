@@ -13,9 +13,8 @@ import (
 	"mime"
 	"mime/multipart"
 	"net"
-	"net/mail"
 	"log"
-	"net/textproto"
+	"net/mail"
 	"regexp"
 	"strings"
 	"time"
@@ -204,7 +203,6 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 	writer:=bufio.NewWriter(conn)
 	reply:=func(code int,message string) bool { _,e:=fmt.Fprintf(writer,"%d %s\r\n",code,message); if e!=nil{return false}; return writer.Flush()==nil }
 	if !reply(220,"mail.testagram.site Testagram native feedback receiver"){return}
-	mailFrom:=""
 	mailFromSeen:=false
 	var tokenHash []byte
 	for {
@@ -217,7 +215,7 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 		case strings.HasPrefix(upper,"EHLO ") || strings.HasPrefix(upper,"HELO "):
 			_,_=writer.WriteString("250-mail.testagram.site\r\n250 SIZE 1048576\r\n"); if writer.Flush()!=nil{return}
 		case upper=="NOOP": if !reply(250,"OK"){return}
-		case upper=="RSET": mailFrom="";mailFromSeen=false;tokenHash=nil;if !reply(250,"Reset"){return}
+		case upper=="RSET": mailFromSeen=false;tokenHash=nil;if !reply(250,"Reset"){return}
 		case upper=="QUIT": _=reply(221,"Bye");return
 		case strings.HasPrefix(upper,"STARTTLS"):
 			if !reply(454,"TLS not configured on this receiver"){return}
@@ -226,7 +224,6 @@ func handleNativeBounceSMTP(ctx context.Context, db *pgxpool.Pool, conn net.Conn
 		case strings.HasPrefix(upper,"MAIL FROM:"):
 			value:=smtpPathValue(command[len("MAIL FROM:"):])
 			if value!="" { if _,e:=mail.ParseAddress(value);e!=nil {if !reply(501,"Invalid sender"){return};continue} }
-			mailFrom=value
 			mailFromSeen=true
 			if !reply(250,"Sender accepted"){return}
 		case strings.HasPrefix(upper,"RCPT TO:"):
