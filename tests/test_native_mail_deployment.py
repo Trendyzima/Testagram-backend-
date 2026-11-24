@@ -40,6 +40,26 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("inbound_reports", migration)
         self.assertIn("'mailjet.bounce'", migration)
 
+    def test_cloudflare_bounce_ingress_is_inbound_only_and_authenticated(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        main = (ROOT / "cmd/api/main.go").read_text()
+        handler = (ROOT / "cmd/api/mail_bounce_http.go").read_text()
+        worker = (ROOT / "cloudflare/email-bounce-worker/src/index.ts").read_text()
+        wrangler = (ROOT / "cloudflare/email-bounce-worker/wrangler.toml").read_text()
+        script = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        self.assertIn("TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET", compose)
+        self.assertIn("TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET", script)
+        self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET", script)
+        self.assertIn("nativeBounceIngressPath", main)
+        self.assertIn("hmac.New(sha256.New", handler)
+        self.assertIn("nativeBounceIngressMaxSkew", handler)
+        self.assertIn("processNativeBounceReport", handler)
+        self.assertIn("message.raw", worker)
+        self.assertIn('method: "POST"', worker)
+        self.assertIn("HMAC", worker)
+        self.assertNotIn("env.EMAIL.send", worker)
+        self.assertIn('addresses = ["b@bounces.testagram.site"]', wrangler)
+
     def test_native_sender_has_no_external_mail_provider_requirement(self):
         smtp = (ROOT / "cmd/api/mail_smtp.go").read_text()
         script = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
