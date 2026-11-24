@@ -219,10 +219,10 @@ func processNativeBounceReport(ctx context.Context, db *pgxpool.Pool, tokenHash,
 		INSERT INTO testagram_mail.delivery_events(
 			provider_event_id,provider_message_id,event_type,recipient_fingerprint,
 			smtp_status_code,bounce_type,rejection_reason,rejection_party,transport,
-			enhanced_status_code,diagnostic_code,remote_mta,report_sha256
+			enhanced_status_code,diagnostic_code,remote_mta,report_sha256,processed_at
 		)
 		VALUES($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),
-		       'native',NULLIF($5,''),NULLIF($7,''),NULLIF($8,''),$9)
+		       'native',NULLIF($5,''),NULLIF($7,''),NULLIF($8,''),$9,now())
 		ON CONFLICT(provider_event_id) DO NOTHING
 	`, eventID, providerMessageID, report.EventType, storedFingerprint,
 		report.Status, bounceType, report.Diagnostic, report.RemoteMTA, reportHash[:])
