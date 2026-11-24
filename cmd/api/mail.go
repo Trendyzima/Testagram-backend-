@@ -49,10 +49,10 @@ func (e ambiguousMailError) Unwrap() error { return e.cause }
 type queuedMail struct {
 	EnvelopeFrom string            `json:"-"`
 	Recipient    string            `json:"recipient"`
-	Subject   string            `json:"subject"`
-	HTML      string            `json:"html"`
-	Text      string            `json:"text,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
+	Subject      string            `json:"subject"`
+	HTML         string            `json:"html"`
+	Text         string            `json:"text,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
 }
 
 var mailHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
