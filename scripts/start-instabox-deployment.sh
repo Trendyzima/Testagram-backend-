@@ -5,6 +5,11 @@ AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
 TESTAGRAM_EDGE_PROXY_SHARED_TOKEN="${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}"
 TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN="${TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:-}"
+[[ -n "${TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4:-}" ]] || { echo "::error::Set the provider-confirmed TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4 repository variable."; exit 1; }
+[[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]] || { echo "::error::CLOUDFLARE_DNS_API_TOKEN is required to publish Testagram-owned SPF/DKIM/A records."; exit 1; }
+[[ -n "${CLOUDFLARE_BOUNCE_WORKER_API_TOKEN:-}" ]] || { echo "::error::CLOUDFLARE_BOUNCE_WORKER_API_TOKEN is required to deploy the inbound-only bounce Worker."; exit 1; }
+[[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo "::error::CLOUDFLARE_ACCOUNT_ID is required to deploy the inbound-only bounce Worker."; exit 1; }
+
 if [[ -n "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" && ! "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]]; then echo "::error::TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must be exactly 32 random bytes encoded as 64 hexadecimal characters when configured."; exit 1; fi
 [[ "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_EDGE_PROXY_SHARED_TOKEN must be a configured 32-byte hexadecimal secret shared with the Cloudflare API Worker."; exit 1; }
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
