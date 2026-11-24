@@ -14,7 +14,6 @@ import (
 	"net/smtp"
 	"net/textproto"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -182,14 +181,3 @@ func buildSMTPMessage(from, to *mail.Address, message queuedMail, messageID stri
 	return out.Bytes(), nil
 }
 
-func mailSMTPPort() (int, error) {
-	value := strings.TrimSpace(os.Getenv("MAILJET_SMTP_PORT"))
-	if value == "" {
-		return 587, nil
-	}
-	port, err := strconv.Atoi(value)
-	if err != nil || port != 587 {
-		return 0, errors.New("MAILJET_SMTP_PORT must be 587 (STARTTLS)")
-	}
-	return port, nil
-}
