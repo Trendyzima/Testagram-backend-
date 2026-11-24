@@ -12,9 +12,7 @@ import (
 func configureMailWorkerTest(t *testing.T) {
 	t.Helper()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
-	t.Setenv("MAILJET_API_KEY", "ci-api-key")
-	t.Setenv("MAILJET_SECRET_KEY", "ci-secret-key")
-	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("62", 32))
 }
 
 func TestMailWorkerRetriesDefiniteFailureAndPreservesPayload(t *testing.T) {
