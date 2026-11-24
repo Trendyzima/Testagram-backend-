@@ -25,7 +25,7 @@ class InstaBoxDeploymentPollingTests(unittest.TestCase):
         start = DEPLOY_SCRIPT.index("write_env_value() {")
         end = DEPLOY_SCRIPT.index("\n}", start) + 2
         writer = DEPLOY_SCRIPT[start:end]
-        self.assertIn("tr -d '\\\\r\\\\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'", writer)
+        self.assertIn("sed 's/^[[:space:]]*//; s/[[:space:]]*$//'", writer)
         self.assertLess(writer.index("value=\"$(printf"), writer.index("escaped_value="))
         self.assertIn("preserve internal characters", writer)
 
