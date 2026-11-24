@@ -116,6 +116,8 @@ fi
 existing_bounce_rule_count="$(jq --arg suffix "@$BOUNCE_DOMAIN" '[.result[]? | select(any(.matchers[]?; .type == "literal" and ((.value | ascii_downcase) | endswith($suffix))))] | length' "$tmp/existing-rules.json")"
 
 export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
+printf 'CLOUDFLARE_API_TOKEN=%s\nCLOUDFLARE_ACCOUNT_ID=%s\n' "$CLOUDFLARE_API_TOKEN" "$CLOUDFLARE_ACCOUNT_ID" > "$tmp/wrangler.env"
+chmod 600 "$tmp/wrangler.env"
 WORKER_DIR="$(cd "$WORKER_DIR" && pwd)"
 WRANGLER_IMAGE="node:22-bookworm-slim"
 WRANGLER_NPM_CACHE="${HOME:-/root}/.cache/testagram-wrangler-npm"
@@ -123,8 +125,7 @@ mkdir -p "$WRANGLER_NPM_CACHE"
 sudo docker pull "$WRANGLER_IMAGE"
 run_wrangler() {
   sudo docker run --rm -i \
-    --env CLOUDFLARE_API_TOKEN \
-    --env CLOUDFLARE_ACCOUNT_ID \
+    --env-file "$tmp/wrangler.env" \
     --mount "type=bind,source=$WORKER_DIR,target=/worker" \
     --mount "type=bind,source=$WRANGLER_NPM_CACHE,target=/root/.npm" \
     --workdir /worker \
