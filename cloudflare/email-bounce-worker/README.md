@@ -72,7 +72,7 @@ fails before creating the Worker route.
 2. The recipient MX returns a DSN to Cloudflare's MX for the bounce
    subdomain. Cloudflare subaddressing matches the base rule while
    preserving the original recipient in `message.to`.
-3. The Worker first requires Cloudflare's prepended `Authentication-Results: mx.cloudflare.net;` header; Cloudflare validates inbound SPF/DKIM/DMARC before invoking the Worker. It does not trust sender-supplied authentication-result headers. The Worker preserves the token's case-sensitive local part, lowercases
+3. The Worker first requires Cloudflare's prepended `Authentication-Results: mx.cloudflare.net;` header with `dmarc=pass` with `dmarc=pass`; Cloudflare validates inbound SPF/DKIM/DMARC before invoking the Worker. It does not trust sender-supplied authentication-result headers. The Worker preserves the token's case-sensitive local part, lowercases
    only the DNS domain, reads the raw MIME stream, and enforces a 1 MiB cap.
 4. It signs timestamp, canonical recipient and SHA-256 body digest using
    HMAC-SHA-256, then posts the raw bytes to Testagram over HTTPS.
