@@ -24,7 +24,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
 
     def test_native_deployment_script_has_real_line_break_before_sync(self):
         script = SCRIPT.read_text(encoding="utf-8")
-        self.assertNotIn(r"used.\\n\\nsync_repo()", script)
+        self.assertNotIn(r"used.\n\nsync_repo()", script)
         self.assertIn('\nsync_repo() {', script)
 
     def test_sender_delivers_directly_to_mx_with_starttls_and_no_auth(self):
