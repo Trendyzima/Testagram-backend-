@@ -488,6 +488,8 @@ export TESTAGRAM_WEB_IMAGE
 # Fail closed: the API may start before the Cloudflare bounce Worker is ready,
 # but the outbox sender must remain paused until the inbound route is verified.
 write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED false
+TESTAGRAM_MAIL_DELIVERY_ENABLED=false
+export TESTAGRAM_MAIL_DELIVERY_ENABLED
 
 echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API with outbound mail paused..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
@@ -1153,6 +1155,8 @@ bash "$BACKEND/scripts/deploy-cloudflare-bounce-worker.sh" "$BACKEND/cloudflare/
 # Only now is the Cloudflare bounce route installed and its Worker-to-API
 # health probe verified. Re-enable the native sender and restart the API.
 write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED true
+TESTAGRAM_MAIL_DELIVERY_ENABLED=true
+export TESTAGRAM_MAIL_DELIVERY_ENABLED
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --no-deps --force-recreate api
 api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
 if [[ -z "$api_container" ]]; then
