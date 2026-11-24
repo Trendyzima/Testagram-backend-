@@ -18,25 +18,7 @@ import (
 
 const testagramDKIMDomain = "testagram.site"
 
-var nativeDKIMSelectorPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,63}package main
-
-import (
-	"bytes"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/pem"
-	"errors"
-	"fmt"
-	"os"
-	"regexp"
-	"strings"
-)
-
-)
+var nativeDKIMSelectorPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,63}$`)
 
 func signNativeMailDKIM(message []byte) ([]byte, error) {
 	path := strings.TrimSpace(os.Getenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE"))
