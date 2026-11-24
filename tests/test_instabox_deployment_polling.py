@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +29,24 @@ class InstaBoxDeploymentPollingTests(unittest.TestCase):
         writer = DEPLOY_SCRIPT[start:end]
         self.assertIn("sed 's/^[[:space:]]*//; s/[[:space:]]*$//'", writer)
         self.assertLess(writer.index("value=\"$(printf"), writer.index("escaped_value="))
-        self.assertIn("preserve internal characters", writer)
+        with tempfile.TemporaryDirectory() as directory:
+            env_file = Path(directory) / ".env"
+            env_file.write_text("EXISTING=value\\n", encoding="utf-8")
+            subprocess.run(
+                [
+                    "bash", "-c",
+                    f'BASE_ENV="$1"; {writer}; write_env_value "$2" "$3"',
+                    "test", str(env_file), "TESTAGRAM_WEBAUTHN_RPID",
+                    "  ops.testagram.site  \\r\\n",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn(
+                "TESTAGRAM_WEBAUTHN_RPID=ops.testagram.site",
+                env_file.read_text(encoding="utf-8"),
+            )
 
     def test_success_marker_is_still_required(self):
         step = WORKFLOW.split("- name: Wait for deployment and report logs", 1)[1].split("\n      - name:", 1)[0]
