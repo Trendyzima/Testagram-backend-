@@ -19,8 +19,13 @@ import (
 
 // unverifiedCommunicationEncryptionState deliberately reports no E2EE capability
 // until a reviewed device-key and authenticated-encryption lifecycle is deployed.
-func unverifiedCommunicationEncryptionState() (bool, int64) {
-	return false, 0
+type communicationEncryptionStatus struct {
+	Enabled bool
+	Epoch int64
+}
+
+func unverifiedCommunicationEncryptionState() communicationEncryptionStatus {
+	return communicationEncryptionStatus{Enabled: false, Epoch: 0}
 }
 
 func newCallRoomFrom(random io.Reader) (string, error) {
@@ -449,7 +454,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			}
 			var meta any
 			_ = json.Unmarshal(metadata, &meta)
-			items = append(items, map[string]any{"id": id, "call_id": id, "conversation_id": cid, "created_by": creator, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": state, "e2ee_enabled": unverifiedCommunicationEncryptionState().0, "e2ee_epoch": unverifiedCommunicationEncryptionState().1, "metadata": meta, "created_at": created})
+			items = append(items, map[string]any{"id": id, "call_id": id, "conversation_id": cid, "created_by": creator, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": state, "e2ee_enabled": unverifiedCommunicationEncryptionState().Enabled, "e2ee_epoch": unverifiedCommunicationEncryptionState().Epoch, "metadata": meta, "created_at": created})
 		}
 		if rows.Err() != nil {
 			fail("CALL_HISTORY_FAILED", "Could not read call history", http.StatusServiceUnavailable)
