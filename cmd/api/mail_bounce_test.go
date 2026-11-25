@@ -172,3 +172,24 @@ func TestNativeBounceVERPTokenShape(t *testing.T) {
 		t.Fatalf("unexpected native bounce domain: %q", nativeBounceDomain)
 	}
 }
+
+func TestNativeBounceIngressSecretUsesHKDFSeparatedMailEncryptionKey(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("ab", 32))
+	got, ok := nativeBounceIngressSecret()
+	if !ok {
+		t.Fatal("expected a valid derived bounce ingress key")
+	}
+	const want = "5d510aa0f389f3275682dca6b659f310d9bb4e5902bc0f8f6eba10387743076a"
+	if got != want {
+		t.Fatalf("HKDF-derived bounce key = %q, want %q", got, want)
+	}
+}
+
+func TestNativeBounceIngressSecretRejectsInvalidMailEncryptionKey(t *testing.T) {
+	for _, key := range []string{"", "abcd", strings.Repeat("z", 64), strings.Repeat("ab", 31)} {
+		t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", key)
+		if got, ok := nativeBounceIngressSecret(); ok || got != "" {
+			t.Fatalf("invalid mail encryption key %q produced a bounce key", key)
+		}
+	}
+}
