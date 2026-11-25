@@ -497,11 +497,45 @@ func (s *service) socialReact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if inserted && authorID != userID {
-		eventKey := "like:" + postID + ":" + reactionID
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,kind,event_key)
-			VALUES($1,$2,$3,'like',$4) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, authorID, userID, postID, eventKey)
+		var aggregateID, windowStarted string
+		var reactionCount int
+		var actorIDs []string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO testagram_local.notification_reaction_aggregates(
+				post_id,recipient_id,window_started_at,last_reaction_at,reaction_count,latest_actor_id,actor_ids
+			) VALUES($1,$2,date_bin('15 minutes',now(),TIMESTAMPTZ '2000-01-01'),now(),1,$3,ARRAY[$3::uuid])
+			ON CONFLICT(post_id,recipient_id,window_started_at) DO UPDATE SET
+				last_reaction_at=now(),reaction_count=testagram_local.notification_reaction_aggregates.reaction_count+1,
+				latest_actor_id=EXCLUDED.latest_actor_id,
+				actor_ids=CASE WHEN $3::uuid=ANY(testagram_local.notification_reaction_aggregates.actor_ids)
+					THEN testagram_local.notification_reaction_aggregates.actor_ids
+					ELSE array_append(testagram_local.notification_reaction_aggregates.actor_ids,$3::uuid) END
+			RETURNING id::text,window_started_at::text,reaction_count,
+				ARRAY(SELECT unnest(actor_ids)::text)
+		`, postID, authorID, userID).Scan(&aggregateID, &windowStarted, &reactionCount, &actorIDs)
+		if err == nil {
+			eventKey := "reaction-aggregate:" + aggregateID
+			payload := map[string]any{"post_id": postID, "reaction_count": reactionCount, "actor_ids": actorIDs, "window_started_at": windowStarted}
+			err = publishNotificationEvent(ctx, tx, notificationEvent{
+				RecipientID: authorID, ActorID: userID, Type: "social.reactions.aggregated",
+				Key: eventKey, EntityType: "post", EntityID: postID, Payload: payload,
+			})
+			if err == nil {
+				raw, _ := json.Marshal(payload)
+				_, err = tx.Exec(ctx, `
+					UPDATE testagram_local.notification_events SET payload=$3::jsonb,actor_id=$2,occurred_at=now()
+					WHERE recipient_id=$1 AND event_key=$4
+				`, authorID, userID, string(raw), eventKey)
+				if err == nil {
+					_, err = tx.Exec(ctx, `
+						UPDATE testagram_local.notifications SET payload=$3::jsonb,actor_id=$2
+						WHERE recipient_id=$1 AND event_key=$4
+					`, authorID, userID, string(raw), eventKey)
+				}
+			}
+		}
 		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("REACTION_NOTIFICATION_FAILED", "Reaction and notification could not be saved", requestID))
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("REACTION_NOTIFICATION_FAILED", "Reaction and aggregate notification could not be saved", requestID))
 			return
 		}
 	}
