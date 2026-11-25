@@ -83,9 +83,23 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 	if kind=="tip"{outKind,inKind="tip_out","tip_in"}else if kind=="superchat"{outKind,inKind="superchat_out","superchat_in"}
 	if _,err=tx.Exec(ctx,`INSERT INTO testagram_local.wallet_transactions(user_id,transfer_id,kind,amount,currency)
 		VALUES($1,$2,$3,$4,$7),($5,$2,$6,$4,$7)`,sender,transferID,outKind,amount,recipient,inKind,senderCurrency);err!=nil{return "",false,err}
-	if _,err=tx.Exec(ctx,`INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
-		VALUES($1,$2,'wallet.transfer.received',jsonb_build_object('transfer_id',$3,'amount',$4,'currency',$5,'kind',$6),'wallet-transfer:'||$3)
-		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,recipient,sender,transferID,amount,senderCurrency,kind);err!=nil{return "",false,err}
+	eventPayload := map[string]any{"transfer_id": transferID, "amount": amount, "currency": senderCurrency, "kind": kind}
+	outKind, inKind := "wallet.transfer.sent", "wallet.transfer.received"
+	if kind == "tip" {
+		outKind, inKind = "wallet.tip.sent", "wallet.tip.received"
+	} else if kind == "superchat" {
+		outKind, inKind = "wallet.superchat.sent", "wallet.superchat.received"
+	}
+	if err = publishNotificationEvent(ctx, tx, notificationEvent{
+		RecipientID: sender, ActorID: recipient, Type: outKind,
+		Key: "wallet-transfer:" + transferID + ":sender:" + sender,
+		EntityType: "wallet_transfer", EntityID: transferID, Payload: eventPayload,
+	}); err != nil { return "", false, err }
+	if err = publishNotificationEvent(ctx, tx, notificationEvent{
+		RecipientID: recipient, ActorID: sender, Type: inKind,
+		Key: "wallet-transfer:" + transferID + ":recipient:" + recipient,
+		EntityType: "wallet_transfer", EntityID: transferID, Payload: eventPayload,
+	}); err != nil { return "", false, err }
 	return transferID,false,nil
 }
 
