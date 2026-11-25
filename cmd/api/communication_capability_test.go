@@ -55,11 +55,11 @@ func TestNewCallRoomReturnsUniqueIdentifiers(t *testing.T) {
 }
 
 func TestUnverifiedCommunicationEncryptionStateFailsClosed(t *testing.T) {
-	enabled, epoch := unverifiedCommunicationEncryptionState()
-	if enabled {
+	state := unverifiedCommunicationEncryptionState()
+	if state.Enabled {
 		t.Fatal("unverified communication encryption must never be reported as enabled")
 	}
-	if epoch != 0 {
-		t.Fatalf("unverified communication encryption epoch = %d, want 0", epoch)
+	if state.Epoch != 0 {
+		t.Fatalf("unverified communication encryption epoch = %d, want 0", state.Epoch)
 	}
 }
