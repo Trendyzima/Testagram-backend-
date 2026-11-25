@@ -224,8 +224,8 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter, r *http.Request, 
 		}
 		walletAmount := amount
 		fxRate := 1.0
-		referenceEntropy, entropyErr := newCallRoom()
-		if entropyErr != nil {
+		referenceEntropy := newCallRoom()
+		if referenceEntropy == "" {
 			fail("TOPUP_REFERENCE_ENTROPY_UNAVAILABLE", "Could not securely generate the payment request reference", http.StatusServiceUnavailable)
 			return true
 		}
