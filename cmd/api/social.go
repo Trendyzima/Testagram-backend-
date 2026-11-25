@@ -1026,8 +1026,11 @@ func (s *service) socialRespondFollowRequest(w http.ResponseWriter, r *http.Requ
 	_, err = tx.Exec(ctx, "UPDATE testagram_local.follows SET status=$3,updated_at=now() WHERE follower_id=$1 AND following_id=$2", requesterID, userID, newStatus)
 	if err == nil && accepted {
 		eventKey := fmt.Sprintf("follow-accepted:%s:%s:%d", requesterID, userID, createdAt.UnixNano())
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,event_key)
-			VALUES($1,$2,'follow_accepted',$3) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, requesterID, userID, eventKey)
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: requesterID, ActorID: userID, Type: "social.follow_accepted",
+			Key: eventKey, EntityType: "profile", EntityID: userID,
+			Payload: map[string]any{"follower_id": requesterID, "following_id": userID, "status": "accepted"},
+		})
 	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FOLLOW_REQUEST_UPDATE_FAILED", "Follow request could not be updated", requestID))
