@@ -163,7 +163,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			 FROM testagram_local.conversation_members cm JOIN testagram_local.accounts a ON a.user_id=cm.user_id
 			 WHERE cm.conversation_id=c.id AND cm.left_at IS NULL),'[]'::jsonb),
 			(SELECT count(*) FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.sender_id<>$1 AND m.deleted_at IS NULL AND m.created_at>COALESCE(me.last_read_at,'epoch'::timestamptz)),
-			(SELECT jsonb_build_object('id',m.id,'sender_id',m.sender_id,'created_at',m.created_at,'ciphertext',m.ciphertext,'media_type',m.media_type,'e2ee_enabled',m.e2ee_enabled,'e2ee_version',m.e2ee_version,'e2ee_epoch',m.e2ee_epoch)
+			(SELECT jsonb_build_object('id',m.id,'sender_id',m.sender_id,'created_at',m.created_at)
 			 FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC,m.id DESC LIMIT 1)
 			FROM testagram_local.conversations c JOIN testagram_local.conversation_members me ON me.conversation_id=c.id
 			WHERE me.user_id=$1 AND me.left_at IS NULL AND me.archived_at IS NULL
@@ -305,7 +305,9 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			var senderValue any
 			_ = json.Unmarshal(attachments, &attachmentValue)
 			_ = json.Unmarshal(senderJSON, &senderValue)
-			items = append(items, map[string]any{"id": id, "conversation_id": cid, "sender_id": sender, "created_at": created, "edited_at": edited, "deleted_at": deleted, "reply_to_message_id": reply, "shared_post_id": shared, "client_message_id": client, "delivered_at": delivered, "read_at": read, "e2ee_enabled": e2ee, "e2ee_version": version, "e2ee_epoch": epoch, "ciphertext": ciphertext, "nonce": nonce, "aad": aad, "attachment_metadata": attachmentValue, "sender": senderValue})
+			// No message envelope is considered verified until the reviewed device-key
+			// lifecycle is implemented. Do not expose caller/database flags as proof.
+			items = append(items, map[string]any{"id": id, "conversation_id": cid, "sender_id": sender, "created_at": created, "edited_at": edited, "deleted_at": deleted, "reply_to_message_id": reply, "shared_post_id": shared, "client_message_id": client, "delivered_at": delivered, "read_at": read, "e2ee_enabled": false, "sender": senderValue})
 		}
 		if rows.Err() != nil {
 			fail("MESSAGES_LIST_FAILED", "Could not read conversation messages", http.StatusServiceUnavailable)
@@ -441,7 +443,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			}
 			var meta any
 			_ = json.Unmarshal(metadata, &meta)
-			items = append(items, map[string]any{"id": id, "call_id": id, "conversation_id": cid, "created_by": creator, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": state, "e2ee_enabled": encrypted, "e2ee_epoch": epoch, "metadata": meta, "created_at": created})
+			items = append(items, map[string]any{"id": id, "call_id": id, "conversation_id": cid, "created_by": creator, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": state, "e2ee_enabled": false, "e2ee_epoch": int64(0), "metadata": meta, "created_at": created})
 		}
 		if rows.Err() != nil {
 			fail("CALL_HISTORY_FAILED", "Could not read call history", http.StatusServiceUnavailable)
