@@ -4,11 +4,11 @@ import "testing"
 
 func TestSocialListPinCapacityExceeded(t *testing.T) {
 	tests := []struct {
-		name             string
-		count            int64
-		currentlyPinned  bool
-		requestedPinned  bool
-		wantExceeded     bool
+		name            string
+		count           int64
+		currentlyPinned bool
+		requestedPinned bool
+		wantExceeded    bool
 	}{
 		{name: "pin below limit", count: 4, requestedPinned: true, wantExceeded: false},
 		{name: "pin at limit", count: 5, requestedPinned: true, wantExceeded: true},
