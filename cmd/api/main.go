@@ -1229,6 +1229,12 @@ func main() {
 	dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
 	dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
 	notificationStreamURL := strings.TrimRight(env("DATA_CENTRE_NOTIFICATION_STREAM_URL", ""), "/")
+	if notificationStreamURL != "" {
+		notificationStreamURL, err = validNotificationStreamOrigin(notificationStreamURL)
+		if err != nil {
+			log.Fatalf("configure private Data Centre notification stream: %v", err)
+		}
+	}
 	if dataCentreURL != "" || dataCentreToken != "" {
 		if dataCentreURL == "" || dataCentreToken == "" {
 			log.Fatal("DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN must be configured together")
