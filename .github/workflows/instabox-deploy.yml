@@ -922,14 +922,16 @@ jobs:
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           api_response="$tmp/signup-probe.json"
-          api_headers="$tmp/signup-probe.headers"
-          api_status="$(curl --silent --show-error --max-time 20 -D "$api_headers" -o "$api_response" -w '%{http_code}' -X POST \
+          # The canonical signup route is intentionally blocked before request-body
+          # parsing. Send a bodyless POST with no credentials and assert the explicit identity-review gate;
+          # this proves the live release matches Backend main without exercising a
+          # password error path or risking account creation/email delivery.
+          api_status="$(curl --silent --show-error --max-time 20 -o "$api_response" -w '%{http_code}' -X POST \
             "https://api.testagram.site/api/auth/signup" \
-            -H 'Content-Type: application/json' \
-            --data-binary '{"email":"signup-probe@example.invalid","username":"signup_probe","password":"short"}')"
+            -H 'Content-Type: application/json')"
           api_error="$(jq -r '.error.code // empty' "$api_response" 2>/dev/null || true)"
-          if [[ "$api_status" != "400" || "$api_error" != "INVALID_PASSWORD" ]]; then
-            echo "::error::Production native signup API did not reach password validation (HTTP $api_status, code=$api_error). No account was created."
+          if [[ "$api_status" != "403" || "$api_error" != "IDENTITY_REVIEW_REQUIRED" ]]; then
+            echo "::error::Production native signup must remain fail-closed behind identity evidence review and two-person approval (HTTP $api_status, code=$api_error). Refusing to continue."
             exit 1
           fi
           base="https://www.testagram.site"
