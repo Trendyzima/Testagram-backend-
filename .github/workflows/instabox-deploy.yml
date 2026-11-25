@@ -90,13 +90,17 @@ jobs:
     timeout-minutes: 5
     env:
       INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-      INSTABOX_MACHINE_ID: ${{ '' }}
+      INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
     steps:
       - name: Validate InstaBox diagnostic access
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "$INSTABOX_API_KEY" && -n "$INSTABOX_MACHINE_ID" ]] || { echo "::error::InstaBox API key or machine ID secret is missing."; exit 1; }
+          [[ -n "$INSTABOX_API_KEY" ]] || { echo "::error::Missing the existing INSTABOX_API_KEY repository secret."; exit 1; }
+          machines="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS -H "X-API-Key: $INSTABOX_API_KEY" "https://api.instabox.sh/v1/machines?limit=100")"
+          INSTABOX_MACHINE_ID="$(jq -r --arg name "$INSTABOX_MACHINE_NAME" '([.machines[] | select(.name == $name)][0].id) // empty' <<<"$machines")"
+          [[ -n "$INSTABOX_MACHINE_ID" ]] || { echo "::error::No InstaBox machine matches the existing machine-name setting."; exit 1; }
+          echo "Resolved the existing Testagram machine by its configured name; no machine-ID secret is required."
       - name: Inspect actual InstaBox SMTP egress without changing machine state
         shell: bash
         run: |
@@ -191,11 +195,10 @@ jobs:
     timeout-minutes: 55
     env:
       INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
-      INSTABOX_MACHINE_ID: ${{ '' }}
       INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
       TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4: ${{ vars.TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4 || '' }}
-      CLOUDFLARE_DNS_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_BOUNCE_WORKER_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_WORKERS_DEPLOY_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
       TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED || 'false' }}
@@ -258,7 +261,7 @@ jobs:
           API="https://api.instabox.sh"
           EXPECTED_MACHINE_NAME="${INSTABOX_MACHINE_NAME:-testagramdb}"
           if [[ -z "${INSTABOX_API_KEY:-}" ]]; then
-            echo "::error::Missing TESTAGRAM_DB_API repository secret. Add the InstaBox API key there."
+            echo "::error::Missing the existing INSTABOX_API_KEY repository secret."
             exit 1
           fi
           if [[ -z "$EXPECTED_MACHINE_NAME" ]]; then
@@ -314,14 +317,14 @@ jobs:
           fi
 
           if [[ -z "$machine_id" ]]; then
-            echo "::error::No InstaBox machine named '$EXPECTED_MACHINE_NAME' was found. Set INSTABOX_MACHINE_ID only if it identifies that exact machine."
+            echo "::error::No InstaBox machine named '$EXPECTED_MACHINE_NAME' was found. Set the existing INSTABOX_MACHINE_NAME variable only if it identifies that exact machine."
             exit 1
           fi
 
           machine="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
           actual_machine_name="$(jq -r '.name // empty' <<<"$machine")"
           if [[ "$actual_machine_name" != "$EXPECTED_MACHINE_NAME" ]]; then
-            echo "::error::Refusing to deploy to machine '$actual_machine_name'; expected '$EXPECTED_MACHINE_NAME'. Check INSTABOX_MACHINE_ID and INSTABOX_MACHINE_NAME."
+            echo "::error::Refusing to deploy to machine '$actual_machine_name'; expected '$EXPECTED_MACHINE_NAME'. Check the configured machine name."
             exit 1
           fi
           state="$(jq -r '.state // empty' <<<"$machine")"
