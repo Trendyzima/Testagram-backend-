@@ -89,9 +89,12 @@ export default {
       .trim();
     if (
       !/^mx\.cloudflare\.net\s*;/i.test(trustedAuthenticationResult) ||
-      !/\bdmarc=pass\b/i.test(trustedAuthenticationResult)
+      !/\b(?:spf|dkim|dmarc)=pass\b/i.test(trustedAuthenticationResult)
     ) {
-      message.setReject("Cloudflare DMARC authentication did not pass");
+      // A valid DSN may be emitted by an MTA whose From domain does not align
+      // for DMARC. Accept a Cloudflare-verified SPF, DKIM, or DMARC pass; the
+      // opaque VERP token and Testagram HMAC remain the authoritative correlation.
+      message.setReject("Cloudflare email authentication did not pass");
       return;
     }
     const secret = env.TESTAGRAM_BOUNCE_INGRESS_SECRET;
