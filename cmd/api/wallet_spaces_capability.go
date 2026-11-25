@@ -45,44 +45,101 @@ func moneyAmount(value any) (string, float64, bool) {
 
 var errWalletIdempotencyConflict = errors.New("wallet idempotency key payload conflict")
 
-func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount, kind, note, key string) (string,bool,error) {
-	_,err:=tx.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING",sender)
-	if err!=nil{return "",false,err}
+func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount, kind, note, key string) (string, bool, error) {
+	_, err := tx.Exec(ctx, "INSERT INTO testagram_local.wallets(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING", sender)
+	if err != nil {
+		return "", false, err
+	}
 	var senderCurrency string
-	if err=tx.QueryRow(ctx,"SELECT currency FROM testagram_local.wallets WHERE user_id=$1",sender).Scan(&senderCurrency);err!=nil{return "",false,err}
-	senderCurrency=strings.TrimSpace(senderCurrency)
-	if senderCurrency!="KES"{return "",false,pgx.ErrNoRows}
-	_,err=tx.Exec(ctx,"INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",recipient,senderCurrency)
-	if err!=nil{return "",false,err}
-	rows,err:=tx.Query(ctx,`SELECT w.user_id::text,w.balance::text,w.currency,w.status
-		FROM testagram_local.wallets w WHERE w.user_id=$1 OR w.user_id=$2 ORDER BY w.user_id FOR UPDATE`,sender,recipient)
-	if err!=nil{return "",false,err}
-	balances:=map[string]float64{};currencies:=map[string]string{};statuses:=map[string]string{}
-	for rows.Next(){var id,balance,currency,status string;if err=rows.Scan(&id,&balance,&currency,&status);err!=nil{rows.Close();return "",false,err};v,e:=strconv.ParseFloat(balance,64);if e!=nil{rows.Close();return "",false,e};balances[id]=v;currencies[id]=strings.TrimSpace(currency);statuses[id]=status}
-	if err=rows.Err();err!=nil{rows.Close();return "",false,err};rows.Close()
-	if len(balances)!=2||statuses[sender]!="active"||statuses[recipient]!="active"||currencies[sender]!=currencies[recipient]||currencies[sender]!=senderCurrency{return "",false,pgx.ErrNoRows}
-	sum:=sha256.Sum256([]byte(strings.Join([]string{recipient,amount,senderCurrency,kind,note},"\\n")))
-	requestHash:=hex.EncodeToString(sum[:])
+	if err = tx.QueryRow(ctx, "SELECT currency FROM testagram_local.wallets WHERE user_id=$1", sender).Scan(&senderCurrency); err != nil {
+		return "", false, err
+	}
+	senderCurrency = strings.TrimSpace(senderCurrency)
+	if senderCurrency != "KES" {
+		return "", false, pgx.ErrNoRows
+	}
+	_, err = tx.Exec(ctx, "INSERT INTO testagram_local.wallets(user_id,currency) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING", recipient, senderCurrency)
+	if err != nil {
+		return "", false, err
+	}
+	rows, err := tx.Query(ctx, `SELECT w.user_id::text,w.balance::text,w.currency,w.status
+		FROM testagram_local.wallets w WHERE w.user_id=$1 OR w.user_id=$2 ORDER BY w.user_id FOR UPDATE`, sender, recipient)
+	if err != nil {
+		return "", false, err
+	}
+	balances := map[string]float64{}
+	currencies := map[string]string{}
+	statuses := map[string]string{}
+	for rows.Next() {
+		var id, balance, currency, status string
+		if err = rows.Scan(&id, &balance, &currency, &status); err != nil {
+			rows.Close()
+			return "", false, err
+		}
+		value, parseErr := strconv.ParseFloat(balance, 64)
+		if parseErr != nil {
+			rows.Close()
+			return "", false, parseErr
+		}
+		balances[id] = value
+		currencies[id] = strings.TrimSpace(currency)
+		statuses[id] = status
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return "", false, err
+	}
+	rows.Close()
+	if len(balances) != 2 || statuses[sender] != "active" || statuses[recipient] != "active" ||
+		currencies[sender] != currencies[recipient] || currencies[sender] != senderCurrency {
+		return "", false, pgx.ErrNoRows
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{recipient, amount, senderCurrency, kind, note}, "\\n")))
+	requestHash := hex.EncodeToString(sum[:])
+
 	// Recheck after acquiring both wallet row locks so concurrent retries cannot
 	// double-debit or create duplicate ledger entries.
-	var existingID,existingHash string
-	err=tx.QueryRow(ctx,"SELECT id::text,request_hash FROM testagram_local.wallet_transfers WHERE sender_id=$1 AND idempotency_key=$2",sender,key).Scan(&existingID,&existingHash)
-	if err==nil{if existingHash!=requestHash{return "",false,errWalletIdempotencyConflict};return existingID,true,nil}
-	if err!=pgx.ErrNoRows{return "",false,err}
-	amountValue,_:=strconv.ParseFloat(amount,64)
-	if balances[sender]+0.000001<amountValue{return "",false,pgx.ErrNoRows}
+	var existingID, existingHash string
+	err = tx.QueryRow(ctx, "SELECT id::text,request_hash FROM testagram_local.wallet_transfers WHERE sender_id=$1 AND idempotency_key=$2", sender, key).Scan(&existingID, &existingHash)
+	if err == nil {
+		if existingHash != requestHash {
+			return "", false, errWalletIdempotencyConflict
+		}
+		return existingID, true, nil
+	}
+	if err != pgx.ErrNoRows {
+		return "", false, err
+	}
+	amountValue, _ := strconv.ParseFloat(amount, 64)
+	if balances[sender]+0.000001 < amountValue {
+		return "", false, pgx.ErrNoRows
+	}
 	var transferID string
-	err=tx.QueryRow(ctx,`INSERT INTO testagram_local.wallet_transfers(sender_id,recipient_id,amount,currency,kind,note,idempotency_key,request_hash)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text`,sender,recipient,amount,senderCurrency,kind,note,key,requestHash).Scan(&transferID)
-	if err!=nil{return "",false,err}
-	if _,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance-$2,updated_at=now() WHERE user_id=$1",sender,amount);err!=nil{return "",false,err}
-	if _,err=tx.Exec(ctx,"UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1",recipient,amount);err!=nil{return "",false,err}
-	if _,err=tx.Exec(ctx,`INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,user_id,direction,amount,currency)
-		VALUES($1,$2,'debit',$3,$5),($1,$4,'credit',$3,$5)`,transferID,sender,amount,recipient,senderCurrency);err!=nil{return "",false,err}
-	outKind,inKind:="transfer_out","transfer_in"
-	if kind=="tip"{outKind,inKind="tip_out","tip_in"}else if kind=="superchat"{outKind,inKind="superchat_out","superchat_in"}
-	if _,err=tx.Exec(ctx,`INSERT INTO testagram_local.wallet_transactions(user_id,transfer_id,kind,amount,currency)
-		VALUES($1,$2,$3,$4,$7),($5,$2,$6,$4,$7)`,sender,transferID,outKind,amount,recipient,inKind,senderCurrency);err!=nil{return "",false,err}
+	err = tx.QueryRow(ctx, `INSERT INTO testagram_local.wallet_transfers(sender_id,recipient_id,amount,currency,kind,note,idempotency_key,request_hash)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id::text`, sender, recipient, amount, senderCurrency, kind, note, key, requestHash).Scan(&transferID)
+	if err != nil {
+		return "", false, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE testagram_local.wallets SET balance=balance-$2,updated_at=now() WHERE user_id=$1", sender, amount); err != nil {
+		return "", false, err
+	}
+	if _, err = tx.Exec(ctx, "UPDATE testagram_local.wallets SET balance=balance+$2,updated_at=now() WHERE user_id=$1", recipient, amount); err != nil {
+		return "", false, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO testagram_local.wallet_ledger_entries(transfer_id,user_id,direction,amount,currency)
+		VALUES($1,$2,'debit',$3,$5),($1,$4,'credit',$3,$5)`, transferID, sender, amount, recipient, senderCurrency); err != nil {
+		return "", false, err
+	}
+	outKind, inKind := "transfer_out", "transfer_in"
+	if kind == "tip" {
+		outKind, inKind = "tip_out", "tip_in"
+	} else if kind == "superchat" {
+		outKind, inKind = "superchat_out", "superchat_in"
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO testagram_local.wallet_transactions(user_id,transfer_id,kind,amount,currency)
+		VALUES($1,$2,$3,$4,$7),($5,$2,$6,$4,$7)`, sender, transferID, outKind, amount, recipient, inKind, senderCurrency); err != nil {
+		return "", false, err
+	}
 	eventPayload := map[string]any{"transfer_id": transferID, "amount": amount, "currency": senderCurrency, "kind": kind}
 	eventOutKind, eventInKind := "wallet.transfer.sent", "wallet.transfer.received"
 	if kind == "tip" {
@@ -94,13 +151,17 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 		RecipientID: sender, ActorID: recipient, Type: eventOutKind,
 		Key: "wallet-transfer:" + transferID + ":sender:" + sender,
 		EntityType: "wallet_transfer", EntityID: transferID, Payload: eventPayload,
-	}); err != nil { return "", false, err }
+	}); err != nil {
+		return "", false, err
+	}
 	if err = publishNotificationEvent(ctx, tx, notificationEvent{
 		RecipientID: recipient, ActorID: sender, Type: eventInKind,
 		Key: "wallet-transfer:" + transferID + ":recipient:" + recipient,
 		EntityType: "wallet_transfer", EntityID: transferID, Payload: eventPayload,
-	}); err != nil { return "", false, err }
-	return transferID,false,nil
+	}); err != nil {
+		return "", false, err
+	}
+	return transferID, false, nil
 }
 
 func (s *service) nativeWalletSpaceCapability(w http.ResponseWriter,r *http.Request,requestID string,body capabilityRequest) bool {
