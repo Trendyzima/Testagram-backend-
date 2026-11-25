@@ -312,6 +312,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		if got == "" {
 			t.Fatalf("redemption omitted canonical user ID: %#v", body)
 		}
+		if response.Code == http.StatusAccepted && body["email_queued"] != true {
+			t.Fatalf("new provisioning must report durable email enqueue, not inferred delivery: %#v", body)
+		}
 		if userID != "" && userID != got {
 			t.Fatalf("concurrent redemption created different users: %q != %q", userID, got)
 		}
@@ -395,6 +398,13 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	router.ServeHTTP(resendResp, resendReq)
 	if resendResp.Code != http.StatusAccepted {
 		t.Fatalf("native verification resend status=%d body=%s", resendResp.Code, resendResp.Body.String())
+	}
+	var resendBody map[string]any
+	if err := json.Unmarshal(resendResp.Body.Bytes(), &resendBody); err != nil {
+		t.Fatal(err)
+	}
+	if resendBody["email_queued"] != true {
+		t.Fatalf("resend must report durable outbox enqueue without claiming mailbox delivery: %#v", resendBody)
 	}
 	var rotatedVerificationHash []byte
 	if err := db.QueryRow(ctx, `
