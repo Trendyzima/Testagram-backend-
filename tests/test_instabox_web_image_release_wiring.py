@@ -22,7 +22,12 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         self.assertIn('"$api_response"', workflow)
         self.assertIn('"$api_status" != "403"', workflow)
         self.assertIn('"$api_error" != "IDENTITY_REVIEW_REQUIRED"', workflow)
-        self.assertIn("bodyless POST", workflow)
+        probe_start = workflow.index('api_status="$(curl')
+        probe_end = workflow.index(')"', probe_start)
+        signup_probe = workflow[probe_start:probe_end]
+        self.assertIn("-X POST", signup_probe)
+        self.assertNotIn("--data", signup_probe)
+        self.assertNotIn(" -d ", signup_probe)
         self.assertNotIn("INVALID_PASSWORD", workflow)
         self.assertNotIn('"password":"short"', workflow)
         self.assertIn('"/?mode=signup"', workflow)
