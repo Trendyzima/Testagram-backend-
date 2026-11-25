@@ -134,10 +134,14 @@ RETURNING e2ee_enabled`, conversationID, sender, "testagram-ci-"+suffix).Scan(&c
 		t.Fatal("new call session must not claim media end-to-end encryption before a verified media lifecycle exists")
 	}
 	var messageID string
+	var messageE2EEEnabled bool
 	if err := tx.QueryRow(ctx, `
 INSERT INTO testagram_local.messages(conversation_id,sender_id,body)
-VALUES($1,$2,'') RETURNING id::text`, conversationID, sender).Scan(&messageID); err != nil {
+VALUES($1,$2,'') RETURNING id::text,e2ee_enabled`, conversationID, sender).Scan(&messageID, &messageE2EEEnabled); err != nil {
 		t.Fatalf("insert message resolver fixture: %v", err)
+	}
+	if messageE2EEEnabled {
+		t.Fatal("new messages must not claim end-to-end encryption before a verified device-key lifecycle exists")
 	}
 	var resolverCallID string
 	if err := tx.QueryRow(ctx, `

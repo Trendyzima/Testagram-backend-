@@ -154,7 +154,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			 FROM testagram_local.conversation_members cm JOIN testagram_local.accounts a ON a.user_id=cm.user_id
 			 WHERE cm.conversation_id=c.id AND cm.left_at IS NULL),'[]'::jsonb),
 			(SELECT count(*) FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.sender_id<>$1 AND m.deleted_at IS NULL AND m.created_at>COALESCE(me.last_read_at,'epoch'::timestamptz)),
-			(SELECT jsonb_build_object('id',m.id,'sender_id',m.sender_id,'created_at',m.created_at,'ciphertext',m.ciphertext,'media_type',m.media_type)
+			(SELECT jsonb_build_object('id',m.id,'sender_id',m.sender_id,'created_at',m.created_at,'ciphertext',m.ciphertext,'media_type',m.media_type,'e2ee_enabled',m.e2ee_enabled,'e2ee_version',m.e2ee_version,'e2ee_epoch',m.e2ee_epoch)
 			 FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC,m.id DESC LIMIT 1)
 			FROM testagram_local.conversations c JOIN testagram_local.conversation_members me ON me.conversation_id=c.id
 			WHERE me.user_id=$1 AND me.left_at IS NULL AND me.archived_at IS NULL
@@ -305,123 +305,15 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil})
 		return true
 	case "testagram.messages.send_encrypted":
-		conversationID := str("conversation_id")
-		ciphertext := str("ciphertext")
-		nonce := str("nonce")
-		clientID := str("client_message_id")
-		if clientID == "" {
-			clientID = strings.TrimPrefix(newCallRoom(), "testagram-")
-		}
-		epoch := intVal("e2ee_epoch", 1, 1, 1<<30)
-		if !socialUUIDPattern.MatchString(conversationID) || ciphertext == "" || len(ciphertext) > 32768 || nonce == "" || len(nonce) > 512 || epoch < 1 || clientID == "" || len(clientID) > 128 {
-			fail("INVALID_MESSAGE", "Encrypted message fields are invalid", http.StatusBadRequest)
-			return true
-		}
-		tx, e := s.db.Begin(ctx)
-		if e != nil {
-			fail("MESSAGE_SEND_FAILED", "Could not begin encrypted message transaction", http.StatusServiceUnavailable)
-			return true
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		var id string
-		var inserted bool
-		e = tx.QueryRow(ctx, `INSERT INTO testagram_local.messages(conversation_id,sender_id,body,client_message_id,reply_to_message_id,shared_post_id,ciphertext,nonce,aad,e2ee_enabled,e2ee_version,e2ee_epoch)
-			SELECT $1,$2,'',$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,TRUE,'v1',$9
-			WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)
-			ON CONFLICT(sender_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id
-			RETURNING id::text,(xmax=0)`,
-			conversationID, userID, clientID, str("reply_to_message_id"), str("shared_post_id"), ciphertext, nonce, str("aad"), epoch).Scan(&id, &inserted)
-		if errors.Is(e, pgx.ErrNoRows) {
-			fail("CONVERSATION_ACCESS_DENIED", "Conversation membership is required", http.StatusForbidden)
-			return true
-		}
-		if e != nil {
-			fail("MESSAGE_SEND_FAILED", "Could not save encrypted message", http.StatusServiceUnavailable)
-			return true
-		}
-		_, e = tx.Exec(ctx, "UPDATE testagram_local.conversations SET updated_at=now() WHERE id=$1", conversationID)
-		if e == nil {
-			_, e = tx.Exec(ctx, `INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
-			VALUES($1,'message.created',$2,$3,jsonb_build_object('message_id',$3,'conversation_id',$2,'sender_id',$4,'encrypted',true))
-			ON CONFLICT(event_key) DO NOTHING`, "message:"+id, conversationID, id, userID)
-		}
-		if e == nil && inserted {
-			rows, queryErr := tx.Query(ctx, `SELECT user_id::text FROM testagram_local.conversation_members
-				WHERE conversation_id=$1 AND user_id<>$2 AND left_at IS NULL ORDER BY user_id`, conversationID, userID)
-			if queryErr != nil {
-				e = queryErr
-			} else {
-				recipients := make([]string, 0)
-				for rows.Next() {
-					var recipient string
-					if scanErr := rows.Scan(&recipient); scanErr != nil {
-						e = scanErr
-						break
-					}
-					recipients = append(recipients, recipient)
-				}
-				if e == nil {
-					e = rows.Err()
-				}
-				rows.Close()
-				for _, recipient := range recipients {
-					if e != nil {
-						break
-					}
-					e = publishNotificationEvent(ctx, tx, notificationEvent{
-						RecipientID: recipient, ActorID: userID, Type: "message.new",
-						Key:        "message:" + id + ":recipient:" + recipient,
-						EntityType: "message", EntityID: id,
-						Payload: map[string]any{"conversation_id": conversationID, "message_id": id, "encrypted": true},
-					})
-				}
-			}
-		}
-		if e == nil {
-			e = tx.Commit(ctx)
-		}
-		if e != nil {
-			fail("MESSAGE_SEND_FAILED", "Could not commit encrypted message and realtime event", http.StatusServiceUnavailable)
-			return true
-		}
-		writeJSON(w, http.StatusCreated, map[string]any{"message_id": id, "encrypted": true})
+		// A caller-supplied ciphertext envelope is not proof of end-to-end
+		// encryption. Until device registration, authenticated recipient-key
+		// verification, key rotation/recovery and client-side AEAD are live,
+		// fail closed rather than persisting arbitrary bytes as E2EE.
+		fail("E2EE_NOT_READY", "Secure messaging is unavailable until Testagram device-key and recipient-verification flows are enabled", http.StatusServiceUnavailable)
 		return true
 	case "testagram.messages.edit_encrypted":
-		id := str("message_id")
-		ciphertext := str("ciphertext")
-		nonce := str("nonce")
-		epoch := intVal("e2ee_epoch", 1, 1, 1<<30)
-		if !socialUUIDPattern.MatchString(id) || ciphertext == "" || nonce == "" || epoch < 1 {
-			fail("INVALID_MESSAGE", "Encrypted message fields are invalid", http.StatusBadRequest)
-			return true
-		}
-		tx, e := s.db.Begin(ctx)
-		if e != nil {
-			fail("MESSAGE_EDIT_FAILED", "Could not begin message edit", http.StatusServiceUnavailable)
-			return true
-		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
-		var conversationID string
-		e = tx.QueryRow(ctx, `UPDATE testagram_local.messages SET ciphertext=$3,nonce=$4,aad=$5,e2ee_epoch=$6,e2ee_enabled=TRUE,e2ee_version='v1',edited_at=now()
-			WHERE id=$1 AND sender_id=$2 AND deleted_at IS NULL RETURNING conversation_id::text`, id, userID, ciphertext, nonce, str("aad"), epoch).Scan(&conversationID)
-		if e != nil {
-			if errors.Is(e, pgx.ErrNoRows) {
-				fail("MESSAGE_NOT_FOUND", "Message was not found or cannot be edited", http.StatusNotFound)
-			} else {
-				fail("MESSAGE_EDIT_FAILED", "Could not update encrypted message", http.StatusServiceUnavailable)
-			}
-			return true
-		}
-		_, e = tx.Exec(ctx, `INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
-			VALUES($1,'message.updated',$2,$3,jsonb_build_object('message_id',$3,'conversation_id',$2,'sender_id',$4,'encrypted',true)) ON CONFLICT(event_key) DO NOTHING`, "message:"+id+":updated:"+strings.TrimPrefix(newCallRoom(), "testagram-"), conversationID, id, userID)
-		if e == nil {
-			e = tx.Commit(ctx)
-		}
-		if e != nil {
-			fail("MESSAGE_EDIT_FAILED", "Could not commit message edit and realtime event", http.StatusServiceUnavailable)
-			return true
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"message_id": id, "edited": true})
+		// Editing must use the same verified cryptographic lifecycle as sending.
+		fail("E2EE_NOT_READY", "Secure message editing is unavailable until Testagram device-key and recipient-verification flows are enabled", http.StatusServiceUnavailable)
 		return true
 	case "testagram.messages.delete":
 		id := str("message_id")
