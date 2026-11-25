@@ -41,13 +41,13 @@ func TestNewCallRoomFromFailsClosedWithoutEntropy(t *testing.T) {
 }
 
 func TestNewCallRoomReturnsUniqueIdentifiers(t *testing.T) {
-	first, err := newCallRoom()
-	if err != nil {
-		t.Fatalf("first call room generation failed: %v", err)
+	first := newCallRoom()
+	if first == "" {
+		t.Fatal("first call room generation failed")
 	}
-	second, err := newCallRoom()
-	if err != nil {
-		t.Fatalf("second call room generation failed: %v", err)
+	second := newCallRoom()
+	if second == "" {
+		t.Fatal("second call room generation failed")
 	}
 	if first == second {
 		t.Fatal("call room identifiers must be unique")
