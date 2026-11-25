@@ -97,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$INSTABOX_API_KEY" ]] || { echo "::error::Missing the existing INSTABOX_API_KEY repository secret."; exit 1; }
-          machines="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS -H "X-API-Key: $INSTABOX_API_KEY" "https://api.instabox.sh/v1/machines?limit=100")"
+          machines="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS -H "X-API-Key: $INSTABOX_API_KEY" -H "Idempotency-Key: testagram-list-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "https://api.instabox.sh/v1/machines?limit=100")"
           INSTABOX_MACHINE_ID="$(jq -r --arg name "$INSTABOX_MACHINE_NAME" '([.machines[] | select(.name == $name)][0].id) // empty' <<<"$machines")"
           [[ -n "$INSTABOX_MACHINE_ID" ]] || { echo "::error::No InstaBox machine matches the existing machine-name setting."; exit 1; }
           echo "Resolved the existing Testagram machine by its configured name; no machine-ID secret is required."
@@ -269,7 +269,7 @@ jobs:
           fi
 
           machines="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS \
-            -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
+            -H "X-API-Key: $INSTABOX_API_KEY" -H "Idempotency-Key: testagram-list-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$API/v1/machines?limit=100")"
           if ! jq -e '.machines | type == "array"' <<<"$machines" >/dev/null; then
             echo "::error::InstaBox machine inventory response is malformed."
             exit 1
