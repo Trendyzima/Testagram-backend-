@@ -828,6 +828,20 @@ func (s *service) socialNotifications(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
+	category, categoryErr := parseNotificationCategory(r.URL.Query().Get("category"))
+	if categoryErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_NOTIFICATION_CATEGORY", "category must be all, mentions, likes, follows, replies, reposts, messages, wallet, or system", requestID))
+		return
+	}
+	unreadOnly := false
+	if raw := strings.TrimSpace(r.URL.Query().Get("unread_only")); raw != "" {
+		parsed, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_UNREAD_FILTER", "unread_only must be a boolean", requestID))
+			return
+		}
+		unreadOnly = parsed
+	}
 	var beforeAt any
 	var beforeID any
 	if raw := r.URL.Query().Get("cursor"); raw != "" {
@@ -838,12 +852,43 @@ func (s *service) socialNotifications(w http.ResponseWriter, r *http.Request) {
 		}
 		beforeAt, beforeID = cursor.CreatedAt, cursor.ID
 	}
+	var unreadCount int64
+	if err := s.db.QueryRow(r.Context(), `SELECT count(*) FROM testagram_local.notifications WHERE recipient_id=$1 AND read_at IS NULL`, userID).Scan(&unreadCount); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATIONS_UNAVAILABLE", "Notification counts could not be loaded", requestID))
+		return
+	}
+	categoryRows, err := s.db.Query(r.Context(), `SELECT `+notificationCategorySQL+` AS category,count(*) FILTER (WHERE n.read_at IS NULL)
+		FROM testagram_local.notifications n WHERE n.recipient_id=$1 GROUP BY 1`, userID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATIONS_UNAVAILABLE", "Notification counts could not be loaded", requestID))
+		return
+	}
+	categoryUnread := map[string]int64{"mentions": 0, "likes": 0, "follows": 0, "replies": 0, "reposts": 0, "messages": 0, "wallet": 0, "system": 0}
+	for categoryRows.Next() {
+		var name string
+		var count int64
+		if err := categoryRows.Scan(&name, &count); err != nil {
+			categoryRows.Close()
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATIONS_UNAVAILABLE", "Notification counts could not be decoded", requestID))
+			return
+		}
+		categoryUnread[name] = count
+	}
+	if err := categoryRows.Err(); err != nil {
+		categoryRows.Close()
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATIONS_UNAVAILABLE", "Notification counts could not be loaded", requestID))
+		return
+	}
+	categoryRows.Close()
 	rows, err := s.db.Query(r.Context(), `SELECT n.id::text,n.kind,n.actor_id::text,n.post_id::text,n.reply_id::text,
 		n.payload,n.read_at,n.created_at,a.username,a.display_name,a.avatar_key
 		FROM testagram_local.notifications n
 		LEFT JOIN testagram_local.accounts a ON a.user_id=n.actor_id
-		WHERE n.recipient_id=$1 AND ($2::timestamptz IS NULL OR (n.created_at,n.id)<($2::timestamptz,$3::uuid))
-		ORDER BY n.created_at DESC,n.id DESC LIMIT $4`, userID, beforeAt, beforeID, limit+1)
+		WHERE n.recipient_id=$1
+		  AND ($2::timestamptz IS NULL OR (n.created_at,n.id)<($2::timestamptz,$3::uuid))
+		  AND ($4='all' OR `+notificationCategorySQL+`=$4)
+		  AND (NOT $5::boolean OR n.read_at IS NULL)
+		ORDER BY n.created_at DESC,n.id DESC LIMIT $6`, userID, beforeAt, beforeID, category, unreadOnly, limit+1)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATIONS_UNAVAILABLE", "Notifications could not be loaded", requestID))
 		return
@@ -864,7 +909,7 @@ func (s *service) socialNotifications(w http.ResponseWriter, r *http.Request) {
 		}
 		var decodedPayload map[string]any
 		_ = json.Unmarshal(payload, &decodedPayload)
-		item := map[string]any{"id": id, "kind": kind, "actor_id": actorID, "post_id": postID, "reply_id": replyID, "payload": decodedPayload, "read_at": readAt, "created_at": createdAt}
+		item := map[string]any{"id": id, "kind": kind, "category": notificationCategory(kind), "actor_id": actorID, "post_id": postID, "reply_id": replyID, "payload": decodedPayload, "read_at": readAt, "created_at": createdAt}
 		if actorID != nil {
 			item["actor"] = map[string]any{"id": actorID, "username": username, "display_name": displayName, "avatar_key": avatarKey}
 		}
@@ -882,7 +927,7 @@ func (s *service) socialNotifications(w http.ResponseWriter, r *http.Request) {
 		items = items[:limit]
 		nextCursor = encodeSocialCursor(last)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items, "next_cursor": nextCursor}, "error": nil, "request_id": requestID})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"items": items, "next_cursor": nextCursor, "unread_count": unreadCount, "category_unread_counts": categoryUnread}, "error": nil, "request_id": requestID})
 }
 
 func (s *service) socialMarkNotificationRead(w http.ResponseWriter, r *http.Request) {
