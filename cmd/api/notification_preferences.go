@@ -35,8 +35,8 @@ func (s *service) notificationPreferences(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok": true,
 			"data": map[string]any{
-				"push_social_enabled": social,
-				"push_wallet_enabled": wallet,
+				"push_social_enabled":   social,
+				"push_wallet_enabled":   wallet,
 				"push_messages_enabled": messages,
 			},
 			"error": nil, "request_id": requestID,
