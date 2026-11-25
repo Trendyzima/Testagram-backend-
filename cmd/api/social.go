@@ -513,9 +513,12 @@ func (s *service) socialReact(w http.ResponseWriter, r *http.Request) {
 			ON CONFLICT(post_id,recipient_id,window_started_at) DO UPDATE SET
 				last_reaction_at=now(),reaction_count=testagram_local.notification_reaction_aggregates.reaction_count+1,
 				latest_actor_id=EXCLUDED.latest_actor_id,
-				actor_ids=CASE WHEN $3::uuid=ANY(testagram_local.notification_reaction_aggregates.actor_ids)
+				actor_ids=CASE
+					WHEN $3::uuid=ANY(testagram_local.notification_reaction_aggregates.actor_ids)
+					  OR cardinality(testagram_local.notification_reaction_aggregates.actor_ids)>=5
 					THEN testagram_local.notification_reaction_aggregates.actor_ids
-					ELSE array_append(testagram_local.notification_reaction_aggregates.actor_ids,$3::uuid) END
+					ELSE array_append(testagram_local.notification_reaction_aggregates.actor_ids,$3::uuid)
+				END
 			RETURNING id::text,window_started_at::text,reaction_count,
 				ARRAY(SELECT unnest(actor_ids)::text)
 		`, postID, authorID, userID).Scan(&aggregateID, &windowStarted, &reactionCount, &actorIDs)
@@ -534,7 +537,7 @@ func (s *service) socialReact(w http.ResponseWriter, r *http.Request) {
 				`, authorID, userID, string(raw), eventKey)
 				if err == nil {
 					_, err = tx.Exec(ctx, `
-						UPDATE testagram_local.notifications SET payload=$3::jsonb,actor_id=$2
+						UPDATE testagram_local.notifications SET payload=$3::jsonb,actor_id=$2,created_at=now()
 						WHERE recipient_id=$1 AND event_key=$4
 					`, authorID, userID, string(raw), eventKey)
 				}
