@@ -188,6 +188,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn('--arg cmd "bash -s"', script)
         self.assertIn('--arg stdin "$REMOTE_COMMAND"', script)
         self.assertIn("'{cmd:$cmd,stdin:$stdin,envs:{", script)
+        self.assertIn("--data-binary @-", script)
+        self.assertNotIn('-d "$payload" "$API/v1/machines/$MACHINE_ID/exec"', script)
         self.assertIn("execution outcome is unknown. Do not retry automatically.", script)
         self.assertNotIn("curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST", script)
 
