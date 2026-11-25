@@ -198,7 +198,6 @@ func TestNativeSignupFailsClosedBeforeCreatingIdentityOrEmail(t *testing.T) {
 	}
 }
 
-
 func TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("7b", 32))
 	db := nativeRecoveryTestDatabase(t)
