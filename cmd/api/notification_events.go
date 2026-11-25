@@ -74,13 +74,12 @@ func publishNotificationEvent(ctx context.Context, tx pgx.Tx, event notification
 			SELECT 1 FROM testagram_local.push_devices d
 			WHERE d.user_id=$2 AND d.enabled=TRUE
 		)
-		AND EXISTS (
-			SELECT 1 FROM testagram_local.notification_preferences p
-			WHERE p.user_id=$2 AND
-				CASE WHEN $3 LIKE 'wallet.%' THEN p.push_wallet_enabled
-				     WHEN $3 LIKE 'message.%' THEN p.push_messages_enabled
-				     ELSE p.push_social_enabled END
-		)
+		AND COALESCE((
+			SELECT CASE WHEN $3 LIKE 'wallet.%' THEN p.push_wallet_enabled
+			            WHEN $3 LIKE 'message.%' THEN p.push_messages_enabled
+			            ELSE p.push_social_enabled END
+			FROM testagram_local.notification_preferences p WHERE p.user_id=$2
+		),TRUE)
 		ON CONFLICT(event_id,channel) DO NOTHING
 	`, eventID, event.RecipientID, event.Type)
 	return err
