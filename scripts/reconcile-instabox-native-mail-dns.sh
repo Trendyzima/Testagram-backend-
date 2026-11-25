@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 
 : "${CLOUDFLARE_DNS_API_TOKEN:?CLOUDFLARE_DNS_API_TOKEN is required}"
-: "${TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4:?Provider-confirmed static SMTP egress IPv4 is required}"
+: "${TESTAGRAM_MAIL_EGRESS_IPV4:?Verified InstaBox SMTP egress IPv4 is required}"
 : "${DKIM_PUBLIC_KEY:?Testagram-generated DKIM public key is required}"
 API="https://api.cloudflare.com/client/v4"
 DOMAIN="testagram.site"
@@ -12,7 +12,7 @@ MAIL_HOST="mail.testagram.site"
 BOUNCE_HOST="bounces.testagram.site"
 SELECTOR="tg2026._domainkey.testagram.site"
 DMARC_HOST="_dmarc.testagram.site"
-PUBLIC_IPV4="$TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4"
+PUBLIC_IPV4="$TESTAGRAM_MAIL_EGRESS_IPV4"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 chmod 700 "$TMP_DIR"
