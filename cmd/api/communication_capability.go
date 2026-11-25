@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,12 +17,20 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func newCallRoom() string {
+func newCallRoomFrom(random io.Reader) (string, error) {
 	var entropy [16]byte
-	if _, err := rand.Read(entropy[:]); err != nil {
-		return "testagram-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if _, err := io.ReadFull(random, entropy[:]); err != nil {
+		return "", err
 	}
-	return "testagram-" + hex.EncodeToString(entropy[:])
+	return "testagram-" + hex.EncodeToString(entropy[:]), nil
+}
+
+func newCallRoom() string {
+	room, err := newCallRoomFrom(rand.Reader)
+	if err != nil {
+		return ""
+	}
+	return room
 }
 
 func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
@@ -472,6 +481,10 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			return true
 		}
 		room := newCallRoom()
+		if room == "" {
+			fail("CALL_ROOM_ENTROPY_UNAVAILABLE", "Could not securely generate a call room identifier", http.StatusServiceUnavailable)
+			return true
+		}
 		tx, e := s.db.Begin(ctx)
 		if e != nil {
 			fail("CALL_CREATE_FAILED", "Could not begin call creation", http.StatusServiceUnavailable)

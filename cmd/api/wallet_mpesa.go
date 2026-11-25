@@ -224,7 +224,12 @@ func (s *service) nativeMPesaCapability(w http.ResponseWriter, r *http.Request, 
 		}
 		walletAmount := amount
 		fxRate := 1.0
-		reference := "TS" + strings.TrimPrefix(newCallRoom(), "testagram-")[:18]
+		referenceEntropy := newCallRoom()
+		if referenceEntropy == "" {
+			fail("TOPUP_REFERENCE_ENTROPY_UNAVAILABLE", "Could not securely generate the payment request reference", http.StatusServiceUnavailable)
+			return true
+		}
+		reference := "TS" + strings.TrimPrefix(referenceEntropy, "testagram-")[:18]
 		var topupID, requestReference, state string
 		var checkout *string
 		err := s.db.QueryRow(ctx, `INSERT INTO testagram_local.wallet_topups(user_id,amount_kes,wallet_amount,wallet_currency,fx_rate,phone_e164,idempotency_key,request_reference)
