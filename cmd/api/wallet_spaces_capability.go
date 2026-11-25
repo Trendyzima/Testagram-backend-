@@ -84,19 +84,19 @@ func walletTransferTx(ctx context.Context, tx pgx.Tx, sender, recipient, amount,
 	if _,err=tx.Exec(ctx,`INSERT INTO testagram_local.wallet_transactions(user_id,transfer_id,kind,amount,currency)
 		VALUES($1,$2,$3,$4,$7),($5,$2,$6,$4,$7)`,sender,transferID,outKind,amount,recipient,inKind,senderCurrency);err!=nil{return "",false,err}
 	eventPayload := map[string]any{"transfer_id": transferID, "amount": amount, "currency": senderCurrency, "kind": kind}
-	outKind, inKind := "wallet.transfer.sent", "wallet.transfer.received"
+	eventOutKind, eventInKind := "wallet.transfer.sent", "wallet.transfer.received"
 	if kind == "tip" {
-		outKind, inKind = "wallet.tip.sent", "wallet.tip.received"
+		eventOutKind, eventInKind = "wallet.tip.sent", "wallet.tip.received"
 	} else if kind == "superchat" {
-		outKind, inKind = "wallet.superchat.sent", "wallet.superchat.received"
+		eventOutKind, eventInKind = "wallet.superchat.sent", "wallet.superchat.received"
 	}
 	if err = publishNotificationEvent(ctx, tx, notificationEvent{
-		RecipientID: sender, ActorID: recipient, Type: outKind,
+		RecipientID: sender, ActorID: recipient, Type: eventOutKind,
 		Key: "wallet-transfer:" + transferID + ":sender:" + sender,
 		EntityType: "wallet_transfer", EntityID: transferID, Payload: eventPayload,
 	}); err != nil { return "", false, err }
 	if err = publishNotificationEvent(ctx, tx, notificationEvent{
-		RecipientID: recipient, ActorID: sender, Type: inKind,
+		RecipientID: recipient, ActorID: sender, Type: eventInKind,
 		Key: "wallet-transfer:" + transferID + ":recipient:" + recipient,
 		EntityType: "wallet_transfer", EntityID: transferID, Payload: eventPayload,
 	}); err != nil { return "", false, err }
