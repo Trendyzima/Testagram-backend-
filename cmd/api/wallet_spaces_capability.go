@@ -2,17 +2,17 @@ package main
 
 import (
 	"context"
-	"errors"
 	"crypto/sha256"
 	"encoding/hex"
-		"math"
+	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/Trendyzima/Testagram-backend-/internal/algorithmclient"
+	"github.com/jackc/pgx/v5"
 )
 
 func validWalletUsername(value string) bool {
