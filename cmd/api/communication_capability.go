@@ -481,7 +481,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		}
 		var meta any
 		_ = json.Unmarshal(metadata, &meta)
-		writeJSON(w, http.StatusOK, map[string]any{"id": id, "call_id": id, "conversation_id": cid, "created_by": creator, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": state, "e2ee_enabled": unverifiedCommunicationEncryptionState().0, "e2ee_epoch": unverifiedCommunicationEncryptionState().1, "metadata": meta, "created_at": created})
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "call_id": id, "conversation_id": cid, "created_by": creator, "provider": "testagram-p2p", "room_name": room, "kind": kind, "status": state, "e2ee_enabled": unverifiedCommunicationEncryptionState().Enabled, "e2ee_epoch": unverifiedCommunicationEncryptionState().Epoch, "metadata": meta, "created_at": created})
 		return true
 	case "testagram.calls.create":
 		conversationID := str("conversation_id")
