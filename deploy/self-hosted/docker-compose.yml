@@ -212,8 +212,6 @@ services:
       # Private Data Centre media lifecycle; provider credentials stay in Data Centre only.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
-      # Private Data Centre notification SSE origin; never expose this URL to Flutter.
-      DATA_CENTRE_NOTIFICATION_STREAM_URL: ${DATA_CENTRE_NOTIFICATION_STREAM_URL:-}
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
       IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}
       # Legacy VPS-primary replication for identity evidence and media namespaces.
