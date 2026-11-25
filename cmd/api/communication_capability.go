@@ -399,28 +399,10 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusOK, map[string]any{"message_id": id, "reaction": emoji, "removed": remove})
 		return true
 	case "testagram.messages.attach":
-		id := str("message_id")
-		attachment, ok := in["attachment_metadata"].(map[string]any)
-		if !socialUUIDPattern.MatchString(id) || !ok {
-			fail("INVALID_ATTACHMENT", "Attachment metadata is invalid", http.StatusBadRequest)
-			return true
-		}
-		raw, _ := json.Marshal([]any{attachment})
-		if len(raw) > 16384 {
-			fail("INVALID_ATTACHMENT", "Attachment metadata is too large", http.StatusBadRequest)
-			return true
-		}
-		tag, e := s.db.Exec(ctx, `UPDATE testagram_local.messages m SET attachment_metadata=$3::jsonb
-			WHERE m.id=$1 AND m.sender_id=$2 AND EXISTS(SELECT 1 FROM testagram_local.conversation_members cm WHERE cm.conversation_id=m.conversation_id AND cm.user_id=$2 AND cm.left_at IS NULL)`, id, userID, string(raw))
-		if e != nil {
-			fail("MESSAGE_ATTACHMENT_FAILED", "Could not attach media to message", http.StatusServiceUnavailable)
-			return true
-		}
-		if tag.RowsAffected() != 1 {
-			fail("MESSAGE_NOT_FOUND", "Message was not found in an active conversation", http.StatusNotFound)
-			return true
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"attachment": attachment})
+		// Attaching a normal media URL to a private message would bypass the
+		// encrypted-attachment lifecycle. Keep this disabled until attachment
+		// bytes are encrypted on-device and keys travel only inside E2EE messages.
+		fail("E2EE_NOT_READY", "Message attachments are unavailable until client-side encryption and encrypted-key delivery are implemented", http.StatusServiceUnavailable)
 		return true
 	case "testagram.calls.list":
 		conversationID := str("conversation_id")
