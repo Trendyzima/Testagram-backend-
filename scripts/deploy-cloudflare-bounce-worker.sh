@@ -8,14 +8,15 @@ BOUNCE_ADDRESS="b@bounces.testagram.site"
 INGRESS_URL="https://api.testagram.site/internal/mail/bounce"
 WORKER_DIR="${1:?worker directory is required}"
 
-: "${CLOUDFLARE_BOUNCE_WORKER_API_TOKEN:?Missing scoped Cloudflare bounce-worker API token}"
+: "${CLOUDFLARE_API_TOKEN:?Missing existing Cloudflare API token}"
+: "${CLOUDFLARE_WORKERS_DEPLOY_TOKEN:?Missing existing Cloudflare Workers deployment token}"
 : "${CLOUDFLARE_ACCOUNT_ID:?Missing Cloudflare account ID}"
 : "${TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET:?Missing InstaBox-generated bounce ingress secret}"
 [[ "${#TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET}" -ge 32 ]] || { echo "::error::Bounce ingress secret is too short."; exit 1; }
 command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1 || { echo "::error::Docker is required to run the pinned Wrangler deployment container on InstaBox."; exit 1; }
 
 tmp="$(mktemp -d)"
-auth_header="Authorization: Bearer $CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
+auth_header="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 script_subdomain_url="$API_BASE/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/testagram-bounce-ingress/subdomain"
 worker_probe_enabled=false
 cleanup_worker_probe() {
@@ -115,8 +116,8 @@ if ! jq -e --arg suffix "@$BOUNCE_DOMAIN" --arg address "$BOUNCE_ADDRESS" --arg 
 fi
 existing_bounce_rule_count="$(jq --arg suffix "@$BOUNCE_DOMAIN" '[.result[]? | select(any(.matchers[]?; .type == "literal" and ((.value | ascii_downcase) | endswith($suffix))))] | length' "$tmp/existing-rules.json")"
 
-export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_BOUNCE_WORKER_API_TOKEN"
-printf 'CLOUDFLARE_API_TOKEN=%s\nCLOUDFLARE_ACCOUNT_ID=%s\n' "$CLOUDFLARE_API_TOKEN" "$CLOUDFLARE_ACCOUNT_ID" > "$tmp/wrangler.env"
+export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_WORKERS_DEPLOY_TOKEN"
+printf 'CLOUDFLARE_API_TOKEN=%s\nCLOUDFLARE_ACCOUNT_ID=%s\n' "$CLOUDFLARE_WORKERS_DEPLOY_TOKEN" "$CLOUDFLARE_ACCOUNT_ID" > "$tmp/wrangler.env"
 chmod 600 "$tmp/wrangler.env"
 WORKER_DIR="$(cd "$WORKER_DIR" && pwd)"
 WRANGLER_IMAGE="node:22-bookworm-slim"
