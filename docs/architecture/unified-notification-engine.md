@@ -1,23 +1,23 @@
 # Testagram unified notification engine
 
-## Ownership
+## Ownership and request path
 
 The Backend PostgreSQL database is the single source of truth for notification events, the in-app inbox, read state, category preferences and channel delivery state.
 
 - Business handlers publish `testagram_local.notification_events` in the same transaction as the business action.
 - The publisher inserts the in-app read model into `testagram_local.notifications` and creates channel delivery rows in `testagram_local.notification_deliveries`.
 - Event keys are unique per recipient, making business retries and webhook replays idempotent.
-- The Data Centre notification service is a read-only real-time delivery projection. Its new `GET /v2/stream` endpoint reads `testagram_local.notifications`; it does not create events, change read state or own a second canonical queue.
-- Backend exposes `GET /api/social/notifications/stream` and forwards the authenticated native session bearer only to the private Data Centre service. Flutter never receives or calls the internal service URL.
-- Flutter continues to load the canonical inbox over `GET /api/social/notifications`, marks items read through the Backend, and uses SSE only as a prompt to refresh.
+- Backend serves both the REST inbox and authenticated SSE stream directly from its own database. There is no cross-service notification database dependency.
+- Flutter calls only the public Backend API with its native session. The stream is a read-only projection and never marks inbox items read.
+- Data Centre remains responsible for its separate storage and media lifecycle domains; it is not a second notification source of truth.
 
-## Private stream configuration
+## Live stream behavior
 
-Set `DATA_CENTRE_NOTIFICATION_STREAM_URL` on the Backend API to the Data Centre notification-service origin reachable on the private platform network, for example `http://notification:8090`. Do not publish this service port to the Internet and do not place this URL in Flutter configuration.
+The Backend exposes `GET /api/social/notifications/stream`. It validates the native user session, then reads only rows for that authenticated recipient from `testagram_local.notifications`.
 
-The Data Centre notification service must use the same Testagram PostgreSQL database as Backend, and its database role must have SELECT access to `testagram_local.notifications`. Verify both conditions in staging before enabling the stream.
+The stream supports opaque replay cursors through `Last-Event-ID`, ordered by `created_at,id`. Connections are bounded to 25 seconds to respect the API server write deadline. Flutter reconnects and supplies the last cursor. The stream does not mutate the notification ledger or read state.
 
-Backend bounds each proxied stream connection to 25 seconds to respect the API server's global write deadline. Data Centre emits keep-alive comments; Flutter reconnects and supplies the opaque `Last-Event-ID` cursor. The cursor is ordered by `created_at,id` and is not a user credential.
+The REST inbox remains the recovery path if SSE is interrupted. A stream frame is only a signal that the inbox may have changed; Flutter refreshes the authoritative REST projection and marks items read through the Backend.
 
 ## Channel dispatch status
 
@@ -31,6 +31,5 @@ Before production acceptance, test:
 2. Two different recipients cannot see each other's events.
 3. SSE reconnect replays only rows after the supplied cursor and never marks them read.
 4. Read state remains authoritative in Backend after SSE delivery.
-5. Data Centre outage leaves the inbox REST API usable and causes bounded client reconnects.
-6. Backend stream proxy never redirects the user's bearer to another host.
-7. Push retries, provider token invalidation and worker lease recovery are tested separately.
+5. Backend stream outage leaves the REST inbox usable and causes bounded client reconnects.
+6. Push retries, provider token invalidation and worker lease recovery are tested separately.
