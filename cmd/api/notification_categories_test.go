@@ -26,16 +26,16 @@ func TestParseNotificationCategory(t *testing.T) {
 
 func TestNotificationCategory(t *testing.T) {
 	tests := map[string]string{
-		"mention": "mentions",
-		"social.mention": "mentions",
+		"mention":                     "mentions",
+		"social.mention":              "mentions",
 		"social.reactions.aggregated": "likes",
-		"social.follow": "follows",
-		"social.follow_request": "follows",
-		"social.reply": "replies",
-		"social.repost": "reposts",
-		"message.new": "messages",
-		"wallet.transfer.received": "wallet",
-		"security.alert": "system",
+		"social.follow":               "follows",
+		"social.follow_request":       "follows",
+		"social.reply":                "replies",
+		"social.repost":               "reposts",
+		"message.new":                 "messages",
+		"wallet.transfer.received":    "wallet",
+		"security.alert":              "system",
 	}
 	for kind, want := range tests {
 		if got := notificationCategory(kind); got != want {
