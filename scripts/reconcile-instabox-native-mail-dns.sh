@@ -3,7 +3,7 @@
 # script updates only the outbound identity A, SPF, DKIM and missing DMARC.
 set -Eeuo pipefail
 
-: "${CLOUDFLARE_DNS_API_TOKEN:?CLOUDFLARE_DNS_API_TOKEN is required}"
+: "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${TESTAGRAM_MAIL_EGRESS_IPV4:?Verified InstaBox SMTP egress IPv4 is required}"
 : "${DKIM_PUBLIC_KEY:?Testagram-generated DKIM public key is required}"
 API="https://api.cloudflare.com/client/v4"
@@ -17,7 +17,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 chmod 700 "$TMP_DIR"
 umask 077
-printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_DNS_API_TOKEN" > "$TMP_DIR/cloudflare.curlrc"
+printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN" > "$TMP_DIR/cloudflare.curlrc"
 chmod 600 "$TMP_DIR/cloudflare.curlrc"
 
 python3 - "$PUBLIC_IPV4" <<'PY'
