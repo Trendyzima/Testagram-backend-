@@ -54,8 +54,9 @@ func publishNotificationEvent(ctx context.Context, tx pgx.Tx, event notification
 	// The existing inbox remains the in-app read model. The event ledger is now
 	// the deduplication and dispatch source of truth.
 	if _, err = tx.Exec(ctx, `
-		INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,kind,payload,event_key)
-		VALUES($1,$2,CASE WHEN $3='post' THEN NULLIF($4,'')::uuid END,$5,$6::jsonb,$7)
+		INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,reply_id,kind,payload,event_key)
+		VALUES($1,$2,CASE WHEN $3='post' THEN NULLIF($4,'')::uuid END,
+		       CASE WHEN $3='reply' THEN NULLIF($4,'')::uuid END,$5,$6::jsonb,$7)
 		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING
 	`, event.RecipientID, nullableNotificationActor(event.ActorID), event.EntityType, event.EntityID, event.Type, string(raw), event.Key); err != nil {
 		return err
