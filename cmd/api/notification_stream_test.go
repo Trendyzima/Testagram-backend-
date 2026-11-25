@@ -1,31 +1,33 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-func TestValidNotificationStreamOrigin(t *testing.T) {
-	for _, input := range []string{
-		"http://notification:8090",
-		"http://notification.internal:8090",
-		"https://notifications.testagram.site",
-	} {
-		if _, err := validNotificationStreamOrigin(input); err != nil {
-			t.Fatalf("expected trusted notification origin %q, got %v", input, err)
-		}
+func TestNotificationStreamCursorRoundTrip(t *testing.T) {
+	want := notificationStreamCursor{
+		CreatedAt: time.Date(2026, 11, 25, 10, 30, 0, 0, time.UTC),
+		ID:        "123e4567-e89b-12d3-a456-426614174000",
+	}
+	encoded := encodeNotificationStreamCursor(want)
+	got, err := decodeNotificationStreamCursor(encoded)
+	if err != nil {
+		t.Fatalf("decodeNotificationStreamCursor: %v", err)
+	}
+	if !got.CreatedAt.Equal(want.CreatedAt) || got.ID != want.ID {
+		t.Fatalf("round trip mismatch: got %#v want %#v", got, want)
 	}
 }
 
-func TestValidNotificationStreamOriginRejectsUntrustedHTTPAndURLParts(t *testing.T) {
-	for _, input := range []string{
-		"http://notifications.example.com",
-		"ftp://notification:8090",
-		"http://user:password@notification:8090",
-		"http://notification:8090/path",
-		"http://notification:8090?token=secret",
-		"http://notification:8090#fragment",
-		"",
+func TestDecodeNotificationStreamCursorRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{
+		"not-base64!",
+		"eyJjcmVhdGVkX2F0IjoiMjAyNi0xMS0yNVQxMDozMDowMFoiLCJpZCI6Im5vdC11dWlkIn0",
+		string(make([]byte, 513)),
 	} {
-		if _, err := validNotificationStreamOrigin(input); err == nil {
-			t.Fatalf("expected notification origin %q to be rejected", input)
+		if _, err := decodeNotificationStreamCursor(value); err == nil {
+			t.Fatalf("expected invalid cursor %q to be rejected", value)
 		}
 	}
 }
