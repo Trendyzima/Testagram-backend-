@@ -181,5 +181,16 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("TESTAGRAM_MAIL_VERP_KEY", (ROOT / "cmd/api/mail_return_path.go").read_text())
 
 
+    def test_instabox_large_deployment_script_uses_bounded_stdin_without_retrying_exec(self):
+        script = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        self.assertIn('remote_command_bytes="$(LC_ALL=C printf \'%s\' "$REMOTE_COMMAND" | wc -c', script)
+        self.assertIn("remote_command_bytes > 1048576", script)
+        self.assertIn('--arg cmd "bash -s"', script)
+        self.assertIn('--arg stdin "$REMOTE_COMMAND"', script)
+        self.assertIn("'{cmd:$cmd,stdin:$stdin,envs:{", script)
+        self.assertIn("execution outcome is unknown. Do not retry automatically.", script)
+        self.assertNotIn("curl --retry 3 --retry-all-errors --retry-delay 2 -fsS -X POST", script)
+
+
 if __name__ == "__main__":
     unittest.main()
