@@ -28,6 +28,12 @@ psql_ci <<'SQL'
 CREATE ROLE testagram_app NOLOGIN;
 CREATE ROLE service_role NOLOGIN;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- The social moderation migration references the canonical staff principal.
+-- Keep this focused schema fixture minimal; identity migrations have their own CI suite.
+CREATE SCHEMA testagram_auth;
+CREATE TABLE testagram_auth.staff_principals(user_id UUID PRIMARY KEY);
+INSERT INTO testagram_auth.staff_principals(user_id)
+VALUES ('123e4567-e89b-42d3-a456-426614174204');
 SQL
 
 for migration in \
