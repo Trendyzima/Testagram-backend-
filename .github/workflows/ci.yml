@@ -1757,10 +1757,10 @@ jobs:
           DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: bash tests/test-social-platform-product-foundation.sh
 
-notification-engine-schema-integration:
-    name: Unified notification PostgreSQL migration integration
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Run notification schema, replay, grants and delivery constraints
-        run: bash scripts/test-unified-notification-engine-migration.sh
+  notification-engine-schema-integration:
+      name: Unified notification PostgreSQL migration integration
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v7
+        - name: Run notification schema, replay, grants and delivery constraints
+          run: bash scripts/test-unified-notification-engine-migration.sh
