@@ -443,9 +443,11 @@ func (s *service) mpesaCallback(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(ctx, "UPDATE testagram_local.wallet_transactions SET status='completed',provider_status='SUCCESS',metadata=metadata||jsonb_build_object('receipt_number',$2) WHERE topup_id=$1", topupID, receipt)
 	}
 	if err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,payload,event_key)
-		VALUES($1,NULL,'wallet.topup.completed',jsonb_build_object('topup_id',$2,'amount',$3,'currency',$4,'amount_kes',$5,'receipt_number',$6),'wallet-topup:'||$2)
-		ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, userID, topupID, walletAmountRaw, walletCurrency, amountRaw, receipt)
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: userID, Type: "wallet.deposit.completed",
+			Key: "wallet-topup:" + topupID, EntityType: "wallet_topup", EntityID: topupID,
+			Payload: map[string]any{"topup_id": topupID, "amount": walletAmountRaw, "currency": walletCurrency, "amount_kes": amountRaw, "receipt_number": receipt},
+		})
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
