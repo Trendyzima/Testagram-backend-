@@ -205,7 +205,7 @@ ORDER BY f.follower_id`, authorID)
 	for _, recipient := range recipients {
 		if err := publishNotificationEvent(ctx, tx, notificationEvent{
 			RecipientID: recipient, ActorID: authorID, Type: "social.post.new",
-			Key: "post:" + postID + ":" + recipient,
+			Key:        "post:" + postID + ":" + recipient,
 			EntityType: "post", EntityID: postID,
 			Payload: map[string]any{"post_id": postID},
 		}); err != nil {
