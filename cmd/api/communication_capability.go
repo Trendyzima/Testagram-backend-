@@ -324,11 +324,13 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		var id string
+		var inserted bool
 		e = tx.QueryRow(ctx, `INSERT INTO testagram_local.messages(conversation_id,sender_id,body,client_message_id,reply_to_message_id,shared_post_id,ciphertext,nonce,aad,e2ee_enabled,e2ee_version,e2ee_epoch)
 			SELECT $1,$2,'',$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,TRUE,'v1',$9
 			WHERE EXISTS(SELECT 1 FROM testagram_local.conversation_members WHERE conversation_id=$1 AND user_id=$2 AND left_at IS NULL)
-			ON CONFLICT(sender_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id RETURNING id::text`,
-			conversationID, userID, clientID, str("reply_to_message_id"), str("shared_post_id"), ciphertext, nonce, str("aad"), epoch).Scan(&id)
+			ON CONFLICT(sender_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id
+			RETURNING id::text,(xmax=0)`,
+			conversationID, userID, clientID, str("reply_to_message_id"), str("shared_post_id"), ciphertext, nonce, str("aad"), epoch).Scan(&id, &inserted)
 		if errors.Is(e, pgx.ErrNoRows) {
 			fail("CONVERSATION_ACCESS_DENIED", "Conversation membership is required", http.StatusForbidden)
 			return true
@@ -342,6 +344,38 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			_, e = tx.Exec(ctx, `INSERT INTO testagram_local.communication_outbox(event_key,event_type,conversation_id,message_id,payload)
 			VALUES($1,'message.created',$2,$3,jsonb_build_object('message_id',$3,'conversation_id',$2,'sender_id',$4,'encrypted',true))
 			ON CONFLICT(event_key) DO NOTHING`, "message:"+id, conversationID, id, userID)
+		}
+		if e == nil && inserted {
+			rows, queryErr := tx.Query(ctx, `SELECT user_id::text FROM testagram_local.conversation_members
+				WHERE conversation_id=$1 AND user_id<>$2 AND left_at IS NULL ORDER BY user_id`, conversationID, userID)
+			if queryErr != nil {
+				e = queryErr
+			} else {
+				recipients := make([]string, 0)
+				for rows.Next() {
+					var recipient string
+					if scanErr := rows.Scan(&recipient); scanErr != nil {
+						e = scanErr
+						break
+					}
+					recipients = append(recipients, recipient)
+				}
+				if e == nil {
+					e = rows.Err()
+				}
+				rows.Close()
+				for _, recipient := range recipients {
+					if e != nil {
+						break
+					}
+					e = publishNotificationEvent(ctx, tx, notificationEvent{
+						RecipientID: recipient, ActorID: userID, Type: "message.new",
+						Key:        "message:" + id + ":recipient:" + recipient,
+						EntityType: "message", EntityID: id,
+						Payload: map[string]any{"conversation_id": conversationID, "message_id": id, "encrypted": true},
+					})
+				}
+			}
 		}
 		if e == nil {
 			e = tx.Commit(ctx)
