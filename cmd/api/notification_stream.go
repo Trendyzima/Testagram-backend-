@@ -56,6 +56,7 @@ func (s *service) socialNotificationStream(w http.ResponseWriter, r *http.Reques
 	}
 	origin, err := validNotificationStreamOrigin(s.notificationStreamURL)
 	if err != nil || s.notificationStreamHTTP == nil {
+		w.Header().Set("Retry-After", "30")
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATION_STREAM_UNAVAILABLE", "Real-time notifications are temporarily unavailable", requestID))
 		return
 	}
@@ -82,12 +83,14 @@ func (s *service) socialNotificationStream(w http.ResponseWriter, r *http.Reques
 	}
 	upstreamResponse, err := s.notificationStreamHTTP.Do(upstreamRequest)
 	if err != nil {
+		w.Header().Set("Retry-After", "15")
 		writeJSON(w, http.StatusBadGateway, errorBody("NOTIFICATION_STREAM_UPSTREAM_FAILED", "Real-time notifications could not be reached", requestID))
 		return
 	}
 	defer upstreamResponse.Body.Close()
 	if upstreamResponse.StatusCode != http.StatusOK ||
 		!strings.HasPrefix(strings.ToLower(upstreamResponse.Header.Get("Content-Type")), "text/event-stream") {
+		w.Header().Set("Retry-After", "15")
 		_, _ = io.Copy(io.Discard, io.LimitReader(upstreamResponse.Body, 4096))
 		writeJSON(w, http.StatusBadGateway, errorBody("NOTIFICATION_STREAM_UPSTREAM_INVALID", "Real-time notification service returned an invalid response", requestID))
 		return
