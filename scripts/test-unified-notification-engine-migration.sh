@@ -57,6 +57,9 @@ INSERT INTO testagram_local.posts(id,author_id,text)
 VALUES ('123e4567-e89b-42d3-a456-426614174203',
         '123e4567-e89b-42d3-a456-426614174201','Notification migration test post');
 
+INSERT INTO testagram_local.accounts(user_id,username)
+SELECT gen_random_uuid(),'notify_actor_' || g FROM generate_series(1,7) AS g;
+
 INSERT INTO testagram_local.notification_events
   (recipient_id,actor_id,event_type,event_key,entity_type,entity_id,payload)
 VALUES
@@ -94,6 +97,64 @@ VALUES
   ('123e4567-e89b-42d3-a456-426614174202','android','fcm',
    digest('notification-test-device-token','sha256'),
    decode('01','hex'),decode('02','hex'));
+
+-- Exercise the same 15-minute aggregation upsert used by social reactions.
+DO $aggregate$
+DECLARE actor RECORD; aggregate_count INTEGER; preview_count INTEGER; latest_actor UUID;
+BEGIN
+  FOR actor IN
+    SELECT user_id FROM testagram_local.accounts
+    WHERE username LIKE 'notify_actor_%' ORDER BY username
+  LOOP
+    INSERT INTO testagram_local.notification_reaction_aggregates(
+      post_id,recipient_id,window_started_at,last_reaction_at,reaction_count,latest_actor_id,actor_ids
+    ) VALUES (
+      '123e4567-e89b-42d3-a456-426614174203',
+      '123e4567-e89b-42d3-a456-426614174202',
+      date_bin('15 minutes',now(),TIMESTAMPTZ '2000-01-01'),now(),1,actor.user_id,ARRAY[actor.user_id]
+    )
+    ON CONFLICT(post_id,recipient_id,window_started_at) DO UPDATE SET
+      last_reaction_at=now(),
+      reaction_count=testagram_local.notification_reaction_aggregates.reaction_count+1,
+      latest_actor_id=EXCLUDED.latest_actor_id,
+      actor_ids=CASE
+        WHEN EXCLUDED.latest_actor_id=ANY(testagram_local.notification_reaction_aggregates.actor_ids)
+          OR cardinality(testagram_local.notification_reaction_aggregates.actor_ids)>=5
+        THEN testagram_local.notification_reaction_aggregates.actor_ids
+        ELSE array_append(testagram_local.notification_reaction_aggregates.actor_ids,EXCLUDED.latest_actor_id)
+      END;
+  END LOOP;
+  SELECT reaction_count,cardinality(actor_ids),latest_actor_id
+    INTO aggregate_count,preview_count,latest_actor
+  FROM testagram_local.notification_reaction_aggregates
+  WHERE post_id='123e4567-e89b-42d3-a456-426614174203'
+    AND recipient_id='123e4567-e89b-42d3-a456-426614174202';
+  IF aggregate_count<>7 OR preview_count<>5 OR latest_actor IS NULL THEN
+    RAISE EXCEPTION 'reaction aggregation preview invariant failed: count %, preview %, latest %',
+      aggregate_count,preview_count,latest_actor;
+  END IF;
+  INSERT INTO testagram_local.notifications(
+    recipient_id,actor_id,post_id,kind,payload,event_key,created_at
+  ) VALUES (
+    '123e4567-e89b-42d3-a456-426614174202',latest_actor,
+    '123e4567-e89b-42d3-a456-426614174203','social.reactions.aggregated',
+    '{"reaction_count":1}'::jsonb,'ci:reaction:aggregate',now()-interval '1 minute'
+  );
+  UPDATE testagram_local.notifications
+  SET payload=jsonb_build_object('reaction_count',aggregate_count),
+      actor_id=latest_actor,created_at=now()
+  WHERE recipient_id='123e4567-e89b-42d3-a456-426614174202'
+    AND event_key='ci:reaction:aggregate';
+  IF NOT EXISTS (
+    SELECT 1 FROM testagram_local.notifications
+    WHERE event_key='ci:reaction:aggregate'
+      AND created_at>now()-interval '30 seconds'
+      AND payload->>'reaction_count'='7'
+  ) THEN
+    RAISE EXCEPTION 'aggregate refresh did not move the inbox row for SSE replay';
+  END IF;
+END
+$aggregate$;
 
 DO $verify$
 DECLARE event_count INTEGER; delivery_count INTEGER; payload JSONB;
