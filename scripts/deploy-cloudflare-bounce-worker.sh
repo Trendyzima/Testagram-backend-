@@ -11,8 +11,8 @@ WORKER_DIR="${1:?worker directory is required}"
 : "${CLOUDFLARE_API_TOKEN:?Missing existing Cloudflare API token}"
 : "${CLOUDFLARE_WORKERS_DEPLOY_TOKEN:?Missing existing Cloudflare Workers deployment token}"
 : "${CLOUDFLARE_ACCOUNT_ID:?Missing Cloudflare account ID}"
-: "${TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET:?Missing InstaBox-generated bounce ingress secret}"
-[[ "${#TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET}" -ge 32 ]] || { echo "::error::Bounce ingress secret is too short."; exit 1; }
+: "${TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY:?Missing HKDF-derived bounce ingress key}"
+[[ "${#TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY}" -ge 32 ]] || { echo "::error::Bounce ingress secret is too short."; exit 1; }
 command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1 || { echo "::error::Docker is required to run the pinned Wrangler deployment container on InstaBox."; exit 1; }
 
 tmp="$(mktemp -d)"
@@ -149,14 +149,14 @@ fi
 if [[ "$existing_bounce_rule_count" == "0" ]]; then
   run_wrangler deploy --config wrangler-bootstrap.toml
   worker_probe_enabled=true
-  printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-bootstrap.toml
+  printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-bootstrap.toml
 fi
 
 # The probe config keeps the existing email address rule intact while briefly
 # enabling workers.dev. The HMAC secret is installed before the health call.
 run_wrangler deploy --config wrangler-probe.toml
 worker_probe_enabled=true
-printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
+printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler-probe.toml
 
 health_timestamp="$(date +%s)"
 health_signature="$(python3 - "$health_timestamp" <<'PY'
@@ -164,7 +164,7 @@ import hashlib
 import hmac
 import os
 import sys
-secret, timestamp = os.environ["TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET"], sys.argv[1]
+secret, timestamp = os.environ["TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY"], sys.argv[1]
 print(hmac.new(secret.encode(), ("health\n" + timestamp).encode(), hashlib.sha256).hexdigest())
 PY
 )"
@@ -178,7 +178,7 @@ fi
 # Only after the Worker-to-API probe passes do we deploy the final
 # email-only configuration: workers.dev disabled, inbound address enabled.
 run_wrangler deploy --config wrangler.toml
-printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler.toml
+printf '%s' "$TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY" | run_wrangler secret put TESTAGRAM_BOUNCE_INGRESS_SECRET --config wrangler.toml
 
 # Verify that the temporary workers.dev endpoint is disabled after the probe.
 script_subdomain_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$tmp/script-subdomain.json" -w '%{http_code}' "$script_subdomain_url" -H "$auth_header")"
