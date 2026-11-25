@@ -298,7 +298,10 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status": "provisioned", "canonical_user_id": userID,
-		"email_verification_required": true, "email_delivery_pending": mailErr != nil,
+		"email_verification_required": true,
+		// This reports durable outbox enqueue, not final remote mailbox delivery.
+		"email_queued": mailErr == nil, "email_enqueue_failed": mailErr != nil,
+		"email_delivery_pending": mailErr != nil,
 	})
 }
 
@@ -496,8 +499,10 @@ func (s *service) identityProvisioningResendVerification(w http.ResponseWriter, 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"ok":                     true,
-		"email_delivery_pending": mailErr != nil,
-		"message":                "If the application is awaiting email verification, a new link will be sent.",
+		"ok": true,
+		// A successful response means the message entered Testagram's durable
+		// outbox. It does not claim that Gmail/Outlook has accepted delivery.
+		"email_queued": mailErr == nil, "email_enqueue_failed": mailErr != nil,
+		"message": "If the application is awaiting email verification, a new link will be sent.",
 	})
 }
