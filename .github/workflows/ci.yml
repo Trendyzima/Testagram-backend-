@@ -39,6 +39,7 @@ jobs:
         run: |
           python3 tests/test_instabox_web_image_release_wiring.py -v
           python3 tests/test_instabox_deployment_polling.py -v
+          python3 tests/test_instabox_exec_stdin_contract.py -v
       - name: Verify native identity migration manifest
         run: python3 tests/test_native_identity_migration_manifest.py
       - name: Verify native Testagram mail deployment and DNS wiring
