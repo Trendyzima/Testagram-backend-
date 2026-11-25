@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,44 @@ type notificationPreferenceInput struct {
 	PushMessagesEnabled *bool `json:"push_messages_enabled"`
 }
 
+type notificationPreferenceReader interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func loadNotificationPreferences(ctx context.Context, db notificationPreferenceReader, userID string) (bool, bool, bool, error) {
+	var social, wallet, messages bool
+	err := db.QueryRow(ctx, `
+		SELECT COALESCE(push_social_enabled,TRUE),
+		       COALESCE(push_wallet_enabled,TRUE),
+		       COALESCE(push_messages_enabled,TRUE)
+		FROM testagram_local.notification_preferences WHERE user_id=$1
+	`, userID).Scan(&social, &wallet, &messages)
+	if err == pgx.ErrNoRows {
+		return true, true, true, nil
+	}
+	if err != nil {
+		return false, false, false, err
+	}
+	return social, wallet, messages, nil
+}
+
+func writeNotificationPreferences(w http.ResponseWriter, r *http.Request, db notificationPreferenceReader, userID, requestID string) {
+	social, wallet, messages, err := loadNotificationPreferences(r.Context(), db, userID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATION_PREFERENCES_UNAVAILABLE", "Notification preferences could not be loaded", requestID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"data": map[string]any{
+			"push_social_enabled":   social,
+			"push_wallet_enabled":   wallet,
+			"push_messages_enabled": messages,
+		},
+		"error": nil, "request_id": requestID,
+	})
+}
+
 func (s *service) notificationPreferences(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
@@ -19,28 +58,7 @@ func (s *service) notificationPreferences(w http.ResponseWriter, r *http.Request
 	}
 	switch r.Method {
 	case http.MethodGet:
-		var social, wallet, messages bool
-		err := s.db.QueryRow(r.Context(), `
-			SELECT COALESCE(push_social_enabled,TRUE),
-			       COALESCE(push_wallet_enabled,TRUE),
-			       COALESCE(push_messages_enabled,TRUE)
-			FROM testagram_local.notification_preferences WHERE user_id=$1
-		`, userID).Scan(&social, &wallet, &messages)
-		if err == pgx.ErrNoRows {
-			social, wallet, messages = true, true, true
-		} else if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATION_PREFERENCES_UNAVAILABLE", "Notification preferences could not be loaded", requestID))
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok": true,
-			"data": map[string]any{
-				"push_social_enabled":   social,
-				"push_wallet_enabled":   wallet,
-				"push_messages_enabled": messages,
-			},
-			"error": nil, "request_id": requestID,
-		})
+		writeNotificationPreferences(w, r, s.db, userID, requestID)
 	case http.MethodPut:
 		var input notificationPreferenceInput
 		if err := decodeMediaJSON(w, r, &input); err != nil ||
@@ -62,7 +80,8 @@ func (s *service) notificationPreferences(w http.ResponseWriter, r *http.Request
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATION_PREFERENCES_SAVE_FAILED", "Notification preferences could not be saved", requestID))
 			return
 		}
-		s.notificationPreferences(w, r)
+		// Return the persisted state without recursively re-reading the consumed PUT body.
+		writeNotificationPreferences(w, r, s.db, userID, requestID)
 	default:
 		w.Header().Set("Allow", "GET, PUT, OPTIONS")
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "GET or PUT required", requestID))
