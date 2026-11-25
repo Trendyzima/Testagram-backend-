@@ -19,9 +19,9 @@ API on InstaBox. It does not send application email.
   Gmail and Outlook MX connectivity from the actual InstaBox machine.
 - A TCP connection alone is insufficient. InstaBox must confirm a stable,
   dedicated outbound IPv4 and configure its PTR to `mail.testagram.site`.
-  The deployment cross-checks the observed IP against two independent
-  reflectors, requires it to equal the operator-confirmed repository variable
-  `TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4`, and verifies the PTR.
+  The deployment discovers the observed IP from two independent reflectors,
+  requires them to agree, and verifies the PTR. This cannot prove the address
+  is static or dedicated; InstaBox provider confirmation remains mandatory.
 - The Cloudflare DNS reconciler publishes `mail.testagram.site` as a
   DNS-only A record for that egress IP. It never treats an arbitrary
   IP-echo result as an inbound SMTP address.
@@ -53,9 +53,10 @@ identity and Testagram DKIM key are available. It:
 - Never creates, replaces or changes MX records. Cloudflare Email Routing
   owns the inbound MX records on the bounce subdomain.
 
-The DNS token is separate from the Worker token. Use the existing
-`CLOUDFLARE_DNS_API_TOKEN` GitHub secret scoped to Zone Read and DNS Edit for
-`testagram.site` only.
+The reconciler receives the existing `CLOUDFLARE_API_TOKEN` from the
+approved GitHub Actions inventory. It does not require a separate DNS secret.
+The existing token must already have the Zone Read and DNS Edit permissions
+needed for the records it manages; deployment fails closed if not.
 
 ## Cloudflare inbound bounce setup
 
@@ -83,9 +84,11 @@ Wrangler runs inside the official Node 22 Bookworm-slim Docker image on InstaBox
   then deploys `wrangler-probe.toml` with the email rule. On later deployments,
   the probe config preserves the existing email rule while enabling the
   temporary HTTP health endpoint.
-- It reads the internally generated `TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET`
-  from InstaBox and sends it directly to Cloudflare using `wrangler secret
-  put`. The value is not printed, committed, or sent to the GitHub runner.
+- The API derives a purpose-separated 256-bit bounce HMAC key from the
+  existing `TESTAGRAM_MAIL_ENCRYPTION_KEY` using HKDF-SHA256 with fixed,
+  versioned salt and info values. The deployment sends this derived key
+  directly to Cloudflare using `wrangler secret put`; it does not generate
+  or persist a second master credential.
 - It sends a signed health request to the temporary Worker. The Worker calls
   the public Testagram API and requires HTTP 401 plus
   `X-Testagram-Bounce-Endpoint: native-v1`; it returns 204 only if the API
@@ -99,16 +102,18 @@ Wrangler runs inside the official Node 22 Bookworm-slim Docker image on InstaBox
 - The Cloudflare account must already have a workers.dev subdomain configured
   under Workers & Pages. The deployment reads it but does not create or rename it.
 
-Required GitHub configuration:
+Use only the existing GitHub Actions credentials:
 
-- Repository variable `TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4`: set only
-  after InstaBox confirms the static dedicated egress IP and matching PTR.
-- Secret `CLOUDFLARE_DNS_API_TOKEN`: Zone Read + DNS Edit on `testagram.site`.
-- Secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`: Cloudflare control-plane access only, not an SMTP credential; Account Workers Scripts Read and Write;
-  Zone Read; Zone Settings Read; and Email Routing Rules Read/Write on
-  `testagram.site`.
-- Secret `CLOUDFLARE_ACCOUNT_ID`: the Cloudflare account containing the zone
-  and Worker.
+- `CLOUDFLARE_API_TOKEN` for Cloudflare zone/DNS/Email Routing API calls.
+- `CLOUDFLARE_WORKERS_DEPLOY_TOKEN` for Wrangler Worker deployments.
+- `CLOUDFLARE_ACCOUNT_ID` for the account containing the zone and Worker.
+- `INSTABOX_API_KEY` for InstaBox machine access.
+- `TESTAGRAM_MAIL_ENCRYPTION_KEY` for the encrypted outbox and HKDF-derived
+  bounce HMAC key.
+
+No additional GitHub secret or repository variable is required. The existing
+Cloudflare tokens must already carry the necessary permissions; this design
+does not create, rotate, or broaden credentials.
 
 Cloudflare's Email Routing subdomain must be enabled before the production
 deployment. If its MX records are absent, deployment fails closed instead of
@@ -141,15 +146,15 @@ path.
 
 - [ ] InstaBox confirms stable, dedicated outbound IPv4 and configurable PTR.
 - [ ] InstaBox outbound TCP/25 reaches Gmail and Outlook MX hosts.
-- [ ] Observed egress matches the configured expected IPv4.
+- [ ] Two independent egress reflectors agree on the observed IPv4, and InstaBox confirms it is static/dedicated.
 - [ ] PTR is `mail.testagram.site`; A record resolves to the same IPv4.
 - [ ] SPF has exactly one record and authorizes InstaBox plus Cloudflare
       Email Routing.
 - [ ] Testagram `tg2026` DKIM record resolves and verifies on a real message.
 - [ ] Existing DMARC policy is preserved; Gmail and Outlook show SPF, DKIM
       and DMARC pass in recipient Authentication-Results.
-- [ ] Cloudflare Worker route exists, plus-addressing works, and the shared
-      HMAC secret is installed.
+- [ ] Cloudflare Worker route exists, plus-addressing works, and the
+      HKDF-derived HMAC key is installed.
 - [ ] Worker/API outage behavior is tested; no bounce is silently lost.
 - [ ] Controlled messages reach actual Gmail and Outlook inboxes.
 - [ ] A real hard-bounce DSN is correlated and suppresses once; replay creates
