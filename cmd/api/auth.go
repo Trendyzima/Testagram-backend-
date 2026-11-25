@@ -279,10 +279,14 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return true
 	}
-	// Self-service registration is intentionally independent of staff identity review.
-	// Accounts are created in an unverified state and cannot sign in until the
-	// single-use email verification token is redeemed. Staff review is not part
-	// of ordinary account creation.
+	// Public self-service signup is fail-closed. Only the evidence-backed identity
+	// provisioning flow may create an account after independent evidence review and
+	// two-person approval. Keep this gate before database readiness checks so an
+	// unavailable review service cannot fall through to ordinary account creation.
+	if action == "signup" {
+		writeJSON(w, http.StatusForbidden, errorBody("IDENTITY_REVIEW_REQUIRED", "Identity evidence review and two-person account approval are required before account creation", requestID(r)))
+		return true
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 	var in authInput
@@ -294,7 +298,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Authentication store is unavailable", requestID(r)))
 		return true
 	}
-	if (action == "signup" || action == "login") && len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))) < 32 {
+	if action == "login" && len(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))) < 32 {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_NOT_CONFIGURED", "Independent authentication is not configured", requestID(r)))
 		return true
 	}
