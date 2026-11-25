@@ -1,110 +1,150 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"io"
-	"net"
+	"log"
 	"net/http"
-	"net/url"
 	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
-func validNotificationStreamOrigin(raw string) (string, error) {
-	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
-	if raw == "" {
-		return "", errors.New("notification stream origin is not configured")
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" || parsed.User != nil ||
-		parsed.RawQuery != "" || parsed.Fragment != "" ||
-		(parsed.Path != "" && parsed.Path != "/") {
-		return "", errors.New("notification stream origin must be an absolute HTTP(S) origin")
-	}
-	if parsed.Scheme != "https" {
-		host := strings.ToLower(parsed.Hostname())
-		ip := net.ParseIP(host)
-		privateHost := host == "localhost" || host == "notification" ||
-			host == "notification-service" || strings.HasSuffix(host, ".internal") ||
-			(ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()))
-		if parsed.Scheme != "http" || !privateHost {
-			return "", errors.New("notification stream must use HTTPS or a private internal HTTP origin")
-		}
-	}
-	return raw, nil
+type notificationStreamCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
 }
 
-type notificationFlushWriter struct {
-	writer  http.ResponseWriter
-	flusher http.Flusher
+type notificationStreamItem struct {
+	ID        string         `json:"id"`
+	ActorID   string         `json:"actor_id,omitempty"`
+	PostID    string         `json:"post_id,omitempty"`
+	ReplyID   string         `json:"reply_id,omitempty"`
+	Kind      string         `json:"kind"`
+	Payload   map[string]any `json:"payload"`
+	ReadAt    *time.Time     `json:"read_at,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
-func (w notificationFlushWriter) Write(p []byte) (int, error) {
-	n, err := w.writer.Write(p)
-	w.flusher.Flush()
-	return n, err
+func encodeNotificationStreamCursor(cursor notificationStreamCursor) string {
+	raw, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
-// socialNotificationStream authenticates at Backend first, then forwards the
-// same short-lived native user bearer over the private service network. The
-// Data Centre resolves the user again and streams only that user's canonical
-// testagram_local.notifications rows. The client never receives the private
-// Data Centre address.
+func decodeNotificationStreamCursor(value string) (notificationStreamCursor, error) {
+	var cursor notificationStreamCursor
+	if value == "" {
+		return cursor, nil
+	}
+	if len(value) > 512 {
+		return cursor, errors.New("notification cursor is too long")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || json.Unmarshal(raw, &cursor) != nil ||
+		cursor.CreatedAt.IsZero() || !socialUUIDPattern.MatchString(cursor.ID) {
+		return notificationStreamCursor{}, errors.New("invalid notification cursor")
+	}
+	return cursor, nil
+}
+
+// socialNotificationStream reads the canonical Backend inbox directly. It is
+// intentionally read-only: the REST inbox remains authoritative for read
+// state, while SSE only signals the client to refresh its inbox.
 func (s *service) socialNotificationStream(w http.ResponseWriter, r *http.Request) {
-	_, requestID, ok := s.socialAuth(w, r)
+	uid, requestID, ok := s.socialAuth(w, r)
 	if !ok {
 		return
 	}
-	origin, err := validNotificationStreamOrigin(s.notificationStreamURL)
-	if err != nil || s.notificationStreamHTTP == nil {
-		w.Header().Set("Retry-After", "30")
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATION_STREAM_UNAVAILABLE", "Real-time notifications are temporarily unavailable", requestID))
-		return
-	}
-	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
-	if authorization == "" || len(authorization) > 8192 {
-		writeJSON(w, http.StatusUnauthorized, errorBody("UNAUTHORIZED", "A valid Testagram session is required", requestID))
-		return
-	}
-	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	if len(lastEventID) > 512 {
+	cursor, err := decodeNotificationStreamCursor(strings.TrimSpace(r.Header.Get("Last-Event-ID")))
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_NOTIFICATION_CURSOR", "Notification cursor is invalid", requestID))
 		return
 	}
-	target := origin + "/v2/stream"
-	upstreamRequest, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATION_STREAM_UNAVAILABLE", "Real-time notifications are temporarily unavailable", requestID))
-		return
-	}
-	upstreamRequest.Header.Set("Authorization", authorization)
-	upstreamRequest.Header.Set("Accept", "text/event-stream")
-	if lastEventID != "" {
-		upstreamRequest.Header.Set("Last-Event-ID", lastEventID)
-	}
-	upstreamResponse, err := s.notificationStreamHTTP.Do(upstreamRequest)
-	if err != nil {
-		w.Header().Set("Retry-After", "15")
-		writeJSON(w, http.StatusBadGateway, errorBody("NOTIFICATION_STREAM_UPSTREAM_FAILED", "Real-time notifications could not be reached", requestID))
-		return
-	}
-	defer upstreamResponse.Body.Close()
-	if upstreamResponse.StatusCode != http.StatusOK ||
-		!strings.HasPrefix(strings.ToLower(upstreamResponse.Header.Get("Content-Type")), "text/event-stream") {
-		w.Header().Set("Retry-After", "15")
-		_, _ = io.Copy(io.Discard, io.LimitReader(upstreamResponse.Body, 4096))
-		writeJSON(w, http.StatusBadGateway, errorBody("NOTIFICATION_STREAM_UPSTREAM_INVALID", "Real-time notification service returned an invalid response", requestID))
-		return
+	if cursor.CreatedAt.IsZero() {
+		if err := s.db.QueryRow(r.Context(), "SELECT now() - interval '30 seconds'").Scan(&cursor.CreatedAt); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("NOTIFICATIONS_UNAVAILABLE", "Notifications are temporarily unavailable", requestID))
+			return
+		}
+		cursor.CreatedAt = cursor.CreatedAt.UTC()
+		cursor.ID = "00000000-0000-0000-0000-000000000000"
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeJSON(w, http.StatusInternalServerError, errorBody("STREAMING_UNSUPPORTED", "This connection cannot stream notifications", requestID))
 		return
 	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	_, _ = io.Copy(notificationFlushWriter{writer: w, flusher: flusher}, upstreamResponse.Body)
+
+	poll := time.NewTicker(time.Second)
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer poll.Stop()
+	defer heartbeat.Stop()
+
+	for {
+		delivered, next, streamErr := s.deliverNotificationStreamItem(ctx, uid, cursor, w, flusher)
+		if streamErr != nil {
+			if !errors.Is(streamErr, context.Canceled) && !errors.Is(streamErr, context.DeadlineExceeded) {
+				log.Printf("notification stream: %v", streamErr)
+			}
+			return
+		}
+		if delivered {
+			cursor = next
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-poll.C:
+		case <-heartbeat.C:
+			if _, err := w.Write([]byte(": keep-alive\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *service) deliverNotificationStreamItem(ctx context.Context, user string, cursor notificationStreamCursor, w http.ResponseWriter, flusher http.Flusher) (bool, notificationStreamCursor, error) {
+	var item notificationStreamItem
+	err := s.db.QueryRow(ctx, `
+		SELECT id::text, COALESCE(actor_id::text,''), COALESCE(post_id::text,''),
+		       COALESCE(reply_id::text,''), kind, payload, read_at, created_at
+		FROM testagram_local.notifications
+		WHERE recipient_id=$1
+		  AND (created_at > $2 OR (created_at = $2 AND id > $3::uuid))
+		ORDER BY created_at ASC, id ASC
+		LIMIT 1
+	`, user, cursor.CreatedAt, cursor.ID).Scan(
+		&item.ID, &item.ActorID, &item.PostID, &item.ReplyID,
+		&item.Kind, &item.Payload, &item.ReadAt, &item.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, cursor, nil
+	}
+	if err != nil {
+		return false, cursor, err
+	}
+	next := notificationStreamCursor{CreatedAt: item.CreatedAt.UTC(), ID: item.ID}
+	data, err := json.Marshal(item)
+	if err != nil {
+		return false, cursor, err
+	}
+	frame := "event: notification\nid: " + encodeNotificationStreamCursor(next) + "\ndata: " + string(data) + "\n\n"
+	if _, err := w.Write([]byte(frame)); err != nil {
+		return false, cursor, err
+	}
+	flusher.Flush()
+	return true, next, nil
 }
