@@ -633,8 +633,11 @@ func (s *service) socialReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if authorID != userID {
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,reply_id,kind,event_key)
-			VALUES($1,$2,$3,$4,'reply',$5) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, authorID, userID, postID, replyID, "reply:"+replyID)
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: authorID, ActorID: userID, Type: "social.reply",
+			Key: "reply:" + replyID, EntityType: "reply", EntityID: replyID,
+			Payload: map[string]any{"post_id": postID, "reply_id": replyID},
+		})
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_NOTIFICATION_FAILED", "Reply and notification could not be saved", requestID))
 			return
@@ -690,8 +693,11 @@ func (s *service) socialRepost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if inserted && authorID != userID {
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,kind,event_key)
-			VALUES($1,$2,$3,'repost',$4) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, authorID, userID, postID, "repost:"+repostID)
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: authorID, ActorID: userID, Type: "social.repost",
+			Key: "repost:" + repostID, EntityType: "post", EntityID: postID,
+			Payload: map[string]any{"post_id": postID, "repost_id": repostID},
+		})
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPOST_NOTIFICATION_FAILED", "Repost and notification could not be saved", requestID))
 			return
