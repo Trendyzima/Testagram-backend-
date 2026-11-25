@@ -75,6 +75,8 @@ type service struct {
 	media                      *media.Signer
 	mediaIntentFactory         *media.IntentFactory
 	dataCentreMedia            *datacentreclient.Client
+	notificationStreamURL      string
+	notificationStreamHTTP     *http.Client
 	identityEvidenceMedia      identityEvidenceMediaClient
 	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
 	identityReviewWebAuthnReady         bool
@@ -623,6 +625,8 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/social/posts/{post_id}/bookmarks", s.socialBookmark)
 	mux.HandleFunc("DELETE /api/social/posts/{post_id}/bookmarks", s.socialUnbookmark)
 	mux.HandleFunc("GET /api/social/notifications", s.socialNotifications)
+	mux.HandleFunc("OPTIONS /api/social/notifications/stream", s.mediaPreflight)
+	mux.HandleFunc("GET /api/social/notifications/stream", s.socialNotificationStream)
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("POST /internal/mailjet/events", s.mailjetDeliveryEvents)
 	mux.HandleFunc("GET /api/email/unsubscribe", s.socialEmailUnsubscribe)
@@ -1224,6 +1228,7 @@ func main() {
 	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
 	dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
 	dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
+	notificationStreamURL := strings.TrimRight(env("DATA_CENTRE_NOTIFICATION_STREAM_URL", ""), "/")
 	if dataCentreURL != "" || dataCentreToken != "" {
 		if dataCentreURL == "" || dataCentreToken == "" {
 			log.Fatal("DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN must be configured together")
@@ -1410,7 +1415,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, edgeRecoveryReadinessToken: edgeRecoveryReadinessToken, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
+		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, notificationStreamURL: notificationStreamURL, notificationStreamHTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
