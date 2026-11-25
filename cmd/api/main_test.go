@@ -671,7 +671,7 @@ func TestSocialAccountSuggestionsFailsClosedWithoutDatabase(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("suggestions status = %d, want %d: %s", response.Code, http.StatusServiceUnavailable, response.Body.String())
 	}
-	if got := normalizedRoute("/api/social/suggestions"); got != "/api/social/suggestions" {
+	if got := normalizedRoute("/api/social/suggestions"); got != "/api/social/{route}" {
 		t.Fatalf("suggestions route metric label = %q", got)
 	}
 }
