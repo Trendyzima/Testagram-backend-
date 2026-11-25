@@ -154,7 +154,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			 FROM testagram_local.conversation_members cm JOIN testagram_local.accounts a ON a.user_id=cm.user_id
 			 WHERE cm.conversation_id=c.id AND cm.left_at IS NULL),'[]'::jsonb),
 			(SELECT count(*) FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.sender_id<>$1 AND m.deleted_at IS NULL AND m.created_at>COALESCE(me.last_read_at,'epoch'::timestamptz)),
-			(SELECT jsonb_build_object('id',m.id,'sender_id',m.sender_id,'created_at',m.created_at,'ciphertext',m.ciphertext,'media_type',m.media_type)
+			(SELECT jsonb_build_object('id',m.id,'sender_id',m.sender_id,'created_at',m.created_at,'ciphertext',m.ciphertext,'media_type',m.media_type,'e2ee_enabled',m.e2ee_enabled,'e2ee_version',m.e2ee_version,'e2ee_epoch',m.e2ee_epoch)
 			 FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC,m.id DESC LIMIT 1)
 			FROM testagram_local.conversations c JOIN testagram_local.conversation_members me ON me.conversation_id=c.id
 			WHERE me.user_id=$1 AND me.left_at IS NULL AND me.archived_at IS NULL
