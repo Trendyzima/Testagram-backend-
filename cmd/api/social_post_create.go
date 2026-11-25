@@ -47,15 +47,10 @@ func createSocialMentionNotifications(ctx context.Context, tx pgx.Tx, authorID, 
 	if len(handles) == 0 {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `
-INSERT INTO testagram_local.notifications
-  (recipient_id,actor_id,post_id,kind,payload,event_key)
-SELECT DISTINCT recipient.user_id,author.user_id,$2::uuid,'mention',
-       jsonb_build_object('handle',recipient.username),
-       'mention:' || $2::text || ':' || recipient.user_id::text
-FROM unnest($3::text[]) AS mentioned(handle)
-JOIN testagram_local.accounts recipient
-  ON lower(recipient.username)=mentioned.handle
+	rows, err := tx.Query(ctx, `
+SELECT DISTINCT recipient.user_id::text,recipient.username
+FROM unnest($2::text[]) AS mentioned(handle)
+JOIN testagram_local.accounts recipient ON lower(recipient.username)=mentioned.handle
 JOIN testagram_local.accounts author ON author.user_id=$1::uuid
 WHERE recipient.account_status='active'
   AND recipient.user_id<>author.user_id
@@ -65,17 +60,43 @@ WHERE recipient.account_status='active'
        OR (b.blocker_id=recipient.user_id AND b.blocked_id=author.user_id)
   )
   AND (
-    ($4::text='public' AND NOT author.protected_account)
+    ($3::text='public' AND NOT author.protected_account)
     OR EXISTS (
       SELECT 1 FROM testagram_local.follows f
       WHERE f.follower_id=recipient.user_id
         AND f.following_id=author.user_id
         AND f.status='accepted'
     )
-  )
-ON CONFLICT (recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`,
-		authorID, postID, handles, visibility)
-	return err
+  )`, authorID, handles, visibility)
+	if err != nil {
+		return err
+	}
+	type mentionRecipient struct{ id, handle string }
+	recipients := make([]mentionRecipient, 0)
+	for rows.Next() {
+		var recipient mentionRecipient
+		if err := rows.Scan(&recipient.id, &recipient.handle); err != nil {
+			rows.Close()
+			return err
+		}
+		recipients = append(recipients, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, recipient := range recipients {
+		if err := publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: recipient.id, ActorID: authorID, Type: "social.mention",
+			Key: "mention:" + postID + ":" + recipient.id,
+			EntityType: "post", EntityID: postID,
+			Payload: map[string]any{"post_id": postID, "handle": recipient.handle},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type socialPostCreateInput struct {
