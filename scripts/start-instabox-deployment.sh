@@ -288,7 +288,7 @@ write_env_value TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-privat
 write_env_value TESTAGRAM_DKIM_SELECTOR "tg2026"
 write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ""
 DKIM_PUBLIC_KEY="$(sudo openssl pkey -in "$MAIL_KEY_DIR/dkim-private.pem" -pubout -outform DER | base64 -w0)"
-TESTAGRAM_MAIL_EGRESS_IPV4="$TESTAGRAM_MAIL_EGRESS_IPV4" DKIM_PUBLIC_KEY="$DKIM_PUBLIC_KEY" CLOUDFLARE_DNS_API_TOKEN="$CLOUDFLARE_API_TOKEN" bash "$BACKEND/scripts/reconcile-instabox-native-mail-dns.sh"
+TESTAGRAM_MAIL_EGRESS_IPV4="$TESTAGRAM_MAIL_EGRESS_IPV4" DKIM_PUBLIC_KEY="$DKIM_PUBLIC_KEY" CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" bash "$BACKEND/scripts/reconcile-instabox-native-mail-dns.sh"
 echo "Publish DKIM TXT at tg2026._domainkey.testagram.site: v=DKIM1; k=rsa; p=$DKIM_PUBLIC_KEY"
 # The edge proxy token must match the Cloudflare API Worker credential. Never
 # generate a replacement here: a mismatch would make the canonical API route fail closed.
