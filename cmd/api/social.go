@@ -317,9 +317,15 @@ func (s *service) socialFollow(w http.ResponseWriter, r *http.Request) {
 			kind = "follow_request"
 		}
 		eventKey := fmt.Sprintf("follow:%s:%s:%d", userID, targetID, createdAt.UnixNano())
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,event_key)
-			VALUES($1,$2,$3,$4) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL
-			DO UPDATE SET kind=EXCLUDED.kind,actor_id=EXCLUDED.actor_id,created_at=now()`, targetID, userID, kind, eventKey)
+		eventType := "social.follow"
+		if desired == "pending" {
+			eventType = "social.follow_request"
+		}
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: targetID, ActorID: userID, Type: eventType,
+			Key: eventKey, EntityType: "profile", EntityID: userID,
+			Payload: map[string]any{"follower_id": userID, "following_id": targetID, "status": desired},
+		})
 		if err == nil {
 			err = enqueueFollowActivityEmail(ctx, tx, userID, targetID, kind)
 		}
@@ -633,8 +639,11 @@ func (s *service) socialReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if authorID != userID {
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,reply_id,kind,event_key)
-			VALUES($1,$2,$3,$4,'reply',$5) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, authorID, userID, postID, replyID, "reply:"+replyID)
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: authorID, ActorID: userID, Type: "social.reply",
+			Key: "reply:" + replyID, EntityType: "reply", EntityID: replyID,
+			Payload: map[string]any{"post_id": postID, "reply_id": replyID},
+		})
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPLY_NOTIFICATION_FAILED", "Reply and notification could not be saved", requestID))
 			return
@@ -690,8 +699,11 @@ func (s *service) socialRepost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if inserted && authorID != userID {
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,post_id,kind,event_key)
-			VALUES($1,$2,$3,'repost',$4) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, authorID, userID, postID, "repost:"+repostID)
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: authorID, ActorID: userID, Type: "social.repost",
+			Key: "repost:" + repostID, EntityType: "post", EntityID: postID,
+			Payload: map[string]any{"post_id": postID, "repost_id": repostID},
+		})
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("REPOST_NOTIFICATION_FAILED", "Repost and notification could not be saved", requestID))
 			return
@@ -1014,8 +1026,11 @@ func (s *service) socialRespondFollowRequest(w http.ResponseWriter, r *http.Requ
 	_, err = tx.Exec(ctx, "UPDATE testagram_local.follows SET status=$3,updated_at=now() WHERE follower_id=$1 AND following_id=$2", requesterID, userID, newStatus)
 	if err == nil && accepted {
 		eventKey := fmt.Sprintf("follow-accepted:%s:%s:%d", requesterID, userID, createdAt.UnixNano())
-		_, err = tx.Exec(ctx, `INSERT INTO testagram_local.notifications(recipient_id,actor_id,kind,event_key)
-			VALUES($1,$2,'follow_accepted',$3) ON CONFLICT(recipient_id,event_key) WHERE event_key IS NOT NULL DO NOTHING`, requesterID, userID, eventKey)
+		err = publishNotificationEvent(ctx, tx, notificationEvent{
+			RecipientID: requesterID, ActorID: userID, Type: "social.follow_accepted",
+			Key: eventKey, EntityType: "profile", EntityID: userID,
+			Payload: map[string]any{"follower_id": requesterID, "following_id": userID, "status": "accepted"},
+		})
 	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FOLLOW_REQUEST_UPDATE_FAILED", "Follow request could not be updated", requestID))
