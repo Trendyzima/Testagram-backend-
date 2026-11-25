@@ -295,6 +295,9 @@ func (s *service) identityProvisioningRedeemNative(w http.ResponseWriter, r *htt
 	link := base + "/verify-email?application_id=" + url.QueryEscape(applicationID) + "&token=" + url.QueryEscape(verificationToken)
 	mailErr := s.sendAuthEmail(ctx, email, "Verify your Testagram account",
 		"<p>Your identity application has been approved.</p><p><a href=\""+link+"\">Verify your Testagram email</a></p><p>This link expires in 24 hours and can only be used once.</p>")
+	if mailErr != nil {
+		log.Printf("native identity verification email enqueue failed request_id=%s: %v", requestID(r), mailErr)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status": "provisioned", "canonical_user_id": userID,
@@ -495,7 +498,7 @@ func (s *service) identityProvisioningResendVerification(w http.ResponseWriter, 
 	mailErr := s.sendAuthEmail(ctx, email, "Verify your Testagram account",
 		"<p>Verify your Testagram account:</p><p><a href=\""+link+"\">Verify email</a></p><p>This link expires in 24 hours and can only be used once.</p>")
 	if mailErr != nil {
-		log.Printf("native identity verification resend delivery failed request_id=%s: %v", requestID(r), mailErr)
+		log.Printf("native identity verification resend enqueue failed request_id=%s: %v", requestID(r), mailErr)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]any{
