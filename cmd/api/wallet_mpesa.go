@@ -376,6 +376,13 @@ func (s *service) mpesaCallback(w http.ResponseWriter, r *http.Request) {
 				_, e = tx.Exec(ctx, "UPDATE testagram_local.wallet_transactions SET status='failed',provider_status=$2 WHERE topup_id=$1", topupID, cb.ResultDesc)
 			}
 			if e == nil {
+				e = publishNotificationEvent(ctx, tx, notificationEvent{
+					RecipientID: userID, Type: "wallet.deposit.failed",
+					Key: "wallet-topup-failed:" + topupID, EntityType: "wallet_topup", EntityID: topupID,
+					Payload: map[string]any{"topup_id": topupID, "amount_kes": amountRaw, "currency": walletCurrency, "result_code": cb.ResultCode},
+				})
+			}
+			if e == nil {
 				e = tx.Commit(ctx)
 			}
 			_ = tx.Rollback(context.Background())
