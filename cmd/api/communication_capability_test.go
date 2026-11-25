@@ -53,3 +53,13 @@ func TestNewCallRoomReturnsUniqueIdentifiers(t *testing.T) {
 		t.Fatal("call room identifiers must be unique")
 	}
 }
+
+func TestUnverifiedCommunicationEncryptionStateFailsClosed(t *testing.T) {
+	state := unverifiedCommunicationEncryptionState()
+	if state.Enabled {
+		t.Fatal("unverified communication encryption must never be reported as enabled")
+	}
+	if state.Epoch != 0 {
+		t.Fatalf("unverified communication encryption epoch = %d, want 0", state.Epoch)
+	}
+}
