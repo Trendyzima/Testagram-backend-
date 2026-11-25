@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"golang.org/x/crypto/hkdf"
 	"io"
 	"net/http"
 	"os"
@@ -29,6 +30,23 @@ func canonicalNativeBounceRecipient(recipient string) string {
 	return recipient[:at] + "@" + strings.ToLower(recipient[at+1:])
 }
 
+const nativeBounceIngressHKDFSalt = "Testagram native mail key separation v1"
+const nativeBounceIngressHKDFInfo = "bounce-ingress-hmac-sha256"
+
+func nativeBounceIngressSecret() (string, bool) {
+	masterHex := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_ENCRYPTION_KEY"))
+	master, err := hex.DecodeString(masterHex)
+	if err != nil || len(master) != 32 {
+		return "", false
+	}
+	reader := hkdf.New(sha256.New, master, []byte(nativeBounceIngressHKDFSalt), []byte(nativeBounceIngressHKDFInfo))
+	derived := make([]byte, 32)
+	if _, err := io.ReadFull(reader, derived); err != nil {
+		return "", false
+	}
+	return hex.EncodeToString(derived), true
+}
+
 func nativeBounceIngressMAC(secret, timestamp, recipient string, body []byte) []byte {
 	bodyHash := sha256.Sum256(body)
 	payload := timestamp + "\n" + canonicalNativeBounceRecipient(recipient) + "\n" + hex.EncodeToString(bodyHash[:])
@@ -46,8 +64,8 @@ func (s *service) nativeBounceHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	secret := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET"))
-	if len(secret) < 32 || s.db == nil {
+	secret, secretOK := nativeBounceIngressSecret()
+	if !secretOK || s.db == nil {
 		http.Error(w, "bounce ingress unavailable", http.StatusServiceUnavailable)
 		return
 	}
