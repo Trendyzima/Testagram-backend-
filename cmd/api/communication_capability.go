@@ -370,7 +370,7 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 					}
 					e = publishNotificationEvent(ctx, tx, notificationEvent{
 						RecipientID: recipient, ActorID: userID, Type: "message.new",
-						Key: "message:" + id + ":recipient:" + recipient,
+						Key:        "message:" + id + ":recipient:" + recipient,
 						EntityType: "message", EntityID: id,
 						Payload: map[string]any{"conversation_id": conversationID, "message_id": id, "encrypted": true},
 					})
