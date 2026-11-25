@@ -5,7 +5,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class InstaBoxNativeMailEgressTests(unittest.TestCase):
-    def test_egress_check_requires_provider_confirmed_ipv4_and_matching_ptr(self):
+    def test_egress_check_discovers_ipv4_and_requires_matching_ptr(self):
         script = (ROOT / "scripts/verify-instabox-native-mail-egress.sh").read_text()
         self.assertNotIn("TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4", script)
         self.assertIn("api.ipify.org", script)
@@ -14,11 +14,11 @@ class InstaBoxNativeMailEgressTests(unittest.TestCase):
         self.assertIn("mail.testagram.site", script)
         self.assertIn("address.is_global", script)
 
-    def test_deploy_requires_the_confirmed_egress_ip(self):
+    def test_deploy_discovers_the_verified_egress_ip(self):
         deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
         workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
         self.assertIn("verify-instabox-native-mail-egress.sh", deploy)
-        self.assertIn("expected_mail_ipv4", deploy)
+        self.assertIn("TESTAGRAM_MAIL_EGRESS_IPV4", deploy)
         self.assertNotIn("TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4", workflow)
 
     def test_instabox_disables_inbound_smtp_listener_and_host_port_probe(self):
