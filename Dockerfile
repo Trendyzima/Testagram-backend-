@@ -11,5 +11,5 @@ WORKDIR /app
 COPY --from=build /out/testagram-api /app/testagram-api
 USER app
 ENV LISTEN_ADDR=:8080
-EXPOSE 8080 8082
+EXPOSE 8080 8082 2525
 ENTRYPOINT ["/app/testagram-api"]

@@ -1,8 +1,8 @@
 name: Deploy Testagram to InstaBox
 
 on:
-  # A merge/push to main is the production approval boundary. Pull requests
-  # run validation only; they never receive production secrets or deploy.
+  # Pushes/merges to main run validation only. Production deployment requires
+  # manual workflow_dispatch confirmation and the protected production environment.
   push:
     branches: [main]
   pull_request:
@@ -16,6 +16,11 @@ on:
         default: false
       confirm_native_identity_migrations:
         description: "Authorize additive native identity, OTP, transactional mail, social email-consent and Federation actor-consent PostgreSQL migrations only if the live schema preflight finds them incomplete"
+        required: true
+        type: boolean
+        default: false
+      diagnose_native_mail_egress:
+        description: "Run a read-only TCP/25, public IPv4 and PTR diagnostic on the existing InstaBox machine; do not deploy or change DNS"
         required: true
         type: boolean
         default: false
@@ -35,15 +40,32 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-      - name: Validate deployment shell syntax, PostgreSQL readiness, and Mailjet HTTPS transport
+      - name: Set up Node.js for Cloudflare Worker validation
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the inbound bounce Worker without deploying
+        working-directory: cloudflare/email-bounce-worker
+        run: |
+          npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --dry-run --config wrangler-bootstrap.toml
+          npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --dry-run --config wrangler-probe.toml
+          npm exec --yes --package=wrangler@4.113.0 -- wrangler deploy --dry-run --config wrangler.toml
+      - name: Validate deployment shell syntax, PostgreSQL readiness, and native Testagram mail transport
         shell: bash
         run: |
           bash -n scripts/start-instabox-deployment.sh
+          bash -n scripts/reconcile-native-mail-dns.sh
+          bash -n scripts/verify-instabox-native-mail-egress.sh
+          bash -n scripts/reconcile-instabox-native-mail-dns.sh
+          bash -n scripts/deploy-cloudflare-bounce-worker.sh
           python3 tests/test_r2_managed_domain_request.py -v
           python3 tests/test_instabox_postgres_readiness.py -v
           python3 tests/test_instabox_runtime_healthcheck_paths.py -v
           python3 tests/test_media_feature_gate_wiring.py -v
           python3 tests/test_native_identity_migration_manifest.py -v
+          python3 tests/test_native_mail_dns_api.py -v
+          python3 tests/test_instabox_native_mail_egress.py -v
+          python3 tests/test_native_mail_deployment.py -v
           python3 tests/test_instabox_b2_credentials.py -v
           python3 tests/test_instabox_mailjet_port.py -v
           python3 tests/test_instabox_edge_proxy_secret.py -v
@@ -59,19 +81,124 @@ jobs:
       - name: Run watchdog regression tests
         run: python3 -m unittest discover -s tests -p 'test_instabox_watchdog.py' -v
 
+  diagnose-native-mail-egress:
+    name: Read-only InstaBox native mail network diagnostic
+    needs: validate
+    environment: production
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_native_mail_egress == true && inputs.confirm_production_deploy != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+      INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
+    steps:
+      - name: Validate InstaBox diagnostic access
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$INSTABOX_API_KEY" ]] || { echo "::error::Missing the existing INSTABOX_API_KEY repository secret."; exit 1; }
+          machines="$(curl --retry 2 --retry-all-errors --retry-delay 2 -fsS -H "X-API-Key: $INSTABOX_API_KEY" -H "Idempotency-Key: testagram-list-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "https://api.instabox.sh/v1/machines?limit=100")"
+          INSTABOX_MACHINE_ID="$(jq -r --arg name "$INSTABOX_MACHINE_NAME" '([.machines[] | select(.name == $name)][0].id) // empty' <<<"$machines")"
+          [[ -n "$INSTABOX_MACHINE_ID" ]] || { echo "::error::No InstaBox machine matches the existing machine-name setting."; exit 1; }
+          echo "Resolved the existing Testagram machine by its configured name; no machine-ID secret is required."
+      - name: Inspect actual InstaBox SMTP egress without changing machine state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd="$(cat <<'REMOTE'
+          set -euo pipefail
+          python3 - <<'PY'
+          import ipaddress
+          import json
+          import socket
+          import subprocess
+
+          result = {"public_ipv4": {}, "public_ipv4_global": {}, "ptr": None, "mail_host_a": [], "tcp25": {}}
+          for name, url in {
+              "ipify": "https://api.ipify.org",
+              "amazon": "https://checkip.amazonaws.com",
+          }.items():
+              try:
+                  response = subprocess.run(
+                      ["curl", "-4fsS", "--connect-timeout", "5", "--max-time", "12", url],
+                      capture_output=True, text=True, check=True,
+                  )
+                  address = ipaddress.ip_address(response.stdout.strip())
+                  result["public_ipv4"][name] = str(address)
+                  result["public_ipv4_global"][name] = address.version == 4 and address.is_global
+              except Exception as exc:
+                  result["public_ipv4"][name] = "ERROR: " + type(exc).__name__ + ": " + str(exc)
+
+          candidates = [value for value in result["public_ipv4"].values() if not value.startswith("ERROR:")]
+          observed = candidates[0] if candidates else None
+          if observed:
+              try:
+                  result["ptr"] = socket.gethostbyaddr(observed)[0].rstrip(".").lower()
+              except Exception as exc:
+                  result["ptr"] = "ERROR: " + type(exc).__name__ + ": " + str(exc)
+
+          try:
+              result["mail_host_a"] = sorted({item[4][0] for item in socket.getaddrinfo("mail.testagram.site", 25, socket.AF_INET, socket.SOCK_STREAM)})
+          except Exception as exc:
+              result["mail_host_a"] = ["ERROR: " + type(exc).__name__ + ": " + str(exc)]
+
+          for name, host in {"gmail": "gmail-smtp-in.l.google.com", "outlook": "outlook-com.olc.protection.outlook.com"}.items():
+              try:
+                  addresses = socket.getaddrinfo(host, 25, socket.AF_INET, socket.SOCK_STREAM)
+                  connected = None
+                  errors = []
+                  for item in addresses[:6]:
+                      try:
+                          with socket.create_connection((item[4][0], 25), timeout=7):
+                              connected = item[4][0]
+                              break
+                      except OSError as exc:
+                          errors.append(type(exc).__name__ + ": " + str(exc))
+                  result["tcp25"][name] = {"reachable": connected is not None, "connected_ip": connected, "errors": errors[-3:]}
+              except Exception as exc:
+                  result["tcp25"][name] = {"reachable": False, "error": type(exc).__name__ + ": " + str(exc)}
+
+          values = set(candidates)
+          result["reflectors_agree"] = len(values) == 1 and len(candidates) == 2
+          result["ptr_matches_mail_host"] = result["ptr"] == "mail.testagram.site"
+          result["mail_a_matches_egress"] = bool(observed and observed in result["mail_host_a"])
+          result["provider_static_dedicated_confirmation"] = "NOT_VERIFIABLE_FROM_A_SINGLE_NETWORK_PROBE"
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+          REMOTE
+          )"
+          payload="$(jq -nc --arg cmd "$cmd" '{cmd:$cmd,timeoutSeconds:120}')"
+          result="$(curl -fsS --connect-timeout 10 --max-time 150 -X POST -H "X-API-Key: $INSTABOX_API_KEY" -H "Content-Type: application/json" -d "$payload" "https://api.instabox.sh/v1/machines/$INSTABOX_MACHINE_ID/exec")"
+          code="$(jq -r '.exitCode // 1' <<<"$result")"
+          if [[ "$code" != "0" ]]; then
+            echo "::error::Read-only InstaBox diagnostic command failed."
+            jq -r '.stderr // empty' <<<"$result"
+            exit 1
+          fi
+          output="$(jq -r '.stdout // empty' <<<"$result")"
+          printf '%s\n' "$output"
+          {
+            echo "### Read-only InstaBox native mail diagnostic"
+            echo ""
+            echo "The following JSON is read-only evidence; static/dedicated status still requires provider confirmation."
+            printf '%s\n' "$output"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     needs: validate
-    # A merge/push to main is the production approval boundary. Pull requests
-    # validate only; manual dispatch still requires explicit confirmation.
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true))
+    # Every production deployment requires an explicit manual confirmation.
+    # Pushes/merges to main run validation only and never deploy automatically.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm_production_deploy == true
     name: Deploy backend and private services
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 55
     env:
-      INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
-      INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+      INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
       INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_WORKERS_DEPLOY_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
       TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED || 'false' }}
       TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED: ${{ vars.TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED || 'false' }}
@@ -81,60 +208,9 @@ jobs:
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
       TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN: ${{ secrets.TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN }}
       AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-      MAILJET_API_KEY: ${{ secrets.MAILJET_API_KEY }}
-      MAILJET_SECRET_KEY: ${{ secrets.MAILJET_SECRET_KEY }}
-      AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
-      TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
-      - name: Validate production transactional email credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${MAILJET_API_KEY:-}" || -z "${MAILJET_SECRET_KEY:-}" ]]; then
-            echo "::error::Missing MAILJET_API_KEY or MAILJET_SECRET_KEY production secret. Configure both in the GitHub production environment before deploying."
-            exit 1
-          fi
-          if [[ ! "${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}" =~ ^[A-Fa-f0-9]{64}$ ]]; then
-            echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."
-            exit 1
-          fi
-          python3 - "${AUTH_FROM_EMAIL:-}" <<'PY'
-          import sys
-          from email.headerregistry import Address
-          from email.utils import getaddresses
-
-          raw_configured = sys.argv[1]
-          configured = raw_configured.strip()
-          mailboxes = getaddresses([configured])
-          if len(mailboxes) != 1 or not mailboxes[0][1]:
-              # Emit structural diagnostics only. Never print or expose the sender.
-              has_at = "@" in configured
-              has_comma = "," in configured
-              has_line_break = "\n" in raw_configured or "\r" in raw_configured
-              print(
-                  "::error::AUTH_FROM_EMAIL must be one bare mailbox such as "
-                  "no-reply@testagram.site; "
-                  f"mailbox_count={len(mailboxes)}, "
-                  f"address_present={bool(len(mailboxes) == 1 and mailboxes[0][1])}, "
-                  f"has_at={has_at}, has_comma={has_comma}, "
-                  f"has_line_break={has_line_break}, "
-                  f"trimmed_length={len(configured)}. "
-                  "The sender value itself is intentionally not logged."
-              )
-              raise SystemExit(1)
-          try:
-              parsed = Address(addr_spec=mailboxes[0][1])
-          except ValueError:
-              print("::error::AUTH_FROM_EMAIL is not a valid mailbox address.")
-              raise SystemExit(1)
-          domain = parsed.domain.lower().rstrip(".")
-          if domain != "testagram.site" and not domain.endswith(".testagram.site"):
-              print("::error::AUTH_FROM_EMAIL must use a verified Testagram-owned testagram.site domain or subdomain.")
-              raise SystemExit(1)
-          print(f"Validated Testagram sender domain: {domain}")
-          PY
       - name: Validate edge proxy shared credential
         shell: bash
         run: |
@@ -184,7 +260,7 @@ jobs:
           API="https://api.instabox.sh"
           EXPECTED_MACHINE_NAME="${INSTABOX_MACHINE_NAME:-testagramdb}"
           if [[ -z "${INSTABOX_API_KEY:-}" ]]; then
-            echo "::error::Missing TESTAGRAM_DB_API repository secret. Add the InstaBox API key there."
+            echo "::error::Missing the existing INSTABOX_API_KEY repository secret."
             exit 1
           fi
           if [[ -z "$EXPECTED_MACHINE_NAME" ]]; then
@@ -193,7 +269,7 @@ jobs:
           fi
 
           machines="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS \
-            -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
+            -H "X-API-Key: $INSTABOX_API_KEY" -H "Idempotency-Key: testagram-list-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$API/v1/machines?limit=100")"
           if ! jq -e '.machines | type == "array"' <<<"$machines" >/dev/null; then
             echo "::error::InstaBox machine inventory response is malformed."
             exit 1
@@ -240,14 +316,14 @@ jobs:
           fi
 
           if [[ -z "$machine_id" ]]; then
-            echo "::error::No InstaBox machine named '$EXPECTED_MACHINE_NAME' was found. Set INSTABOX_MACHINE_ID only if it identifies that exact machine."
+            echo "::error::No InstaBox machine named '$EXPECTED_MACHINE_NAME' was found. Set the existing INSTABOX_MACHINE_NAME variable only if it identifies that exact machine."
             exit 1
           fi
 
           machine="$(curl -fsS -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines/$machine_id")"
           actual_machine_name="$(jq -r '.name // empty' <<<"$machine")"
           if [[ "$actual_machine_name" != "$EXPECTED_MACHINE_NAME" ]]; then
-            echo "::error::Refusing to deploy to machine '$actual_machine_name'; expected '$EXPECTED_MACHINE_NAME'. Check INSTABOX_MACHINE_ID and INSTABOX_MACHINE_NAME."
+            echo "::error::Refusing to deploy to machine '$actual_machine_name'; expected '$EXPECTED_MACHINE_NAME'. Check the configured machine name."
             exit 1
           fi
           state="$(jq -r '.state // empty' <<<"$machine")"
@@ -527,10 +603,6 @@ jobs:
           TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
           TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${{ secrets.TESTAGRAM_EDGE_PROXY_SHARED_TOKEN }}
           AUTH_PUBLIC_BASE_URL: ${{ vars.AUTH_PUBLIC_BASE_URL || 'https://testagram.site' }}
-          MAILJET_API_KEY: ${{ secrets.MAILJET_API_KEY }}
-          MAILJET_SECRET_KEY: ${{ secrets.MAILJET_SECRET_KEY }}
-          AUTH_FROM_EMAIL: ${{ secrets.TESTAGRAM_MAIL_FROM || vars.TESTAGRAM_MAIL_FROM || 'no-reply@testagram.site' }}
-          TESTAGRAM_MAIL_ENCRYPTION_KEY: ${{ secrets.TESTAGRAM_MAIL_ENCRYPTION_KEY }}
           MEDIA_MODERATION_TOKEN: ${{ secrets.MEDIA_MODERATION_TOKEN }}
           MPESA_ENV: ${{ vars.MPESA_ENV }}
           MPESA_SHORTCODE: ${{ secrets.MPESA_SHORTCODE }}

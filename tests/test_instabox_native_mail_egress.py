@@ -1,0 +1,34 @@
+import pathlib
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+class InstaBoxNativeMailEgressTests(unittest.TestCase):
+    def test_egress_check_discovers_ipv4_and_requires_matching_ptr(self):
+        script = (ROOT / "scripts/verify-instabox-native-mail-egress.sh").read_text()
+        self.assertNotIn("TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4", script)
+        self.assertIn("api.ipify.org", script)
+        self.assertIn("checkip.amazonaws.com", script)
+        self.assertIn("socket.gethostbyaddr", script)
+        self.assertIn("mail.testagram.site", script)
+        self.assertIn("address.is_global", script)
+
+    def test_deploy_discovers_the_verified_egress_ip(self):
+        deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        workflow = (ROOT / ".github/workflows/instabox-deploy.yml").read_text()
+        self.assertIn("verify-instabox-native-mail-egress.sh", deploy)
+        self.assertIn("TESTAGRAM_MAIL_EGRESS_IPV4", deploy)
+        self.assertNotIn("TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4", workflow)
+
+    def test_instabox_disables_inbound_smtp_listener_and_host_port_probe(self):
+        deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        self.assertIn('write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ""', deploy)
+        self.assertNotIn('write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ":2525"', deploy)
+        self.assertNotIn('/dev/tcp/127.0.0.1/25', deploy)
+        self.assertNotIn('"25:2525"', compose)
+
+
+if __name__ == "__main__":
+    unittest.main()

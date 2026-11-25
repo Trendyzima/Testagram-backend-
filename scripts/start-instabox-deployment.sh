@@ -5,16 +5,15 @@ AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
 TESTAGRAM_EDGE_PROXY_SHARED_TOKEN="${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}"
 TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN="${TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:-}"
+[[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::The existing CLOUDFLARE_API_TOKEN is required to publish Testagram-owned SPF/DKIM/A records."; exit 1; }
+[[ -n "${CLOUDFLARE_WORKERS_DEPLOY_TOKEN:-}" ]] || { echo "::error::The existing CLOUDFLARE_WORKERS_DEPLOY_TOKEN is required to deploy the inbound-only bounce Worker."; exit 1; }
+[[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo "::error::CLOUDFLARE_ACCOUNT_ID is required to deploy the inbound-only bounce Worker."; exit 1; }
+
 if [[ -n "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" && ! "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]]; then echo "::error::TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN must be exactly 32 random bytes encoded as 64 hexadecimal characters when configured."; exit 1; fi
 [[ "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_EDGE_PROXY_SHARED_TOKEN must be a configured 32-byte hexadecimal secret shared with the Cloudflare API Worker."; exit 1; }
 [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::Testagram native authentication requires TESTAGRAM_AUTH_JWT_SECRET with at least 32 characters."; exit 1; }
 [[ "$AUTH_PUBLIC_BASE_URL" == https://* ]] || { echo "::error::AUTH_PUBLIC_BASE_URL must use HTTPS for native authentication."; exit 1; }
 [[ "$TESTAGRAM_WEB_IMAGE" =~ ^ghcr\.io/trendyzima/testagram-web@sha256:[a-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_WEB_IMAGE must be the approved immutable digest before remote deployment starts."; exit 1; }
-for key in MAILJET_API_KEY MAILJET_SECRET_KEY AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY; do
-  [[ -n "${!key:-}" ]] || { echo "::error::Mailjet transactional mail requires $key."; exit 1; }
-done
-[[ "$TESTAGRAM_MAIL_ENCRYPTION_KEY" =~ ^[A-Fa-f0-9]{64}$ ]] || { echo "::error::TESTAGRAM_MAIL_ENCRYPTION_KEY must be 64 hexadecimal characters."; exit 1; }
-[[ "$AUTH_FROM_EMAIL" == "no-reply@testagram.site" ]] || { echo "::error::AUTH_FROM_EMAIL must be no-reply@testagram.site for this release."; exit 1; }
 # GitHub Actions variables may contain accidental surrounding whitespace or CRLF.
 # Normalize the edges but reject every value other than the exact boolean literals.
 normalize_boolean() {
@@ -107,40 +106,18 @@ if ! sudo docker compose version >/dev/null 2>&1; then
 fi
 sudo docker info >/dev/null
 
-# Verify outbound HTTPS/TLS reachability to Mailjet before changing production services.
-# A credential-free GET is intentionally used: it cannot send an email. Any
-# HTTP response proves DNS, TCP 443, TLS certificate verification, and HTTP routing.
-# Encode Basic Auth before passing it to curl's stdin config. This avoids
-# exposing the API credentials in process arguments and keeps curl config syntax safe.
-# Match the exact normalization used when these values are persisted to the VPS
-# .env file and consumed by the Go API. Never log either normalized value.
-normalize_mailjet_credential() {
-  printf '%s' "$1" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
-}
-mailjet_api_key="$(normalize_mailjet_credential "$MAILJET_API_KEY")"
-mailjet_secret_key="$(normalize_mailjet_credential "$MAILJET_SECRET_KEY")"
-if [[ -z "$mailjet_api_key" || -z "$mailjet_secret_key" ]]; then
-  echo "::error::Mailjet API credentials are empty after safe whitespace normalization."
-  exit 1
-fi
-mailjet_basic_auth="$(printf '%s:%s' "$mailjet_api_key" "$mailjet_secret_key" | base64 | tr -d '\r\n')"
-if mailjet_api_status="$(
-  printf 'url = "https://api.mailjet.com:443/v3/REST/myprofile"\nheader = "Authorization: Basic %s"\n' \
-    "$mailjet_basic_auth" |
-    curl --config - --silent --show-error --output /dev/null --max-time 15 --write-out '%{http_code}'
-)"; then
-  unset mailjet_basic_auth mailjet_api_key mailjet_secret_key
-  [[ "$mailjet_api_status" == "200" ]] || {
-    echo "::error::Mailjet read-only API credential check returned HTTP $mailjet_api_status."
+# Native direct-to-MX delivery requires outbound TCP/25. Check both major
+# mailbox networks before replacing the running production stack.
+for mx_host in gmail-smtp-in.l.google.com outlook-com.olc.protection.outlook.com; do
+  if ! timeout 12 bash -c "exec 3<>/dev/tcp/$mx_host/25"; then
+    echo "::error::InstaBox cannot establish outbound TCP/25 to $mx_host; native mail delivery cannot be accepted as production-ready."
     exit 1
-  }
-  echo "Verified Mailjet HTTPS/TLS connectivity and API credentials with the read-only profile endpoint."
-else
-  unset mailjet_basic_auth mailjet_api_key mailjet_secret_key
-  echo "::error::InstaBox cannot authenticate to Mailjet over verified HTTPS on api.mailjet.com:443."
-  exit 1
-fi
+  fi
+  echo "Verified outbound TCP/25 reachability to $mx_host."
+done
 
+
+# Native Testagram mail connects directly to recipient MX hosts; no provider preflight or credentials are used.
 
 sync_repo() {
   local url="$1" path="$2"
@@ -153,6 +130,9 @@ sync_repo() {
 }
 
 sync_repo https://github.com/Trendyzima/Testagram-backend-.git "$BACKEND"
+TESTAGRAM_MAIL_EGRESS_IPV4="$(bash "$BACKEND/scripts/verify-instabox-native-mail-egress.sh")"
+export TESTAGRAM_MAIL_EGRESS_IPV4
+echo "Verified current InstaBox outbound SMTP IPv4 and PTR identity."
 sync_repo https://github.com/Trendyzima/Testagram-data-centre-.git "$DATACENTRE"
 sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
 sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content"
@@ -219,10 +199,7 @@ B2_S3_ACCESS_KEY_ID=
 B2_S3_SECRET_ACCESS_KEY=
 TESTAGRAM_AUTH_JWT_SECRET=${TESTAGRAM_AUTH_JWT_SECRET:-}
 AUTH_PUBLIC_BASE_URL=$AUTH_PUBLIC_BASE_URL
-MAILJET_API_KEY=${MAILJET_API_KEY:-}
-MAILJET_SECRET_KEY=${MAILJET_SECRET_KEY:-}
-AUTH_FROM_EMAIL=${AUTH_FROM_EMAIL:-no-reply@testagram.site}
-TESTAGRAM_MAIL_ENCRYPTION_KEY=${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
+TESTAGRAM_MAIL_ENCRYPTION_KEY=
 ALGORITHM_URL=http://algorithm:8092
 ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
 FEDERATION_INTERNAL_URL=http://federation:8081
@@ -257,6 +234,7 @@ EOF
   chmod 600 "$BASE_ENV"
 fi
 normalize_env_file "$BASE_ENV"
+chmod 600 "$BASE_ENV"
 
 # Keep the two Federation directions independently keyed, including on existing VPS installs.
 read_env_value() { sed -n "s/^$1=//p" "$BASE_ENV" | tail -n 1; }
@@ -280,6 +258,38 @@ write_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$BASE_ENV"
   fi
 }
+# Generate Testagram-owned DKIM material on the VPS. The private key never
+# enters GitHub Actions, the .env file, or a third-party mail provider.
+MAIL_KEY_DIR="$ROOT/mail-keys"
+sudo mkdir -p "$MAIL_KEY_DIR"
+sudo chmod 700 "$MAIL_KEY_DIR"
+if ! sudo test -s "$MAIL_KEY_DIR/dkim-private.pem"; then
+  sudo openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$MAIL_KEY_DIR/dkim-private.pem"
+fi
+# The Go image runs as uid/gid 100; grant only that runtime identity access.
+sudo chown 100:100 "$MAIL_KEY_DIR" "$MAIL_KEY_DIR/dkim-private.pem"
+sudo chmod 700 "$MAIL_KEY_DIR"
+sudo chmod 600 "$MAIL_KEY_DIR/dkim-private.pem"
+MAIL_TLS_DIR="$ROOT/mail-tls"
+sudo mkdir -p "$MAIL_TLS_DIR"
+sudo chown 100:100 "$MAIL_TLS_DIR"
+sudo chmod 700 "$MAIL_TLS_DIR"
+if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
+  sudo chown 100:100 "$MAIL_TLS_DIR/fullchain.pem" "$MAIL_TLS_DIR/privkey.pem"
+  sudo chmod 600 "$MAIL_TLS_DIR/fullchain.pem" "$MAIL_TLS_DIR/privkey.pem"
+  write_env_value TESTAGRAM_MAIL_TLS_CERT_FILE "/run/testagram-mail-tls/fullchain.pem"
+  write_env_value TESTAGRAM_MAIL_TLS_KEY_FILE "/run/testagram-mail-tls/privkey.pem"
+else
+  write_env_value TESTAGRAM_MAIL_TLS_CERT_FILE ""
+  write_env_value TESTAGRAM_MAIL_TLS_KEY_FILE ""
+  echo "Inbound SMTP STARTTLS is disabled until a valid mail.testagram.site certificate is installed in $MAIL_TLS_DIR."
+fi
+write_env_value TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
+write_env_value TESTAGRAM_DKIM_SELECTOR "tg2026"
+write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ""
+DKIM_PUBLIC_KEY="$(sudo openssl pkey -in "$MAIL_KEY_DIR/dkim-private.pem" -pubout -outform DER | base64 -w0)"
+TESTAGRAM_MAIL_EGRESS_IPV4="$TESTAGRAM_MAIL_EGRESS_IPV4" DKIM_PUBLIC_KEY="$DKIM_PUBLIC_KEY" CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" bash "$BACKEND/scripts/reconcile-instabox-native-mail-dns.sh"
+echo "Publish DKIM TXT at tg2026._domainkey.testagram.site: v=DKIM1; k=rsa; p=$DKIM_PUBLIC_KEY"
 # The edge proxy token must match the Cloudflare API Worker credential. Never
 # generate a replacement here: a mismatch would make the canonical API route fail closed.
 write_env_value EDGE_PROXY_SHARED_TOKEN "$EDGE_PROXY_SHARED_TOKEN"
@@ -313,12 +323,38 @@ ensure_random_secret() {
   printf -v "$key" '%s' "$value"
 }
 ensure_random_secret FEDERATION_INGRESS_TOKEN
+# Native mail secrets are generated and persisted on InstaBox; no SMTP-provider credentials are used.
+# The existing encryption key protects queued payloads and is HKDF-separated for inbound bounce HMAC; VERP signs bounce tokens.
+# Keep VERP stable until every outstanding return-path token has expired.
+ensure_hex_secret() {
+  local key="$1" value
+  value="$(read_env_value "$key")"
+  if [[ ! "$value" =~ ^[A-Fa-f0-9]{64}$ ]]; then
+    value="$(openssl rand -hex 32)"
+    write_env_value "$key" "$value"
+  fi
+  printf -v "$key" '%s' "$value"
+}
+ensure_hex_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
+ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY
+TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY="$(python3 - "$TESTAGRAM_MAIL_ENCRYPTION_KEY" <<'PY'
+import hashlib, hmac, sys
+master = bytes.fromhex(sys.argv[1])
+salt = b"Testagram native mail key separation v1"
+info = b"bounce-ingress-hmac-sha256"
+prk = hmac.new(salt, master, hashlib.sha256).digest()
+okm = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
+print(okm.hex())
+PY
+)"
+# Purge obsolete external mail-provider credentials from older VPS .env files.
+sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d' "$BASE_ENV"
 # Identity-application evidence is owned by the private Data Centre media service.
 # Backend-local object storage is not an evidence fallback. This restriction
 # applies only to evidence-based identity applications; it does not gate the
 # independent native /api/auth/signup + email verification account flow.
 write_env_value AUTH_PUBLIC_BASE_URL "$AUTH_PUBLIC_BASE_URL"
-for key in TESTAGRAM_AUTH_JWT_SECRET MAILJET_API_KEY MAILJET_SECRET_KEY AUTH_FROM_EMAIL TESTAGRAM_MAIL_ENCRYPTION_KEY TESTAGRAM_WEBAUTHN_READINESS_TOKEN TESTAGRAM_WEBAUTHN_RPID TESTAGRAM_WEBAUTHN_ORIGINS; do
+for key in TESTAGRAM_AUTH_JWT_SECRET TESTAGRAM_WEBAUTHN_READINESS_TOKEN TESTAGRAM_WEBAUTHN_RPID TESTAGRAM_WEBAUTHN_ORIGINS; do
   value="${!key:-}"
   if [[ -n "$value" ]]; then write_env_value "$key" "$value"; fi
 done
@@ -459,8 +495,13 @@ fi
 write_env_value TESTAGRAM_WEB_IMAGE "$web_image_digest"
 TESTAGRAM_WEB_IMAGE="$web_image_digest"
 export TESTAGRAM_WEB_IMAGE
+# Fail closed: the API may start before the Cloudflare bounce Worker is ready,
+# but the outbox sender must remain paused until the inbound route is verified.
+write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED false
+TESTAGRAM_MAIL_DELIVERY_ENABLED=false
+export TESTAGRAM_MAIL_DELIVERY_ENABLED
 
-echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API..."
+echo "Starting PostgreSQL, MinIO, Flutter web and the native Go API with outbound mail paused..."
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config -q
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 host_arch="$(uname -m)"; case "$host_arch" in x86_64|amd64) ;; *) echo "InstaBox host architecture $host_arch is not supported by the pinned linux/amd64 CDN image" >&2; exit 1 ;; esac; sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d postgres
@@ -999,9 +1040,24 @@ verify_container_env "$BASE_ENV" "$BASE_COMPOSE" media-cache ORIGIN_URL "http://
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api BACKEND_INTERNAL_TOKEN "$FEDERATION_BACKEND_INTERNAL_TOKEN"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
-verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api MAILJET_API_KEY "$MAILJET_API_KEY"
-verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api MAILJET_SECRET_KEY "$MAILJET_SECRET_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_VERP_KEY "$TESTAGRAM_MAIL_VERP_KEY"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"
+if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
+  verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_TLS_CERT_FILE "/run/testagram-mail-tls/fullchain.pem"
+  verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_TLS_KEY_FILE "/run/testagram-mail-tls/privkey.pem"
+  if ! sudo docker exec "$api_container" sh -ec 'test -r "$TESTAGRAM_MAIL_TLS_CERT_FILE" && test -r "$TESTAGRAM_MAIL_TLS_KEY_FILE"'; then
+    echo "::error::API container cannot read the native feedback STARTTLS certificate/key."
+    exit 1
+  fi
+fi
+if ! sudo docker exec "$api_container" sh -ec 'test -r "$TESTAGRAM_DKIM_PRIVATE_KEY_FILE"'; then
+  echo "::error::API container cannot read the VPS-owned DKIM private key."
+  exit 1
+fi
+# Bounce ingress is HTTP-only on InstaBox. The legacy SMTP feedback listener is disabled;
+# do not require a local TCP/25 greeting or a mail.testagram.site inbound TLS certificate.
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api DATABASE_URL "$shared_database_url"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" video TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" notification TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
@@ -1098,6 +1154,42 @@ echo "Data Centre overlay status: $overlay_status"
 sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps
 sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" ps || true
 printf '%s\n' "$overlay_status" > "$ROOT/overlay-status.txt"
+# The verified InstaBox egress identity is now published for outbound SMTP only.
+# Cloudflare Email Routing owns bounces.testagram.site MX; no inbound SMTP is exposed.
+TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY="$TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY" \
+CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" CLOUDFLARE_WORKERS_DEPLOY_TOKEN="$CLOUDFLARE_WORKERS_DEPLOY_TOKEN" \
+CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
+bash "$BACKEND/scripts/deploy-cloudflare-bounce-worker.sh" "$BACKEND/cloudflare/email-bounce-worker"
+
+# Only now is the Cloudflare bounce route installed and its Worker-to-API
+# health probe verified. Re-enable the native sender and restart the API.
+write_env_value TESTAGRAM_MAIL_DELIVERY_ENABLED true
+TESTAGRAM_MAIL_DELIVERY_ENABLED=true
+export TESTAGRAM_MAIL_DELIVERY_ENABLED
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --no-deps --force-recreate api
+api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
+if [[ -z "$api_container" ]]; then
+  echo "::error::Backend API container disappeared while enabling native mail delivery."
+  exit 1
+fi
+api_health=""
+for attempt in $(seq 1 60); do
+  api_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$api_container" 2>/dev/null || true)"
+  [[ "$api_health" == "healthy" ]] && break
+  [[ "$api_health" == "unhealthy" ]] && break
+  sleep 2
+done
+if [[ "$api_health" != "healthy" ]]; then
+  echo "::error::Backend API did not become healthy after enabling native mail delivery; the outbox gate may remain closed in the running container."
+  sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" logs --tail=120 api
+  exit 1
+fi
+api_actual_image_id="$(sudo docker inspect --format '{{.Image}}' "$api_container")"
+if [[ "$api_actual_image_id" != "$api_expected_image_id" ]]; then
+  echo "::error::API image changed unexpectedly while enabling native mail delivery."
+  exit 1
+fi
+echo "Native mail outbox delivery enabled only after Cloudflare bounce ingress and Worker-to-API health checks passed."
 echo "DEPLOY_EXIT=0"
 REMOTE_SCRIPT
 chmod 700 "$ROOT/deploy.sh"
@@ -1130,17 +1222,15 @@ if [[ ! "$remote_command_bytes" =~ ^[0-9]+$ ]] || (( remote_command_bytes > 1048
   echo "::error::Remote deployment script exceeds the InstaBox exec stdin limit (bytes=$remote_command_bytes; max=1048576)."
   exit 1
 fi
-
 payload="$(jq -nc \
   --arg cmd "bash -s" \
   --arg stdin "$REMOTE_COMMAND" \
   --arg web_image "$TESTAGRAM_WEB_IMAGE" \
+  --arg cloudflare_dns_token "${CLOUDFLARE_API_TOKEN:-}" \
+  --arg cloudflare_worker_token "${CLOUDFLARE_WORKERS_DEPLOY_TOKEN:-}" \
+  --arg cloudflare_account_id "${CLOUDFLARE_ACCOUNT_ID:-}" \
   --arg auth_jwt_secret "${TESTAGRAM_AUTH_JWT_SECRET:-}" \
   --arg auth_public_base_url "$AUTH_PUBLIC_BASE_URL" \
-  --arg mailjet_api_key "$MAILJET_API_KEY" \
-  --arg mailjet_secret_key "$MAILJET_SECRET_KEY" \
-  --arg auth_from_email "$AUTH_FROM_EMAIL" \
-  --arg mail_encryption_key "$TESTAGRAM_MAIL_ENCRYPTION_KEY" \
   --arg federation_token "$FEDERATION_BACKEND_INTERNAL_TOKEN" \
   --arg edge_proxy_token "$TESTAGRAM_EDGE_PROXY_SHARED_TOKEN" \
   --arg edge_recovery_readiness_token "$TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN" \
@@ -1167,7 +1257,7 @@ payload="$(jq -nc \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
   --arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}" \
-  '{cmd:$cmd,stdin:$stdin,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,MAILJET_API_KEY:$mailjet_api_key,MAILJET_SECRET_KEY:$mailjet_secret_key,AUTH_FROM_EMAIL:$auth_from_email,TESTAGRAM_MAIL_ENCRYPTION_KEY:$mail_encryption_key,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,stdin:$stdin,envs:{TESTAGRAM_WEB_IMAGE:$web_image,CLOUDFLARE_API_TOKEN:$cloudflare_dns_token,CLOUDFLARE_WORKERS_DEPLOY_TOKEN:$cloudflare_worker_token,CLOUDFLARE_ACCOUNT_ID:$cloudflare_account_id,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response_file="$(mktemp)"
 if ! http_status="$(printf '%s' "$payload" | curl --silent --show-error --connect-timeout 10 --max-time 120 \
   --output "$response_file" --write-out '%{http_code}' -X POST \

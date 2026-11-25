@@ -33,7 +33,7 @@ type permanentMailError struct {
 }
 
 func (e permanentMailError) Error() string {
-	return "Mail provider definitively rejected the message"
+	return "Recipient mail server definitively rejected the message"
 }
 
 type ambiguousMailError struct {
@@ -47,11 +47,12 @@ func (e ambiguousMailError) Error() string {
 func (e ambiguousMailError) Unwrap() error { return e.cause }
 
 type queuedMail struct {
-	Recipient string            `json:"recipient"`
-	Subject   string            `json:"subject"`
-	HTML      string            `json:"html"`
-	Text      string            `json:"text,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
+	EnvelopeFrom string            `json:"-"`
+	Recipient    string            `json:"recipient"`
+	Subject      string            `json:"subject"`
+	HTML         string            `json:"html"`
+	Text         string            `json:"text,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
 }
 
 var mailHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]*>`)
@@ -75,7 +76,35 @@ func mailPlainTextFromHTML(value string) string {
 }
 
 func mailRuntimeConfigurationError() error {
-	return mailProviderConfigurationError()
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_DELIVERY_ENABLED")), "false") {
+		return errors.New("native mail delivery is paused until bounce ingress is verified")
+	}
+	if err := mailProviderConfigurationError(); err != nil {
+		return err
+	}
+	if _, _, err := nativeMailReturnPath(1); err != nil {
+		return err
+	}
+	keyPath := strings.TrimSpace(os.Getenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE"))
+	if keyPath == "" {
+		return errors.New("TESTAGRAM_DKIM_PRIVATE_KEY_FILE is required for native mail delivery")
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		return errors.New("native DKIM private key file is unavailable")
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("native DKIM private key path must be a regular file")
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return errors.New("native DKIM private key permissions must not allow group or other access")
+	}
+	file, err := os.Open(keyPath)
+	if err != nil {
+		return errors.New("native DKIM private key file is not readable")
+	}
+	_ = file.Close()
+	return nil
 }
 
 func mailCipher() (cipher.AEAD, error) {
@@ -288,6 +317,33 @@ func (s *service) cleanupMailOperationalRecords(ctx context.Context) error {
 		return err
 	}
 	_, err = s.db.Exec(ctx, `
+		DELETE FROM testagram_mail.return_path_tokens
+		WHERE token_hash IN (
+			SELECT token_hash
+			FROM testagram_mail.return_path_tokens
+			WHERE expires_at < now() - interval '30 days'
+			ORDER BY expires_at
+			LIMIT 500
+		)
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+		WITH expired AS (
+			SELECT id
+			FROM testagram_mail.inbound_reports
+			WHERE received_at < now() - interval '180 days'
+			ORDER BY received_at,id
+			LIMIT 500
+			FOR UPDATE SKIP LOCKED
+		)
+		DELETE FROM testagram_mail.inbound_reports WHERE id IN (SELECT id FROM expired)
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
 		WITH expired AS (
 			SELECT id
 			FROM testagram_mail.social_unsubscribe_tokens
@@ -308,9 +364,6 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 	}
 	if err := mailRuntimeConfigurationError(); err != nil {
 		return false, nil
-	}
-	if err := s.reconcileMailjetEvents(ctx); err != nil {
-		return false, err
 	}
 	if err := s.cleanupMailOperationalRecords(ctx); err != nil {
 		return false, err
@@ -334,9 +387,9 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	// A worker may have crashed after the mail provider accepted the request but before
+	// A worker may have crashed after the recipient MX accepted the message but before
 	// recording the response. Never reclaim an expired sending lease: its
-	// provider outcome is unknowable and automatic resend could duplicate mail.
+	// SMTP outcome is unknowable and automatic resend could duplicate mail.
 	if _, err := s.db.Exec(ctx, `
 		UPDATE testagram_mail.outbox
 		SET status='uncertain',lease_until=NULL,last_error_code='MAIL_LEASE_EXPIRED_OUTCOME_UNKNOWN',updated_at=now()
@@ -416,7 +469,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		return true, err
 	}
 
-	// Re-check consent immediately before the provider call so queued social
+	// Re-check consent immediately before the direct SMTP send so queued social
 	// messages cannot be sent after a preference withdrawal.
 	if preferenceUserID != "" {
 		consentActive, err := socialMailConsentActive(ctx, s.db, preferenceUserID, preferenceCategory)
@@ -433,8 +486,23 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		}
 	}
 
+	returnPath, tokenHash, err := nativeMailReturnPath(id)
+	if err != nil {
+		_ = s.failMail(ctx, id, attempt, "MAIL_RETURN_PATH_GENERATION_FAILED")
+		return true, err
+	}
+	if _, err := s.db.Exec(ctx, `
+		INSERT INTO testagram_mail.return_path_tokens(token_hash,outbox_id)
+		VALUES($1,$2)
+		ON CONFLICT(outbox_id) DO NOTHING
+	`, tokenHash, id); err != nil {
+		_ = s.failMail(ctx, id, attempt, "MAIL_RETURN_PATH_PERSIST_FAILED")
+		return true, err
+	}
+	message.EnvelopeFrom = returnPath
+
 	sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-	send := sendMailjetAPI
+	send := sendNativeSMTP
 	if s.mailSender != nil {
 		send = s.mailSender
 	}
@@ -454,7 +522,7 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		if errors.As(sendErr, &permanent) {
 			code := permanent.code
 			if code == "" {
-				code = "MAIL_PROVIDER_REJECTED"
+				code = "MAIL_MX_REJECTED"
 			}
 			_, err := s.db.Exec(ctx, `
 				UPDATE testagram_mail.outbox
@@ -466,20 +534,39 @@ func (s *service) processOneMail(ctx context.Context) (bool, error) {
 		}
 		code := "MAIL_DELIVERY_FAILED"
 		if strings.Contains(sendErr.Error(), "not configured") {
-			code = "MAIL_PROVIDER_NOT_CONFIGURED"
+			code = "MAIL_NATIVE_CONFIGURATION_ERROR"
 		}
 		if err := s.failMail(ctx, id, attempt, code); err != nil {
 			return true, err
 		}
 		return true, nil
 	}
-	_, err = s.db.Exec(ctx, `
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return true, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		UPDATE testagram_mail.outbox
 		SET status='sent',sent_at=now(),lease_until=NULL,provider_message_id=NULLIF($2,''),last_error_code=NULL,
-		    payload_ciphertext='',payload_nonce='',updated_at=now()
+		    delivery_status='accepted',payload_ciphertext='',payload_nonce='',updated_at=now()
 		WHERE id=$1 AND status='sending'
 	`, id, messageID)
-	return true, err
+	if err != nil {
+		return true, err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_mail.delivery_events(
+			provider_event_id,provider_message_id,event_type,recipient_fingerprint,transport,processed_at
+		)
+		VALUES('native-accepted:'||$1::bigint::text,COALESCE(NULLIF($2,''),'native-outbox-'||$1::bigint::text),
+		       'smtp.accepted',$3,'native',now())
+		ON CONFLICT(provider_event_id) DO NOTHING
+	`, id, messageID, fingerprint)
+	if err != nil {
+		return true, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 func (s *service) failMail(ctx context.Context, id int64, attempt int, code string) error {

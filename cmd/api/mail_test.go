@@ -30,6 +30,13 @@ func TestBrandedMailShellEscapesSubjectAndIncludesAccessibleLayout(t *testing.T)
 	}
 }
 
+func TestMailRuntimeConfigurationCanPauseOutboundDelivery(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_DELIVERY_ENABLED", "false")
+	if err := mailRuntimeConfigurationError(); err == nil {
+		t.Fatal("expected outbound mail delivery to remain paused until bounce ingress is verified")
+	}
+}
+
 func TestMailCipherEncryptsAndDecrypts(t *testing.T) {
 	key := strings.Repeat("ab", 32)
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", key)

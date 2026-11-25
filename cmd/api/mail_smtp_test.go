@@ -2,116 +2,121 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"net"
+	"net/mail"
 	"strings"
 	"testing"
 )
 
-func TestMailjetAPIConfigurationRequiresCredentials(t *testing.T) {
+func TestNativeMailConfigurationNeedsNoProviderCredentials(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
-	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
-	t.Setenv("MAILJET_API_KEY", "api-key")
-	t.Setenv("MAILJET_SECRET_KEY", "secret")
-
-	if err := mailProviderConfigurationError(); err != nil {
-		t.Fatalf("valid Mailjet API configuration rejected: %v", err)
-	}
+	t.Setenv("MAILJET_API_KEY", "")
 	t.Setenv("MAILJET_SECRET_KEY", "")
-	if err := mailProviderConfigurationError(); err == nil {
-		t.Fatal("missing Mailjet secret was accepted")
+	t.Setenv("AUTH_FROM_EMAIL", "")
+	if err := mailProviderConfigurationError(); err != nil {
+		t.Fatalf("native mail configuration unexpectedly requires a provider: %v", err)
 	}
 }
 
-func TestSendMailjetAPIUsesHTTPSBasicAuthAndPreservesEventCorrelation(t *testing.T) {
-	t.Setenv("MAILJET_API_KEY", "api-key")
-	t.Setenv("MAILJET_SECRET_KEY", "secret")
-	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
+func TestNativeMailRuntimeRequiresVERPAndDKIMConfiguration(t *testing.T) {
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", "")
+	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", "")
+	if err := mailRuntimeConfigurationError(); err == nil {
+		t.Fatal("runtime accepted missing dedicated VERP and DKIM keys")
+	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != "api-key" || pass != "secret" {
-			t.Errorf("unexpected Mailjet API authentication")
-		}
-		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" {
-			t.Errorf("unexpected request method or content type")
-		}
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("62", 32))
+	if err := mailRuntimeConfigurationError(); err == nil {
+		t.Fatal("runtime accepted missing DKIM private key")
+	}
 
-		var body mailjetSendRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	_, keyPath := writeTestDKIMKey(t, 0600)
+	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", keyPath)
+	if err := mailRuntimeConfigurationError(); err != nil {
+		t.Fatalf("runtime rejected valid native mail keys: %v", err)
+	}
+}
+
+func TestNativeMailMXHostsSortsRecipientMXByPreference(t *testing.T) {
+	hosts, err := nativeMailMXHosts(context.Background(), "example.test", func(context.Context, string) ([]*net.MX, error) {
+		return []*net.MX{{Host: "secondary.example.test.", Pref: 20}, {Host: "primary.example.test.", Pref: 10}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hosts) != 2 || hosts[0].Host != "primary.example.test." || hosts[1].Host != "secondary.example.test." {
+		t.Fatalf("MX hosts were not preference-sorted: %#v", hosts)
+	}
+}
+
+func TestNativeMailMXHostsUsesAddressFallbackOnlyWhenMXIsAbsent(t *testing.T) {
+	for _, lookup := range []func(context.Context, string) ([]*net.MX, error){
+		func(context.Context, string) ([]*net.MX, error) { return nil, nil },
+		func(context.Context, string) ([]*net.MX, error) {
+			return nil, &net.DNSError{Err: "no such host", Name: "example.test", IsNotFound: true}
+		},
+	} {
+		hosts, err := nativeMailMXHosts(context.Background(), "example.test", lookup)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if len(body.Messages) != 1 {
-			t.Fatalf("message count = %d", len(body.Messages))
+		if len(hosts) != 1 || hosts[0].Host != "example.test" {
+			t.Fatalf("missing-MX fallback is incorrect: %#v", hosts)
 		}
-		msg := body.Messages[0]
-		if msg.From.Email != "no-reply@testagram.site" || msg.To[0].Email != "person@example.test" {
-			t.Fatalf("unexpected sender or recipient: %#v", msg)
-		}
-		if msg.CustomID == "" || !strings.HasPrefix(msg.CustomID, "testagram-") || len(msg.CustomID) > 64 {
-			t.Fatalf("invalid custom correlation ID: %q", msg.CustomID)
-		}
-		if msg.Headers["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
-			t.Fatalf("unsubscribe headers were not forwarded: %#v", msg.Headers)
-		}
+	}
+}
 
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Messages":[{"Status":"success","To":[{"MessageID":12345}]}]}`))
-	}))
-	defer server.Close()
+func TestNativeMailMXHostsDoesNotHideTransientDNSFailures(t *testing.T) {
+	_, err := nativeMailMXHosts(context.Background(), "example.test", func(context.Context, string) ([]*net.MX, error) {
+		return nil, errors.New("temporary resolver timeout")
+	})
+	if err == nil || !strings.Contains(err.Error(), "MX lookup failed") {
+		t.Fatalf("transient DNS failure was hidden: %v", err)
+	}
+}
 
-	customID, err := sendMailjetAPIWithClient(context.Background(), queuedMail{
+func TestBuildNativeSMTPMessagePreservesUnsubscribeHeaders(t *testing.T) {
+	to, err := mail.ParseAddress("person@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := buildNativeSMTPMessage(to, queuedMail{
 		Recipient: "person@example.test",
 		Subject:   "Testagram notice",
 		Text:      "Hello",
 		HTML:      "<p>Hello</p>",
 		Headers: map[string]string{
-			"List-Unsubscribe":      "<https://testagram.site/unsubscribe>",
+			"List-Unsubscribe":      "<https://testagram.site/api/email/unsubscribe?token=abc>",
 			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
 		},
-	}, server.Client(), server.URL)
+	}, "abc123@testagram.site")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(customID, "testagram-") {
-		t.Fatalf("returned correlation ID = %q", customID)
+	got := string(payload)
+	for _, want := range []string{
+		"From: Testagram <no-reply@testagram.site>",
+		"Message-ID: <abc123@testagram.site>",
+		"List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+		"multipart/alternative",
+		"text/plain",
+		"text/html",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("native message missing %q: %s", want, got)
+		}
 	}
 }
 
-func TestSendMailjetAPIQuarantinesAmbiguousServerFailure(t *testing.T) {
-	t.Setenv("MAILJET_API_KEY", "api-key")
-	t.Setenv("MAILJET_SECRET_KEY", "secret")
-	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "upstream error", http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	_, err := sendMailjetAPIWithClient(context.Background(), queuedMail{
-		Recipient: "person@example.test",
-		Subject:   "Test",
-		HTML:      "<p>Hi</p>",
-	}, server.Client(), server.URL)
-	var ambiguous ambiguousMailError
-	if !errors.As(err, &ambiguous) {
-		t.Fatalf("HTTP 500 must be quarantined as ambiguous, got %v", err)
-	}
-}
-
-func TestSendMailjetAPIRejectsUnsafeCustomHeaders(t *testing.T) {
-	t.Setenv("MAILJET_API_KEY", "api-key")
-	t.Setenv("MAILJET_SECRET_KEY", "secret")
-	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
-
-	_, err := sendMailjetAPIWithClient(context.Background(), queuedMail{
-		Recipient: "person@example.test",
-		Subject:   "Test",
-		HTML:      "<p>Hi</p>",
-		Headers:   map[string]string{"X-Test": "safe"},
-	}, http.DefaultClient, "https://api.mailjet.com/v3.1/send")
+func TestBuildNativeSMTPMessageRejectsUnsafeHeaders(t *testing.T) {
+	to, _ := mail.ParseAddress("person@example.test")
+	_, err := buildNativeSMTPMessage(to, queuedMail{
+		Subject: "Test",
+		HTML:    "<p>Hi</p>",
+		Headers: map[string]string{"X-Test": "bad"},
+	}, "abc@testagram.site")
 	if err == nil {
 		t.Fatal("unsupported custom header was accepted")
 	}

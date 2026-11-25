@@ -595,7 +595,6 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/threads/{thread_id}/reposts/state", s.threadRepostState)
 	mux.HandleFunc("POST /api/threads/{thread_id}/reposts/toggle", s.threadRepostToggle)
 	mux.HandleFunc("GET /api/social/lists", s.socialListsList)
-	mux.HandleFunc("PUT /api/social/lists/{list_id}/pin", s.socialListPinUpdate)
 	mux.HandleFunc("POST /api/social/lists", s.socialListCreate)
 	mux.HandleFunc("GET /api/social/lists/{list_id}", s.socialListRead)
 	mux.HandleFunc("DELETE /api/social/lists/{list_id}", s.socialListDelete)
@@ -623,13 +622,15 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/social/posts/{post_id}/reposts", s.socialUnrepost)
 	mux.HandleFunc("POST /api/social/posts/{post_id}/bookmarks", s.socialBookmark)
 	mux.HandleFunc("DELETE /api/social/posts/{post_id}/bookmarks", s.socialUnbookmark)
+	mux.HandleFunc("PUT /api/social/lists/{list_id}/pin", s.socialListPinUpdate)
 	mux.HandleFunc("GET /api/social/notifications", s.socialNotifications)
 	mux.HandleFunc("OPTIONS /api/social/notifications/stream", s.mediaPreflight)
 	mux.HandleFunc("GET /api/social/notifications/stream", s.socialNotificationStream)
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
-	mux.HandleFunc("POST /internal/mailjet/events", s.mailjetDeliveryEvents)
 	mux.HandleFunc("GET /api/email/unsubscribe", s.socialEmailUnsubscribe)
 	mux.HandleFunc("POST /api/email/unsubscribe", s.socialEmailUnsubscribe)
+	// Cloudflare is an inbound-only bounce transport; Testagram authenticates and processes the original MIME payload.
+	mux.HandleFunc("POST "+nativeBounceIngressPath, s.nativeBounceHTTP)
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
@@ -1461,6 +1462,13 @@ func main() {
 	go svc.runStorageCleanupWorker(signalCtx)
 	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
 	go svc.runMailOutboxWorker(signalCtx)
+
+	if bounceAddr := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR")); bounceAddr != "" {
+		if err := startNativeBounceSMTP(signalCtx, db, bounceAddr); err != nil {
+			log.Fatalf("start Testagram native mail feedback receiver: %v", err)
+		}
+		log.Printf("Testagram native SMTP feedback receiver listening on %s", bounceAddr)
+	}
 	if replicationApplyEnabled {
 		if replicationStore == nil {
 			log.Fatal("REPLICATION_APPLY_ENABLED requires replication configuration and database access")

@@ -270,32 +270,35 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 	}
 }
 
-func TestPublicRegistrationDoesNotRequireAdminIdentityReview(t *testing.T) {
-	// Private evidence storage and staff WebAuthn are deliberately disabled in
-	// this scenario. Ordinary signup must still reach only the native auth-store
-	// readiness boundary, never an identity-review or evidence-storage gate.
-	t.Setenv("DATA_CENTRE_MEDIA_ENABLED", "false")
-	t.Setenv("FRESH_MEDIA_ENABLED", "false")
-	t.Setenv("TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED", "false")
-	old, had := os.LookupEnv("TESTAGRAM_AUTH_JWT_SECRET")
-	_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv("TESTAGRAM_AUTH_JWT_SECRET", old)
-		} else {
-			_ = os.Unsetenv("TESTAGRAM_AUTH_JWT_SECRET")
-		}
-	})
+func TestPublicSignupRequiresIdentityReviewAndTwoPersonApproval(t *testing.T) {
 	handler := (&service{}).routes()
-	for _, path := range []string{"/api/auth/signup", "/api/auth/resend-verification", "/api/auth/verify-email"} {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value","token":"a-valid-looking-token"}`))
+	for _, body := range []string{
+		`{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value"}`,
+		"{invalid-json",
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+			t.Fatalf("public signup must fail closed before parsing or touching the auth store: status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "AUTH_STORE_UNAVAILABLE") {
+			t.Fatalf("public signup fell through to ordinary auth-store handling: %s", rec.Body.String())
+		}
+	}
+}
+
+func TestPostProvisioningEmailVerificationEndpointsAreNotBlockedBySignupGate(t *testing.T) {
+	handler := (&service{}).routes()
+	for _, path := range []string{"/api/auth/resend-verification", "/api/auth/verify-email"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"email":"applicant@example.com","token":"a-valid-looking-token"}`))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-			t.Fatalf("POST %s is still blocked by admin identity review: status=%d body=%s", path, rec.Code, rec.Body.String())
+			t.Fatalf("POST %s was incorrectly blocked by the public signup gate: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "AUTH_STORE_UNAVAILABLE") {
-			t.Fatalf("POST %s did not reach the independent auth-store readiness gate: status=%d body=%s", path, rec.Code, rec.Body.String())
+			t.Fatalf("POST %s did not reach its independent auth-store readiness boundary: status=%d body=%s", path, rec.Code, rec.Body.String())
 		}
 	}
 }

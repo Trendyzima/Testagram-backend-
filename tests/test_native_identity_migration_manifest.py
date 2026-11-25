@@ -49,6 +49,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261124_testagram_email_verification_otp.sql",
             "20261124_testagram_social_email_consent.sql",
             "20261125_testagram_mail_delivery_events.sql",
+            "20261126_testagram_native_mail_feedback.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -67,7 +68,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         otp = "20261124_testagram_email_verification_otp.sql"
         consent = "20261124_testagram_social_email_consent.sql"
         delivery = "20261125_testagram_mail_delivery_events.sql"
-        for migration in (otp, consent, delivery):
+        feedback = "20261126_testagram_native_mail_feedback.sql"
+        for migration in (otp, consent, delivery, feedback):
             with self.subTest(migration=migration):
                 self.assertIn(
                     f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
@@ -90,15 +92,15 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("social_unsubscribe_tokens", delivery_sql)
         self.assertIn("recipient_fingerprint", delivery_sql)
         mail_events = (ROOT / "cmd/api/mail_events.go").read_text(encoding="utf-8")
-        self.assertIn("MAILJET_API_KEY", mail_events)
-        self.assertIn("MAILJET_SECRET_KEY", mail_events)
+        self.assertNotIn("MAILJET_API_KEY", mail_events)
+        self.assertNotIn("MAILJET_SECRET_KEY", mail_events)
         deploy_script = (ROOT / "scripts" / "start-instabox-deployment.sh").read_text(encoding="utf-8")
         self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"', deploy_script)
         deploy_workflow = (ROOT / ".github" / "workflows" / "instabox-deploy.yml").read_text(encoding="utf-8")
         self.assertIn("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN", deploy_workflow)
         self.assertIn("TESTAGRAM_EDGE_PROXY_SHARED_TOKEN", compose)
-        self.assertIn("reconcileMailjetEvents", mail_events)
-        self.assertIn("CustomID", (ROOT / "cmd/api/mail_smtp.go").read_text(encoding="utf-8"))
+        self.assertNotIn("reconcileMailjetEvents", mail_events)
+        self.assertIn("LookupMX", (ROOT / "cmd/api/mail_smtp.go").read_text(encoding="utf-8"))
         self.assertIn("List-Unsubscribe-Post", (ROOT / "cmd/api/mail.go").read_text(encoding="utf-8"))
         self.assertIn("socialEmailUnsubscribe", (ROOT / "cmd/api/mail_unsubscribe.go").read_text(encoding="utf-8"))
 
@@ -233,6 +235,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261124_testagram_email_verification_otp.sql",
             "20261124_testagram_social_email_consent.sql",
             "20261125_testagram_mail_delivery_events.sql",
+            "20261126_testagram_native_mail_feedback.sql",
         ):
             with self.subTest(migration=migration):
                 self.assertIn(migration, script)

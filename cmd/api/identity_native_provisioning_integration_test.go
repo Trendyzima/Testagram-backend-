@@ -516,16 +516,15 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if !svc.authRespond(authResp, authReq, "signup") {
 		t.Fatal("ordinary native signup route was not handled")
 	}
-	if strings.Contains(authResp.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-		t.Fatalf("ordinary native signup is still blocked by administrator identity review: status=%d body=%s", authResp.Code, authResp.Body.String())
+	if authResp.Code != http.StatusForbidden || !strings.Contains(authResp.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+		t.Fatalf("ordinary public signup must remain fail-closed until evidence review and two-person approval: status=%d body=%s", authResp.Code, authResp.Body.String())
 	}
-	// This integration fixture intentionally does not configure production
-	// mail delivery. Reaching EMAIL_UNAVAILABLE proves the request passed the
-	// obsolete admin-review gate and reached the native verification-email
-	// enqueue stage; production signup still requires the real mail outbox.
-	if authResp.Code != http.StatusServiceUnavailable ||
-		!strings.Contains(authResp.Body.String(), "EMAIL_UNAVAILABLE") {
-		t.Fatalf("ordinary native signup did not reach its email-delivery gate: status=%d body=%s", authResp.Code, authResp.Body.String())
+	var bypassIdentityCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", "bypass@example.test").Scan(&bypassIdentityCount); err != nil {
+		t.Fatal(err)
+	}
+	if bypassIdentityCount != 0 {
+		t.Fatalf("blocked public signup created %d native identity records", bypassIdentityCount)
 	}
 	// Existing native identities may predate the approved-registration
 	// ledger. They still require verified email, an enabled account and no

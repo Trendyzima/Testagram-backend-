@@ -103,16 +103,20 @@ psql_ci < migrations/20261106_social_core.sql
 psql_ci < migrations/20261106_social_core.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
 psql_ci < migrations/20261124_testagram_email_verification_otp.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 
 psql_ci <<'SQL'
 INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at) VALUES
@@ -718,7 +722,8 @@ for migration in \
   migrations/061_native_sensitive_action_integrity.sql \
   migrations/20261124_testagram_email_verification_otp.sql \
   migrations/20261124_testagram_social_email_consent.sql \
-  migrations/20261125_testagram_mail_delivery_events.sql; do
+  migrations/20261125_testagram_mail_delivery_events.sql \
+  migrations/20261126_testagram_native_mail_feedback.sql; do
   psql_ci < "$migration"
 done
 
@@ -988,6 +993,7 @@ psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci <<'SQL'
 DO $mail_role_repair$
 BEGIN
@@ -1001,6 +1007,41 @@ BEGIN
      OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','USAGE')
      OR NOT has_sequence_privilege('testagram_app','testagram_mail.outbox_id_seq','SELECT') THEN
     RAISE EXCEPTION 'corrective migration did not restore the exact mail outbox grants';
+  END IF;
+
+  IF to_regclass('testagram_mail.return_path_tokens') IS NULL
+     OR to_regclass('testagram_mail.inbound_reports') IS NULL THEN
+    RAISE EXCEPTION 'native mail feedback migration did not create its required ledgers';
+  END IF;
+  IF NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','UPDATE')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.return_path_tokens','DELETE')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','SELECT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','INSERT')
+     OR NOT has_table_privilege('testagram_app','testagram_mail.inbound_reports','DELETE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.inbound_reports_id_seq','USAGE')
+     OR NOT has_sequence_privilege('testagram_app','testagram_mail.inbound_reports_id_seq','SELECT') THEN
+    RAISE EXCEPTION 'native mail feedback runtime grants are incomplete';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='testagram_mail.delivery_events'::regclass
+      AND conname='testagram_mail_delivery_events_event_type_check'
+      AND pg_get_constraintdef(oid) LIKE '%dsn.delivered%'
+  ) THEN
+    RAISE EXCEPTION 'native mail delivery event types were not enabled';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_mail' AND table_name='delivery_events'
+      AND column_name='transport'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_mail' AND table_name='delivery_events'
+      AND column_name='report_sha256'
+  ) THEN
+    RAISE EXCEPTION 'provider-neutral native mail event metadata is missing';
   END IF;
 END;
 $mail_role_repair$;
@@ -1079,7 +1120,7 @@ echo "Native identity migrations, evidence-access audit and registration invaria
 
 # Exercise Cloudflare lifecycle reconciliation, duplicate-event protection, complaint suppression,
 # and RFC one-click social unsubscribe against the isolated PostgreSQL schema.
-TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient|TestSocialEmailUnsubscribeGetIsSafeAndPostWithdrawsConsent|TestMailWorkerRetriesDefiniteFailureAndPreservesPayload|TestMailWorkerQuarantinesAmbiguousOutcomeWithoutResending|TestMailWorkerNeverSendsPendingSocialMailAfterConsentWithdrawal)$' -count=1
+TEST_DATABASE_URL='postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable' TESTAGRAM_MAIL_ENCRYPTION_KEY='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' go test ./cmd/api -run '^(TestCloudflareDeliveryEventIsIdempotentAndComplaintSuppressesRecipient|TestSocialEmailUnsubscribeGetIsSafeAndPostWithdrawsConsent|TestMailWorkerRetriesDefiniteFailureAndPreservesPayload|TestMailWorkerQuarantinesAmbiguousOutcomeWithoutResending|TestMailWorkerNeverSendsPendingSocialMailAfterConsentWithdrawal|TestNativeBounceReportCorrelatesAndDeduplicatesHardBounce)$' -count=1
 
 # Exercise native password recovery and the complete refresh/logout lifecycle against
 # the same isolated PostgreSQL schema used by the registration acceptance tests.
@@ -1118,6 +1159,7 @@ psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261123_testagram_mail_outbox_runtime_role.sql
 psql_ci < migrations/20261124_testagram_social_email_consent.sql
 psql_ci < migrations/20261125_testagram_mail_delivery_events.sql
+psql_ci < migrations/20261126_testagram_native_mail_feedback.sql
 psql_ci <<'SQL'
 DO $mail_role_repair$
 BEGIN

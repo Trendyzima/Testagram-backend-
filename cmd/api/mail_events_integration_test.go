@@ -2,26 +2,113 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestMailjetDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *testing.T) {
+func TestNativeBounceReportCorrelatesAndDeduplicatesHardBounce(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("64", 32))
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("65", 32))
+
+	recipient := fmt.Sprintf("native-bounce-%d@example.test", time.Now().UnixNano())
+	if err := enqueueAuthEmailWith(ctx, db, recipient, "Bounce integration test", "<p>Test</p>"); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := mailRecipientFingerprint(recipient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outboxID int64
+	if err := db.QueryRow(ctx, "SELECT id FROM testagram_mail.outbox WHERE recipient_fingerprint=$1 ORDER BY id DESC LIMIT 1", fingerprint).Scan(&outboxID); err != nil {
+		t.Fatal(err)
+	}
+	returnPath, tokenHash, err := nativeMailReturnPath(outboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.recipient_suppressions WHERE recipient_fingerprint=$1", fingerprint)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.delivery_events WHERE provider_message_id=$1", fmt.Sprintf("native-outbox-%d", outboxID))
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.inbound_reports WHERE token_hash=$1", tokenHash)
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", outboxID)
+	}()
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_mail.return_path_tokens(token_hash,outbox_id)
+		VALUES($1,$2)
+		ON CONFLICT(outbox_id) DO NOTHING
+	`, tokenHash, outboxID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(returnPath, "b+") {
+		t.Fatalf("invalid generated VERP address: %q", returnPath)
+	}
+
+	raw := []byte("Message-ID: <native-bounce-fixture@example.test>\\r\\n" +
+		"Final-Recipient: rfc822; " + recipient + "\\r\\n" +
+		"Action: failed\\r\\nStatus: 5.1.1\\r\\n")
+	report := nativeBounceReport{
+		Recipient: recipient, EventType: "dsn.bounced", Status: "5.1.1",
+		Diagnostic: "smtp; 550 5.1.1 user unknown", RemoteMTA: "dns; mx.example.test",
+	}
+	if err := processNativeBounceReport(ctx, db, tokenHash, raw, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := processNativeBounceReport(ctx, db, tokenHash, raw, report); err != nil {
+		t.Fatalf("replayed DSN was not handled idempotently: %v", err)
+	}
+
+	var deliveryStatus string
+	var hasFailedAt bool
+	if err := db.QueryRow(ctx, "SELECT delivery_status,delivery_failed_at IS NOT NULL FROM testagram_mail.outbox WHERE id=$1", outboxID).Scan(&deliveryStatus, &hasFailedAt); err != nil {
+		t.Fatal(err)
+	}
+	if deliveryStatus != "bounced" || !hasFailedAt {
+		t.Fatalf("hard-bounce delivery state=(%s,failed_at=%v)", deliveryStatus, hasFailedAt)
+	}
+	var suppressionCount, reportCount, eventCount int64
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.recipient_suppressions WHERE recipient_fingerprint=$1 AND reason='hard_bounce'", fingerprint).Scan(&suppressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.inbound_reports WHERE token_hash=$1", tokenHash).Scan(&reportCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.delivery_events WHERE provider_message_id=$1 AND event_type='dsn.bounced'", fmt.Sprintf("native-outbox-%d", outboxID)).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if suppressionCount != 1 || reportCount != 1 || eventCount != 1 {
+		t.Fatalf("idempotency counts: suppressions=%d reports=%d events=%d", suppressionCount, reportCount, eventCount)
+	}
+
+	mismatched := report
+	mismatched.Recipient = "different-recipient@example.test"
+	if err := processNativeBounceReport(ctx, db, tokenHash, []byte("forged recipient report"), mismatched); err == nil {
+		t.Fatal("report for a different recipient was correlated to this VERP token")
+	}
+}
+
+func TestNativeMailWorkerSuppressesPreviouslyComplainedRecipient(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("4c", 32))
-	t.Setenv("MAILJET_API_KEY", "ci-api-key")
-	t.Setenv("MAILJET_SECRET_KEY", "ci-secret-key")
-	t.Setenv("AUTH_FROM_EMAIL", "no-reply@testagram.site")
-	svc := &service{db: db}
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("4d", 32))
+	_, dkimPath := writeTestDKIMKey(t, 0600)
+	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", dkimPath)
+	t.Setenv("TESTAGRAM_DKIM_SELECTOR", "test2026")
+	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("63", 32))
+	_, keyPath := writeTestDKIMKey(t, 0600)
+	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", keyPath)
+	t.Setenv("MAILJET_API_KEY", "")
+	t.Setenv("MAILJET_SECRET_KEY", "")
+	t.Setenv("AUTH_FROM_EMAIL", "")
 
-	recipient := fmt.Sprintf("mail-event-%d@example.test", time.Now().UnixNano())
-	if err := svc.enqueueAuthEmail(ctx, recipient, "CI delivery event", "<p>Test</p>"); err != nil {
+	svc := &service{db: db}
+	recipient := fmt.Sprintf("native-mail-suppression-%d@example.test", time.Now().UnixNano())
+	if err := svc.enqueueAuthEmail(ctx, recipient, "Native mail suppression test", "<p>Test</p>"); err != nil {
 		t.Fatal(err)
 	}
 	fingerprint, err := mailRecipientFingerprint(recipient)
@@ -32,77 +119,19 @@ func TestMailjetDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *test
 	if err := db.QueryRow(ctx, "SELECT id FROM testagram_mail.outbox WHERE recipient_fingerprint=$1 ORDER BY id DESC LIMIT 1", fingerprint).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	customID := "testagram-ci-mail-message"
 	defer func() {
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.delivery_events WHERE provider_message_id=$1", customID)
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.recipient_suppressions WHERE recipient_fingerprint=$1", fingerprint)
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", id)
 	}()
 
-	send := func(eventType string, eventTime int64) (*httptest.ResponseRecorder, string) {
-		event := mailjetDeliveryEvent{
-			Event: eventType, Time: eventTime, MessageGUID: "ci-mailjet-guid",
-			MessageID: json.Number("123456"), CustomID: customID, Email: recipient,
-			HardBounce: false, ErrorRelatedTo: "recipient",
-		}
-		payload, err := json.Marshal([]mailjetDeliveryEvent{event})
-		if err != nil {
-			t.Fatal(err)
-		}
-		req := httptest.NewRequest(http.MethodPost, "/internal/mailjet/events", strings.NewReader(string(payload)))
-		req.SetBasicAuth("ci-api-key", "ci-secret-key")
-		rec := httptest.NewRecorder()
-		svc.mailjetDeliveryEvents(rec, req)
-		return rec, mailjetEventFingerprint(event)
-	}
-
-	firstTime := time.Now().Unix()
-	if got, eventID := send("sent", firstTime); got.Code != http.StatusOK {
-		t.Fatalf("delivery event status=%d body=%s", got.Code, got.Body.String())
-	} else {
-		var processed bool
-		if err := db.QueryRow(ctx, "SELECT processed_at IS NOT NULL FROM testagram_mail.delivery_events WHERE provider_event_id=$1", eventID).Scan(&processed); err != nil {
-			t.Fatal(err)
-		}
-		if processed {
-			t.Fatal("early event was processed before the outbox custom message ID existed")
-		}
-	}
-	if _, err := db.Exec(ctx, "UPDATE testagram_mail.outbox SET provider_message_id=$2,available_at=now()-interval '10 years' WHERE id=$1", id, customID); err != nil {
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_mail.recipient_suppressions
+			(recipient_fingerprint,reason,source_event_id)
+		VALUES ($1,'complaint',$2)
+		ON CONFLICT (recipient_fingerprint) DO NOTHING
+	`, fingerprint, "testagram-native-complaint-"+fmt.Sprint(id)); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.reconcileMailjetEvents(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var state string
-	if err := db.QueryRow(ctx, "SELECT delivery_status FROM testagram_mail.outbox WHERE id=$1", id).Scan(&state); err != nil {
-		t.Fatal(err)
-	}
-	if state != "delivered" {
-		t.Fatalf("delivery state=%q", state)
-	}
-	if got, eventID := send("sent", firstTime); got.Code != http.StatusOK {
-		t.Fatalf("duplicate event status=%d body=%s", got.Code, got.Body.String())
-	} else {
-		var count int
-		if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.delivery_events WHERE provider_event_id=$1", eventID).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != 1 {
-			t.Fatalf("duplicate event rows=%d", count)
-		}
-	}
-
-	if got, _ := send("spam", firstTime+1); got.Code != http.StatusOK {
-		t.Fatalf("complaint event status=%d body=%s", got.Code, got.Body.String())
-	}
-	if err := db.QueryRow(ctx, "SELECT delivery_status FROM testagram_mail.outbox WHERE id=$1", id).Scan(&state); err != nil {
-		t.Fatal(err)
-	}
-	if state != "complained" {
-		t.Fatalf("complaint state=%q", state)
-	}
-
 	worked, err := svc.processOneMail(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +144,6 @@ func TestMailjetDeliveryEventIsIdempotentAndComplaintSuppressesRecipient(t *test
 		t.Fatal(err)
 	}
 	if status != "dead" || code != "RECIPIENT_SUPPRESSED" {
-		t.Fatalf("suppressed state=(%s,%s)", status, code)
+		t.Fatalf("suppressed message state=(%s,%s)", status, code)
 	}
 }

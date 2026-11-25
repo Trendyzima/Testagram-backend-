@@ -67,6 +67,7 @@ services:
       - ../../migrations/20261124_testagram_email_verification_otp.sql:/docker-entrypoint-initdb.d/20261124_testagram_email_verification_otp.sql:ro
       - ../../migrations/20261124_testagram_social_email_consent.sql:/docker-entrypoint-initdb.d/20261124_testagram_social_email_consent.sql:ro
       - ../../migrations/20261125_testagram_mail_delivery_events.sql:/docker-entrypoint-initdb.d/20261125_testagram_mail_delivery_events.sql:ro
+      - ../../migrations/20261126_testagram_native_mail_feedback.sql:/docker-entrypoint-initdb.d/20261126_testagram_native_mail_feedback.sql:ro
       - ../../migrations/20261120_native_identity_historical_account_archive.sql:/docker-entrypoint-initdb.d/058a_native_identity_historical_account_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_staff_archive.sql:/docker-entrypoint-initdb.d/058b_native_identity_historical_staff_archive.sql:ro
       - ../../migrations/20261120_native_identity_historical_admin_archive.sql:/docker-entrypoint-initdb.d/058c_native_identity_historical_admin_archive.sql:ro
@@ -174,10 +175,14 @@ services:
       TESTAGRAM_WEBAUTHN_ORIGINS: ${TESTAGRAM_WEBAUTHN_ORIGINS:-}
       # Canonical API gate; unset/empty remains closed even if a client build exposes the form.
       AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
-      AUTH_FROM_EMAIL: ${AUTH_FROM_EMAIL:-no-reply@testagram.site}
-      MAILJET_API_KEY: ${MAILJET_API_KEY:-}
-      MAILJET_SECRET_KEY: ${MAILJET_SECRET_KEY:-}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
+      TESTAGRAM_MAIL_VERP_KEY: ${TESTAGRAM_MAIL_VERP_KEY:-}
+      TESTAGRAM_MAIL_DELIVERY_ENABLED: ${TESTAGRAM_MAIL_DELIVERY_ENABLED:-true}
+      TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR: ${TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR:-}
+      TESTAGRAM_DKIM_PRIVATE_KEY_FILE: ${TESTAGRAM_DKIM_PRIVATE_KEY_FILE:-/run/testagram-mail/dkim-private.pem}
+      TESTAGRAM_DKIM_SELECTOR: ${TESTAGRAM_DKIM_SELECTOR:-tg2026}
+      TESTAGRAM_MAIL_TLS_CERT_FILE: ${TESTAGRAM_MAIL_TLS_CERT_FILE:-}
+      TESTAGRAM_MAIL_TLS_KEY_FILE: ${TESTAGRAM_MAIL_TLS_KEY_FILE:-}
       TESTAGRAM_EDGE_PROXY_SHARED_TOKEN: ${EDGE_PROXY_SHARED_TOKEN:?Set EDGE_PROXY_SHARED_TOKEN in .env}
       ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
@@ -246,6 +251,9 @@ services:
       MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
       MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
       MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}
+    volumes:
+      - /data/home/testagram/mail-keys:/run/testagram-mail:ro
+      - /data/home/testagram/mail-tls:/run/testagram-mail-tls:ro
     depends_on:
       postgres:
         condition: service_healthy

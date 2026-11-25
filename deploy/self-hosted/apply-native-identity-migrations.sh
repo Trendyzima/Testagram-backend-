@@ -75,6 +75,20 @@ WITH checks(check_name, ok) AS (VALUES
   ('native approval WebAuthn RP and credential columns', (SELECT count(*)=2 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_approvals' AND column_name IN ('webauthn_rpid','webauthn_credential_id'))),
   ('native sensitive-action approval append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals') AND tgname='native_sensitive_action_approval_append_only' AND NOT tgisinternal)),
   ('native_registration_provisioning table', to_regclass('testagram_identity.native_registration_provisioning') IS NOT NULL),
+  ('native mail return-path token table', to_regclass('testagram_mail.return_path_tokens') IS NOT NULL),
+  ('native mail inbound report table', to_regclass('testagram_mail.inbound_reports') IS NOT NULL),
+  ('native mail delivery-event transport column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_mail' AND table_name='delivery_events' AND column_name='transport')),
+  ('native mail delivery-event constraint', EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('testagram_mail.delivery_events') AND conname='testagram_mail_delivery_events_event_type_check' AND pg_get_constraintdef(oid) LIKE '%dsn.bounced%')),
+  ('testagram_app mail delivery-event DELETE', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.delivery_events') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.delivery_events','DELETE') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app social unsubscribe-token DELETE', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.social_unsubscribe_tokens') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.social_unsubscribe_tokens','DELETE') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app native return-path SELECT', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.return_path_tokens') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.return_path_tokens','SELECT') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app native return-path INSERT', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.return_path_tokens') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.return_path_tokens','INSERT') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app native return-path UPDATE', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.return_path_tokens') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.return_path_tokens','UPDATE') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app inbound report SELECT', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.inbound_reports') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.inbound_reports','SELECT') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app inbound report INSERT', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.inbound_reports') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.inbound_reports','INSERT') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app inbound report DELETE', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.inbound_reports') IS NOT NULL THEN has_table_privilege(oid,'testagram_mail.inbound_reports','DELETE') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+  ('testagram_app inbound report sequence USAGE', COALESCE((SELECT CASE WHEN to_regclass('testagram_mail.inbound_reports') IS NOT NULL THEN has_sequence_privilege(oid,pg_get_serial_sequence('testagram_mail.inbound_reports','id'),'USAGE') ELSE false END FROM pg_roles WHERE rolname='testagram_app'),false)),
+
   ('testagram_mail.outbox table', to_regclass('testagram_mail.outbox') IS NOT NULL),
   ('mail outbox encrypted payload and lifecycle columns', (SELECT count(*)=10 FROM information_schema.columns WHERE table_schema='testagram_mail' AND table_name='outbox' AND column_name IN ('payload_ciphertext','payload_nonce','status','attempts','available_at','lease_until','sent_at','provider_message_id','last_error_code','updated_at'))),
   ('mail outbox social consent recipient column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_mail' AND table_name='outbox' AND column_name='preference_user_id')),
@@ -198,7 +212,8 @@ for file in \
   061_native_sensitive_action_integrity.sql \
   20261124_testagram_email_verification_otp.sql \
   20261124_testagram_social_email_consent.sql \
-  20261125_testagram_mail_delivery_events.sql; do
+  20261125_testagram_mail_delivery_events.sql \
+  20261126_testagram_native_mail_feedback.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -238,6 +253,7 @@ apply_migration 061_native_sensitive_action_integrity.sql
 apply_migration 20261124_testagram_email_verification_otp.sql
 apply_migration 20261124_testagram_social_email_consent.sql
 apply_migration 20261125_testagram_mail_delivery_events.sql
+apply_migration 20261126_testagram_native_mail_feedback.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
@@ -251,5 +267,5 @@ if [[ "$(schema_ready)" != "t" ]]; then
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Cloudflare mail outbox, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and native approval circuit."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Testagram-native mail outbox, VERP return paths, inbound feedback ledger, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and native approval circuit."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
