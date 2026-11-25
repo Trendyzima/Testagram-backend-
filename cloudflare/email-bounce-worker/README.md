@@ -89,7 +89,7 @@ Cloudflare subaddressing maps it to the base Worker address while preserving
 the original recipient in the email event.
 
 The Worker requires Cloudflare's prepended
-`Authentication-Results: mx.cloudflare.net;` header with `dmarc=pass`; it
+`Authentication-Results: mx.cloudflare.net;` header with at least one Cloudflare-verified `spf=pass`, `dkim=pass`, or `dmarc=pass`; it
 does not trust sender-supplied authentication-result headers. It preserves
 the case-sensitive VERP token, lowercases only the DNS domain, reads the raw
 MIME stream, and enforces a 1 MiB limit.
