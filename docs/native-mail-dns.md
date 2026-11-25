@@ -121,7 +121,7 @@ Testagram sets each outbound envelope sender to
 subaddressing maps that recipient to the base Worker rule while preserving
 the original recipient in the email event.
 
-The Worker requires Cloudflare's prepended `Authentication-Results: mx.cloudflare.net;` header with `dmarc=pass` and relies on Cloudflare's inbound SPF/DKIM/DMARC validation; sender-supplied authentication-result headers are not trusted. It preserves the case-sensitive VERP local part, lowercases only the
+The Worker requires Cloudflare's prepended `Authentication-Results: mx.cloudflare.net;` header with at least one Cloudflare-verified `spf=pass`, `dkim=pass`, or `dmarc=pass` and relies on Cloudflare's inbound SPF/DKIM/DMARC validation; sender-supplied authentication-result headers are not trusted. It preserves the case-sensitive VERP local part, lowercases only the
 DNS domain, preserves the raw RFC 5322 bytes, and enforces a 1 MiB limit. It
 signs timestamp, canonical recipient and SHA-256 body digest with HMAC-SHA-256
 and posts the original MIME to `POST /internal/mail/bounce` over HTTPS.
