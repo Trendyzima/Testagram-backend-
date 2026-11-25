@@ -304,19 +304,19 @@ func (s *service) socialFollow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("SOCIAL_WRITE_FAILED", "Follow could not be saved", requestID))
 		return
 	}
-	var createdAt time.Time
+	var updatedAt time.Time
 	_, err = tx.Exec(ctx, `INSERT INTO testagram_local.follows(follower_id,following_id,status)
 		VALUES($1,$2,$3)
 		ON CONFLICT(follower_id,following_id) DO UPDATE SET status=EXCLUDED.status,updated_at=now()`, userID, targetID, desired)
 	if err == nil {
-		err = tx.QueryRow(ctx, "SELECT created_at FROM testagram_local.follows WHERE follower_id=$1 AND following_id=$2", userID, targetID).Scan(&createdAt)
+		err = tx.QueryRow(ctx, "SELECT updated_at FROM testagram_local.follows WHERE follower_id=$1 AND following_id=$2", userID, targetID).Scan(&updatedAt)
 	}
 	if err == nil {
 		kind := "follow"
 		if desired == "pending" {
 			kind = "follow_request"
 		}
-		eventKey := fmt.Sprintf("follow:%s:%s:%d", userID, targetID, createdAt.UnixNano())
+		eventKey := fmt.Sprintf("follow:%s:%s:%d", userID, targetID, updatedAt.UnixNano())
 		eventType := "social.follow"
 		if desired == "pending" {
 			eventType = "social.follow_request"
