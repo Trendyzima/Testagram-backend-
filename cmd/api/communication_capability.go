@@ -173,6 +173,9 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.user_id,'username',a.username,'display_name',a.display_name,'avatar_url',a.avatar_key) ORDER BY a.username)
 			 FROM testagram_local.conversation_members cm JOIN testagram_local.accounts a ON a.user_id=cm.user_id
 			 WHERE cm.conversation_id=c.id AND cm.left_at IS NULL),'[]'::jsonb),
+			COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a.user_id,'username',a.username,'display_name',a.display_name,'avatar_url',a.avatar_key) ORDER BY a.username)
+			 FROM testagram_local.conversation_members cm JOIN testagram_local.accounts a ON a.user_id=cm.user_id
+			 WHERE cm.conversation_id=c.id AND cm.user_id<>$1 AND cm.left_at IS NULL),'[]'::jsonb),
 			(SELECT count(*) FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.sender_id<>$1 AND m.deleted_at IS NULL AND m.created_at>COALESCE(me.last_read_at,'epoch'::timestamptz)),
 			(SELECT jsonb_build_object('id',m.id,'sender_id',m.sender_id,'created_at',m.created_at)
 			 FROM testagram_local.messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC,m.id DESC LIMIT 1)
@@ -188,19 +191,20 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 		for rows.Next() {
 			var id, kind, title string
 			var created, updated time.Time
-			var members, latest []byte
+			var members, otherMembers, latest []byte
 			var unread int64
-			if rows.Scan(&id, &kind, &title, &created, &updated, &members, &unread, &latest) != nil {
+			if rows.Scan(&id, &kind, &title, &created, &updated, &members, &otherMembers, &unread, &latest) != nil {
 				fail("CONVERSATIONS_LIST_FAILED", "Could not read conversations", http.StatusServiceUnavailable)
 				return true
 			}
-			var m any
+			var m, others any
 			var l any
 			_ = json.Unmarshal(members, &m)
+			_ = json.Unmarshal(otherMembers, &others)
 			if len(latest) > 0 {
 				_ = json.Unmarshal(latest, &l)
 			}
-			items = append(items, map[string]any{"id": id, "kind": kind, "title": title, "created_at": created, "updated_at": updated, "members": m, "unread_count": unread, "latest_message": l})
+			items = append(items, map[string]any{"id": id, "kind": kind, "title": title, "created_at": created, "updated_at": updated, "members": m, "other_members": others, "unread_count": unread, "latest_message": l})
 		}
 		if rows.Err() != nil {
 			fail("CONVERSATIONS_LIST_FAILED", "Could not read conversations", http.StatusServiceUnavailable)
