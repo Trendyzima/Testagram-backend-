@@ -5,7 +5,6 @@ AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
 TESTAGRAM_EDGE_PROXY_SHARED_TOKEN="${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}"
 TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN="${TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:-}"
-[[ -n "${TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4:-}" ]] || { echo "::error::Set the provider-confirmed TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4 repository variable."; exit 1; }
 [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::The existing CLOUDFLARE_API_TOKEN is required to publish Testagram-owned SPF/DKIM/A records."; exit 1; }
 [[ -n "${CLOUDFLARE_WORKERS_DEPLOY_TOKEN:-}" ]] || { echo "::error::The existing CLOUDFLARE_WORKERS_DEPLOY_TOKEN is required to deploy the inbound-only bounce Worker."; exit 1; }
 [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] || { echo "::error::CLOUDFLARE_ACCOUNT_ID is required to deploy the inbound-only bounce Worker."; exit 1; }
@@ -131,7 +130,9 @@ sync_repo() {
 }
 
 sync_repo https://github.com/Trendyzima/Testagram-backend-.git "$BACKEND"
-TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4="${TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4:-}" bash "$BACKEND/scripts/verify-instabox-native-mail-egress.sh"
+TESTAGRAM_MAIL_EGRESS_IPV4="$(bash "$BACKEND/scripts/verify-instabox-native-mail-egress.sh")"
+export TESTAGRAM_MAIL_EGRESS_IPV4
+echo "Verified current InstaBox outbound SMTP IPv4 and PTR identity."
 sync_repo https://github.com/Trendyzima/Testagram-data-centre-.git "$DATACENTRE"
 sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
 sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content"
@@ -287,7 +288,7 @@ write_env_value TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-privat
 write_env_value TESTAGRAM_DKIM_SELECTOR "tg2026"
 write_env_value TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR ""
 DKIM_PUBLIC_KEY="$(sudo openssl pkey -in "$MAIL_KEY_DIR/dkim-private.pem" -pubout -outform DER | base64 -w0)"
-TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4="$TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4" DKIM_PUBLIC_KEY="$DKIM_PUBLIC_KEY" CLOUDFLARE_DNS_API_TOKEN="$CLOUDFLARE_API_TOKEN" bash "$BACKEND/scripts/reconcile-instabox-native-mail-dns.sh"
+TESTAGRAM_MAIL_EGRESS_IPV4="$TESTAGRAM_MAIL_EGRESS_IPV4" DKIM_PUBLIC_KEY="$DKIM_PUBLIC_KEY" CLOUDFLARE_DNS_API_TOKEN="$CLOUDFLARE_API_TOKEN" bash "$BACKEND/scripts/reconcile-instabox-native-mail-dns.sh"
 echo "Publish DKIM TXT at tg2026._domainkey.testagram.site: v=DKIM1; k=rsa; p=$DKIM_PUBLIC_KEY"
 # The edge proxy token must match the Cloudflare API Worker credential. Never
 # generate a replacement here: a mismatch would make the canonical API route fail closed.
@@ -323,7 +324,7 @@ ensure_random_secret() {
 }
 ensure_random_secret FEDERATION_INGRESS_TOKEN
 # Native mail secrets are generated and persisted on InstaBox; no SMTP-provider credentials are used.
-# The encryption key protects queued payloads, VERP signs bounce tokens, and ingress HMAC authenticates Cloudflare's inbound-only handoff.
+# The existing encryption key protects queued payloads and is HKDF-separated for inbound bounce HMAC; VERP signs bounce tokens.
 # Keep VERP stable until every outstanding return-path token has expired.
 ensure_hex_secret() {
   local key="$1" value
@@ -336,7 +337,16 @@ ensure_hex_secret() {
 }
 ensure_hex_secret TESTAGRAM_MAIL_ENCRYPTION_KEY
 ensure_hex_secret TESTAGRAM_MAIL_VERP_KEY
-ensure_hex_secret TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET
+TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY="$(python3 - "$TESTAGRAM_MAIL_ENCRYPTION_KEY" <<'PY'
+import hashlib, hmac, sys
+master = bytes.fromhex(sys.argv[1])
+salt = b"Testagram native mail key separation v1"
+info = b"bounce-ingress-hmac-sha256"
+prk = hmac.new(salt, master, hashlib.sha256).digest()
+okm = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()
+print(okm.hex())
+PY
+)"
 # Purge obsolete external mail-provider credentials from older VPS .env files.
 sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d' "$BASE_ENV"
 # Identity-application evidence is owned by the private Data Centre media service.
@@ -1032,7 +1042,6 @@ verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federati
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_VERP_KEY "$TESTAGRAM_MAIL_VERP_KEY"
-verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET "$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"
 if sudo test -s "$MAIL_TLS_DIR/fullchain.pem" && sudo test -s "$MAIL_TLS_DIR/privkey.pem"; then
@@ -1147,7 +1156,7 @@ sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.
 printf '%s\n' "$overlay_status" > "$ROOT/overlay-status.txt"
 # The verified InstaBox egress identity is now published for outbound SMTP only.
 # Cloudflare Email Routing owns bounces.testagram.site MX; no inbound SMTP is exposed.
-TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET="$TESTAGRAM_MAIL_BOUNCE_INGRESS_SECRET" \
+TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY="$TESTAGRAM_MAIL_BOUNCE_INGRESS_KEY" \
 CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN" CLOUDFLARE_WORKERS_DEPLOY_TOKEN="$CLOUDFLARE_WORKERS_DEPLOY_TOKEN" \
 CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
 bash "$BACKEND/scripts/deploy-cloudflare-bounce-worker.sh" "$BACKEND/cloudflare/email-bounce-worker"
@@ -1217,7 +1226,6 @@ payload="$(jq -nc \
   --arg cmd "bash -s" \
   --arg stdin "$REMOTE_COMMAND" \
   --arg web_image "$TESTAGRAM_WEB_IMAGE" \
-  --arg expected_mail_ipv4 "${TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4:-}" \
   --arg cloudflare_dns_token "${CLOUDFLARE_API_TOKEN:-}" \
   --arg cloudflare_worker_token "${CLOUDFLARE_WORKERS_DEPLOY_TOKEN:-}" \
   --arg cloudflare_account_id "${CLOUDFLARE_ACCOUNT_ID:-}" \
@@ -1249,7 +1257,7 @@ payload="$(jq -nc \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
   --arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}" \
-  '{cmd:$cmd,stdin:$stdin,envs:{TESTAGRAM_WEB_IMAGE:$web_image,TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4:$expected_mail_ipv4,CLOUDFLARE_API_TOKEN:$cloudflare_dns_token,CLOUDFLARE_WORKERS_DEPLOY_TOKEN:$cloudflare_worker_token,CLOUDFLARE_ACCOUNT_ID:$cloudflare_account_id,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,stdin:$stdin,envs:{TESTAGRAM_WEB_IMAGE:$web_image,CLOUDFLARE_API_TOKEN:$cloudflare_dns_token,CLOUDFLARE_WORKERS_DEPLOY_TOKEN:$cloudflare_worker_token,CLOUDFLARE_ACCOUNT_ID:$cloudflare_account_id,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response_file="$(mktemp)"
 if ! http_status="$(printf '%s' "$payload" | curl --silent --show-error --connect-timeout 10 --max-time 120 \
   --output "$response_file" --write-out '%{http_code}' -X POST \
