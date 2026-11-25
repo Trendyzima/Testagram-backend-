@@ -7,13 +7,14 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
-	"golang.org/x/crypto/hkdf"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/hkdf"
 )
 
 const nativeBounceIngressPath = "/internal/mail/bounce"
