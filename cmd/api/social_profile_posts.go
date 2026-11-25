@@ -12,6 +12,14 @@ import (
 // socialProfilePosts returns the authenticated viewer's visible page of posts
 // for a profile. Protected-account and block rules are enforced in SQL before
 // any post or media identifiers are returned.
+func parseProfileMediaOnly(value string) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
+}
+
 func (s *service) socialProfilePosts(w http.ResponseWriter, r *http.Request) {
 	viewerID, requestID, ok := s.socialAuth(w, r)
 	if !ok {
@@ -30,6 +38,11 @@ func (s *service) socialProfilePosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		limit = n
+	}
+	mediaOnly, mediaOnlyErr := parseProfileMediaOnly(r.URL.Query().Get("media_only"))
+	if mediaOnlyErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_MEDIA_FILTER", "media_only must be a boolean", requestID))
+		return
 	}
 	cursor, err := decodeHomeFeedCursor(r.URL.Query().Get("before"))
 	if err != nil {
@@ -67,6 +80,7 @@ WHERE p.author_id=$2
   AND NOT EXISTS(SELECT 1 FROM testagram_local.blocks b
     WHERE (b.blocker_id=$1 AND b.blocked_id=a.user_id)
        OR (b.blocker_id=a.user_id AND b.blocked_id=$1))
+  AND (NOT $6::boolean OR jsonb_array_length(COALESCE(p.media_ids,'[]'::jsonb))>0)
   AND ($3::timestamptz IS NULL OR (p.created_at,p.id)<($3::timestamptz,$4::uuid))
 ORDER BY p.created_at DESC,p.id DESC
 LIMIT $5`
@@ -75,7 +89,7 @@ LIMIT $5`
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	rows, err := s.db.Query(ctx, query, viewerID, ownerID, before, beforeID, limit+1)
+	rows, err := s.db.Query(ctx, query, viewerID, ownerID, before, beforeID, limit+1, mediaOnly)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("PROFILE_POSTS_UNAVAILABLE", "Profile posts could not be loaded", requestID))
 		return

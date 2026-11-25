@@ -289,6 +289,17 @@ func orderHomeFeedByRanking(posts []homeFeedPost, ranked []algorithmclient.Ranke
 	return ordered, true
 }
 
+func (s *service) socialBookmarksFeed(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	query.Set("bookmarks_only", "true")
+	query.Set("feed", "latest")
+	clone := r.Clone(r.Context())
+	urlCopy := *r.URL
+	urlCopy.RawQuery = query.Encode()
+	clone.URL = &urlCopy
+	s.homeFeed(w, clone)
+}
+
 func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	requestID := requestID(r)
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -319,6 +330,11 @@ func (s *service) homeFeed(w http.ResponseWriter, r *http.Request) {
 	}
 	mediaOnly := feedMode == "media"
 	discoverOnly := feedMode == "discover"
+	bookmarksOnly, bookmarksErr := parseFollowingOnly(r.URL.Query().Get("bookmarks_only"))
+	if bookmarksErr != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_BOOKMARK_FILTER", "bookmarks_only must be a boolean", requestID))
+		return
+	}
 	rankingEnabled := feedMode != "latest"
 	listID, listIDErr := parseHomeFeedListID(r.URL.Query().Get("list_id"))
 	if listIDErr != nil {
@@ -394,6 +410,10 @@ WHERE p.deleted_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM testagram_local.follows f
           WHERE f.follower_id=$1::uuid AND f.following_id=p.author_id AND f.status='accepted')
   ))
+  AND (NOT $10::boolean OR EXISTS (
+      SELECT 1 FROM testagram_local.bookmarks bm
+      WHERE bm.user_id=$1::uuid AND bm.post_id=p.id
+  ))
   AND (NOT $6::boolean OR EXISTS (
       SELECT 1
       FROM jsonb_array_elements_text(COALESCE(p.media_ids,'[]'::jsonb)) AS media_key(object_key)
@@ -451,10 +471,7 @@ WHERE id=$1::uuid AND deleted_at IS NULL
 	if cursor != nil {
 		before, beforeID = cursor.CreatedAt, cursor.ID
 	}
-	queryArgs := []any{userID, before, beforeID, limit + 1, followingOnly, videoOnly, mediaOnly, discoverOnly}
-	if listIDArg != nil {
-		queryArgs = append(queryArgs, listIDArg)
-	}
+	queryArgs := []any{userID, before, beforeID, limit + 1, followingOnly, videoOnly, mediaOnly, discoverOnly, listIDArg, bookmarksOnly}
 	rows, err := s.db.Query(queryCtx, query, queryArgs...)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("FEED_QUERY_FAILED", "Feed could not be loaded", requestID))
@@ -544,7 +561,7 @@ WHERE id=$1::uuid AND deleted_at IS NULL
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
-		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode, "feed_mode": feedMode, "video_only": videoOnly, "list_id": listID},
+		"data":  map[string]any{"posts": posts, "next_cursor": nextCursor, "has_more": hasMore, "ranking_mode": rankingMode, "feed_mode": feedMode, "video_only": videoOnly, "bookmarks_only": bookmarksOnly, "list_id": listID},
 		"error": nil, "request_id": requestID,
 	})
 }
