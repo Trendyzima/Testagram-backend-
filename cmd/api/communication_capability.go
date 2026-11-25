@@ -21,7 +21,7 @@ import (
 // until a reviewed device-key and authenticated-encryption lifecycle is deployed.
 type communicationEncryptionStatus struct {
 	Enabled bool
-	Epoch int64
+	Epoch   int64
 }
 
 func unverifiedCommunicationEncryptionState() communicationEncryptionStatus {
