@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"encoding/json"
 	"fmt"
 	"net/http"
