@@ -6,7 +6,7 @@
 # The caller supplies a narrowly scoped Zone:DNS:Edit token; no root MX records are touched.
 set -Eeuo pipefail
 
-: "${CLOUDFLARE_DNS_API_TOKEN:?CLOUDFLARE_DNS_API_TOKEN is required}"
+: "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${DKIM_PUBLIC_KEY:?DKIM_PUBLIC_KEY must be the public key generated on the dedicated SMTP host}"
 API="https://api.cloudflare.com/client/v4"
 DOMAIN="testagram.site"
@@ -18,7 +18,7 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 chmod 700 "$TMP_DIR"
 umask 077
-printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_DNS_API_TOKEN" > "$TMP_DIR/cloudflare.curlrc"
+printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN" > "$TMP_DIR/cloudflare.curlrc"
 chmod 600 "$TMP_DIR/cloudflare.curlrc"
 
 api_get() {
