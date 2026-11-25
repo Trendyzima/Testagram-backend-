@@ -95,9 +95,9 @@ WHERE id=$1::uuid AND owner_id=$3::uuid AND deleted_at IS NULL`, id, *in.Pinned,
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"data": map[string]any{"list_id": id, "pinned": *in.Pinned},
-		"error": nil,
+		"ok":         true,
+		"data":       map[string]any{"list_id": id, "pinned": *in.Pinned},
+		"error":      nil,
 		"request_id": rid,
 	})
 }
