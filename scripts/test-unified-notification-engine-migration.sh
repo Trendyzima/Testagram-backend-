@@ -92,10 +92,14 @@ VALUES
 DO $verify$
 DECLARE event_count INTEGER; delivery_count INTEGER; payload JSONB;
 BEGIN
-  SELECT count(*), min(payload) INTO event_count,payload
+  SELECT count(*) INTO event_count
   FROM testagram_local.notification_events
   WHERE recipient_id='123e4567-e89b-42d3-a456-426614174202'
     AND event_key='ci:follow:one';
+  SELECT e.payload INTO payload
+  FROM testagram_local.notification_events e
+  WHERE e.recipient_id='123e4567-e89b-42d3-a456-426614174202'
+    AND e.event_key='ci:follow:one';
   IF event_count <> 1 THEN
     RAISE EXCEPTION 'notification event replay was not idempotent: % rows',event_count;
   END IF;
