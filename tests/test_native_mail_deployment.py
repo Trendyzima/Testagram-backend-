@@ -160,7 +160,7 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("rawRecipient.slice(at + 1).toLowerCase()", worker)
         self.assertIn("authentication-results", worker)
         self.assertIn("mx\\.cloudflare", worker)
-        self.assertIn("dmarc=pass", worker)
+        self.assertIn("spf|dkim|dmarc", worker)
         self.assertIn("trustedAuthenticationResult", worker)
 
     def test_native_sender_has_no_external_mail_provider_requirement(self):
