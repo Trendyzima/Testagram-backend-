@@ -625,6 +625,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/social/posts/{post_id}/bookmarks", s.socialUnbookmark)
 	mux.HandleFunc("GET /api/social/notifications", s.socialNotifications)
 	mux.HandleFunc("OPTIONS /api/social/notifications/stream", s.mediaPreflight)
+	mux.HandleFunc("GET /api/social/notifications/stream", s.socialNotificationStream)
 	mux.HandleFunc("POST /api/social/notifications/{notification_id}/read", s.socialMarkNotificationRead)
 	mux.HandleFunc("POST /internal/mailjet/events", s.mailjetDeliveryEvents)
 	mux.HandleFunc("GET /api/email/unsubscribe", s.socialEmailUnsubscribe)
