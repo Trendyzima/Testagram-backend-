@@ -105,4 +105,3 @@ func (s *service) socialNotificationStream(w http.ResponseWriter, r *http.Reques
 	flusher.Flush()
 	_, _ = io.Copy(notificationFlushWriter{writer: w, flusher: flusher}, upstreamResponse.Body)
 }
-
