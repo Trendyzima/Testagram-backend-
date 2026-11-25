@@ -71,7 +71,7 @@ CROSS JOIN LATERAL (
 CROSS JOIN LATERAL (
   SELECT count(*)::bigint AS recent_posts
   FROM testagram_local.posts p
-  WHERE p.author_id=a.user_id AND p.deleted_at IS NULL
+  WHERE p.author_id=a.user_id AND p.deleted_at IS NULL AND p.visibility='public'
     AND p.created_at >= now()-interval '7 days'
 ) activity
 CROSS JOIN LATERAL (
