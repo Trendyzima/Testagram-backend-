@@ -42,12 +42,7 @@ func (s *service) runCommunicationOutbox(ctx context.Context) {
 	if !strings.HasSuffix(base,"/internal/v1/realtime/publish"){base+="/internal/v1/realtime/publish"}
 	client:=&http.Client{Timeout:5*time.Second,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}
 	ticker:=time.NewTicker(2*time.Second);defer ticker.Stop()
-	workerEntropy, entropyErr := newCallRoom()
-	if entropyErr != nil {
-		log.Printf("communication realtime outbox worker disabled: secure worker identifier entropy unavailable")
-		return
-	}
-	workerID := "backend-" + strings.TrimPrefix(workerEntropy, "testagram-")
+	workerID:="backend-"+strings.TrimPrefix(newCallRoom(),"testagram-")
 	for {
 		select {
 		case <-ctx.Done(): return
