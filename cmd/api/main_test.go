@@ -662,3 +662,16 @@ func TestRemoteAuthorSubscriptionRoutesAreRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestSocialAccountSuggestionsRequiresAuthentication(t *testing.T) {
+	s := &service{}
+	request := httptest.NewRequest(http.MethodGet, "/api/social/suggestions?limit=8", nil)
+	response := httptest.NewRecorder()
+	s.routes().ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("suggestions status = %d, want %d: %s", response.Code, http.StatusUnauthorized, response.Body.String())
+	}
+	if got := normalizedRoute("/api/social/suggestions"); got != "/api/social/suggestions" {
+		t.Fatalf("suggestions route metric label = %q", got)
+	}
+}
