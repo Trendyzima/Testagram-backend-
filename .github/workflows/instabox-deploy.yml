@@ -89,8 +89,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
-      INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+      INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+      INSTABOX_MACHINE_ID: ${{ '' }}
     steps:
       - name: Validate InstaBox diagnostic access
         shell: bash
@@ -190,12 +190,12 @@ jobs:
     environment: production
     timeout-minutes: 55
     env:
-      INSTABOX_API_KEY: ${{ secrets.TESTAGRAM_DB_API }}
-      INSTABOX_MACHINE_ID: ${{ secrets.INSTABOX_MACHINE_ID }}
+      INSTABOX_API_KEY: ${{ secrets.INSTABOX_API_KEY }}
+      INSTABOX_MACHINE_ID: ${{ '' }}
       INSTABOX_MACHINE_NAME: ${{ vars.INSTABOX_MACHINE_NAME || 'testagramdb' }}
       TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4: ${{ vars.TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4 || '' }}
-      CLOUDFLARE_DNS_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}
-      CLOUDFLARE_BOUNCE_WORKER_API_TOKEN: ${{ secrets.CLOUDFLARE_BOUNCE_WORKER_API_TOKEN }}
+      CLOUDFLARE_DNS_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_BOUNCE_WORKER_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
       TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED || 'false' }}
