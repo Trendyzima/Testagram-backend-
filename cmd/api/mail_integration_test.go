@@ -167,16 +167,12 @@ func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
 	}
 }
 
-func TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount(t *testing.T) {
+func TestNativeSignupFailsClosedBeforeCreatingIdentityOrEmail(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
-	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("9a", 32))
-	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("native-auth-test-key-", 4))
-
 	stamp := time.Now().UnixNano()
 	email := fmt.Sprintf("native-otp-%d@example.test", stamp)
 	username := fmt.Sprintf("otp%d", stamp)
-	ip := fmt.Sprintf("198.51.100.%d:4321", stamp%200+1)
 	svc := &service{db: db}
 
 	signupBody, err := json.Marshal(authInput{
@@ -186,104 +182,23 @@ func TestNativeSignupQueuesEmailOTPAndOTPVerifiesAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	signupRequest := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(string(signupBody)))
-	signupRequest.RemoteAddr = ip
 	signupResponse := httptest.NewRecorder()
-	svc.authRespond(signupResponse, signupRequest, "signup")
-	if signupResponse.Code != http.StatusAccepted {
-		t.Fatalf("signup status = %d, body=%s; want 202", signupResponse.Code, signupResponse.Body.String())
+	if !svc.authRespond(signupResponse, signupRequest, "signup") {
+		t.Fatal("public signup route was not handled")
+	}
+	if signupResponse.Code != http.StatusForbidden || !strings.Contains(signupResponse.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+		t.Fatalf("public signup must require identity evidence review and two-person approval: status=%d body=%s", signupResponse.Code, signupResponse.Body.String())
 	}
 
-	var userID string
-	var storedOTPHash []byte
-	if err := db.QueryRow(ctx, `
-		SELECT user_id::text,verification_otp_hash
-		FROM testagram_auth.identities WHERE email_normalized=$1
-	`, email).Scan(&userID, &storedOTPHash); err != nil {
+	var identityCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", email).Scan(&identityCount); err != nil {
 		t.Fatal(err)
 	}
-	var outboxID int64
-	var ciphertext, nonce []byte
-	if err := db.QueryRow(ctx, `
-		SELECT id,payload_ciphertext,payload_nonce
-		FROM testagram_mail.outbox
-		WHERE status='pending' ORDER BY id DESC LIMIT 1
-	`).Scan(&outboxID, &ciphertext, &nonce); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", userID)
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", userID)
-		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", outboxID)
-	}()
-
-	aead, err := mailCipher()
-	if err != nil {
-		t.Fatal(err)
-	}
-	plain, err := aead.Open(nil, nonce, ciphertext, []byte("testagram-mail-v1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var message queuedMail
-	if err := json.Unmarshal(plain, &message); err != nil {
-		t.Fatal(err)
-	}
-	if message.Recipient != email || !strings.Contains(message.Subject, "verification code") {
-		t.Fatalf("signup mail recipient/subject = %q / %q", message.Recipient, message.Subject)
-	}
-	const otpMarker = `letter-spacing:8px">`
-	parts := strings.SplitN(message.HTML, otpMarker, 2)
-	if len(parts) != 2 {
-		t.Fatal("verification email did not contain the formatted one-time code")
-	}
-	otp := strings.SplitN(parts[1], "</p>", 2)[0]
-	if len(otp) != 6 {
-		t.Fatalf("email OTP length = %d, want six digits", len(otp))
-	}
-	for _, digit := range otp {
-		if digit < '0' || digit > '9' {
-			t.Fatalf("email OTP contains non-digit %q", digit)
-		}
-	}
-	otpHash, err := authOTPHash(otp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !hmac.Equal(otpHash, storedOTPHash) {
-		t.Fatal("email OTP does not match the stored one-way OTP hash")
-	}
-
-	verifyBody, err := json.Marshal(authInput{Email: email, Token: otp})
-	if err != nil {
-		t.Fatal(err)
-	}
-	verifyRequest := httptest.NewRequest(http.MethodPost, "/api/auth/verify-email", strings.NewReader(string(verifyBody)))
-	verifyRequest.RemoteAddr = ip
-	verifyResponse := httptest.NewRecorder()
-	svc.authRespond(verifyResponse, verifyRequest, "verify-email")
-	if verifyResponse.Code != http.StatusOK {
-		t.Fatalf("OTP verification status = %d, body=%s; want 200", verifyResponse.Code, verifyResponse.Body.String())
-	}
-	var verified bool
-	if err := db.QueryRow(ctx, `
-		SELECT email_verified_at IS NOT NULL
-		FROM testagram_auth.identities WHERE user_id=$1::uuid
-	`, userID).Scan(&verified); err != nil {
-		t.Fatal(err)
-	}
-	if !verified {
-		t.Fatal("successful OTP verification did not verify the native account email")
-	}
-	var profileExists bool
-	if err := db.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM testagram_local.accounts WHERE user_id=$1::uuid)
-	`, userID).Scan(&profileExists); err != nil {
-		t.Fatal(err)
-	}
-	if !profileExists {
-		t.Fatal("successful OTP verification did not create the Testagram profile")
+	if identityCount != 0 {
+		t.Fatalf("blocked public signup created %d native identity records", identityCount)
 	}
 }
+
 
 func TestSocialFollowAndPostEmailsOnlyQueueForConsentingFollowers(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("7b", 32))
