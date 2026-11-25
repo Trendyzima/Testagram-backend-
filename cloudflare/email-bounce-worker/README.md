@@ -15,21 +15,8 @@ InstaBox over HTTPS. It does not send application mail and is not an SMTP relay.
    matching changes for every apex and subdomain rule, not only Testagram's
    bounce address. The deployment checks that it is already enabled and
    deliberately does not toggle it.
-3. Create a dedicated Cloudflare API token and save it as the GitHub Actions
-   production secret `CLOUDFLARE_BOUNCE_WORKER_API_TOKEN`. This is
-   Cloudflare control-plane access only, not an SMTP or outbound mail
-   credential. Required scopes:
-   - Account: Workers Scripts Read and Write
-   - Zone `testagram.site`: Zone Read
-   - Zone `testagram.site`: Zone Settings Read
-   - Zone `testagram.site`: Email Routing Rules Read and Write
-4. Keep `CLOUDFLARE_DNS_API_TOKEN` scoped to Zone Read and DNS Edit on
-   `testagram.site`. It is used only for A/SPF/DKIM/DMARC DNS records.
-5. Ensure `CLOUDFLARE_ACCOUNT_ID` identifies the account containing the zone
-   and Worker.
-6. After InstaBox confirms its stable, dedicated SMTP egress IPv4 and
-   provider-configured PTR, set repository variable
-   `TESTAGRAM_NATIVE_MAIL_EXPECTED_EGRESS_IPV4` to that exact IPv4.
+3. Reuse the existing repository secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_WORKERS_DEPLOY_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. Do not create additional credentials. The existing Cloudflare API token must already have the zone/DNS/Email Routing permissions used by this workflow; the existing Workers deployment token must authorize Wrangler deployments.
+4. The deployment discovers the public IPv4 from two independent reflectors and requires agreement, then verifies the PTR is `mail.testagram.site`. This runtime check does not prove that the address is dedicated or static; that remains an explicit InstaBox provider acceptance check.
 
 ## Read-only InstaBox network diagnostic
 
@@ -49,7 +36,7 @@ Wrangler is executed inside the official Node 22 Bookworm-slim Docker image on I
 1. InstaBox pauses the native outbox sender before starting the new API, so
    queued messages cannot leave before bounce ingress is ready. It verifies
    outbound TCP/25 to Gmail and Outlook, cross-checks the egress IPv4 against
-   two independent reflectors, and verifies PTR is `mail.testagram.site`.
+   two independent reflectors, verifies PTR is `mail.testagram.site`, and records that static/dedicated status still requires provider confirmation.
 2. The InstaBox DNS reconciler creates/updates DNS-only `mail.testagram.site`
    A, merges the InstaBox IPv4 and Cloudflare Email Routing include into the
    single SPF record on `bounces.testagram.site`, publishes Testagram's
@@ -62,7 +49,7 @@ Wrangler is executed inside the official Node 22 Bookworm-slim Docker image on I
    Cloudflare, and no existing routing rule would be taken over.
 5. On first install, it bootstraps the Worker on the account's existing
    `workers.dev` subdomain without an email address, installs the
-   InstaBox-generated HMAC secret, then deploys `wrangler-probe.toml` with the
+   HKDF-derived HMAC key from the existing mail encryption key, then deploys `wrangler-probe.toml` with the
    email address rule. On later deployments, the probe config preserves the
    existing rule while enabling the temporary HTTP health endpoint.
 6. A signed health request invokes the actual Cloudflare Worker runtime. The
@@ -94,7 +81,11 @@ does not trust sender-supplied authentication-result headers. It preserves
 the case-sensitive VERP token, lowercases only the DNS domain, reads the raw
 MIME stream, and enforces a 1 MiB limit.
 
-It signs timestamp, canonical recipient, and SHA-256 body digest with
+The API derives a purpose-separated 256-bit bounce HMAC key from the existing
+`TESTAGRAM_MAIL_ENCRYPTION_KEY` using HKDF-SHA-256 (fixed versioned salt and
+info). The deployment transfers that derived key to the Worker secret store;
+there is no separately generated or GitHub-managed ingress credential. The
+Worker signs timestamp, canonical recipient, and SHA-256 body digest with
 HMAC-SHA-256, then posts the original bytes to
 `POST /internal/mail/bounce` over HTTPS. Testagram verifies the signature and
 five-minute timestamp window, parses DSN/ARF, validates the token and
