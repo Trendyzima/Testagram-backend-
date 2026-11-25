@@ -25,8 +25,12 @@ func newCallRoomFrom(random io.Reader) (string, error) {
 	return "testagram-" + hex.EncodeToString(entropy[:]), nil
 }
 
-func newCallRoom() (string, error) {
-	return newCallRoomFrom(rand.Reader)
+func newCallRoom() string {
+	room, err := newCallRoomFrom(rand.Reader)
+	if err != nil {
+		return ""
+	}
+	return room
 }
 
 func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.Request, requestID string, body capabilityRequest) bool {
@@ -476,8 +480,8 @@ func (s *service) nativeCommunicationCapability(w http.ResponseWriter, r *http.R
 			fail("INVALID_CALL", "Call details are invalid", http.StatusBadRequest)
 			return true
 		}
-		room, entropyErr := newCallRoom()
-		if entropyErr != nil {
+		room := newCallRoom()
+		if room == "" {
 			fail("CALL_ROOM_ENTROPY_UNAVAILABLE", "Could not securely generate a call room identifier", http.StatusServiceUnavailable)
 			return true
 		}
