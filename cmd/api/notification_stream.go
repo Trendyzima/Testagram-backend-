@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 func validNotificationStreamOrigin(raw string) (string, error) {
@@ -107,7 +106,3 @@ func (s *service) socialNotificationStream(w http.ResponseWriter, r *http.Reques
 	_, _ = io.Copy(notificationFlushWriter{writer: w, flusher: flusher}, upstreamResponse.Body)
 }
 
-// Keep this compile-time reference close to the stream proxy: stream requests
-// intentionally have a bounded 25-second lifetime so the API server's global
-// write deadline is respected. Clients reconnect with Last-Event-ID.
-var _ = time.Second
