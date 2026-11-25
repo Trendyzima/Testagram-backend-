@@ -75,8 +75,6 @@ type service struct {
 	media                      *media.Signer
 	mediaIntentFactory         *media.IntentFactory
 	dataCentreMedia            *datacentreclient.Client
-	notificationStreamURL      string
-	notificationStreamHTTP     *http.Client
 	identityEvidenceMedia      identityEvidenceMediaClient
 	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
 	identityReviewWebAuthnReady         bool
@@ -1228,13 +1226,6 @@ func main() {
 	freshMediaEnabled := strings.EqualFold(env("FRESH_MEDIA_ENABLED", "false"), "true")
 	dataCentreURL := env("DATA_CENTRE_MEDIA_API_URL", "")
 	dataCentreToken := env("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "")
-	notificationStreamURL := strings.TrimRight(env("DATA_CENTRE_NOTIFICATION_STREAM_URL", ""), "/")
-	if notificationStreamURL != "" {
-		notificationStreamURL, err = validNotificationStreamOrigin(notificationStreamURL)
-		if err != nil {
-			log.Fatalf("configure private Data Centre notification stream: %v", err)
-		}
-	}
 	if dataCentreURL != "" || dataCentreToken != "" {
 		if dataCentreURL == "" || dataCentreToken == "" {
 			log.Fatal("DATA_CENTRE_MEDIA_API_URL and FRESH_DATA_CENTRE_INTERNAL_TOKEN must be configured together")
@@ -1421,7 +1412,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, edgeRecoveryReadinessToken: edgeRecoveryReadinessToken, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, notificationStreamURL: notificationStreamURL, notificationStreamHTTP: &http.Client{Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
+		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
