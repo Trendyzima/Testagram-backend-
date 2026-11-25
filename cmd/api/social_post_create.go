@@ -89,7 +89,7 @@ WHERE recipient.account_status='active'
 	for _, recipient := range recipients {
 		if err := publishNotificationEvent(ctx, tx, notificationEvent{
 			RecipientID: recipient.id, ActorID: authorID, Type: "social.mention",
-			Key: "mention:" + postID + ":" + recipient.id,
+			Key:        "mention:" + postID + ":" + recipient.id,
 			EntityType: "post", EntityID: postID,
 			Payload: map[string]any{"post_id": postID, "handle": recipient.handle},
 		}); err != nil {
