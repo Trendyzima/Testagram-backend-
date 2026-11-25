@@ -10,7 +10,7 @@ import (
 const socialListPinnedLimit = 5
 
 type socialListPinInput struct {
-	Pinned bool `json:"pinned"`
+	Pinned *bool `json:"pinned"`
 }
 
 func socialListPinCapacityExceeded(count int64, currentlyPinned, requestedPinned bool) bool {
@@ -36,7 +36,7 @@ func (s *service) socialListPinUpdate(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	var in socialListPinInput
-	if err := decoder.Decode(&in); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+	if err := decoder.Decode(&in); err != nil || in.Pinned == nil || decoder.Decode(&struct{}{}) != io.EOF {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PIN_STATE", "A boolean pinned value is required", rid))
 		return
 	}
@@ -67,7 +67,7 @@ FOR UPDATE`, id).Scan(&owner, &currentlyPinned)
 		return
 	}
 
-	if in.Pinned && !currentlyPinned {
+	if *in.Pinned && !currentlyPinned {
 		var count int64
 		if err = tx.QueryRow(r.Context(), `
 SELECT count(*)
@@ -76,7 +76,7 @@ WHERE owner_id=$1::uuid AND deleted_at IS NULL AND is_pinned`, uid).Scan(&count)
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_PIN_FAILED", "Pinned lists could not be counted", rid))
 			return
 		}
-		if socialListPinCapacityExceeded(count, currentlyPinned, in.Pinned) {
+		if socialListPinCapacityExceeded(count, currentlyPinned, *in.Pinned) {
 			writeJSON(w, http.StatusConflict, errorBody("PINNED_LIST_LIMIT", "You can pin up to five lists. Unpin one before pinning another.", rid))
 			return
 		}
@@ -85,7 +85,7 @@ WHERE owner_id=$1::uuid AND deleted_at IS NULL AND is_pinned`, uid).Scan(&count)
 	_, err = tx.Exec(r.Context(), `
 UPDATE testagram_local.social_lists
 SET is_pinned=$2,updated_at=now()
-WHERE id=$1::uuid AND owner_id=$3::uuid AND deleted_at IS NULL`, id, in.Pinned, uid)
+WHERE id=$1::uuid AND owner_id=$3::uuid AND deleted_at IS NULL`, id, *in.Pinned, uid)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("LIST_PIN_FAILED", "List pin state could not be updated", rid))
 		return
@@ -96,7 +96,7 @@ WHERE id=$1::uuid AND owner_id=$3::uuid AND deleted_at IS NULL`, id, in.Pinned, 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true,
-		"data": map[string]any{"list_id": id, "pinned": in.Pinned},
+		"data": map[string]any{"list_id": id, "pinned": *in.Pinned},
 		"error": nil,
 		"request_id": rid,
 	})
