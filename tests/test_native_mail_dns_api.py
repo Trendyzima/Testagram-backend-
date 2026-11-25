@@ -16,11 +16,11 @@ class NativeMailDNSAPITest(unittest.TestCase):
         # config; avoid matching the full Authorization header in CI logs,
         # where GitHub secret masking can redact portions of the assertion.
         self.assertIn("header =", source)
-        self.assertIn('"$CLOUDFLARE_DNS_API_TOKEN"', source)
+        self.assertIn('"$CLOUDFLARE_API_TOKEN"', source)
         self.assertIn("mktemp -d", source)
         self.assertIn('--config "$TMP_DIR/cloudflare.curlrc"', source)
         self.assertIn('chmod 600 "$TMP_DIR/cloudflare.curlrc"', source)
-        self.assertNotIn("echo $CLOUDFLARE_DNS_API_TOKEN", source)
+        self.assertNotIn("echo $CLOUDFLARE_API_TOKEN", source)
 
     def test_only_reconciles_dedicated_mail_records(self):
         source = SCRIPT.read_text(encoding="utf-8")
@@ -39,7 +39,7 @@ class NativeMailDNSAPITest(unittest.TestCase):
 
     def test_dns_reconciler_refuses_to_guess_public_ip_before_network_access(self):
         env = os.environ.copy()
-        env["CLOUDFLARE_DNS_API_TOKEN"] = "test-only-token"
+        env["CLOUDFLARE_API_TOKEN"] = "test-only-token"
         env["DKIM_PUBLIC_KEY"] = "A" * 400
         env.pop("TESTAGRAM_NATIVE_MAIL_PUBLIC_IPV4", None)
         result = subprocess.run(
