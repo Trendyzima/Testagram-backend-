@@ -218,7 +218,7 @@ func (s *service) videoComments(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/comments")
+		s.videoProxyRequest(w, r, "/v1/videos/"+id+"/comments", 0)
 	case http.MethodPost:
 		s.videoProxyRequest(w, r, "/v1/videos/"+id+"/comments", 64<<10)
 	default:
