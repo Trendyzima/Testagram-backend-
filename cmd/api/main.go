@@ -663,6 +663,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/video/uploads", s.videoUpload)
 	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/video/uploads/{video_id}", s.videoStatus)
+	mux.HandleFunc("DELETE /api/video/uploads/{video_id}", s.videoDelete)
 	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}/publish", s.mediaPreflight)
 	mux.HandleFunc("POST /api/video/uploads/{video_id}/publish", s.videoPublish)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
