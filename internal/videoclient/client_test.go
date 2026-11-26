@@ -110,3 +110,110 @@ func TestProxyFailsClosedWhenNotConfigured(t *testing.T) {
 		t.Fatal("unconfigured video proxy succeeded")
 	}
 }
+
+func TestPublicFeedAndPlaybackProxyStayOnPrivateOrigin(t *testing.T) {
+	const videoID = "00000000-0000-4000-8000-000000000001"
+	const playbackToken = "signed-playback-token.1799999999"
+	segment := strings.Repeat("segment-data-", 30000)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("public playback route unexpectedly received Authorization: %q", r.Header.Get("Authorization"))
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/feed":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/videos/"+videoID+"/manifest":
+			w.Header().Set("Location", "/v1/videos/"+videoID+"/hls/master.m3u8?token="+playbackToken)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/videos/"+videoID+"/hls/segment.ts":
+			if r.URL.Query().Get("token") != playbackToken {
+				t.Errorf("playback token not forwarded: %q", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "video/mp2t")
+			w.Header().Set("Cache-Control", "private, max-age=300")
+			_, _ = io.WriteString(w, segment)
+		default:
+			t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	feedRequest := httptest.NewRequest(http.MethodGet, "/api/video/feed", nil)
+	feedResponse := httptest.NewRecorder()
+	if err := client.Proxy(feedResponse, feedRequest, "/v1/feed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if feedResponse.Code != http.StatusOK || feedResponse.Body.String() != "[]" {
+		t.Fatalf("feed proxy response = %d %q", feedResponse.Code, feedResponse.Body.String())
+	}
+
+	manifestRequest := httptest.NewRequest(http.MethodGet, "/api/video/uploads/"+videoID+"/manifest", nil)
+	manifestResponse := httptest.NewRecorder()
+	if err := client.Proxy(manifestResponse, manifestRequest, "/v1/videos/"+videoID+"/manifest", ""); err != nil {
+		t.Fatal(err)
+	}
+	wantLocation := "/api/video/uploads/"+videoID+"/hls/master.m3u8?token="+playbackToken
+	if manifestResponse.Code != http.StatusTemporaryRedirect || manifestResponse.Header().Get("Location") != wantLocation {
+		t.Fatalf("manifest redirect = %d %q, want %q", manifestResponse.Code, manifestResponse.Header().Get("Location"), wantLocation)
+	}
+
+	hlsRequest := httptest.NewRequest(http.MethodGet, "/api/video/uploads/"+videoID+"/hls/segment.ts?token="+playbackToken, nil)
+	hlsResponse := httptest.NewRecorder()
+	if err := client.Proxy(hlsResponse, hlsRequest, "/v1/videos/"+videoID+"/hls/segment.ts?token="+playbackToken, ""); err != nil {
+		t.Fatal(err)
+	}
+	if hlsResponse.Code != http.StatusOK || hlsResponse.Body.String() != segment {
+		t.Fatalf("HLS response = %d, body bytes %d", hlsResponse.Code, hlsResponse.Body.Len())
+	}
+	if hlsResponse.Header().Get("Content-Type") != "video/mp2t" {
+		t.Fatalf("HLS content type = %q", hlsResponse.Header().Get("Content-Type"))
+	}
+}
+
+func TestProxyDoesNotAllowAnonymousPrivateVideoOperations(t *testing.T) {
+	client, err := New("http://video:8790", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/video/uploads", nil)
+	for _, path := range []string{
+		"/v1/channels",
+		"/v1/videos",
+		"/v1/videos/00000000-0000-4000-8000-000000000001/like",
+		"/v1/videos/00000000-0000-4000-8000-000000000001/comments",
+	} {
+		if err := client.Proxy(httptest.NewRecorder(), request, path, ""); err == nil {
+			t.Fatalf("anonymous private video operation accepted: %s", path)
+		}
+	}
+}
+
+func TestManifestProxyRejectsExternalAndUnexpectedRedirects(t *testing.T) {
+	for _, location := range []string{
+		"https://evil.example/steal",
+		"/v1/videos/00000000-0000-4000-8000-000000000002/hls/master.m3u8?token=abc",
+		"/v1/videos/00000000-0000-4000-8000-000000000001/hls/master.m3u8",
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", location)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		}))
+		client, err := New(server.URL, nil)
+		if err != nil {
+			server.Close()
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/manifest", nil)
+		if err := client.Proxy(httptest.NewRecorder(), request, "/v1/videos/00000000-0000-4000-8000-000000000001/manifest", ""); err == nil {
+			server.Close()
+			t.Fatalf("unsafe manifest redirect accepted: %s", location)
+		}
+		server.Close()
+	}
+}
