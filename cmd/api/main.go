@@ -30,8 +30,8 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
 	moderationpkg "github.com/Trendyzima/Testagram-backend-/internal/moderation"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
-	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/Trendyzima/Testagram-backend-/internal/videoclient"
+	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
