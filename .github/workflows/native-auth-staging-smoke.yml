@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-auth-staging-smoke
+  group: testagram-staging-account-acceptance
   cancel-in-progress: false
 
 jobs:
