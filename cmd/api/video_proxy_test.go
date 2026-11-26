@@ -101,4 +101,37 @@ func TestVideoHLSRouteRequiresSignedPlaybackToken(t *testing.T) {
 	}
 }
 
+
+func TestVideoPublicPlaybackRoutesDoNotRequireUserBearer(t *testing.T) {
+	handler := (&service{}).routes()
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/video/feed"},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/view"},
+		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/manifest"},
+	} {
+		request := httptest.NewRequest(tc.method, tc.path, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("public video route %s %s returned %d, want service-unavailable with unconfigured test service: %s",
+				tc.method, tc.path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestVideoHLSRejectsUnsafeSegmentNames(t *testing.T) {
+	handler := (&service{}).routes()
+	for _, path := range []string{
+		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/../master.m3u8?token=x",
+		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/%5csecret?token=x",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("unsafe HLS segment %s returned %d: %s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
 }
