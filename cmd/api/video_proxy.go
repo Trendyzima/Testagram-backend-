@@ -16,10 +16,6 @@ func (s *service) videoProxyRequest(w http.ResponseWriter, r *http.Request, upst
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID))
 		return
 	}
-	if s.videoService == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIDEO_SERVICE_NOT_CONFIGURED", "Testagram video service is not configured on the Backend", requestID))
-		return
-	}
 	_, status, err := s.authenticatedMediaUser(r)
 	if err != nil {
 		writeNativeAuthFailure(w, status, err, requestID)
@@ -28,6 +24,10 @@ func (s *service) videoProxyRequest(w http.ResponseWriter, r *http.Request, upst
 	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		writeJSON(w, http.StatusUnauthorized, errorBody("AUTH_REQUIRED", "A valid native session is required", requestID))
+		return
+	}
+	if s.videoService == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIDEO_SERVICE_NOT_CONFIGURED", "Testagram video service is not configured on the Backend", requestID))
 		return
 	}
 	if maxBodyBytes > 0 {
