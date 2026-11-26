@@ -641,6 +641,21 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
 	// Creator video traffic enters through the canonical Backend API; the
 	// private Data Centre service is never a Flutter-facing origin.
+
+	mux.HandleFunc("GET /api/video/feed", s.videoFeed)
+	mux.HandleFunc("OPTIONS /api/video/feed", s.mediaPreflight)
+	mux.HandleFunc("POST /api/video/uploads/{video_id}/view", s.videoView)
+	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}/view", s.mediaPreflight)
+	mux.HandleFunc("POST /api/video/uploads/{video_id}/like", s.videoLike)
+	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}/like", s.mediaPreflight)
+	mux.HandleFunc("GET /api/video/uploads/{video_id}/comments", s.videoComments)
+	mux.HandleFunc("POST /api/video/uploads/{video_id}/comments", s.videoComments)
+	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}/comments", s.mediaPreflight)
+	mux.HandleFunc("GET /api/video/uploads/{video_id}/manifest", s.videoManifest)
+	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}/manifest", s.mediaPreflight)
+	mux.HandleFunc("GET /api/video/uploads/{video_id}/hls/{file}", s.videoHLS)
+	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}/hls/{file}", s.mediaPreflight)
+
 	mux.HandleFunc("OPTIONS /api/video/channels", s.mediaPreflight)
 	mux.HandleFunc("GET /api/video/channels", s.videoChannels)
 	mux.HandleFunc("POST /api/video/channels", s.videoChannels)
