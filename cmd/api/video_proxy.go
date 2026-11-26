@@ -80,6 +80,15 @@ func (s *service) videoChannels(w http.ResponseWriter, r *http.Request) {
 	s.videoProxyRequest(w, r, "/v1/channels", limit)
 }
 
+func (s *service) videoOwnedList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET to list your creator videos", requestID(r)))
+		return
+	}
+	s.videoProxyRequest(w, r, "/v1/videos", 0)
+}
+
 func (s *service) videoUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST, OPTIONS")
