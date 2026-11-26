@@ -12,6 +12,7 @@ import (
 )
 
 const maxResponseBytes = 64 << 10
+const maxHLSResponseBytes = 64 << 20
 
 type Client struct {
 	baseURL *url.URL
@@ -89,6 +90,9 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	req.Header.Set("Authorization", "Bearer "+userToken)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Testagram-API-Version", "1")
+	for _, header := range []string{"Range", "If-Range", "X-Playback-Session"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" { req.Header.Set(header, value) }
+	}
 	if contentType := strings.TrimSpace(r.Header.Get("Content-Type")); contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -101,11 +105,19 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return errors.New("Data Centre video API redirects are not accepted")
+		if resp.StatusCode != http.StatusTemporaryRedirect { return errors.New("Data Centre video API redirect status is not accepted") }
+		location, ok := publicHLSLocation(path, resp.Header.Get("Location"))
+		if !ok { return errors.New("Data Centre video API returned an unsafe playback redirect") }
+		w.Header().Set("Location", location)
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.WriteHeader(resp.StatusCode)
+		return nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil || len(body) > maxResponseBytes {
-		return errors.New("Data Centre video API returned an invalid or oversized response")
+	limit := int64(maxResponseBytes)
+	if strings.Contains(path, "/hls/") { limit = maxHLSResponseBytes }
+	if resp.ContentLength > limit { return errors.New("Data Centre video API returned an oversized response") }
+	for _, header := range []string{"Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+		if value := resp.Header.Get(header); value != "" { w.Header().Set(header, value) }
 	}
 	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
@@ -117,6 +129,18 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 		w.Header().Set("Retry-After", retryAfter)
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(body)
+	written, copyErr := io.Copy(w, io.LimitReader(resp.Body, limit+1))
+	if copyErr != nil { return fmt.Errorf("stream Data Centre video response: %w", copyErr) }
+	if written > limit { return errors.New("Data Centre video API response exceeded its streaming limit") }
 	return nil
+}
+
+func publicHLSLocation(requestPath, rawLocation string) (string, bool) {
+	requested := strings.Split(strings.Trim(requestPath, "/"), "/")
+	location, err := url.Parse(strings.TrimSpace(rawLocation))
+	if err != nil || location.IsAbs() || location.Host != "" || location.User != nil || location.Fragment != "" { return "", false }
+	parts := strings.Split(strings.Trim(location.Path, "/"), "/")
+	if len(requested) != 4 || requested[0] != "v1" || requested[1] != "videos" || requested[3] != "manifest" || len(parts) != 5 || parts[0] != "v1" || parts[1] != "videos" || parts[2] != requested[2] || parts[3] != "hls" || parts[4] == "" || strings.Contains(parts[4], "..") || strings.ContainsAny(parts[4], "/\\") { return "", false }
+	for _, c := range parts[4] { if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') { return "", false } }
+	return "/api/video/uploads/" + requested[2] + "/hls/" + parts[4] + "?" + location.RawQuery, true
 }
