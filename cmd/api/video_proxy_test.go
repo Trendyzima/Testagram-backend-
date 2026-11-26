@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Trendyzima/Testagram-backend-/internal/videoclient"
 )
 
 func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
@@ -175,5 +177,34 @@ func TestVideoHLSFilenameUsesSafeCharacterAllowlist(t *testing.T) {
 		if validVideoHLSFilename(file) {
 			t.Fatalf("unsafe HLS filename accepted: %q", file)
 		}
+	}
+}
+
+func TestPublicVideoProxyDoesNotAppendJSONAfterInterruptedHLSStream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp2t")
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("short"))
+	}))
+	defer upstream.Close()
+
+	client, err := videoclient.New(upstream.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &service{videoService: client}
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/segment.ts?token=signed",
+		nil)
+	recorder := httptest.NewRecorder()
+	s.videoPublicProxyRequest(recorder, request,
+		"/v1/videos/00000000-0000-4000-8000-000000000001/hls/segment.ts")
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "short" {
+		t.Fatalf("interrupted HLS response = %d %q", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "VIDEO_SERVICE_UNAVAILABLE") ||
+		strings.Contains(recorder.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("gateway error corrupted committed media response: %#v %q", recorder.Header(), recorder.Body.String())
 	}
 }
