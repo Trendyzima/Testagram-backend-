@@ -198,3 +198,36 @@ func TestPublicCaddyIngressDoesNotExposePrivateVideoOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestCaddyCannotJoinPrivateVideoPlatformNetwork(t *testing.T) {
+	compose, err := os.ReadFile("../../deploy/self-hosted/docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read canonical self-hosted compose file: %v", err)
+	}
+	source := string(compose)
+	caddyStart := strings.Index(source, "\n  caddy:\n")
+	if caddyStart < 0 {
+		t.Fatal("Caddy service definition not found")
+	}
+	caddyEnd := strings.Index(source[caddyStart+1:], "\n  node-exporter:")
+	if caddyEnd < 0 {
+		t.Fatal("Caddy service boundary not found")
+	}
+	caddyService := source[caddyStart : caddyStart+1+caddyEnd]
+	if !strings.Contains(caddyService, "networks: [edge, control-plane]") || strings.Contains(caddyService, "platform") {
+		t.Fatalf("Caddy must not join the private platform network:\n%s", caddyService)
+	}
+
+	apiStart := strings.Index(source, "\n  api:\n")
+	if apiStart < 0 {
+		t.Fatal("Backend API service definition not found")
+	}
+	apiEnd := strings.Index(source[apiStart+1:], "\n  admin-console:")
+	if apiEnd < 0 {
+		t.Fatal("Backend API service boundary not found")
+	}
+	apiService := source[apiStart : apiStart+1+apiEnd]
+	if !strings.Contains(apiService, "platform") {
+		t.Fatal("Backend API must retain its private platform network connection to the Data Centre video service")
+	}
+}

@@ -386,7 +386,7 @@ services:
       - caddy-config:/config
     depends_on: [api, media-cache, control-plane, admin-console, flutter-web]
     restart: unless-stopped
-    networks: [edge, control-plane, platform]
+    networks: [edge, control-plane]
 
   node-exporter:
     image: prom/node-exporter:v1.9.1
