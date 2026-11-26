@@ -1,0 +1,50 @@
+name: Video end-to-end staging acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging_only:
+        description: Confirm TESTAGRAM_STAGING_API_URL is an isolated non-production environment
+        required: true
+        type: boolean
+        default: false
+      confirm_public_feed_test:
+        description: Authorize temporary publication of one generated test video in the staging feed
+        required: true
+        type: boolean
+        default: false
+      confirm_video_cleanup:
+        description: Confirm the generated staging video must be deleted at the end of the run
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-video-staging-acceptance
+  cancel-in-progress: false
+
+jobs:
+  video-e2e:
+    name: Upload, transcode, publish, stream, engage and clean up
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    env:
+      TESTAGRAM_STAGING_API_URL: ${{ vars.TESTAGRAM_STAGING_API_URL }}
+      TESTAGRAM_AUTH_SMOKE_EMAIL: ${{ secrets.TESTAGRAM_AUTH_SMOKE_EMAIL }}
+      TESTAGRAM_AUTH_SMOKE_PASSWORD: ${{ secrets.TESTAGRAM_AUTH_SMOKE_PASSWORD }}
+      CONFIRM_STAGING_ONLY: ${{ inputs.confirm_staging_only }}
+      CONFIRM_PUBLIC_FEED_TEST: ${{ inputs.confirm_public_feed_test }}
+      CONFIRM_VIDEO_CLEANUP: ${{ inputs.confirm_video_cleanup }}
+    steps:
+      - name: Check out reviewed Backend acceptance harness
+        uses: actions/checkout@v7
+      - name: Install FFmpeg for disposable MP4 fixture
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Verify staging API, upload, playback and cleanup lifecycle
+        run: python3 scripts/video-e2e-staging-acceptance.py
