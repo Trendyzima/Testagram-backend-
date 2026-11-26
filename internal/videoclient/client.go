@@ -101,8 +101,10 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	if requestID := strings.TrimSpace(r.Header.Get("X-Request-ID")); requestID != "" {
 		req.Header.Set("X-Request-ID", requestID)
 	}
-	if playbackSession := strings.TrimSpace(r.Header.Get("X-Playback-Session")); playbackSession != "" {
-		req.Header.Set("X-Playback-Session", playbackSession)
+	for _, header := range []string{"Range", "If-Range", "X-Playback-Session"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			req.Header.Set(header, value)
+		}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -129,8 +131,10 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 		if resp.ContentLength > maxVideoSegmentBytes {
 			return errors.New("Data Centre video segment exceeds the 256 MiB limit")
 		}
-		if contentType := resp.Header.Get("Content-Type"); contentType != "" {
-			w.Header().Set("Content-Type", contentType)
+		for _, header := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+			if value := resp.Header.Get(header); value != "" {
+				w.Header().Set(header, value)
+			}
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if cacheControl := resp.Header.Get("Cache-Control"); cacheControl != "" {
