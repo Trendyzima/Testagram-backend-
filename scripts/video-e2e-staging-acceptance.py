@@ -85,7 +85,7 @@ def make_fixture(directory: pathlib.Path) -> pathlib.Path:
     command = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
-        "-t", "12", "-an", "-c:v", "libx264", "-preset", "ultrafast",
+        "-t", "45", "-an", "-c:v", "libx264", "-preset", "ultrafast",
         "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
     ]
     subprocess.run(command, check=True, timeout=90)
@@ -281,6 +281,18 @@ def main() -> None:
         fixture = make_fixture(fixture_dir)
         video_id = upload_video(base, token, channel_id, fixture, video_title)
         print("PASS: generated MP4 uploaded through the canonical Backend")
+
+        initial_state = json_request(base, f"/api/video/uploads/{video_id}", bearer=token)
+        active_state = initial_state.get("status") if isinstance(initial_state, dict) else None
+        if active_state not in ("uploading", "queued", "processing"):
+            fail(f"Video left the active processing state too quickly to test delete protection: {active_state!r}")
+        active_delete_status, _, _ = http_request(
+            base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
+        )
+        if active_delete_status != 409:
+            fail(f"Active video deletion must be rejected with HTTP 409, received {active_delete_status}")
+        print("PASS: owner deletion is refused while upload/transcoding is active")
+
         state = wait_until_terminal(base, token, video_id)
         if state != "ready":
             fail(f"FFmpeg processing finished in state {state!r}, not ready")
@@ -300,7 +312,10 @@ def main() -> None:
         item = feed_item(base, video_id)
         if item is None or item.get("status") != "ready" or item.get("visibility") != "public":
             fail("Published video did not appear in the public Testagram video feed")
-        print("PASS: explicit publish and feed visibility")
+        published_feed = json_request(base, "/api/video/feed")
+        if not isinstance(published_feed, list) or not published_feed or published_feed[0].get("id") != video_id:
+            fail("The disposable video is not the newest feed item; refusing an ambiguous Flutter playback test")
+        print("PASS: explicit publish and exact newest-feed-item visibility")
 
         status, headers, _ = http_request(
             base, f"/api/video/uploads/{video_id}/manifest", follow_redirects=False
