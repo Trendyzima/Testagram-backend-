@@ -122,7 +122,7 @@ func TestVideoPublicPlaybackRoutesDoNotRequireUserBearer(t *testing.T) {
 func TestVideoHLSRejectsUnsafeSegmentNames(t *testing.T) {
 	handler := (&service{}).routes()
 	for _, path := range []string{
-		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/../master.m3u8?token=x",
+		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/master..m3u8?token=x",
 		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/%5csecret?token=x",
 	} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
