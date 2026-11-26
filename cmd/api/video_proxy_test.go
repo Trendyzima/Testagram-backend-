@@ -1,0 +1,68 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
+	s := &service{}
+	handler := s.routes()
+	requests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/video/channels", ""},
+		{http.MethodPost, "/api/video/channels", "{\"handle\":\"creator\",\"name\":\"Creator\"}"},
+		{http.MethodPost, "/api/video/uploads", "multipart"},
+		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/publish", ""},
+	}
+	for _, tc := range requests {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			request := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			request.Header.Set("Origin", "https://testagram.site")
+			if tc.method == http.MethodPost && tc.path == "/api/video/uploads" {
+				request.ContentLength = int64(len(tc.body))
+				request.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated video route status = %d, want %d: %s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestVideoProxyRejectsMalformedVideoIDs(t *testing.T) {
+	s := &service{}
+	handler := s.routes()
+	for _, path := range []string{
+		"/api/video/uploads/not-a-uuid",
+		"/api/video/uploads/../status",
+		"/api/video/uploads/not-a-uuid/publish",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
+			t.Fatalf("malformed video route %s returned %d: %s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestVideoProxyOptionsUsesBackendCorsPreflight(t *testing.T) {
+	request := httptest.NewRequest(http.MethodOptions, "/api/video/uploads", nil)
+	request.Header.Set("Origin", "https://testagram.site")
+	request.Header.Set("Access-Control-Request-Method", "POST")
+	request.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+	recorder := httptest.NewRecorder()
+	(&service{}).routes().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("video upload preflight status = %d, want %d: %s", recorder.Code, http.StatusNoContent, recorder.Body.String())
+	}
+}
