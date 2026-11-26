@@ -199,7 +199,7 @@ func TestPublicCaddyIngressDoesNotExposePrivateVideoOrigin(t *testing.T) {
 	}
 }
 
-func TestCaddyCannotJoinPrivateVideoPlatformNetwork(t *testing.T) {
+func TestCaddyAndVideoUseDisjointNetworks(t *testing.T) {
 	compose, err := os.ReadFile("../../deploy/self-hosted/docker-compose.yml")
 	if err != nil {
 		t.Fatalf("read canonical self-hosted compose file: %v", err)
@@ -214,8 +214,9 @@ func TestCaddyCannotJoinPrivateVideoPlatformNetwork(t *testing.T) {
 		t.Fatal("Caddy service boundary not found")
 	}
 	caddyService := source[caddyStart : caddyStart+1+caddyEnd]
-	if !strings.Contains(caddyService, "networks: [edge, control-plane]") || strings.Contains(caddyService, "platform") {
-		t.Fatalf("Caddy must not join the private platform network:\n%s", caddyService)
+	if !strings.Contains(caddyService, "networks: [edge, control-plane, platform]") ||
+		strings.Contains(caddyService, "video-private") {
+		t.Fatalf("Caddy must retain Federation platform access but never join video-private:\n%s", caddyService)
 	}
 
 	apiStart := strings.Index(source, "\n  api:\n")
@@ -227,7 +228,10 @@ func TestCaddyCannotJoinPrivateVideoPlatformNetwork(t *testing.T) {
 		t.Fatal("Backend API service boundary not found")
 	}
 	apiService := source[apiStart : apiStart+1+apiEnd]
-	if !strings.Contains(apiService, "platform") {
-		t.Fatal("Backend API must retain its private platform network connection to the Data Centre video service")
+	if !strings.Contains(apiService, "platform") || !strings.Contains(apiService, "video-private") {
+		t.Fatalf("Backend API must retain platform and join the dedicated video-private network:\n%s", apiService)
+	}
+	if !strings.Contains(source, "video-private:\n    name: ${TESTAGRAM_VIDEO_NETWORK:-testagram-video-private}\n    internal: true") {
+		t.Fatal("Backend Compose must create the dedicated internal video-private network")
 	}
 }
