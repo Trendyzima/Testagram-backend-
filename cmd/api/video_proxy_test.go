@@ -1,9 +1,9 @@
 package main
 
 import (
-	"os"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
