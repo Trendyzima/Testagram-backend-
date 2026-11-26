@@ -42,6 +42,8 @@ jobs:
           python3 tests/test_instabox_exec_stdin_contract.py -v
       - name: Verify native identity migration manifest
         run: python3 tests/test_native_identity_migration_manifest.py
+      - name: Verify native sensitive-action migration dependency order
+        run: python3 tests/test_native_sensitive_action_migration_order.py
       - name: Verify native Testagram mail deployment and DNS wiring
         run: |
           python3 tests/test_native_mail_deployment.py -v
