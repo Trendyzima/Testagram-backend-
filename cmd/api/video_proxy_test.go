@@ -20,6 +20,13 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 		{http.MethodPost, "/api/video/uploads", "multipart"},
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/publish", ""},
+		{http.MethodGet, "/api/video/feed", ""},
+		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/manifest", ""},
+		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/master.m3u8", ""},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/view", ""},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/like", ""},
+		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", ""},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", "{}"},
 	}
 	for _, tc := range requests {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
@@ -67,5 +74,13 @@ func TestVideoProxyOptionsUsesBackendCorsPreflight(t *testing.T) {
 	(&service{}).routes().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("video upload preflight status = %d, want %d: %s", recorder.Code, http.StatusNoContent, recorder.Body.String())
+	}
+}
+
+func TestVideoProxyRejectsMalformedHLSPath(t *testing.T) {
+	handler := (&service{}).routes()
+	for _, path := range []string{"/api/video/uploads/not-a-uuid/hls/master.m3u8", "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/../secret"} {
+		recorder := httptest.NewRecorder(); handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusBadRequest { t.Fatalf("%s returned %d", path, recorder.Code) }
 	}
 }
