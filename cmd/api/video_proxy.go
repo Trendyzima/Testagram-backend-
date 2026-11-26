@@ -103,6 +103,19 @@ func (s *service) videoStatus(w http.ResponseWriter, r *http.Request) {
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/status", 0)
 }
 
+func (s *service) videoDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use DELETE to remove an owned video", requestID(r)))
+		return
+	}
+	id, ok := videoProxyID(r, w)
+	if !ok {
+		return
+	}
+	s.videoProxyRequest(w, r, "/v1/videos/"+id, 0)
+}
+
 func (s *service) videoPublish(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST, OPTIONS")
