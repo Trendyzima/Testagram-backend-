@@ -64,36 +64,53 @@ func privateServiceHost(host string) bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }
 
-// Proxy forwards only fixed Backend-selected /v1/video paths. It forwards the
-// validated native user token so the private Data Centre service can recheck
-// the account/session against its own PostgreSQL connection.
-func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken string) error {
+// Proxy forwards only Backend-selected private Data Centre video paths.
+// Authenticated operations carry the already-validated native user token so
+// the private service independently rechecks the same account and session.
+// A small allowlist of public playback operations may omit that token.
+func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, rawPath, userToken string) error {
 	if c == nil || c.baseURL == nil || c.http == nil {
 		return errors.New("Data Centre video API is not configured")
 	}
-	if !strings.HasPrefix(path, "/v1/") || strings.Contains(path, "..") || strings.ContainsAny(path, "\r\n") {
+	parsed, err := url.ParseRequestURI(rawPath)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" ||
+		!strings.HasPrefix(parsed.Path, "/v1/") || strings.Contains(parsed.Path, "\\") ||
+		strings.ContainsAny(rawPath, "\\r\\n") {
 		return errors.New("invalid Data Centre video API path")
 	}
+	for _, part := range strings.Split(parsed.Path, "/") {
+		if part == "." || part == ".." {
+			return errors.New("invalid Data Centre video API path")
+		}
+	}
 	userToken = strings.TrimSpace(userToken)
-	if userToken == "" || strings.ContainsAny(userToken, "\r\n") {
+	if userToken == "" && !publicVideoRoute(r.Method, parsed.Path) {
 		return errors.New("validated native user token is required")
 	}
+	if parsed.RawQuery != "" && !strings.Contains(parsed.Path, "/hls/") {
+		return errors.New("query parameters are not accepted for this video route")
+	}
 	target := *c.baseURL
-	target.Path = path
+	target.Path = parsed.Path
 	target.RawPath = ""
+	target.RawQuery = parsed.RawQuery
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
 	if err != nil {
 		return fmt.Errorf("build Data Centre video request: %w", err)
 	}
 	req.ContentLength = r.ContentLength
-	req.Header.Set("Authorization", "Bearer "+userToken)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Testagram-API-Version", "1")
-	if contentType := strings.TrimSpace(r.Header.Get("Content-Type")); contentType != "" {
-		req.Header.Set("Content-Type", contentType)
+	if userToken != "" {
+		if strings.ContainsAny(userToken, "\\r\\n") {
+			return errors.New("invalid native user token")
+		}
+		req.Header.Set("Authorization", "Bearer "+userToken)
 	}
-	if requestID := strings.TrimSpace(r.Header.Get("X-Request-ID")); requestID != "" {
-		req.Header.Set("X-Request-ID", requestID)
+	req.Header.Set("Accept", "application/json, application/vnd.apple.mpegurl, video/mp2t, */*")
+	req.Header.Set("X-Testagram-API-Version", "1")
+	for _, header := range []string{"Content-Type", "X-Request-ID", "X-Playback-Session"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			req.Header.Set(header, value)
+		}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -101,22 +118,64 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return errors.New("Data Centre video API redirects are not accepted")
+		if r.Method != http.MethodGet || !strings.HasSuffix(parsed.Path, "/manifest") || resp.StatusCode != http.StatusTemporaryRedirect {
+			return errors.New("Data Centre video API redirect is not accepted")
+		}
+		location, err := url.Parse(resp.Header.Get("Location"))
+		if err != nil || location.IsAbs() || location.Host != "" || location.User != nil ||
+			location.Path != strings.TrimSuffix(parsed.Path, "/manifest")+"/hls/master.m3u8" ||
+			location.RawQuery == "" || location.Fragment != "" {
+			return errors.New("Data Centre video manifest returned an unsafe playback location")
+		}
+		query := location.Query()
+		token := query.Get("token")
+		if token == "" || len(query) != 1 {
+			return errors.New("Data Centre video manifest returned an invalid playback token")
+		}
+		videoID := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/v1/videos/"), "/manifest")
+		if videoID == "" || strings.Contains(videoID, "/") {
+			return errors.New("invalid video manifest identifier")
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("Location", "/api/video/uploads/"+videoID+"/hls/master.m3u8?token="+url.QueryEscape(token))
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		return nil
+	}
+	for _, header := range []string{"Content-Type", "Cache-Control", "Retry-After", "Content-Length", "Content-Range", "Accept-Ranges"} {
+		if value := resp.Header.Get(header); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
+	if strings.Contains(parsed.Path, "/hls/") {
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			return fmt.Errorf("stream Data Centre video bytes: %w", err)
+		}
+		return nil
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil || len(body) > maxResponseBytes {
 		return errors.New("Data Centre video API returned an invalid or oversized response")
 	}
-	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
-		w.Header().Set("Content-Type", contentType)
-	}
-	if cacheControl := resp.Header.Get("Cache-Control"); cacheControl != "" {
-		w.Header().Set("Cache-Control", cacheControl)
-	}
-	if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
-		w.Header().Set("Retry-After", retryAfter)
-	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
 	return nil
+}
+
+func publicVideoRoute(method, path string) bool {
+	if method == http.MethodGet && path == "/v1/feed" {
+		return true
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 4 && parts[0] == "v1" && parts[1] == "videos" && parts[2] != "" {
+		switch parts[3] {
+		case "manifest", "comments":
+			return method == http.MethodGet
+		case "view":
+			return method == http.MethodPost
+		}
+	}
+	return len(parts) == 5 && method == http.MethodGet &&
+		parts[0] == "v1" && parts[1] == "videos" && parts[2] != "" &&
+		parts[3] == "hls" && parts[4] != ""
 }
