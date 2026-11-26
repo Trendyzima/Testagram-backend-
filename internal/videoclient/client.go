@@ -82,7 +82,9 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	target := *c.baseURL
 	target.Path = path
 	target.RawPath = ""
-	target.RawQuery = r.URL.RawQuery
+	if strings.Contains(path, "/hls/") {
+		target.RawQuery = r.URL.RawQuery
+	}
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
 	if err != nil {
 		return fmt.Errorf("build Data Centre video request: %w", err)
@@ -131,7 +133,13 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 			w.Header().Set("Content-Type", contentType)
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Cache-Control", "private, max-age=300")
+		if cacheControl := resp.Header.Get("Cache-Control"); cacheControl != "" {
+			w.Header().Set("Cache-Control", cacheControl)
+		} else if strings.HasSuffix(path, ".m3u8") {
+			w.Header().Set("Cache-Control", "private, no-store")
+		} else {
+			w.Header().Set("Cache-Control", "private, max-age=300")
+		}
 		w.WriteHeader(resp.StatusCode)
 		_, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxVideoSegmentBytes+1))
 		return copyErr
