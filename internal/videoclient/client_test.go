@@ -1,6 +1,7 @@
 package videoclient
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -228,5 +229,32 @@ func TestHLSProxyForwardsByteRangesAndPlaybackSession(t *testing.T) {
 		recorder.Header().Get("Accept-Ranges") != "bytes" ||
 		recorder.Header().Get("ETag") != "etag-123" {
 		t.Fatalf("range metadata not forwarded: %#v", recorder.Header())
+	}
+}
+
+func TestHLSProxyMarksInterruptedBodyAfterResponseCommit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp2t")
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "short")
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/segment.ts?token=signed",
+		nil)
+	recorder := httptest.NewRecorder()
+	err = client.Proxy(recorder, request,
+		"/v1/videos/00000000-0000-4000-8000-000000000001/hls/segment.ts", "")
+	if !errors.Is(err, ErrResponseCommitted) {
+		t.Fatalf("interrupted HLS stream error = %v, want ErrResponseCommitted", err)
+	}
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "short" {
+		t.Fatalf("committed response = %d %q", recorder.Code, recorder.Body.String())
 	}
 }
