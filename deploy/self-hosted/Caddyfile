@@ -23,13 +23,7 @@
     Referrer-Policy no-referrer
     -Server
   }
-  # Video service is private on the shared Docker edge network. Route its
-  # feed, HLS manifests/segments, likes, comments and creator endpoints over
-  # the same HTTPS origin as Backend; never publish the container port.
-  @video path /v1/feed /v1/videos /v1/videos/* /v1/channels /v1/channels/*
-  handle @video {
-    reverse_proxy video:8790
-  }
+  # All public API traffic, including TV playback, must pass through Backend.
   # Keep liveness public for external release checks; dependency readiness
   # and metrics remain private and are checked from inside the deployment.
   handle /healthz {
