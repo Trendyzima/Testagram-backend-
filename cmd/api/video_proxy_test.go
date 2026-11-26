@@ -22,6 +22,7 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 		{http.MethodPost, "/api/video/channels", "{\"handle\":\"creator\",\"name\":\"Creator\"}"},
 		{http.MethodPost, "/api/video/uploads", "multipart"},
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
+		{http.MethodDelete, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/publish", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/like", ""},
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", ""},
@@ -52,6 +53,7 @@ func TestVideoProxyRejectsMalformedVideoIDs(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/video/uploads/not-a-uuid"},
+		{http.MethodDelete, "/api/video/uploads/not-a-uuid"},
 		{http.MethodPost, "/api/video/uploads/not-a-uuid/publish"},
 	}
 	for _, tc := range requests {
