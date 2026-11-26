@@ -60,6 +60,8 @@ jobs:
         run: |
           python3 -m py_compile scripts/native-auth-staging-smoke.py
           python3 -m py_compile scripts/video-e2e-staging-acceptance.py
+      - name: Test video staging acceptance output contract
+        run: python3 -m unittest discover -s tests -p 'test_video_staging_acceptance_outputs.py' -v
       - name: Resolve and verify Go modules
         run: |
           go mod tidy
