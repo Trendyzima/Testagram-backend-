@@ -12,6 +12,7 @@ import (
 )
 
 const maxResponseBytes = 64 << 10
+const maxVideoSegmentBytes = 256 << 20
 
 type Client struct {
 	baseURL *url.URL
@@ -75,18 +76,21 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 		return errors.New("invalid Data Centre video API path")
 	}
 	userToken = strings.TrimSpace(userToken)
-	if userToken == "" || strings.ContainsAny(userToken, "\r\n") {
-		return errors.New("validated native user token is required")
+	if strings.ContainsAny(userToken, "\r\n") {
+		return errors.New("invalid native user token")
 	}
 	target := *c.baseURL
 	target.Path = path
 	target.RawPath = ""
+	target.RawQuery = r.URL.RawQuery
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
 	if err != nil {
 		return fmt.Errorf("build Data Centre video request: %w", err)
 	}
 	req.ContentLength = r.ContentLength
-	req.Header.Set("Authorization", "Bearer "+userToken)
+	if userToken != "" {
+		req.Header.Set("Authorization", "Bearer "+userToken)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Testagram-API-Version", "1")
 	if contentType := strings.TrimSpace(r.Header.Get("Content-Type")); contentType != "" {
@@ -100,8 +104,34 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 		return fmt.Errorf("Data Centre video request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTemporaryRedirect && strings.HasSuffix(path, "/manifest") {
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/videos/"), "/manifest")
+		location, parseErr := url.Parse(resp.Header.Get("Location"))
+		if parseErr != nil || location.IsAbs() || location.Host != "" || location.Fragment != "" ||
+			location.Path != "/v1/videos/"+id+"/hls/master.m3u8" ||
+			location.Query().Get("token") == "" || len(location.Query()) != 1 {
+			return errors.New("Data Centre video manifest redirect is not an approved signed HLS location")
+		}
+		w.Header().Set("Location", "/api/video/uploads/"+id+"/hls/master.m3u8?token="+url.QueryEscape(location.Query().Get("token")))
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		return nil
+	}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		return errors.New("Data Centre video API redirects are not accepted")
+	}
+	if strings.Contains(path, "/hls/") {
+		if resp.ContentLength > maxVideoSegmentBytes {
+			return errors.New("Data Centre video segment exceeds the 256 MiB limit")
+		}
+		if contentType := resp.Header.Get("Content-Type"); contentType != "" {
+			w.Header().Set("Content-Type", contentType)
+		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		w.WriteHeader(resp.StatusCode)
+		_, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxVideoSegmentBytes+1))
+		return copyErr
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil || len(body) > maxResponseBytes {
