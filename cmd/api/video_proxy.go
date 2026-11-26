@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Trendyzima/Testagram-backend-/internal/videoclient"
 )
 
 const maxVideoProxyRequestBytes int64 = 20 << 30
@@ -125,6 +128,12 @@ func (s *service) videoPublicProxyRequest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.videoService.Proxy(w, r, upstreamPath, ""); err != nil {
+		if errors.Is(err, videoclient.ErrResponseCommitted) {
+			// The HLS status and headers are already on the wire. Appending a
+			// JSON gateway error would corrupt the media segment or playlist.
+			log.Printf("video playback stream interrupted after response commit: %v", err)
+			return
+		}
 		if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
 			writeJSON(w, http.StatusGatewayTimeout, errorBody("VIDEO_SERVICE_TIMEOUT", "Video service did not respond in time", requestID))
 			return
