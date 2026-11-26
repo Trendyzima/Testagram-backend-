@@ -169,7 +169,7 @@ func publicVideoRoute(method, path string) bool {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 4 && parts[0] == "v1" && parts[1] == "videos" && parts[2] != "" {
 		switch parts[3] {
-		case "manifest", "comments":
+		case "manifest":
 			return method == http.MethodGet
 		case "view":
 			return method == http.MethodPost
