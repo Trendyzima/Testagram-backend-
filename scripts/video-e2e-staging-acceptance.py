@@ -251,7 +251,7 @@ def main() -> None:
         channel = json_request(base, "/api/video/channels", method="POST",
                                payload={"handle": handle, "name": "Staging Acceptance",
                                         "description": "Private creator channel for automated staging acceptance"},
-                               bearer=token)
+                               bearer=token, expected=(201,))
         channel_id = channel.get("id") if isinstance(channel, dict) else None
     else:
         channel_id = channel.get("id")
