@@ -103,8 +103,7 @@ func TestVideoHLSRouteRequiresSignedPlaybackToken(t *testing.T) {
 	}
 }
 
-
-func TestVideoPublicPlaybackRoutesDoNotRequireUserBearer(t *testing.T) {
+ TestVideoPublicPlaybackRoutesDoNotRequireUserBearer(t *testing.T) {
 	handler := (&service{}).routes()
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodGet, "/api/video/feed"},
@@ -135,4 +134,3 @@ func TestVideoHLSRejectsUnsafeSegmentNames(t *testing.T) {
 		}
 	}
 }
-
