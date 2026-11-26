@@ -99,12 +99,12 @@ func TestPublicVideoPlaybackRoutesFailClosedWhenServiceIsUnavailable(t *testing.
 
 func TestVideoInteractionRoutesRejectMalformedIDs(t *testing.T) {
 	handler := (&service{}).routes()
+	handler := (&service{}).routes()
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/api/video/uploads/not-a-uuid/view"},
 		{http.MethodPost, "/api/video/uploads/not-a-uuid/like"},
 		{http.MethodGet, "/api/video/uploads/not-a-uuid/manifest"},
 		{http.MethodGet, "/api/video/uploads/not-a-uuid/comments"},
-		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/../secret"},
 	} {
 		request := httptest.NewRequest(tc.method, tc.path, nil)
 		request.Header.Set("Origin", "https://testagram.site")
@@ -113,5 +113,16 @@ func TestVideoInteractionRoutesRejectMalformedIDs(t *testing.T) {
 		if recorder.Code != http.StatusBadRequest {
 			t.Fatalf("malformed route %s %s returned %d: %s", tc.method, tc.path, recorder.Code, recorder.Body.String())
 		}
+	}
+}
+
+func TestVideoHLSRejectsTraversalBeforeProxying(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/secret", nil)
+	request.SetPathValue("video_id", "00000000-0000-4000-8000-000000000001")
+	request.SetPathValue("file", "..")
+	recorder := httptest.NewRecorder()
+	(&service{}).videoHLS(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("traversal HLS file returned %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
 	}
 }
