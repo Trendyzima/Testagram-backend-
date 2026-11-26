@@ -12,6 +12,9 @@ import (
 )
 
 const maxResponseBytes = 64 << 10
+
+// ErrResponseCommitted means an HLS response has started and must not be replaced with a JSON error body.
+var ErrResponseCommitted = errors.New("video response already committed")
 const maxVideoSegmentBytes = 256 << 20
 
 type Client struct {
@@ -145,8 +148,17 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 			w.Header().Set("Cache-Control", "private, max-age=300")
 		}
 		w.WriteHeader(resp.StatusCode)
-		_, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxVideoSegmentBytes+1))
-		return copyErr
+		written, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxVideoSegmentBytes+1))
+		if copyErr != nil {
+			return fmt.Errorf("%w: upstream HLS stream failed: %v", ErrResponseCommitted, copyErr)
+		}
+		if written > maxVideoSegmentBytes {
+			return fmt.Errorf("%w: upstream HLS body exceeds the 256 MiB limit", ErrResponseCommitted)
+		}
+		if resp.ContentLength >= 0 && written != resp.ContentLength {
+			return fmt.Errorf("%w: upstream HLS body ended before Content-Length", ErrResponseCommitted)
+		}
+		return nil
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil || len(body) > maxResponseBytes {
