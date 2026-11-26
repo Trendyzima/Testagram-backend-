@@ -161,6 +161,17 @@ func (s *service) videoView(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	session := strings.TrimSpace(r.Header.Get("X-Playback-Session"))
+	if len(session) < 8 || len(session) > 128 {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PLAYBACK_SESSION", "A valid playback session identifier is required", requestID(r)))
+		return
+	}
+	for _, c := range session {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PLAYBACK_SESSION", "A valid playback session identifier is required", requestID(r)))
+			return
+		}
+	}
 	s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/view")
 }
 
