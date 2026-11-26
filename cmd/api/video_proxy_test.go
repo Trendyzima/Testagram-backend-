@@ -111,6 +111,9 @@ func TestVideoPublicPlaybackRoutesDoNotRequireUserBearer(t *testing.T) {
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/manifest"},
 	} {
 		request := httptest.NewRequest(tc.method, tc.path, nil)
+		if strings.Contains(tc.path, "/view") {
+			request.Header.Set("X-Playback-Session", "playback-session-123")
+		}
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusServiceUnavailable {
