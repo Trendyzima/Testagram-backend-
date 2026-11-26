@@ -298,7 +298,10 @@ def main() -> None:
         item = feed_item(base, video_id)
         if item is None or item.get("status") != "ready" or item.get("visibility") != "public":
             fail("Published video did not appear in the public Testagram video feed")
-        print("PASS: explicit publish and feed visibility")
+        published_feed = json_request(base, "/api/video/feed")
+        if not isinstance(published_feed, list) or not published_feed or published_feed[0].get("id") != video_id:
+            fail("The disposable video is not the newest feed item; refusing an ambiguous Flutter playback test")
+        print("PASS: explicit publish and exact newest-feed-item visibility")
 
         status, headers, _ = http_request(
             base, f"/api/video/uploads/{video_id}/manifest", follow_redirects=False
