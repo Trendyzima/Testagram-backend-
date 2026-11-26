@@ -148,15 +148,24 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 			w.Header().Set("Cache-Control", "private, max-age=300")
 		}
 		w.WriteHeader(resp.StatusCode)
-		written, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxVideoSegmentBytes+1))
+		written, copyErr := io.Copy(w, io.LimitReader(resp.Body, maxVideoSegmentBytes))
 		if copyErr != nil {
 			return fmt.Errorf("%w: upstream HLS stream failed: %v", ErrResponseCommitted, copyErr)
 		}
-		if written > maxVideoSegmentBytes {
-			return fmt.Errorf("%w: upstream HLS body exceeds the 256 MiB limit", ErrResponseCommitted)
-		}
 		if resp.ContentLength >= 0 && written != resp.ContentLength {
 			return fmt.Errorf("%w: upstream HLS body ended before Content-Length", ErrResponseCommitted)
+		}
+		if resp.ContentLength < 0 && written == maxVideoSegmentBytes {
+			// Probe one byte without forwarding it. This enforces the cap for
+			// chunked/unknown-length responses without leaking byte 256 MiB + 1.
+			var probe [1]byte
+			n, probeErr := resp.Body.Read(probe[:])
+			if n > 0 {
+				return fmt.Errorf("%w: upstream HLS body exceeds the 256 MiB limit", ErrResponseCommitted)
+			}
+			if probeErr != nil && !errors.Is(probeErr, io.EOF) {
+				return fmt.Errorf("%w: failed while checking HLS stream limit: %v", ErrResponseCommitted, probeErr)
+			}
 		}
 		return nil
 	}
