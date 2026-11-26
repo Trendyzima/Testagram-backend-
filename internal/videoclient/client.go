@@ -117,6 +117,6 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 		w.Header().Set("Retry-After", retryAfter)
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, writeErr := w.Write(body)
-	return writeErr
+	_, _ = w.Write(body)
+	return nil
 }
