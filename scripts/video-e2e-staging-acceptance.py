@@ -240,6 +240,13 @@ def main() -> None:
             fail(f"FFmpeg processing finished in state {state!r}, not ready")
         print("PASS: Data Centre FFmpeg worker produced a ready video")
 
+        private_status, _, _ = http_request(
+            base, f"/api/video/uploads/{video_id}/manifest", follow_redirects=False
+        )
+        if private_status != 404 or feed_item(base, video_id) is not None:
+            fail("Private, unpublished video was exposed through the manifest or public feed")
+        print("PASS: private/unpublished video is hidden")
+
         published = json_request(base, f"/api/video/uploads/{video_id}/publish",
                                  method="POST", payload={}, bearer=token)
         if not isinstance(published, dict) or published.get("status") != "public":
