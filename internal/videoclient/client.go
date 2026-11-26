@@ -159,7 +159,7 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 			// Probe one byte without forwarding it. This enforces the cap for
 			// chunked/unknown-length responses without leaking byte 256 MiB + 1.
 			var probe [1]byte
-			n, probeErr := resp.Body.Read(probe[:])
+			n, probeErr := io.ReadFull(resp.Body, probe[:])
 			if n > 0 {
 				return fmt.Errorf("%w: upstream HLS body exceeds the 256 MiB limit", ErrResponseCommitted)
 			}
