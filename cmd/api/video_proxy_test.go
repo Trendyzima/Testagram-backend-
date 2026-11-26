@@ -72,6 +72,8 @@ func TestVideoProxyOptionsUsesBackendCorsPreflight(t *testing.T) {
 		t.Fatalf("video upload preflight status = %d, want %d: %s", recorder.Code, http.StatusNoContent, recorder.Body.String())
 	}
 
+}
+
 func TestVideoPlaybackRoutesRejectMalformedIDs(t *testing.T) {
 	handler := (&service{}).routes()
 	for _, tc := range []struct{ method, path string }{
@@ -134,4 +136,3 @@ func TestVideoHLSRejectsUnsafeSegmentNames(t *testing.T) {
 	}
 }
 
-}
