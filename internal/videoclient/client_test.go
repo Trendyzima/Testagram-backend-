@@ -110,6 +110,8 @@ func TestProxyFailsClosedWhenNotConfigured(t *testing.T) {
 		t.Fatal("unconfigured video proxy succeeded")
 	}
 
+}
+
 func TestManifestRedirectIsRewrittenToBackendHLSRoute(t *testing.T) {
 	const videoID = "00000000-0000-4000-8000-000000000001"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -182,4 +184,3 @@ func TestProxyForwardsPlaybackSessionWithoutForwardingClientAuthorizationForPubl
 	if recorder.Code != http.StatusAccepted { t.Fatalf("view proxy status = %d", recorder.Code) }
 }
 
-}
