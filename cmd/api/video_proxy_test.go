@@ -234,4 +234,11 @@ func TestCaddyAndVideoUseDisjointNetworks(t *testing.T) {
 	if !strings.Contains(source, "video-private:\n    name: ${TESTAGRAM_VIDEO_NETWORK:-testagram-video-private}\n    internal: true") {
 		t.Fatal("Backend Compose must create the dedicated internal video-private network")
 	}
+	script, err := os.ReadFile("../../scripts/start-instabox-deployment.sh")
+	if err != nil {
+		t.Fatalf("read Backend deployment script: %v", err)
+	}
+	if !strings.Contains(string(script), "write_dc_env_value TESTAGRAM_VIDEO_NETWORK") {
+		t.Fatal("Backend deployment must pass the same video-private network name to the Data Centre overlay")
+	}
 }
