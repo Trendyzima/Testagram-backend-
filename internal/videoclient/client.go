@@ -82,6 +82,7 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	target := *c.baseURL
 	target.Path = path
 	target.RawPath = ""
+	target.RawQuery = r.URL.RawQuery
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
 	if err != nil {
 		return fmt.Errorf("build Data Centre video request: %w", err)
@@ -129,9 +130,7 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 		w.Header().Set("Retry-After", retryAfter)
 	}
 	w.WriteHeader(resp.StatusCode)
-	written, copyErr := io.Copy(w, io.LimitReader(resp.Body, limit+1))
-	if copyErr != nil { return fmt.Errorf("stream Data Centre video response: %w", copyErr) }
-	if written > limit { return errors.New("Data Centre video API response exceeded its streaming limit") }
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, limit))
 	return nil
 }
 
