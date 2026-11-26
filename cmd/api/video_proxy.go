@@ -113,3 +113,114 @@ func (s *service) videoPublish(w http.ResponseWriter, r *http.Request) {
 	}
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/publish", 0)
 }
+
+
+func (s *service) videoPublicProxyRequest(w http.ResponseWriter, r *http.Request, upstreamPath string) {
+	requestID := requestID(r)
+	if !s.cors(w, r) {
+		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID))
+		return
+	}
+	if s.videoService == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIDEO_SERVICE_NOT_CONFIGURED", "Testagram video service is not configured on the Backend", requestID))
+		return
+	}
+	if err := s.videoService.Proxy(w, r, upstreamPath, ""); err != nil {
+		if errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+			writeJSON(w, http.StatusGatewayTimeout, errorBody("VIDEO_SERVICE_TIMEOUT", "Video service did not respond in time", requestID))
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, errorBody("VIDEO_SERVICE_UNAVAILABLE", "Video service request could not be completed", requestID))
+	}
+}
+
+func videoProxyID(r *http.Request, w http.ResponseWriter) (string, bool) {
+	id := strings.TrimSpace(r.PathValue("video_id"))
+	if !socialUUIDPattern.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_ID", "A valid video ID is required", requestID(r)))
+		return "", false
+	}
+	return id, true
+}
+
+func (s *service) videoFeed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET for the public video feed", requestID(r)))
+		return
+	}
+	s.videoPublicProxyRequest(w, r, "/v1/feed")
+}
+
+func (s *service) videoView(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use POST to record a video view", requestID(r)))
+		return
+	}
+	id, ok := videoProxyID(r, w)
+	if !ok { return }
+	s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/view")
+}
+
+func (s *service) videoLike(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use POST to like a video", requestID(r)))
+		return
+	}
+	id, ok := videoProxyID(r, w)
+	if !ok { return }
+	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/like", 0)
+}
+
+func (s *service) videoComments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET or POST for video comments", requestID(r)))
+		return
+	}
+	id, ok := videoProxyID(r, w)
+	if !ok { return }
+	limit := int64(0)
+	if r.Method == http.MethodPost { limit = 8 << 10 }
+	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/comments", limit)
+}
+
+func (s *service) videoManifest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET for a video manifest", requestID(r)))
+		return
+	}
+	id, ok := videoProxyID(r, w)
+	if !ok { return }
+	s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/manifest")
+}
+
+func (s *service) videoHLS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET for HLS video segments", requestID(r)))
+		return
+	}
+	id, ok := videoProxyID(r, w)
+	if !ok { return }
+	file := strings.TrimSpace(r.PathValue("file"))
+	if file == "" || len(file) > 128 || strings.Contains(file, "..") ||
+		strings.ContainsAny(file, "/"+string(rune(92))) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_SEGMENT", "A valid HLS segment name is required", requestID(r)))
+		return
+	}
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" || len(r.URL.Query()) != 1 {
+		writeJSON(w, http.StatusForbidden, errorBody("INVALID_VIDEO_PLAYBACK_TOKEN", "A valid signed playback token is required", requestID(r)))
+		return
+	}
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Time{}); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("VIDEO_PLAYBACK_STREAMING_UNAVAILABLE", "The Backend cannot safely stream video playback", requestID(r)))
+		return
+	}
+	s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/hls/"+file)
+}
