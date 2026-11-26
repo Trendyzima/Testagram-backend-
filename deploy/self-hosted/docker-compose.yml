@@ -89,6 +89,9 @@ services:
       data: {}
       platform:
         aliases: [federation-db]
+      # The isolated Data Centre video service needs database access without
+      # joining the shared platform network or becoming reachable by Caddy.
+      video-private: {}
 
   control-plane:
     build:
