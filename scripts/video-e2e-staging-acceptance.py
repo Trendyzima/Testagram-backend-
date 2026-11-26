@@ -6,6 +6,7 @@ identity. Never prints credentials or signed playback tokens.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -93,11 +94,11 @@ def make_fixture(directory: pathlib.Path) -> pathlib.Path:
     return output
 
 
-def upload_video(base: str, token: str, channel_id: str, fixture: pathlib.Path) -> str:
+def upload_video(base: str, token: str, channel_id: str, fixture: pathlib.Path, video_title: str) -> str:
     boundary = "----TestagramAcceptance" + uuid.uuid4().hex
     fields = {
         "channel_id": channel_id,
-        "title": "Testagram staging acceptance " + os.environ.get("GITHUB_RUN_ID", "manual"),
+        "title": video_title,
         "description": "Temporary staging-only playback acceptance fixture",
         "visibility": "private",
     }
@@ -181,7 +182,33 @@ def assert_rejected(base: str, url: str, expected: int, label: str) -> None:
         fail(f"{label}: expected HTTP {expected}, received {status}")
 
 
+def cleanup_with_token(base: str, token: str, video_id: str) -> None:
+    cleanup_status, _, _ = http_request(
+        base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
+    )
+    if cleanup_status == 409:
+        final_state = wait_until_terminal(base, token, video_id, timeout=360)
+        if final_state not in ("ready", "failed", "blocked"):
+            fail("Video did not reach a deletable state; staging cleanup is incomplete")
+        cleanup_status, _, _ = http_request(
+            base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
+        )
+    if cleanup_status != 204:
+        fail(f"Staging video cleanup failed (HTTP {cleanup_status}); video may remain")
+    gone_status, _, _ = http_request(
+        base, f"/api/video/uploads/{video_id}", bearer=token
+    )
+    if gone_status != 404:
+        fail(f"Deleted staging video remained addressable (HTTP {gone_status})")
+    if feed_item(base, video_id) is not None:
+        fail("Deleted staging video remained visible in the public feed")
+    print("PASS: disposable video deleted and removed from feed")
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cleanup-video-id", default="")
+    args = parser.parse_args()
     raw_base = os.environ.get("TESTAGRAM_STAGING_API_URL", "").strip()
     email = os.environ.get("TESTAGRAM_AUTH_SMOKE_EMAIL", "").strip()
     password = os.environ.get("TESTAGRAM_AUTH_SMOKE_PASSWORD", "")
@@ -203,6 +230,9 @@ def main() -> None:
     base = raw_base.rstrip("/")
     token = login(base, email, password)
     print("PASS: dedicated Testagram-native staging identity authenticated")
+    if args.cleanup_video_id:
+        cleanup_with_token(base, token, args.cleanup_video_id)
+        return
 
     # Probe the owner-delete route before creating any content. An unknown ID
     # must be accepted idempotently, not rejected as a missing HTTP method.
@@ -230,10 +260,12 @@ def main() -> None:
     print("PASS: dedicated creator channel created or reused")
 
     video_id: str | None = None
+    video_title = "Testagram staging acceptance " + os.environ.get("GITHUB_RUN_ID", "manual")
     fixture_dir = pathlib.Path(os.environ.get("RUNNER_TEMP", "/tmp"))
+    succeeded = False
     try:
         fixture = make_fixture(fixture_dir)
-        video_id = upload_video(base, token, channel_id, fixture)
+        video_id = upload_video(base, token, channel_id, fixture, video_title)
         print("PASS: generated MP4 uploaded through the canonical Backend")
         state = wait_until_terminal(base, token, video_id)
         if state != "ready":
@@ -336,29 +368,23 @@ def main() -> None:
             fail("Created video comment could not be retrieved")
         print("PASS: comment create and read-back")
 
-        print("PASS: staging video acceptance flow completed; cleanup will now run")
+        print("PASS: staging API acceptance completed")
+        succeeded = True
     finally:
         if video_id:
-            cleanup_status, _, _ = http_request(
-                base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
-            )
-            if cleanup_status == 409:
-                final_state = wait_until_terminal(base, token, video_id, timeout=360)
-                if final_state not in ("ready", "failed", "blocked"):
-                    fail("Video did not reach a deletable state; staging cleanup is incomplete")
-                cleanup_status, _, _ = http_request(
-                    base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
-                )
-            if cleanup_status != 204:
-                fail(f"Staging video cleanup failed (HTTP {cleanup_status}); video may remain")
-            gone_status, _, _ = http_request(
-                base, f"/api/video/uploads/{video_id}", bearer=token
-            )
-            if gone_status != 404:
-                fail(f"Deleted staging video remained addressable (HTTP {gone_status})")
-            if feed_item(base, video_id) is not None:
-                fail("Deleted staging video remained visible in the public feed")
-            print("PASS: disposable video deleted and removed from feed")
+            if succeeded and os.environ.get("PRESERVE_FOR_FLUTTER") == "true":
+                output_path = os.environ.get("GITHUB_OUTPUT")
+                if not output_path:
+                    cleanup_with_token(base, token, video_id)
+                    fail("GITHUB_OUTPUT is unavailable; refusing to leave a staging video behind")
+                print("::add-mask::" + token)
+                with open(output_path, "a", encoding="utf-8") as output:
+                    output.write(f"video_id={video_id}\\n")
+                    output.write(f"video_title={video_title}\\n")
+                    output.write(f"access_token={token}\\n")
+                print("PASS: staging video held temporarily for the real Flutter Android feed test")
+            else:
+                cleanup_with_token(base, token, video_id)
 
 
 if __name__ == "__main__":
