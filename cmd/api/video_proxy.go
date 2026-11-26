@@ -113,3 +113,67 @@ func (s *service) videoPublish(w http.ResponseWriter, r *http.Request) {
 	}
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/publish", 0)
 }
+
+func (s *service) videoFeed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET to read the public video feed", requestID(r)))
+		return
+	}
+	s.videoProxyRequest(w, r, "/v1/feed", 0)
+}
+
+func (s *service) videoAction(w http.ResponseWriter, r *http.Request, action, method string, maxBodyBytes int64) {
+	if r.Method != method {
+		w.Header().Set("Allow", method+", OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Unsupported video action method", requestID(r)))
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("video_id"))
+	if !socialUUIDPattern.MatchString(id) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_ID", "A valid video ID is required", requestID(r)))
+		return
+	}
+	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/"+action, maxBodyBytes)
+}
+
+func (s *service) videoManifest(w http.ResponseWriter, r *http.Request) {
+	s.videoAction(w, r, "manifest", http.MethodGet, 0)
+}
+
+func (s *service) videoView(w http.ResponseWriter, r *http.Request) {
+	s.videoAction(w, r, "view", http.MethodPost, 0)
+}
+
+func (s *service) videoLike(w http.ResponseWriter, r *http.Request) {
+	s.videoAction(w, r, "like", http.MethodPost, 0)
+}
+
+func (s *service) videoComments(w http.ResponseWriter, r *http.Request) {
+	limit := int64(0)
+	if r.Method == http.MethodPost { limit = 8 << 10 }
+	s.videoAction(w, r, "comments", r.Method, limit)
+}
+
+func (s *service) videoHLS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET to read an HLS video segment", requestID(r)))
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("video_id"))
+	file := strings.TrimSpace(r.PathValue("file"))
+	if !socialUUIDPattern.MatchString(id) || !validVideoHLSFilename(file) {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_PATH", "A valid video ID and HLS filename are required", requestID(r)))
+		return
+	}
+	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/hls/"+file, 0)
+}
+
+func validVideoHLSFilename(file string) bool {
+	if file == "" || len(file) > 128 || strings.Contains(file, "..") || strings.ContainsAny(file, "/\\") { return false }
+	for _, c := range file {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') { return false }
+	}
+	return strings.Contains(file, ".")
+}
