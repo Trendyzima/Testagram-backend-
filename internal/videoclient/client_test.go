@@ -130,12 +130,13 @@ func TestProxyStreamsHLSAndForwardsRangeAndPlaybackSession(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer "+token { t.Errorf("authorization not forwarded") }
 		if r.Header.Get("Range") != "bytes=0-99" { t.Errorf("Range = %q", r.Header.Get("Range")) }
 		if r.Header.Get("X-Playback-Session") != "session-123" { t.Errorf("playback session not forwarded") }
+		if r.URL.Query().Get("token") != "signed" { t.Errorf("signed playback token not forwarded") }
 		w.Header().Set("Content-Type", "video/mp2t"); w.Header().Set("Accept-Ranges", "bytes"); w.Header().Set("Content-Range", "bytes 0-99/100")
 		w.WriteHeader(http.StatusPartialContent); _, _ = w.Write([]byte(strings.Repeat("x", 100)))
 	}))
 	defer server.Close()
 	client, err := New(server.URL, nil); if err != nil { t.Fatal(err) }
-	request := httptest.NewRequest(http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/segment-1.ts", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/segment-1.ts?token=signed", nil)
 	request.Header.Set("Range", "bytes=0-99"); request.Header.Set("X-Playback-Session", "session-123")
 	recorder := httptest.NewRecorder()
 	if err := client.Proxy(recorder, request, "/v1/videos/00000000-0000-4000-8000-000000000001/hls/segment-1.ts", token); err != nil { t.Fatal(err) }
