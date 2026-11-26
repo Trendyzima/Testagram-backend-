@@ -84,3 +84,16 @@ func TestVideoProxyRejectsMalformedHLSPath(t *testing.T) {
 		if recorder.Code != http.StatusBadRequest { t.Fatalf("%s returned %d", path, recorder.Code) }
 	}
 }
+func TestVideoProxyValidatesPlaybackSessionAndHLSQuery(t *testing.T) {
+	handler := (&service{}).routes()
+	id := "00000000-0000-4000-8000-000000000001"
+	view := httptest.NewRequest(http.MethodPost, "/api/video/uploads/"+id+"/view", nil)
+	view.Header.Set("Origin", "https://testagram.site")
+	view.Header.Set("X-Playback-Session", "short")
+	viewRecorder := httptest.NewRecorder(); handler.ServeHTTP(viewRecorder, view)
+	if viewRecorder.Code != http.StatusBadRequest { t.Fatalf("invalid playback session returned %d", viewRecorder.Code) }
+	hls := httptest.NewRequest(http.MethodGet, "/api/video/uploads/"+id+"/hls/master.m3u8", nil)
+	hls.Header.Set("Origin", "https://testagram.site")
+	hlsRecorder := httptest.NewRecorder(); handler.ServeHTTP(hlsRecorder, hls)
+	if hlsRecorder.Code != http.StatusBadRequest { t.Fatalf("missing signed HLS token returned %d", hlsRecorder.Code) }
+}
