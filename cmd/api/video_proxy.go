@@ -114,7 +114,6 @@ func (s *service) videoPublish(w http.ResponseWriter, r *http.Request) {
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/publish", 0)
 }
 
-
 func (s *service) videoPublicProxyRequest(w http.ResponseWriter, r *http.Request, upstreamPath string) {
 	requestID := requestID(r)
 	if !s.cors(w, r) {
@@ -159,7 +158,9 @@ func (s *service) videoView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, ok := videoProxyID(r, w)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/view")
 }
 
@@ -183,7 +184,9 @@ func (s *service) videoComments(w http.ResponseWriter, r *http.Request) {
 	id, ok := videoProxyID(r, w)
 	if !ok { return }
 	limit := int64(0)
-	if r.Method == http.MethodPost { limit = 8 << 10 }
+	if r.Method == http.MethodPost {
+		limit = 8 << 10
+	}
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/comments", limit)
 }
 
