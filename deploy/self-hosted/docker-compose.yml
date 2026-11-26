@@ -272,7 +272,7 @@ services:
     tmpfs: ["/tmp"]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    networks: [edge, data, monitoring, platform, egress]
+    networks: [edge, data, monitoring, platform, egress, video-private]
 
   admin-console:
     build:
@@ -386,7 +386,7 @@ services:
       - caddy-config:/config
     depends_on: [api, media-cache, control-plane, admin-console, flutter-web]
     restart: unless-stopped
-    networks: [edge, control-plane]
+    networks: [edge, control-plane, platform]
 
   node-exporter:
     image: prom/node-exporter:v1.9.1
@@ -487,6 +487,10 @@ networks:
   # Egress-only network for approved outbound service integrations.
   egress:
     name: testagram-egress
+  # Dedicated internal link between Backend API and the private Data Centre video service.
+  video-private:
+    name: ${TESTAGRAM_VIDEO_NETWORK:-testagram-video-private}
+    internal: true
   notifications:
   control-plane:
     internal: true
