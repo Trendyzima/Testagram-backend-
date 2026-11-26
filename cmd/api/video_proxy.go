@@ -117,6 +117,8 @@ func (s *service) videoPublish(w http.ResponseWriter, r *http.Request) {
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/publish", 0)
 }
 
+// videoPublicProxyRequest is limited by videoclient's explicit public-route allowlist;
+// it never grants anonymous access to owner-scoped channel, upload, like or comment-write APIs.
 func (s *service) videoPublicProxyRequest(w http.ResponseWriter, r *http.Request, upstreamPath string) {
 	requestID := requestID(r)
 	if !s.cors(w, r) {
