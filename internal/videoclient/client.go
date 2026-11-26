@@ -138,6 +138,10 @@ func publicHLSLocation(requestPath, rawLocation string) (string, bool) {
 	requested := strings.Split(strings.Trim(requestPath, "/"), "/")
 	location, err := url.Parse(strings.TrimSpace(rawLocation))
 	if err != nil || location.IsAbs() || location.Host != "" || location.User != nil || location.Fragment != "" { return "", false }
+	query := location.Query()
+	if len(query) != 1 || len(query["token"]) != 1 || query.Get("token") == "" || len(query.Get("token")) > 256 {
+		return "", false
+	}
 	parts := strings.Split(strings.Trim(location.Path, "/"), "/")
 	if len(requested) != 4 || requested[0] != "v1" || requested[1] != "videos" || requested[3] != "manifest" || len(parts) != 5 || parts[0] != "v1" || parts[1] != "videos" || parts[2] != requested[2] || parts[3] != "hls" || parts[4] == "" || strings.Contains(parts[4], "..") || strings.ContainsAny(parts[4], "/\\") { return "", false }
 	for _, c := range parts[4] { if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') { return "", false } }
