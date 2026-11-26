@@ -145,19 +145,25 @@ func TestHLSProxyStreamsLargeSegmentsAndForwardsSignedToken(t *testing.T) {
 		if r.URL.Query().Get("token") != token {
 			t.Fatalf("signed playback token was not forwarded: %q", r.URL.RawQuery)
 		}
+		if r.Header.Get("Range") != "bytes=0-131071" {
+			t.Fatalf("Range header was not forwarded: %q", r.Header.Get("Range"))
+		}
 		w.Header().Set("Content-Type", "video/mp2t")
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Range", "bytes 0-131071/131072")
+		w.WriteHeader(http.StatusPartialContent)
 		_, _ = io.WriteString(w, payload)
 	}))
 	defer server.Close()
 	client, err := New(server.URL, nil)
 	if err != nil { t.Fatal(err) }
 	request := httptest.NewRequest(http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/segment-001.ts?token="+token, nil)
+	request.Header.Set("Range", "bytes=0-131071")
 	recorder := httptest.NewRecorder()
 	if err := client.Proxy(recorder, request, "/v1/videos/00000000-0000-4000-8000-000000000001/hls/segment-001.ts", ""); err != nil {
 		t.Fatal(err)
 	}
-	if recorder.Code != http.StatusOK || recorder.Header().Get("Content-Type") != "video/mp2t" || recorder.Body.Len() != len(payload) {
+	if recorder.Code != http.StatusPartialContent || recorder.Header().Get("Content-Type") != "video/mp2t" || recorder.Body.Len() != len(payload) || recorder.Header().Get("Content-Range") != "bytes 0-131071/131072" || recorder.Header().Get("Accept-Ranges") != "bytes" {
 		t.Fatalf("HLS stream = status %d, content-type %q, bytes %d", recorder.Code, recorder.Header().Get("Content-Type"), recorder.Body.Len())
 	}
 }
