@@ -53,6 +53,7 @@ func TestVideoProxyRejectsMalformedVideoIDs(t *testing.T) {
 	}
 	for _, tc := range requests {
 		request := httptest.NewRequest(tc.method, tc.path, nil)
+		if strings.HasSuffix(tc.path, "/view") { request.Header.Set("X-Playback-Session", "session-123") }
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusBadRequest {
@@ -133,4 +134,13 @@ func TestVideoHLSRejectsUnsafeSegmentNames(t *testing.T) {
 			t.Fatalf("unsafe HLS segment %s returned %d: %s", path, recorder.Code, recorder.Body.String())
 		}
 	}
+}
+
+func TestVideoViewRejectsInvalidPlaybackSession(t *testing.T) {
+	handler := (&service{}).routes()
+	request := httptest.NewRequest(http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/view", nil)
+	request.Header.Set("X-Playback-Session", "short")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest { t.Fatalf("invalid playback session returned %d", recorder.Code) }
 }
