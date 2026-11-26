@@ -95,6 +95,11 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Testagram-API-Version", "1")
+	for _, header := range []string{"Range", "If-Range"} {
+		if value := strings.TrimSpace(r.Header.Get(header)); value != "" {
+			req.Header.Set(header, value)
+		}
+	}
 	if contentType := strings.TrimSpace(r.Header.Get("Content-Type")); contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -128,6 +133,11 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	if strings.Contains(path, "/hls/") {
 		if resp.ContentLength > maxVideoSegmentBytes {
 			return errors.New("Data Centre video segment exceeds the 256 MiB limit")
+		}
+		for _, header := range []string{"Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+			if value := resp.Header.Get(header); value != "" {
+				w.Header().Set(header, value)
+			}
 		}
 		if contentType := resp.Header.Get("Content-Type"); contentType != "" {
 			w.Header().Set("Content-Type", contentType)
