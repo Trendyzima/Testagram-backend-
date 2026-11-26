@@ -99,6 +99,9 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, path, userToken s
 	if requestID := strings.TrimSpace(r.Header.Get("X-Request-ID")); requestID != "" {
 		req.Header.Set("X-Request-ID", requestID)
 	}
+	if playbackSession := strings.TrimSpace(r.Header.Get("X-Playback-Session")); playbackSession != "" {
+		req.Header.Set("X-Playback-Session", playbackSession)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("Data Centre video request failed: %w", err)
