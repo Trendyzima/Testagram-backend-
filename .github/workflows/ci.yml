@@ -44,6 +44,8 @@ jobs:
         run: python3 tests/test_native_identity_migration_manifest.py
       - name: Verify native sensitive-action migration dependency order
         run: python3 tests/test_native_sensitive_action_migration_order.py
+      - name: Verify private video and PostgreSQL network boundary
+        run: python3 tests/test_video_private_network_contract.py
       - name: Verify native Testagram mail deployment and DNS wiring
         run: |
           python3 tests/test_native_mail_deployment.py -v
