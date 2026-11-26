@@ -157,6 +157,17 @@ func (s *service) videoView(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use POST to record a video view", requestID(r)))
 		return
 	}
+	session := strings.TrimSpace(r.Header.Get("X-Playback-Session"))
+	if len(session) < 8 || len(session) > 128 {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PLAYBACK_SESSION", "A valid playback session identifier is required", requestID(r)))
+		return
+	}
+	for _, c := range session {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PLAYBACK_SESSION", "A valid playback session identifier is required", requestID(r)))
+			return
+		}
+	}
 	id, ok := videoProxyID(r, w)
 	if !ok {
 		return
@@ -218,13 +229,14 @@ func (s *service) videoHLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	file := strings.TrimSpace(r.PathValue("file"))
-	if file == "" || len(file) > 128 || strings.Contains(file, "..") ||
-		strings.ContainsAny(file, "/"+string(rune(92))) {
+	if !validVideoHLSFilename(file) {
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_SEGMENT", "A valid HLS segment name is required", requestID(r)))
 		return
 	}
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	if token == "" || len(r.URL.Query()) != 1 {
+	query := r.URL.Query()
+	tokens := query["token"]
+	token := strings.TrimSpace(query.Get("token"))
+	if token == "" || len(token) > 256 || len(query) != 1 || len(tokens) != 1 {
 		writeJSON(w, http.StatusForbidden, errorBody("INVALID_VIDEO_PLAYBACK_TOKEN", "A valid signed playback token is required", requestID(r)))
 		return
 	}
@@ -234,4 +246,17 @@ func (s *service) videoHLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/hls/"+file)
+}
+
+func validVideoHLSFilename(file string) bool {
+	if file == "" || len(file) > 128 || strings.Contains(file, "..") || strings.ContainsAny(file, "/\\") {
+		return false
+	}
+	for _, c := range file {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+			c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return strings.Contains(file, ".")
 }
