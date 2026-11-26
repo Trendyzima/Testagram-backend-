@@ -182,6 +182,20 @@ def assert_rejected(base: str, url: str, expected: int, label: str) -> None:
         fail(f"{label}: expected HTTP {expected}, received {status}")
 
 
+def write_github_outputs(output_path: str, video_id: str, video_title: str, token: str) -> None:
+    values = {
+        "video_id": video_id,
+        "video_title": video_title,
+        "access_token": token,
+    }
+    for key, value in values.items():
+        if not value or "\\n" in value or "\\r" in value:
+            fail(f"Unsafe GitHub step output value: {key}")
+    with open(output_path, "a", encoding="utf-8") as output:
+        for key, value in values.items():
+            output.write(f"{key}={value}\\n")
+
+
 def cleanup_with_token(base: str, token: str, video_id: str) -> None:
     cleanup_status, _, _ = http_request(
         base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
@@ -378,10 +392,7 @@ def main() -> None:
                     cleanup_with_token(base, token, video_id)
                     fail("GITHUB_OUTPUT is unavailable; refusing to leave a staging video behind")
                 print("::add-mask::" + token)
-                with open(output_path, "a", encoding="utf-8") as output:
-                    output.write(f"video_id={video_id}\\n")
-                    output.write(f"video_title={video_title}\\n")
-                    output.write(f"access_token={token}\\n")
+                write_github_outputs(output_path, video_id, video_title, token)
                 print("PASS: staging video held temporarily for the real Flutter Android feed test")
             else:
                 cleanup_with_token(base, token, video_id)
