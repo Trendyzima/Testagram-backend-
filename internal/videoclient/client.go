@@ -75,7 +75,7 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, rawPath, userToke
 	parsed, err := url.ParseRequestURI(rawPath)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" ||
 		!strings.HasPrefix(parsed.Path, "/v1/") || strings.Contains(parsed.Path, "\\") ||
-		strings.ContainsAny(rawPath, "\\r\\n") {
+		strings.ContainsAny(rawPath, "\r\n") {
 		return errors.New("invalid Data Centre video API path")
 	}
 	for _, part := range strings.Split(parsed.Path, "/") {
@@ -100,7 +100,7 @@ func (c *Client) Proxy(w http.ResponseWriter, r *http.Request, rawPath, userToke
 	}
 	req.ContentLength = r.ContentLength
 	if userToken != "" {
-		if strings.ContainsAny(userToken, "\\r\\n") {
+		if strings.ContainsAny(userToken, "\r\n") {
 			return errors.New("invalid native user token")
 		}
 		req.Header.Set("Authorization", "Bearer "+userToken)
