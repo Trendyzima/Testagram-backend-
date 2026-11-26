@@ -150,6 +150,11 @@ func (s *service) videoLike(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) videoComments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use GET or POST for video comments", requestID(r)))
+		return
+	}
 	limit := int64(0)
 	if r.Method == http.MethodPost { limit = 8 << 10 }
 	s.videoAction(w, r, "comments", r.Method, limit)
