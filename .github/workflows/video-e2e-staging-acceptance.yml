@@ -31,7 +31,7 @@ jobs:
     name: Upload, transcode, publish, stream, engage and clean up
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       TESTAGRAM_STAGING_API_URL: ${{ vars.TESTAGRAM_STAGING_API_URL }}
       TESTAGRAM_AUTH_SMOKE_EMAIL: ${{ secrets.TESTAGRAM_AUTH_SMOKE_EMAIL }}
@@ -42,9 +42,59 @@ jobs:
     steps:
       - name: Check out reviewed Backend acceptance harness
         uses: actions/checkout@v7
+      - name: Check out Flutter client
+        uses: actions/checkout@v7
+        with:
+          repository: Trendyzima/testagram-flutter-client-
+          ref: main
+          path: flutter-client
+      - name: Set up Java for Android instrumentation
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android scaffolding and resolve Flutter dependencies
+        working-directory: flutter-client
+        run: |
+          if [[ ! -d android ]]; then
+            flutter create --org com.testagram --project-name app --platforms=android .
+          fi
+          flutter pub get
+          flutter analyze integration_test/video_feed_staging_test.dart
       - name: Install FFmpeg for disposable MP4 fixture
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: Verify staging API, upload, playback and cleanup lifecycle
+      - name: Create staging video and verify Backend/Data Centre API lifecycle
+        id: prepare
+        env:
+          PRESERVE_FOR_FLUTTER: 'true'
         run: python3 scripts/video-e2e-staging-acceptance.py
+      - name: Launch the real Flutter feed on an Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TESTAGRAM_STAGING_ACCESS_TOKEN: ${{ steps.prepare.outputs.access_token }}
+          TESTAGRAM_STAGING_VIDEO_ID: ${{ steps.prepare.outputs.video_id }}
+          TESTAGRAM_STAGING_VIDEO_TITLE: ${{ steps.prepare.outputs.video_title }}
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            cd flutter-client
+            flutter test integration_test/video_feed_staging_test.dart -d emulator-5554 \
+              --dart-define="TESTAGRAM_STAGING_API_URL=$TESTAGRAM_STAGING_API_URL" \
+              --dart-define="TESTAGRAM_STAGING_ACCESS_TOKEN=$TESTAGRAM_STAGING_ACCESS_TOKEN" \
+              --dart-define="TESTAGRAM_STAGING_VIDEO_ID=$TESTAGRAM_STAGING_VIDEO_ID" \
+              --dart-define="TESTAGRAM_STAGING_VIDEO_TITLE=$TESTAGRAM_STAGING_VIDEO_TITLE"
+      - name: Delete disposable staging video after Android playback test
+        if: always() && steps.prepare.outputs.video_id != ''
+        env:
+          VIDEO_ID: ${{ steps.prepare.outputs.video_id }}
+        run: python3 scripts/video-e2e-staging-acceptance.py --cleanup-video-id "$VIDEO_ID"
