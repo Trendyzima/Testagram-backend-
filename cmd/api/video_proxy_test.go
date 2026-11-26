@@ -41,15 +41,19 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 func TestVideoProxyRejectsMalformedVideoIDs(t *testing.T) {
 	s := &service{}
 	handler := s.routes()
-	for _, path := range []string{
-		"/api/video/uploads/not-a-uuid",
-		"/api/video/uploads/not-a-uuid/publish",
-	} {
-		request := httptest.NewRequest(http.MethodGet, path, nil)
+	requests := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/video/uploads/not-a-uuid"},
+		{http.MethodPost, "/api/video/uploads/not-a-uuid/publish"},
+	}
+	for _, tc := range requests {
+		request := httptest.NewRequest(tc.method, tc.path, nil)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
-		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusNotFound {
-			t.Fatalf("malformed video route %s returned %d: %s", path, recorder.Code, recorder.Body.String())
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("malformed video route %s %s returned %d: %s", tc.method, tc.path, recorder.Code, recorder.Body.String())
 		}
 	}
 }
