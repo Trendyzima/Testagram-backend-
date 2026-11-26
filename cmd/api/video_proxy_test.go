@@ -22,7 +22,7 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/publish", ""},
 		{http.MethodGet, "/api/video/feed", ""},
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/manifest", ""},
-		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/master.m3u8", ""},
+		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/master.m3u8?token=signed", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/view", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/like", ""},
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", ""},
@@ -36,6 +36,7 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 				request.ContentLength = int64(len(tc.body))
 				request.Header.Set("Content-Type", "multipart/form-data; boundary=test")
 			}
+			if strings.Contains(tc.path, "/view") { request.Header.Set("X-Playback-Session", "session-123") }
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			if recorder.Code != http.StatusUnauthorized {
@@ -79,7 +80,7 @@ func TestVideoProxyOptionsUsesBackendCorsPreflight(t *testing.T) {
 
 func TestVideoProxyRejectsMalformedHLSPath(t *testing.T) {
 	handler := (&service{}).routes()
-	for _, path := range []string{"/api/video/uploads/not-a-uuid/hls/master.m3u8", "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/../secret"} {
+	for _, path := range []string{"/api/video/uploads/not-a-uuid/hls/master.m3u8", "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/bad%20name.ts"} {
 		recorder := httptest.NewRecorder(); handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusBadRequest { t.Fatalf("%s returned %d", path, recorder.Code) }
 	}
