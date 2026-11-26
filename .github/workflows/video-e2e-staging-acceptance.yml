@@ -23,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: testagram-video-staging-acceptance
+  group: testagram-staging-account-acceptance
   cancel-in-progress: false
 
 jobs:
