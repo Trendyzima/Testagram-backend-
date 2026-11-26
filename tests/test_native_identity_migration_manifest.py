@@ -310,7 +310,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             compose.count("TESTAGRAM_WEBAUTHN_READINESS_TOKEN: ${TESTAGRAM_WEBAUTHN_READINESS_TOKEN:-}"),
             2,
         )
-        self.assertIn("networks: [edge, data, monitoring, platform, egress]", compose)
+        self.assertIn("networks: [edge, data, monitoring, platform, egress, video-private]", compose)
         self.assertIn("networks: [edge, monitoring, platform]", compose)
         self.assertIn(
             "TESTAGRAM_ADMIN_CONSOLE_READINESS_URL=http://admin-console:8090/internal/webauthn/readiness",

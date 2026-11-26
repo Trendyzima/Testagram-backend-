@@ -201,36 +201,42 @@ func TestPublicCaddyIngressDoesNotExposePrivateVideoOrigin(t *testing.T) {
 	}
 }
 
-func TestCaddyCannotJoinPrivateVideoPlatformNetwork(t *testing.T) {
+func TestCaddyAndVideoUseDisjointNetworks(t *testing.T) {
 	compose, err := os.ReadFile("../../deploy/self-hosted/docker-compose.yml")
 	if err != nil {
 		t.Fatalf("read canonical self-hosted compose file: %v", err)
 	}
 	source := string(compose)
 	caddyStart := strings.Index(source, "\n  caddy:\n")
-	if caddyStart < 0 {
-		t.Fatal("Caddy service definition not found")
-	}
 	caddyEnd := strings.Index(source[caddyStart+1:], "\n  node-exporter:")
-	if caddyEnd < 0 {
-		t.Fatal("Caddy service boundary not found")
+	if caddyStart < 0 || caddyEnd < 0 {
+		t.Fatal("Caddy service definition or boundary not found")
 	}
 	caddyService := source[caddyStart : caddyStart+1+caddyEnd]
-	if !strings.Contains(caddyService, "networks: [edge, control-plane]") || strings.Contains(caddyService, "platform") {
-		t.Fatalf("Caddy must not join the private platform network:\n%s", caddyService)
+	if !strings.Contains(caddyService, "networks: [edge, control-plane, platform]") ||
+		strings.Contains(caddyService, "video-private") {
+		t.Fatalf("Caddy must retain Federation platform access but never join video-private:\n%s", caddyService)
 	}
 
 	apiStart := strings.Index(source, "\n  api:\n")
-	if apiStart < 0 {
-		t.Fatal("Backend API service definition not found")
-	}
 	apiEnd := strings.Index(source[apiStart+1:], "\n  admin-console:")
-	if apiEnd < 0 {
-		t.Fatal("Backend API service boundary not found")
+	if apiStart < 0 || apiEnd < 0 {
+		t.Fatal("Backend API service definition or boundary not found")
 	}
 	apiService := source[apiStart : apiStart+1+apiEnd]
-	if !strings.Contains(apiService, "platform") {
-		t.Fatal("Backend API must retain its private platform network connection to the Data Centre video service")
+	if !strings.Contains(apiService, "networks: [edge, data, monitoring, platform, egress, video-private]") {
+		t.Fatalf("Backend API must retain existing networks and join video-private:\n%s", apiService)
+	}
+	if !strings.Contains(source, "video-private:\n    name: ${TESTAGRAM_VIDEO_NETWORK:-testagram-video-private}\n    internal: true") {
+		t.Fatal("Backend Compose must create the dedicated internal video-private network")
+	}
+
+	script, err := os.ReadFile("../../scripts/start-instabox-deployment.sh")
+	if err != nil {
+		t.Fatalf("read Backend deployment script: %v", err)
+	}
+	if !strings.Contains(string(script), "write_dc_env_value TESTAGRAM_VIDEO_NETWORK") {
+		t.Fatal("Backend deployment must pass the same video-private network name to the Data Centre overlay")
 	}
 }
 

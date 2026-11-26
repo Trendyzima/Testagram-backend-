@@ -3,6 +3,7 @@ API="https://api.instabox.sh"
 MACHINE_ID="${MACHINE_ID:?machine output is required}"
 AUTH_PUBLIC_BASE_URL="${AUTH_PUBLIC_BASE_URL:-https://testagram.site}"
 TESTAGRAM_AUTH_JWT_SECRET="${TESTAGRAM_AUTH_JWT_SECRET:-}"
+TESTAGRAM_VIDEO_NETWORK="${TESTAGRAM_VIDEO_NETWORK:-testagram-video-private}"
 TESTAGRAM_EDGE_PROXY_SHARED_TOKEN="${TESTAGRAM_EDGE_PROXY_SHARED_TOKEN:-}"
 TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN="${TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:-}"
 [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo "::error::The existing CLOUDFLARE_API_TOKEN is required to publish Testagram-owned SPF/DKIM/A records."; exit 1; }
@@ -649,6 +650,7 @@ if [[ ! -f "$DC_ENV" ]]; then
 DATABASE_URL=postgresql://testagram:$POSTGRES_PASSWORD@postgres:5432/testagram?sslmode=disable
 TESTAGRAM_NETWORK=testagram-platform
 TESTAGRAM_EGRESS_NETWORK=testagram-egress
+TESTAGRAM_VIDEO_NETWORK=$TESTAGRAM_VIDEO_NETWORK
 TESTAGRAM_ALGORITHM_IMAGE=$TESTAGRAM_ALGORITHM_IMAGE
 TESTAGRAM_FEDERATION_IMAGE=$TESTAGRAM_FEDERATION_IMAGE
 ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
@@ -683,6 +685,8 @@ write_dc_env_value() {
     printf '%s=%s\n' "$key" "$value" >> "$DC_ENV"
   fi
 }
+
+write_dc_env_value TESTAGRAM_VIDEO_NETWORK "$TESTAGRAM_VIDEO_NETWORK"
 
 read_dc_env_value() {
   sed -n "s/^$1=//p" "$DC_ENV" | tail -n 1
