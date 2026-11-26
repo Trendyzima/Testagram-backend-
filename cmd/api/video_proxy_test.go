@@ -20,7 +20,7 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/video/channels", ""},
 		{http.MethodPost, "/api/video/channels", "{\"handle\":\"creator\",\"name\":\"Creator\"}"},
-        {http.MethodGet, "/api/video/uploads", ""},
+		{http.MethodGet, "/api/video/uploads", ""},
 		{http.MethodPost, "/api/video/uploads", "multipart"},
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
 		{http.MethodDelete, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
