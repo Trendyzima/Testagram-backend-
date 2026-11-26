@@ -151,9 +151,9 @@ func TestVideoProxyValidatesPlaybackSessionAndHLSQuery(t *testing.T) {
 	}
 
 	for _, path := range []string{
-		"/api/video/uploads/"+id+"/hls/master.m3u8",
-		"/api/video/uploads/"+id+"/hls/master.m3u8?token=a&token=b",
-		"/api/video/uploads/"+id+"/hls/master.m3u8?token="+strings.Repeat("x", 257),
+		"/api/video/uploads/" + id + "/hls/master.m3u8",
+		"/api/video/uploads/" + id + "/hls/master.m3u8?token=a&token=b",
+		"/api/video/uploads/" + id + "/hls/master.m3u8?token=" + strings.Repeat("x", 257),
 	} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("Origin", "https://testagram.site")
