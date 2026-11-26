@@ -217,6 +217,7 @@ services:
       # Private Data Centre media lifecycle; provider credentials stay in Data Centre only.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
+      DATA_CENTRE_VIDEO_API_URL: ${DATA_CENTRE_VIDEO_API_URL:-http://video:8790}
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
       IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ${IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN:-}
       # Legacy VPS-primary replication for identity evidence and media namespaces.
