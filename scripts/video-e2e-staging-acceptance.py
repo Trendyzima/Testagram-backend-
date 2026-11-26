@@ -289,10 +289,7 @@ def main() -> None:
         print("PASS: invalid and expired HLS tokens rejected")
 
         playback_session = "staging-" + os.environ.get("GITHUB_RUN_ID", uuid.uuid4().hex)
-        first_view = json_request(base, f"/api/video/uploads/{video_id}/view", method="POST",
-                                  payload={}, bearer=token)
-        # The playback session is an explicit header, not a JSON field.
-        # Reissue the requests directly to preserve the exact same session ID.
+        # The playback session is an explicit header; retry the exact same ID.
         for _ in range(2):
             view_status, _, view_raw = http_request(
                 base, f"/api/video/uploads/{video_id}/view", method="POST",
