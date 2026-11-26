@@ -205,10 +205,10 @@ def main() -> None:
     print("PASS: dedicated Testagram-native staging identity authenticated")
 
     # Probe the owner-delete route before creating any content. An unknown ID
-    # must be reported as not found, not as a missing HTTP method.
+    # must be accepted idempotently, not rejected as a missing HTTP method.
     probe = "00000000-0000-4000-8000-000000000001"
     status, _, _ = http_request(base, f"/api/video/uploads/{probe}", method="DELETE", bearer=token)
-    if status != 404:
+    if status != 204:
         fail(f"Owner-delete cleanup route is not ready on staging (probe HTTP {status})")
     print("PASS: owner-delete cleanup route is present before upload")
 
@@ -339,12 +339,16 @@ def main() -> None:
         print("PASS: staging video acceptance flow completed; cleanup will now run")
     finally:
         if video_id:
-            final_state = wait_until_terminal(base, token, video_id, timeout=360)
-            if final_state not in ("ready", "failed", "blocked"):
-                fail("Video did not reach a deletable state; staging cleanup is incomplete")
             cleanup_status, _, _ = http_request(
                 base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
             )
+            if cleanup_status == 409:
+                final_state = wait_until_terminal(base, token, video_id, timeout=360)
+                if final_state not in ("ready", "failed", "blocked"):
+                    fail("Video did not reach a deletable state; staging cleanup is incomplete")
+                cleanup_status, _, _ = http_request(
+                    base, f"/api/video/uploads/{video_id}", method="DELETE", bearer=token
+                )
             if cleanup_status != 204:
                 fail(f"Staging video cleanup failed (HTTP {cleanup_status}); video may remain")
             gone_status, _, _ = http_request(
