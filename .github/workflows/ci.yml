@@ -54,8 +54,10 @@ jobs:
         run: python3 tests/test_self_hosted_media_backup.py
       - name: Verify Federation and media database deployment contracts
         run: python3 tests/test_instabox_federation_runtime_contract.py
-      - name: Validate native authentication staging smoke client syntax
-        run: python3 -m py_compile scripts/native-auth-staging-smoke.py
+      - name: Validate native authentication and video staging smoke client syntax
+        run: |
+          python3 -m py_compile scripts/native-auth-staging-smoke.py
+          python3 -m py_compile scripts/video-e2e-staging-acceptance.py
       - name: Resolve and verify Go modules
         run: |
           go mod tidy
