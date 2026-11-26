@@ -21,7 +21,7 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/publish", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/like", ""},
-		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", "{\\"body\\":\\"hello\\"}"},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", "{\"body\":\"hello\"}"},
 	}
 	for _, tc := range requests {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
