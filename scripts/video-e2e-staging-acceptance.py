@@ -189,11 +189,11 @@ def write_github_outputs(output_path: str, video_id: str, video_title: str, toke
         "access_token": token,
     }
     for key, value in values.items():
-        if not value or "\\n" in value or "\\r" in value:
+        if not value or "\n" in value or "\r" in value:
             fail(f"Unsafe GitHub step output value: {key}")
     with open(output_path, "a", encoding="utf-8") as output:
         for key, value in values.items():
-            output.write(f"{key}={value}\\n")
+            output.write(f"{key}={value}\n")
 
 
 def cleanup_with_token(base: str, token: str, video_id: str) -> None:
