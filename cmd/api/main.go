@@ -660,6 +660,7 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/video/channels", s.videoChannels)
 	mux.HandleFunc("POST /api/video/channels", s.videoChannels)
 	mux.HandleFunc("OPTIONS /api/video/uploads", s.mediaPreflight)
+	mux.HandleFunc("GET /api/video/uploads", s.videoOwnedList)
 	mux.HandleFunc("POST /api/video/uploads", s.videoUpload)
 	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/video/uploads/{video_id}", s.videoStatus)
