@@ -171,7 +171,9 @@ func (s *service) videoLike(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, ok := videoProxyID(r, w)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/like", 0)
 }
 
@@ -182,7 +184,9 @@ func (s *service) videoComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, ok := videoProxyID(r, w)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	limit := int64(0)
 	if r.Method == http.MethodPost {
 		limit = 8 << 10
@@ -197,7 +201,9 @@ func (s *service) videoManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, ok := videoProxyID(r, w)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	s.videoPublicProxyRequest(w, r, "/v1/videos/"+id+"/manifest")
 }
 
@@ -208,7 +214,9 @@ func (s *service) videoHLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, ok := videoProxyID(r, w)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	file := strings.TrimSpace(r.PathValue("file"))
 	if file == "" || len(file) > 128 || strings.Contains(file, "..") ||
 		strings.ContainsAny(file, "/"+string(rune(92))) {
