@@ -134,3 +134,43 @@ func TestVideoHLSRejectsUnsafeSegmentNames(t *testing.T) {
 		}
 	}
 }
+
+func TestVideoProxyValidatesPlaybackSessionAndHLSQuery(t *testing.T) {
+	handler := (&service{}).routes()
+	id := "00000000-0000-4000-8000-000000000001"
+	view := httptest.NewRequest(http.MethodPost, "/api/video/uploads/"+id+"/view", nil)
+	view.Header.Set("Origin", "https://testagram.site")
+	view.Header.Set("X-Playback-Session", "short")
+	viewRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(viewRecorder, view)
+	if viewRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid playback session returned %d", viewRecorder.Code)
+	}
+
+	for _, path := range []string{
+		"/api/video/uploads/"+id+"/hls/master.m3u8",
+		"/api/video/uploads/"+id+"/hls/master.m3u8?token=a&token=b",
+		"/api/video/uploads/"+id+"/hls/master.m3u8?token="+strings.Repeat("x", 257),
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Origin", "https://testagram.site")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest && recorder.Code != http.StatusForbidden {
+			t.Fatalf("invalid HLS query %s returned %d", path, recorder.Code)
+		}
+	}
+}
+
+func TestVideoHLSFilenameUsesSafeCharacterAllowlist(t *testing.T) {
+	for _, file := range []string{"master.m3u8", "segment-001.ts", "variant_2.m3u8"} {
+		if !validVideoHLSFilename(file) {
+			t.Fatalf("valid HLS filename rejected: %q", file)
+		}
+	}
+	for _, file := range []string{"", "..", "master..m3u8", "bad name.ts", "a/b.ts", "x\\\\secret.ts", "segment?token=x.ts"} {
+		if validVideoHLSFilename(file) {
+			t.Fatalf("unsafe HLS filename accepted: %q", file)
+		}
+	}
+}
