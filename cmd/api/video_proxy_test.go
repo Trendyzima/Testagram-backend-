@@ -20,6 +20,9 @@ func TestVideoProxyRoutesRequireNativeSession(t *testing.T) {
 		{http.MethodPost, "/api/video/uploads", "multipart"},
 		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001", ""},
 		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/publish", ""},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/like", ""},
+		{http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", ""},
+		{http.MethodPost, "/api/video/uploads/00000000-0000-4000-8000-000000000001/comments", "{\"body\":\"hello\"}"},
 	}
 	for _, tc := range requests {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
@@ -68,4 +71,34 @@ func TestVideoProxyOptionsUsesBackendCorsPreflight(t *testing.T) {
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("video upload preflight status = %d, want %d: %s", recorder.Code, http.StatusNoContent, recorder.Body.String())
 	}
+
+func TestVideoPlaybackRoutesRejectMalformedIDs(t *testing.T) {
+	handler := (&service{}).routes()
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/api/video/uploads/not-a-uuid/view"},
+		{http.MethodPost, "/api/video/uploads/not-a-uuid/like"},
+		{http.MethodGet, "/api/video/uploads/not-a-uuid/comments"},
+		{http.MethodGet, "/api/video/uploads/not-a-uuid/manifest"},
+		{http.MethodGet, "/api/video/uploads/not-a-uuid/hls/master.m3u8?token=x"},
+	} {
+		request := httptest.NewRequest(tc.method, tc.path, nil)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("malformed playback route %s %s returned %d: %s", tc.method, tc.path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestVideoHLSRouteRequiresSignedPlaybackToken(t *testing.T) {
+	handler := (&service{}).routes()
+	request := httptest.NewRequest(http.MethodGet,
+		"/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/master.m3u8", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("unsigned HLS request status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
 }
