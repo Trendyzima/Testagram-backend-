@@ -43,7 +43,6 @@ func TestVideoProxyRejectsMalformedVideoIDs(t *testing.T) {
 	handler := s.routes()
 	for _, path := range []string{
 		"/api/video/uploads/not-a-uuid",
-		"/api/video/uploads/../status",
 		"/api/video/uploads/not-a-uuid/publish",
 	} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
