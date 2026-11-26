@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,6 +175,26 @@ func TestVideoHLSFilenameUsesSafeCharacterAllowlist(t *testing.T) {
 	for _, file := range []string{"", "..", "master..m3u8", "bad name.ts", "a/b.ts", "x\\\\secret.ts", "segment?token=x.ts"} {
 		if validVideoHLSFilename(file) {
 			t.Fatalf("unsafe HLS filename accepted: %q", file)
+		}
+	}
+}
+
+func TestPublicCaddyIngressDoesNotExposePrivateVideoOrigin(t *testing.T) {
+	config, err := os.ReadFile("../../deploy/self-hosted/Caddyfile")
+	if err != nil {
+		t.Fatalf("read canonical Caddy ingress config: %v", err)
+	}
+	source := string(config)
+	if !strings.Contains(source, "reverse_proxy api:8080") {
+		t.Fatal("public API ingress must forward to the canonical Backend")
+	}
+	for _, forbidden := range []string{
+		"reverse_proxy video:8790",
+		"@video path /v1/feed",
+		"handle @video",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("public Caddy ingress exposes private video service through %q", forbidden)
 		}
 	}
 }
