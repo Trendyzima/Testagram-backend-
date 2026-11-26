@@ -34,6 +34,8 @@ def main() -> None:
     aliases = (
         ("20261115_testagram_native_auth_cutover_foundation.sql", "049_native_auth_cutover_foundation.sql"),
         ("20261118_native_admin_console.sql", "054_native_admin_console.sql"),
+        ("20261120_native_verification_decider.sql", "056_native_verification_decider.sql"),
+        ("20261120_native_identity_historical_attribution_archive.sql", "058d_native_identity_historical_attribution_archive.sql"),
         ("20261121_native_staff_webauthn.sql", "060_native_staff_webauthn.sql"),
     )
     for source, alias in aliases:
@@ -46,6 +48,9 @@ def main() -> None:
     assert runner.index("apply_migration 060_native_staff_webauthn.sql") < runner.index(
         f"apply_migration {TARGET}"
     ), "WebAuthn credentials must exist before sensitive-action integrity triggers are installed"
+    assert runner.index("apply_migration 056_native_verification_decider.sql") < runner.index(
+        "apply_migration 058d_native_identity_historical_attribution_archive.sql"
+    ), "native verification decider UUID must exist before historical attribution is archived"
 
     # The isolated PostgreSQL integration uses canonical migration filenames
     # and must apply the same dependency chain before 061.
