@@ -30,6 +30,7 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/mediaassertion"
 	moderationpkg "github.com/Trendyzima/Testagram-backend-/internal/moderation"
 	"github.com/Trendyzima/Testagram-backend-/internal/replication"
+	"github.com/Trendyzima/Testagram-backend-/internal/videoclient"
 	"github.com/Trendyzima/Testagram-backend-/internal/virtualstorage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,6 +76,7 @@ type service struct {
 	media                      *media.Signer
 	mediaIntentFactory         *media.IntentFactory
 	dataCentreMedia            *datacentreclient.Client
+	videoService               *videoclient.Client
 	identityEvidenceMedia      identityEvidenceMediaClient
 	// Explicit operator policy gate; the handler still requires live PostgreSQL and Admin Console readiness on every request.
 	identityReviewWebAuthnReady         bool
@@ -637,6 +639,17 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/capability", s.capability)
 	mux.HandleFunc("POST /api/capability", s.capability)
 	mux.HandleFunc("POST /api/wallet/mpesa/callback", s.mpesaCallback)
+	// Creator video traffic enters through the canonical Backend API; the
+	// private Data Centre service is never a Flutter-facing origin.
+	mux.HandleFunc("OPTIONS /api/video/channels", s.mediaPreflight)
+	mux.HandleFunc("GET /api/video/channels", s.videoChannels)
+	mux.HandleFunc("POST /api/video/channels", s.videoChannels)
+	mux.HandleFunc("OPTIONS /api/video/uploads", s.mediaPreflight)
+	mux.HandleFunc("POST /api/video/uploads", s.videoUpload)
+	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}", s.mediaPreflight)
+	mux.HandleFunc("GET /api/video/uploads/{video_id}", s.videoStatus)
+	mux.HandleFunc("OPTIONS /api/video/uploads/{video_id}/publish", s.mediaPreflight)
+	mux.HandleFunc("POST /api/video/uploads/{video_id}/publish", s.videoPublish)
 	mux.HandleFunc("OPTIONS /api/media/upload-intent", s.mediaPreflight)
 	mux.HandleFunc("POST /api/media/upload-intent", s.mediaUploadIntent)
 	// Browser uploads use cross-origin PUT with Authorization and Content-Type,
@@ -1240,6 +1253,13 @@ func main() {
 			log.Fatalf("configure private Data Centre media client: %v", err)
 		}
 	}
+	var videoService *videoclient.Client
+	if videoURL := env("DATA_CENTRE_VIDEO_API_URL", ""); videoURL != "" {
+		videoService, err = videoclient.New(videoURL, nil)
+		if err != nil || videoService == nil {
+			log.Fatalf("configure private Data Centre video proxy: %v", err)
+		}
+	}
 	identityEvidenceToken := env("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN", "")
 	var identityEvidenceMedia identityEvidenceMediaClient
 	if identityEvidenceToken != "" {
@@ -1417,7 +1437,7 @@ func main() {
 	}
 	svc := &service{
 		db: db, edgeRecoveryReadinessToken: edgeRecoveryReadinessToken, moderation: moderation, upstream: &http.Client{Timeout: 8 * time.Second},
-		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
+		media: mediaSigner, mediaIntentFactory: mediaIntentFactory, dataCentreMedia: dataCentreMedia, videoService: videoService, identityEvidenceMedia: identityEvidenceMedia, freshMediaEnabled: freshMediaEnabled, virtualStorage: virtualStorageManager, mediaReplicator: mediaReplicator, algorithm: algorithm,
 		cdnMediaAssertions: cdnMediaAssertions, cdnMediaBaseURL: cdnMediaBaseURL, cdnOriginAuthToken: cdnOriginAuthToken, cdnPurger: cdnPurger,
 		freshMediaInternalToken: freshMediaInternalToken,
 		federationInternalToken: federationBackendToken, federationOutbox: federationOutboxStore, federationClient: federationAPIClient,
