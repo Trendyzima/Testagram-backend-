@@ -142,6 +142,22 @@ func (s *service) videoManifest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) videoView(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST, OPTIONS")
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "Use POST to record a video view", requestID(r)))
+		return
+	}
+	session := strings.TrimSpace(r.Header.Get("X-Playback-Session"))
+	if len(session) < 8 || len(session) > 128 {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PLAYBACK_SESSION", "A valid playback session identifier is required", requestID(r)))
+		return
+	}
+	for _, c := range session {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PLAYBACK_SESSION", "A valid playback session identifier is required", requestID(r)))
+			return
+		}
+	}
 	s.videoAction(w, r, "view", http.MethodPost, 0)
 }
 
@@ -168,8 +184,10 @@ func (s *service) videoHLS(w http.ResponseWriter, r *http.Request) {
 	}
 	id := strings.TrimSpace(r.PathValue("video_id"))
 	file := strings.TrimSpace(r.PathValue("file"))
-	if !socialUUIDPattern.MatchString(id) || !validVideoHLSFilename(file) {
-		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_PATH", "A valid video ID and HLS filename are required", requestID(r)))
+	query := r.URL.Query()
+	tokens := query["token"]
+	if !socialUUIDPattern.MatchString(id) || !validVideoHLSFilename(file) || len(query) != 1 || len(tokens) != 1 || len(tokens[0]) > 256 {
+		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_VIDEO_PATH", "A valid video ID, HLS filename and signed playback token are required", requestID(r)))
 		return
 	}
 	s.videoProxyRequest(w, r, "/v1/videos/"+id+"/hls/"+file, 0)
