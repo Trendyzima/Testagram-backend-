@@ -184,3 +184,49 @@ func TestProxyForwardsPlaybackSessionWithoutForwardingClientAuthorizationForPubl
 	if recorder.Code != http.StatusAccepted { t.Fatalf("view proxy status = %d", recorder.Code) }
 }
 
+
+func TestHLSProxyForwardsByteRangesAndPlaybackSession(t *testing.T) {
+	const token = "signed-playback-token"
+	const session = "playback-session-123"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != "bytes=0-99" {
+			t.Errorf("Range = %q", r.Header.Get("Range"))
+		}
+		if r.Header.Get("If-Range") != "etag-123" {
+			t.Errorf("If-Range = %q", r.Header.Get("If-Range"))
+		}
+		if r.Header.Get("X-Playback-Session") != session {
+			t.Errorf("playback session = %q", r.Header.Get("X-Playback-Session"))
+		}
+		if r.URL.Query().Get("token") != token {
+			t.Errorf("signed token = %q", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "video/mp2t")
+		w.Header().Set("Content-Range", "bytes 0-99/1000")
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("ETag", "etag-123")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte(strings.Repeat("x", 100)))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/video/uploads/00000000-0000-4000-8000-000000000001/hls/segment.ts?token="+token, nil)
+	request.Header.Set("Range", "bytes=0-99")
+	request.Header.Set("If-Range", "etag-123")
+	request.Header.Set("X-Playback-Session", session)
+	recorder := httptest.NewRecorder()
+	if err := client.Proxy(recorder, request, "/v1/videos/00000000-0000-4000-8000-000000000001/hls/segment.ts", ""); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusPartialContent || recorder.Body.Len() != 100 {
+		t.Fatalf("HLS range response = %d, %d bytes", recorder.Code, recorder.Body.Len())
+	}
+	if recorder.Header().Get("Content-Range") != "bytes 0-99/1000" ||
+		recorder.Header().Get("Accept-Ranges") != "bytes" ||
+		recorder.Header().Get("ETag") != "etag-123" {
+		t.Fatalf("range metadata not forwarded: %#v", recorder.Header())
+	}
+}
