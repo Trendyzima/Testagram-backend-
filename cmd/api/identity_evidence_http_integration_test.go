@@ -116,9 +116,11 @@ func (p *identityHTTPFakeProvider) CopyFromProvider(_ context.Context, source vi
 }
 
 type identityHTTPDataCentreMedia struct {
-	manager *virtualstorage.Manager
-	mu      sync.Mutex
-	states  map[string]datacentreclient.MediaStatus
+	manager        *virtualstorage.Manager
+	mu             sync.Mutex
+	states         map[string]datacentreclient.MediaStatus
+	deleteFailures int
+	deleteCalls    int
 }
 
 func (m *identityHTTPDataCentreMedia) Ready(context.Context) error { return nil }
@@ -170,6 +172,14 @@ func (m *identityHTTPDataCentreMedia) DownloadURL(ctx context.Context, requester
 	return datacentreclient.DownloadGrant{URL: downloadURL, Provider: "test-primary"}, nil
 }
 func (m *identityHTTPDataCentreMedia) Delete(ctx context.Context, requester, owner, namespace, key string) (string, error) {
+	m.mu.Lock()
+	m.deleteCalls++
+	if m.deleteFailures > 0 {
+		m.deleteFailures--
+		m.mu.Unlock()
+		return "", errors.New("simulated Data Centre provider deletion failure")
+	}
+	m.mu.Unlock()
 	if m.manager == nil {
 		return "", errors.New("fake Data Centre B2 identity storage unavailable")
 	}
@@ -308,7 +318,8 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	// This test isolates the evidence-media lifecycle after the separate
 	// PostgreSQL/Admin Console readiness integration has passed. The registration
 	// HTTP journey exercises the real readiness gate without a test override.
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager}, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
+	mediaClient := &identityHTTPDataCentreMedia{manager: manager}
+	svc := &service{db: db, identityEvidenceMedia: mediaClient, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
 	router := svc.routes()
 
 	idempotencyKey, err := authRandomToken()
@@ -508,5 +519,92 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	}
 	if applicationStatus != "under_review" || sessionStatus != "manual_review" || evidenceStatus != "verified" {
 		t.Fatalf("evidence lifecycle state application=%q session=%q evidence=%q", applicationStatus, sessionStatus, evidenceStatus)
+	}
+
+	// Retention must quarantine first, keep failed provider deletes retryable,
+	// then mark evidence deleted only after the Data Centre confirms deletion.
+	if _, err := db.Exec(ctx, `
+		UPDATE testagram_identity.verification_evidence
+		SET retention_until=now()-interval '1 minute'
+		WHERE id=$1::uuid
+	`, reserved.EvidenceID); err != nil {
+		t.Fatal(err)
+	}
+	mediaClient.mu.Lock()
+	mediaClient.deleteFailures = 1
+	mediaClient.mu.Unlock()
+	if err := svc.processIdentityEvidenceRetentionBatch(ctx); err != nil {
+		t.Fatalf("first retention pass: %v", err)
+	}
+	var afterFailure string
+	if err := db.QueryRow(ctx, `SELECT status FROM testagram_identity.verification_evidence WHERE id=$1::uuid`, reserved.EvidenceID).Scan(&afterFailure); err != nil {
+		t.Fatal(err)
+	}
+	if afterFailure != "quarantined" {
+		t.Fatalf("failed physical deletion left evidence status=%q, want quarantined", afterFailure)
+	}
+	primary.mu.Lock()
+	remainingAfterFailure := len(primary.objects)
+	primary.mu.Unlock()
+	if remainingAfterFailure != 1 {
+		t.Fatalf("failed provider deletion removed or duplicated the physical object; remaining=%d", remainingAfterFailure)
+	}
+	var quarantineEvents, deletionEvents int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE event_type='identity_evidence_quarantined'),
+		       count(*) FILTER (WHERE event_type='identity_evidence_deleted')
+		FROM testagram_identity.verification_events
+		WHERE session_id=$1::uuid
+	`, created.SessionID).Scan(&quarantineEvents, &deletionEvents); err != nil {
+		t.Fatal(err)
+	}
+	if quarantineEvents != 1 || deletionEvents != 0 {
+		t.Fatalf("retention audit after failed delete quarantine=%d deleted=%d; want 1 and 0", quarantineEvents, deletionEvents)
+	}
+
+	if err := svc.processIdentityEvidenceRetentionBatch(ctx); err != nil {
+		t.Fatalf("retry retention pass: %v", err)
+	}
+	var finalEvidenceStatus string
+	if err := db.QueryRow(ctx, `SELECT status FROM testagram_identity.verification_evidence WHERE id=$1::uuid`, reserved.EvidenceID).Scan(&finalEvidenceStatus); err != nil {
+		t.Fatal(err)
+	}
+	if finalEvidenceStatus != "deleted" {
+		t.Fatalf("successful physical deletion left evidence status=%q, want deleted", finalEvidenceStatus)
+	}
+	primary.mu.Lock()
+	remainingAfterDelete := len(primary.objects)
+	primary.mu.Unlock()
+	if remainingAfterDelete != 0 {
+		t.Fatalf("physical identity evidence object remains after confirmed retention deletion: %d", remainingAfterDelete)
+	}
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE event_type='identity_evidence_quarantined'),
+		       count(*) FILTER (WHERE event_type='identity_evidence_deleted')
+		FROM testagram_identity.verification_events
+		WHERE session_id=$1::uuid
+	`, created.SessionID).Scan(&quarantineEvents, &deletionEvents); err != nil {
+		t.Fatal(err)
+	}
+	if quarantineEvents != 1 || deletionEvents != 1 {
+		t.Fatalf("retention audit after successful delete quarantine=%d deleted=%d; want 1 and 1", quarantineEvents, deletionEvents)
+	}
+	var sensitiveMetadataEvents int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM testagram_identity.verification_events
+		WHERE session_id=$1::uuid
+		  AND event_type IN ('identity_evidence_quarantined','identity_evidence_deleted')
+		  AND (metadata ? 'object_key' OR metadata ? 'storage_url' OR metadata ? 'evidence_bytes')
+	`, created.SessionID).Scan(&sensitiveMetadataEvents); err != nil {
+		t.Fatal(err)
+	}
+	if sensitiveMetadataEvents != 0 {
+		t.Fatalf("retention audit leaked object/storage metadata in %d events", sensitiveMetadataEvents)
+	}
+	mediaClient.mu.Lock()
+	deleteCalls := mediaClient.deleteCalls
+	mediaClient.mu.Unlock()
+	if deleteCalls != 2 {
+		t.Fatalf("retention made %d provider delete calls, want one failed attempt and one successful retry", deleteCalls)
 	}
 }

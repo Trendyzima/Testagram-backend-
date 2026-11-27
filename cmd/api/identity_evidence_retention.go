@@ -85,7 +85,7 @@ func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) err
 				(session_id,event_type,actor_type,actor_reference,request_id,metadata)
 				VALUES ($1::uuid,'identity_evidence_quarantined','system',
 				        'identity-evidence-retention-worker',$2,
-				        jsonb_build_object('evidence_id',$3,'retention_action','quarantine'))`,
+				        jsonb_build_object('evidence_id',$3::text,'retention_action','quarantine'))`,
 				item.sessionID, "retention-quarantine:"+item.id, item.id)
 			if err != nil {
 				return err
@@ -123,7 +123,7 @@ func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) err
 				(session_id,event_type,actor_type,actor_reference,request_id,metadata)
 				VALUES ($1::uuid,'identity_evidence_deleted','system',
 				        'identity-evidence-retention-worker',$2,
-				        jsonb_build_object('evidence_id',$3,'retention_action','provider_delete_confirmed'))`,
+				        jsonb_build_object('evidence_id',$3::text,'retention_action','provider_delete_confirmed'))`,
 				item.sessionID, "retention-delete:"+item.id, item.id)
 			if err != nil {
 				_ = deleteTx.Rollback(context.Background())
