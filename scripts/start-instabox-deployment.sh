@@ -153,7 +153,7 @@ DATA_CENTRE_RUNTIME_SHA="$(git -C "$DATACENTRE" log -1 --format=%H -- \
   exit 1
 }
 resolve_data_centre_image() {
-  local image="$1" tag="$2" revision repo_digests digest
+  local image="$1" tag revision repo_digests digest
   tag="$image:sha-$DATA_CENTRE_RUNTIME_SHA"
   sudo docker pull "$tag"
   revision="$(sudo docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$tag")"
