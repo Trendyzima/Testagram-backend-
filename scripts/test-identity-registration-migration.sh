@@ -535,7 +535,7 @@ BEGIN
   INSERT INTO testagram_identity.verification_evidence
     (id,session_id,object_key,content_type,size_bytes,sha256,status,retention_until)
   VALUES
-    (evidence_id,session_id,'identity/ci/evidence.pdf','application/pdf',10,
+    (evidence_id,v_session_id,'identity/ci/evidence.pdf','application/pdf',10,
      decode(repeat('f',64),'hex'),'upload_pending',now()-interval '1 minute');
 
   UPDATE testagram_identity.verification_evidence
