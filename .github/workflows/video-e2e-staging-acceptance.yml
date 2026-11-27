@@ -80,7 +80,7 @@ jobs:
             echo "- These are source revisions, not proof of deployed service image digests."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify native login, refresh rotation, replay and session revocation on the same staging API
-        if: inputs.confirm_staging_only == true
+        if: inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true
         run: python3 scripts/native-auth-staging-smoke.py
       - name: Install FFmpeg for disposable MP4 fixture
         run: |
