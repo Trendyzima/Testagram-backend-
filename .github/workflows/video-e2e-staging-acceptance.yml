@@ -36,6 +36,10 @@ jobs:
       TESTAGRAM_STAGING_API_URL: ${{ vars.TESTAGRAM_STAGING_API_URL }}
       TESTAGRAM_AUTH_SMOKE_EMAIL: ${{ secrets.TESTAGRAM_AUTH_SMOKE_EMAIL }}
       TESTAGRAM_AUTH_SMOKE_PASSWORD: ${{ secrets.TESTAGRAM_AUTH_SMOKE_PASSWORD }}
+      TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED: ${{ vars.TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED }}
+      TESTAGRAM_STAGING_CDN_BASE_URL: ${{ vars.TESTAGRAM_STAGING_CDN_BASE_URL }}
+      TESTAGRAM_STAGING_B2_HOST: ${{ vars.TESTAGRAM_STAGING_B2_HOST }}
+      TESTAGRAM_STAGING_R2_HOST: ${{ vars.TESTAGRAM_STAGING_R2_HOST }}
       CONFIRM_STAGING_ONLY: ${{ inputs.confirm_staging_only }}
       CONFIRM_PUBLIC_FEED_TEST: ${{ inputs.confirm_public_feed_test }}
       CONFIRM_VIDEO_CLEANUP: ${{ inputs.confirm_video_cleanup }}
@@ -65,7 +69,26 @@ jobs:
             flutter create --org com.testagram --project-name app --platforms=android .
           fi
           flutter pub get
-          flutter analyze integration_test/video_feed_staging_test.dart
+          flutter analyze integration_test/native_auth_staging_test.dart integration_test/video_feed_staging_test.dart
+      - name: Record exact Backend harness and Flutter client source revisions
+        id: revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          client_sha="$(git -C flutter-client rev-parse HEAD)"
+          echo "flutter_client_sha=$client_sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Staging acceptance source revisions"
+            echo "- Backend acceptance harness: $GITHUB_SHA"
+            echo "- Flutter client tested on Android: $client_sha"
+            echo "- These are source revisions, not proof of deployed service image digests."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify native login, refresh rotation, replay and session revocation on the same staging API
+        if: inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true
+        run: python3 scripts/native-auth-staging-smoke.py
+      - name: Verify authenticated Data Centre private media and CDN lifecycle
+        if: inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true
+        run: python3 scripts/media-e2e-staging-acceptance.py
       - name: Install FFmpeg for disposable MP4 fixture
         run: |
           sudo apt-get update
@@ -81,6 +104,8 @@ jobs:
           TESTAGRAM_STAGING_ACCESS_TOKEN: ${{ steps.prepare.outputs.access_token }}
           TESTAGRAM_STAGING_VIDEO_ID: ${{ steps.prepare.outputs.video_id }}
           TESTAGRAM_STAGING_VIDEO_TITLE: ${{ steps.prepare.outputs.video_title }}
+          TESTAGRAM_AUTH_SMOKE_EMAIL: ${{ secrets.TESTAGRAM_AUTH_SMOKE_EMAIL }}
+          TESTAGRAM_AUTH_SMOKE_PASSWORD: ${{ secrets.TESTAGRAM_AUTH_SMOKE_PASSWORD }}
         with:
           api-level: 35
           target: google_apis
@@ -88,6 +113,7 @@ jobs:
           profile: pixel_6
           script: |
             cd flutter-client
+            flutter test integration_test/native_auth_staging_test.dart -d emulator-5554 --dart-define="TESTAGRAM_API_URL=$TESTAGRAM_STAGING_API_URL" --dart-define="TESTAGRAM_STAGING_AUTH_EMAIL=$TESTAGRAM_AUTH_SMOKE_EMAIL" --dart-define="TESTAGRAM_STAGING_AUTH_PASSWORD=$TESTAGRAM_AUTH_SMOKE_PASSWORD"
             flutter test integration_test/video_feed_staging_test.dart -d emulator-5554 \
               --dart-define="TESTAGRAM_STAGING_API_URL=$TESTAGRAM_STAGING_API_URL" \
               --dart-define="TESTAGRAM_STAGING_ACCESS_TOKEN=$TESTAGRAM_STAGING_ACCESS_TOKEN" \

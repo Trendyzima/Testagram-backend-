@@ -10,6 +10,14 @@ import urllib.parse
 import urllib.request
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 def fail(message: str) -> "NoReturn":
     print(f"::error::{message}", file=sys.stderr)
     raise SystemExit(1)
@@ -26,7 +34,7 @@ def request(base: str, path: str, *, method: str = "GET", body: dict | None = No
         headers["Authorization"] = f"Bearer {bearer}"
     req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=20) as response:
+        with OPENER.open(req, timeout=20) as response:
             raw = response.read(1 << 20)
             status = response.status
     except urllib.error.HTTPError as error:
@@ -82,8 +90,9 @@ def main() -> None:
     parsed = urllib.parse.urlsplit(raw_base)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         fail("TESTAGRAM_STAGING_API_URL must be a clean HTTPS origin")
-    if parsed.path not in ("", "/") or parsed.hostname.lower() == "api.testagram.site":
-        fail("Refusing to run against a non-staging path or the production API host")
+    production_hosts = {"api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site", "cdn.testagram.site"}
+    if parsed.path not in ("", "/") or parsed.hostname.lower().rstrip(".") in production_hosts:
+        fail("Refusing to run against a non-staging path or a canonical production Testagram host")
     base = raw_base.rstrip("/")
 
     first = login(base, email, password)

@@ -179,6 +179,17 @@ jobs:
         run: node --check scripts/staff-webauthn-browser-check.mjs
       - name: Install pinned Playwright browser harness
         run: npm install --no-save --package-lock=false playwright@1.56.1
+      - name: Remove blocked optional Microsoft apt feed from ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [[ -f "$source" ]] || continue
+            if grep -qF "packages.microsoft.com" "$source"; then
+              echo "Removing optional Microsoft apt feed from this disposable CI runner; Chromium does not depend on it."
+              sudo rm -f "$source"
+            fi
+          done
       - name: Install Chromium and system dependencies
         run: npx playwright install --with-deps chromium
       - name: Execute real-browser staff WebAuthn ceremonies

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for explicit Testagram media deployment approvals."""
 from pathlib import Path
+import os
 import re
 import subprocess
 import unittest
@@ -185,8 +186,107 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("Testagram-data-centre-/.github/workflows/media-provider-smoke.yml", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_R2_ENDPOINT", identity_smoke)
-        self.assertIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
-        self.assertIn("B2_REGION: ${{ secrets.B2_S3_REGION }}", media_smoke)
+        self.assertIn("environment: media-staging", media_smoke)
+        self.assertIn("B2_ENDPOINT: ${{ vars.MEDIA_STAGING_B2_ENDPOINT }}", media_smoke)
+        self.assertIn("B2_REGION: ${{ vars.MEDIA_STAGING_B2_REGION }}", media_smoke)
+        self.assertIn("environment: identity-evidence-staging", media_smoke)
+        self.assertIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_B2_ENDPOINT }}", media_smoke)
+        self.assertIn("IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_R2_ENDPOINT }}", media_smoke)
+        self.assertNotIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
+        self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
+
+    def test_authenticated_video_staging_acceptance_runs_native_auth_first(self):
+        workflow = (ROOT / ".github/workflows/video-e2e-staging-acceptance.yml").read_text()
+        auth_step = workflow.index("scripts/native-auth-staging-smoke.py")
+        media_step = workflow.index("scripts/media-e2e-staging-acceptance.py")
+        video_prepare = workflow.index("scripts/video-e2e-staging-acceptance.py")
+        self.assertLess(auth_step, media_step)
+        self.assertLess(media_step, video_prepare)
+        media_script = (ROOT / "scripts/media-e2e-staging-acceptance.py").read_text()
+        self.assertIn('viewer_headers = {"Authorization": cdn_authorization}', media_script)
+        self.assertIn("TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED", media_script)
+        self.assertIn("OPENER = urllib.request.build_opener(NoRedirect)", media_script)
+        self.assertIn("OPENER = urllib.request.build_opener(NoRedirect)", (ROOT / "scripts/native-auth-staging-smoke.py").read_text())
+        for script_name in (
+            "scripts/native-auth-staging-smoke.py",
+            "scripts/media-e2e-staging-acceptance.py",
+            "scripts/video-e2e-staging-acceptance.py",
+        ):
+            subprocess.run(
+                ["python3", "-c", "import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())", script_name],
+                cwd=ROOT,
+                check=True,
+                timeout=5,
+            )
+        self.assertIn(
+            "inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true",
+            workflow,
+        )
+        self.assertIn('git -C flutter-client rev-parse HEAD', workflow)
+        self.assertIn("Backend acceptance harness: $GITHUB_SHA", workflow)
+        self.assertIn("Flutter client tested on Android: $client_sha", workflow)
+        self.assertIn("integration_test/native_auth_staging_test.dart", workflow)
+        self.assertIn("TESTAGRAM_STAGING_AUTH_EMAIL", workflow)
+        self.assertIn("TESTAGRAM_STAGING_AUTH_PASSWORD", workflow)
+        android_auth = workflow.index("integration_test/native_auth_staging_test.dart")
+        android_video = workflow.index("integration_test/video_feed_staging_test.dart")
+        self.assertLess(android_auth, android_video)
+        self.assertIn("TESTAGRAM_API_URL=$TESTAGRAM_STAGING_API_URL", workflow)
+
+    def test_data_centre_media_staging_smoke_fails_closed_when_feature_flag_is_off(self):
+        script = ROOT / "scripts/media-e2e-staging-acceptance.py"
+        result = subprocess.run(
+            ["python3", str(script)],
+            env={
+                **os.environ,
+                "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "false",
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("must explicitly enable FRESH_MEDIA_ENABLED", result.stderr)
+
+    def test_data_centre_media_staging_smoke_rejects_production_cdn_host(self):
+        script = ROOT / "scripts/media-e2e-staging-acceptance.py"
+        result = subprocess.run(
+            ["python3", str(script)],
+            env={
+                **os.environ,
+                "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "true",
+                "TESTAGRAM_STAGING_API_URL": "https://staging-api.example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
+                "TESTAGRAM_STAGING_CDN_BASE_URL": "https://cdn.testagram.site",
+                "TESTAGRAM_STAGING_B2_HOST": "s3.us-west-004.backblazeb2.com",
+                "TESTAGRAM_STAGING_R2_HOST": "test.r2.cloudflarestorage.com",
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("canonical production host for TESTAGRAM_STAGING_CDN_BASE_URL", result.stderr)
+
+    def test_native_auth_staging_smoke_refuses_canonical_production_hosts(self):
+        script = ROOT / "scripts/native-auth-staging-smoke.py"
+        for host in ("api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site", "cdn.testagram.site", "api.testagram.site."):
+            with self.subTest(host=host):
+                result = subprocess.run(
+                    ["python3", str(script)],
+                    env={
+                        **os.environ,
+                        "TESTAGRAM_STAGING_API_URL": f"https://{host}",
+                        "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
+                        "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
+                    },
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("canonical production Testagram host", result.stderr)
 
     def test_deployer_normalizes_boolean_flags_before_fail_closed_validation(self):
         self.assertIn("normalize_boolean FRESH_MEDIA_ENABLED false", self.deployer)

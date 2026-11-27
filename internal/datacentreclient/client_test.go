@@ -175,6 +175,27 @@ func TestCreateUploadURLRejectsUnsafeOrOverlongGrant(t *testing.T) {
 	}
 }
 
+func TestMediaReadyUsesAuthenticatedMediaReadinessRoute(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/internal/v1/media/readyz" {
+			t.Fatalf("unexpected readiness request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer "+testToken || r.Header.Get("X-Testagram-API-Version") != "1" {
+			t.Fatalf("missing media readiness authentication headers: %+v", r.Header)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ready","namespace":"media"}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, testToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Ready(context.Background()); err != nil {
+		t.Fatalf("media Ready = %v", err)
+	}
+}
+
 func TestIdentityEvidenceClientUsesSeparateTokenAndRoutePrefix(t *testing.T) {
 	const token = "identity-evidence-dedicated-service-token-012345"
 	const owner = "00000000-0000-4000-8000-000000000001"
