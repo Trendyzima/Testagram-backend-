@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression guard for the Cloudflare R2 managed-domain JSON request."""
+"""Regression guard: Cloudflare R2 is ordinary media only, never identity evidence."""
 from pathlib import Path
 import unittest
 
@@ -7,23 +7,21 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/instabox-dep
 
 
 class R2ManagedDomainRequestTests(unittest.TestCase):
-    def test_disable_request_is_generated_validated_and_sent_as_json_bytes(self):
+    def test_r2_provisioning_contains_only_general_media_buckets(self):
         source = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn('body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")', source)
-        self.assertIn("urllib.request.Request(", source)
-        self.assertIn('api_token = os.environ["CLOUDFLARE_API_TOKEN"].strip()', source)
-        self.assertIn("api_token.isascii()", source)
-        self.assertIn("invalid header characters", source)
-        self.assertIn('"Content-Type": "application/json"', source)
-        self.assertIn('method="PUT"', source)
-        self.assertIn(".success == true and .result.enabled == false", source)
+        self.assertIn('R2_MEDIA_BUCKET:', source)
+        self.assertIn('R2_METADATA_BUCKET:', source)
+        self.assertNotIn('R2_IDENTITY_BUCKET', source)
+        self.assertNotIn('CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET', source)
+        self.assertNotIn('testagram-identity-evidence-production-r2', source)
 
-    def test_public_access_verification_remains_fail_closed(self):
+    def test_identity_evidence_provisioning_is_backblaze_only(self):
         source = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("R2 r2.dev public access is not verified disabled.", source)
-        self.assertIn("R2 identity-evidence bucket has an enabled public custom domain or its domain state cannot be verified.", source)
+        self.assertIn("Provision dedicated private B2 identity-evidence bucket", source)
+        self.assertIn("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", source)
+        self.assertNotIn("R2 identity-evidence bucket", source)
+        self.assertNotIn("R2_IDENTITY_BUCKET", source)
 
 
 if __name__ == "__main__":
     unittest.main()
-
