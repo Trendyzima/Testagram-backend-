@@ -532,7 +532,7 @@ jobs:
               if mc stat "b2_identity/$B2_MEDIA_BUCKET" >/tmp/b2-identity-cross-access.log 2>&1; then
                 echo "Identity-evidence B2 key can access ordinary-media bucket." >&2; exit 1
               fi
-              grep -Eqi 'AccessDenied|Forbidden|403' /tmp/b2-identity-cross-access.log || { cat /tmp/b2-identity-cross-access.log >&2; exit 1; }
+              grep -Eqi "AccessDenied|Forbidden|403" /tmp/b2-identity-cross-access.log || { cat /tmp/b2-identity-cross-access.log >&2; exit 1; }
             '
           # Backblaze B2 exposes bucket privacy through S3 ACLs, not the
           # bucket-policy API used by MinIO's anonymous-policy command.
