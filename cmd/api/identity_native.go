@@ -106,14 +106,14 @@ func (s *service) identityApplicationCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if s.db == nil || !s.identityEvidenceStorageConfigured() {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification requires PostgreSQL and the private Data Centre evidence lifecycle or a verified private storage replica", requestID(r)))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_SERVICE_UNAVAILABLE", "Native verification requires PostgreSQL and the private Data Centre Backblaze B2 evidence lifecycle", requestID(r)))
 		return
 	}
 	storageCtx, storageCancel := context.WithTimeout(r.Context(), 3*time.Second)
 	storageErr := s.identityEvidenceStorageAvailable(storageCtx)
 	storageCancel()
 	if storageErr != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORAGE_UNAVAILABLE", "Private identity evidence storage is not ready", requestID(r)))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("IDENTITY_STORAGE_UNAVAILABLE", "Dedicated private Backblaze B2 identity evidence storage is not ready", requestID(r)))
 		return
 	}
 	termsVersion := strings.TrimSpace(env("TESTAGRAM_TERMS_VERSION", ""))
