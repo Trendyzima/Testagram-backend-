@@ -44,7 +44,7 @@ Required environment secrets:
 
 All bucket names must explicitly contain `ci`, `staging` or `smoke`, must not contain `prod` or `production`, and must be distinct across private, public and identity namespaces. The single-provider B2 smoke uses its own `MEDIA_STAGING_B2_BUCKET`; the three-provider job uses the six namespace buckets and an isolated ephemeral MinIO primary.
 
-Run **Actions → Backblaze B2 storage smoke test** with `confirm_b2_object_write=true` for the B2-only round trip. Run it with `confirm_live_provider_writes=true` only for the identity-evidence job. The three-provider media job must have its own explicit confirmation input before it is enabled; it must never inherit the identity-evidence confirmation implicitly.
+Run **Actions → Backblaze B2 storage smoke test** with `confirm_b2_object_write=true` for the B2-only round trip. On the current workflow revision, `confirm_live_provider_writes=true` starts both the identity-evidence and three-provider media jobs; configure both environments before using it.
 
 ## What this does not prove
 
