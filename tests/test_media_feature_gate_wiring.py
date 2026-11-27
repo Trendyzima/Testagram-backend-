@@ -205,7 +205,6 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         media_script = (ROOT / "scripts/media-e2e-staging-acceptance.py").read_text()
         self.assertIn('viewer_headers = {"Authorization": cdn_authorization}', media_script)
         self.assertIn("TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED", media_script)
-        self.assertIn("TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED", media_script)
         self.assertIn("OPENER = urllib.request.build_opener(NoRedirect)", media_script)
         self.assertIn("OPENER = urllib.request.build_opener(NoRedirect)", (ROOT / "scripts/native-auth-staging-smoke.py").read_text())
         for script_name in (
@@ -234,7 +233,6 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             env={
                 **os.environ,
                 "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "false",
-                "TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED": "true",
             },
             capture_output=True,
             text=True,
@@ -250,7 +248,6 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             env={
                 **os.environ,
                 "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "true",
-                "TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED": "true",
                 "TESTAGRAM_STAGING_API_URL": "https://staging-api.example.invalid",
                 "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
                 "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
