@@ -211,6 +211,7 @@ for file in \
   060_native_staff_webauthn.sql \
   061_native_sensitive_action_integrity.sql \
   20261127_native_staff_lifecycle_executor.sql \
+  20261128_native_staff_webauthn_dual_control.sql \
   20261124_testagram_email_verification_otp.sql \
   20261124_testagram_social_email_consent.sql \
   20261125_testagram_mail_delivery_events.sql \
