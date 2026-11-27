@@ -9,7 +9,7 @@ on:
         type: boolean
         default: false
       confirm_live_provider_writes:
-        description: Confirm the isolated MinIO identity-evidence lifecycle may write, repair and delete objects in dedicated non-production B2 and R2 staging buckets.
+        description: Confirm the isolated MinIO general-media lifecycle may write, repair and delete objects in dedicated non-production B2 and R2 staging buckets.
         required: true
         type: boolean
         default: false
@@ -184,7 +184,7 @@ jobs:
         run: |
           {
             echo "### Three-provider media lifecycle"
-            echo "- Uploaded synthetic private/public/identity-evidence objects to isolated MinIO."
+            echo "- Uploaded synthetic private/public general-media objects to isolated MinIO."
             echo "- Independently verified MinIO, R2 and B2 bytes by size and SHA-256."
             echo "- Simulated MinIO loss and restored from a verified replica."
             echo "- Simulated missing R2 and corrupted B2, then repaired both."
