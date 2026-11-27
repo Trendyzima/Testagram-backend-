@@ -12,7 +12,7 @@ ALTER TABLE testagram_identity.verification_events
     'decision_verified','decision_failed','decision_escalated','session_expired',
     'session_cancelled','evidence_access_attempted','account_provisioned','email_verified',
     'account_provisioned','email_verified'
-  ));
+  )) NOT VALID;
 
 COMMENT ON COLUMN testagram_identity.verification_events.event_type IS
   'Append-only lifecycle and reviewer-access events. evidence_access_attempted is written before private evidence retrieval and contains no raw evidence bytes or storage URL.';
