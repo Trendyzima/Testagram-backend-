@@ -216,7 +216,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
 
     def test_native_auth_staging_smoke_refuses_canonical_production_hosts(self):
         script = ROOT / "scripts/native-auth-staging-smoke.py"
-        for host in ("api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site"):
+        for host in ("api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site", "cdn.testagram.site"):
             with self.subTest(host=host):
                 result = subprocess.run(
                     ["python3", str(script)],
