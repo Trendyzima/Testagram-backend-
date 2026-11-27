@@ -114,7 +114,7 @@ WITH checks(check_name, ok) AS (VALUES
   ('verification events append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_identity.verification_events') AND tgname='verification_events_append_only' AND NOT tgisinternal)),
   ('verification reviews append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_identity.verification_reviews') AND tgname='verification_reviews_append_only' AND NOT tgisinternal)),
   ('legal consent audit append-only trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_identity.legal_consent_audit') AND tgname='legal_consent_audit_append_only' AND NOT tgisinternal)),
-  ('verification event audit constraint', EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('testagram_identity.verification_events') AND conname='verification_events_event_type_check' AND pg_get_constraintdef(oid) LIKE '%evidence_access_attempted%')),
+  ('verification event audit constraint', EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('testagram_identity.verification_events') AND conname='verification_events_event_type_check' AND pg_get_constraintdef(oid) LIKE '%evidence_access_attempted%' AND pg_get_constraintdef(oid) LIKE '%identity_evidence_quarantined%' AND pg_get_constraintdef(oid) LIKE '%identity_evidence_deleted%')),
   ('Federation actor consent column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_local' AND table_name='accounts' AND column_name='federation_enabled'))
 )
 SELECT check_name FROM checks WHERE NOT COALESCE(ok,false) ORDER BY check_name;
@@ -214,7 +214,8 @@ for file in \
   20261124_testagram_email_verification_otp.sql \
   20261124_testagram_social_email_consent.sql \
   20261125_testagram_mail_delivery_events.sql \
-  20261126_testagram_native_mail_feedback.sql; do
+  20261126_testagram_native_mail_feedback.sql \
+  20261127_identity_evidence_retention_audit.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -256,6 +257,7 @@ apply_migration 20261124_testagram_email_verification_otp.sql
 apply_migration 20261124_testagram_social_email_consent.sql
 apply_migration 20261125_testagram_mail_delivery_events.sql
 apply_migration 20261126_testagram_native_mail_feedback.sql
+apply_migration 20261127_identity_evidence_retention_audit.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
@@ -269,5 +271,5 @@ if [[ "$(schema_ready)" != "t" ]]; then
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Testagram-native mail outbox, VERP return paths, inbound feedback ledger, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native staff lifecycle invitation and audit ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and native approval circuit."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Testagram-native mail outbox, VERP return paths, inbound feedback ledger, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native staff lifecycle invitation and audit ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, identity evidence retention quarantine and physical deletion audit, and native approval circuit."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
