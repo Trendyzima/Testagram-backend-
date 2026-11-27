@@ -155,7 +155,14 @@ resolve_cdn_image() {
     return 1
   fi
   repo_digests="$(sudo docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$tag")"
-  digest="$(grep -F "$image@sha256:" <<<"$repo_digests" | grep -E '^ghcr\.io/trendyzima/testagram-edge@sha256:[a-f0-9]{64}sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
+  digest="$(grep -F "$image@sha256:" <<<"$repo_digests" | head -n 1 || true)"
+  if [[ ! "$digest" =~ ^ghcr\.io/trendyzima/testagram-edge@sha256:[a-f0-9]{64}$ ]]; then
+    echo "::error::Go CDN image did not resolve to an immutable GHCR manifest digest."
+    return 1
+  fi
+  printf '%s' "$digest"
+}
+sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
 sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content"
 sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/flutter-client"
 
