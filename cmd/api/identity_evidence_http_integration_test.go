@@ -116,11 +116,11 @@ func (p *identityHTTPFakeProvider) CopyFromProvider(_ context.Context, source vi
 }
 
 type identityHTTPDataCentreMedia struct {
-	manager *virtualstorage.Manager
-	mu      sync.Mutex
-	states  map[string]datacentreclient.MediaStatus
+	manager        *virtualstorage.Manager
+	mu             sync.Mutex
+	states         map[string]datacentreclient.MediaStatus
 	deleteFailures int
-	deleteCalls int
+	deleteCalls    int
 }
 
 func (m *identityHTTPDataCentreMedia) Ready(context.Context) error { return nil }
