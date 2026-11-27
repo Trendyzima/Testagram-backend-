@@ -206,6 +206,19 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('viewer_headers = {"Authorization": cdn_authorization}', media_script)
         self.assertIn("TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED", media_script)
         self.assertIn("TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED", media_script)
+        self.assertIn("OPENER = urllib.request.build_opener(NoRedirect)", media_script)
+        self.assertIn("OPENER = urllib.request.build_opener(NoRedirect)", (ROOT / "scripts/native-auth-staging-smoke.py").read_text())
+        for script_name in (
+            "scripts/native-auth-staging-smoke.py",
+            "scripts/media-e2e-staging-acceptance.py",
+            "scripts/video-e2e-staging-acceptance.py",
+        ):
+            subprocess.run(
+                ["python3", "-c", "import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())", script_name],
+                cwd=ROOT,
+                check=True,
+                timeout=5,
+            )
         self.assertIn(
             "inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true",
             workflow,
