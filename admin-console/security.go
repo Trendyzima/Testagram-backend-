@@ -56,7 +56,7 @@ func permissionForAction(action string) (string, error) {
 	case "finance.execute": return "finance.initiate", nil
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.request", nil
-	case "staff.webauthn.enroll": return "staff.manage", nil
+	case "staff.webauthn.enroll": return "staff.webauthn.enroll.approve", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -66,7 +66,7 @@ func approvalPermissionForAction(action string) (string, error) {
 	case "finance.execute": return "finance.approve", nil
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.approve", nil
-	case "staff.webauthn.enroll": return "staff.manage", nil
+	case "staff.webauthn.enroll": return "staff.webauthn.enroll.approve", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -663,7 +663,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	if !a.requireRecentStepUp(w,s) { return }
 	canAudit,err:=a.hasPermission(user,"audit.read")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
-	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve","staff.manage"}
+	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve","staff.webauthn.enroll.approve"}
 	canReview:=canAudit
 	if !canReview {
 		for _,permission:=range approvalPermissions {
