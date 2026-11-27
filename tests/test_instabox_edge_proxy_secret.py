@@ -49,7 +49,7 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         gate = self.workflow[gate_step:machine_step]
         self.assertIn("vars.DATA_CENTRE_MEDIA_ENABLED || 'false'", gate)
         self.assertIn("vars.FRESH_MEDIA_ENABLED || 'false'", gate)
-        self.assertIn('[[ "$early_dc_media_enabled" != "$early_fresh_gate" ]]', gate)
+        self.assertIn('[[ "$early_fresh_gate" == true && "$early_dc_media_enabled" != true ]]', gate)
         self.assertIn('echo "media_enabled=$early_dc_media_enabled" >> "$GITHUB_OUTPUT"', gate)
         self.assertIn("Core-only deployment selected.", gate)
         self.assertNotIn("exit 1", gate.split("if [[ \"$early_dc_media_enabled\" == true ]]; then", 1)[1])
