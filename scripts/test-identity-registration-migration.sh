@@ -76,9 +76,9 @@ psql_ci < migrations/20261114_native_identity_evidence.sql
 psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
-psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
-psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
@@ -747,7 +747,8 @@ for migration in \
   migrations/20261124_testagram_email_verification_otp.sql \
   migrations/20261124_testagram_social_email_consent.sql \
   migrations/20261125_testagram_mail_delivery_events.sql \
-  migrations/20261126_testagram_native_mail_feedback.sql; do
+  migrations/20261126_testagram_native_mail_feedback.sql \
+  migrations/20261127_identity_evidence_retention_audit.sql; do
   psql_ci < "$migration"
 done
 
