@@ -77,8 +77,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             "testagram-identity-evidence-production-b2",
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
-            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "b2_provision/$B2_BUCKET"',
             "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
+            'mc stat "b2_media/$B2_MEDIA_BUCKET"',
+            'mc stat "b2_identity/$B2_BUCKET"',
+            'if mc stat "b2_media/$B2_BUCKET"',
+            'if mc stat "b2_identity/$B2_MEDIA_BUCKET"',
+            'B2 provisioning, ordinary-media and identity-evidence credentials must be three distinct application keys.',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
@@ -332,14 +337,49 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_identity_evidence_bucket_is_b2_only_and_independent_of_legacy_replicator(self):
         for token in (
             'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"',
+            'DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID="${B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:-}"',
+            'DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY="${B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:-}"',
             'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
             'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID',
+            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY',
+            'mc alias set b2 "$B2_ENDPOINT" "$B2_IDENTITY_ACCESS" "$B2_IDENTITY_SECRET"',
             'mc stat "b2/$B2_BUCKET"',
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID',
+            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY',
+            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:$b2_identity_access',
+            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:$b2_identity_secret',
             'internal/v1/identity-evidence/readyz',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.deployer)
+
+
+    def test_identity_evidence_provider_key_is_forwarded_separately_from_ordinary_b2_key(self):
+        for token in (
+            "B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}",
+            "B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}",
+            "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID: ${{ secrets.B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID }}",
+            "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY }}",
+            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:$b2_identity_access',
+            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:$b2_identity_secret',
+            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID="$DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID"',
+            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY="$DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY"',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.workflow + self.deployer)
+
+        self.assertIn("B2_IDENTITY_ACCESS", self.deployer)
+        self.assertIn("B2_IDENTITY_SECRET", self.deployer)
+        self.assertNotIn('-e B2_ACCESS="$B2_S3_ACCESS_KEY_ID"', self.deployer)
+        self.assertNotIn('mc mb --ignore-existing "b2/$B2_BUCKET"', self.deployer)
+        self.assertNotIn('write_env_value B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID', self.deployer)
+        backend_compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", backend_compose)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", backend_compose)
+        self.assertNotIn("B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID", self.workflow)
+        self.assertNotIn("B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY", self.workflow)
 
     def test_optional_fingerprint_migration_is_mounted_for_remote_preflight(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
@@ -351,6 +391,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_b2_s3_credentials_are_trimmed_before_provider_calls(self):
         self.assertIn("B2 S3 access key ID length after whitespace normalization", self.workflow)
         self.assertIn("tr -d '\\r\\n[:space:]'", self.workflow)
+        self.assertIn('DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID="$(printf \'%s\' "$DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID" | tr -d', self.deployer)
+        self.assertIn('DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY="$(printf \'%s\' "$DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY" | tr -d', self.deployer)
         self.assertIn("tr -d '\\r\\n[:space:]'", self.deployer)
 
     def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
