@@ -374,6 +374,10 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("B2_IDENTITY_SECRET", self.deployer)
         self.assertNotIn('-e B2_ACCESS="$B2_S3_ACCESS_KEY_ID"', self.deployer)
         self.assertNotIn('mc mb --ignore-existing "b2/$B2_BUCKET"', self.deployer)
+        self.assertNotIn('write_env_value B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID', self.deployer)
+        backend_compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", backend_compose)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", backend_compose)
         self.assertNotIn("B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID", self.workflow)
         self.assertNotIn("B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY", self.workflow)
 
