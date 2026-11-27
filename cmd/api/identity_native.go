@@ -853,7 +853,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !s.identityEvidenceStorageConfigured() {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private evidence storage and verified replication are not ready", requestID(r)))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Private Backblaze B2 identity evidence storage and verification are not ready", requestID(r)))
 		return
 	}
 	var objectKey, contentType string
@@ -870,7 +870,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.identityEvidenceVerifyAndProtect(ctx, access.ApplicationID, objectKey, contentType, size, hex.EncodeToString(digest)); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, errorBody("EVIDENCE_REPLICATION_INCOMPLETE", "Evidence was received but could not be verified across all private storage providers. Retry submission.", requestID(r)))
+		writeJSON(w, http.StatusServiceUnavailable, errorBody("EVIDENCE_B2_VERIFICATION_FAILED", "Evidence was received but could not be verified in the dedicated Backblaze B2 identity bucket. Retry submission.", requestID(r)))
 		return
 	}
 	tx, err := s.db.Begin(ctx)
