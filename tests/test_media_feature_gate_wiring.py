@@ -198,8 +198,14 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_authenticated_video_staging_acceptance_runs_native_auth_first(self):
         workflow = (ROOT / ".github/workflows/video-e2e-staging-acceptance.yml").read_text()
         auth_step = workflow.index("scripts/native-auth-staging-smoke.py")
+        media_step = workflow.index("scripts/media-e2e-staging-acceptance.py")
         video_prepare = workflow.index("scripts/video-e2e-staging-acceptance.py")
-        self.assertLess(auth_step, video_prepare)
+        self.assertLess(auth_step, media_step)
+        self.assertLess(media_step, video_prepare)
+        media_script = (ROOT / "scripts/media-e2e-staging-acceptance.py").read_text()
+        self.assertIn('viewer_headers = {"Authorization": cdn_authorization}', media_script)
+        self.assertIn("TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED", media_script)
+        self.assertIn("TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED", media_script)
         self.assertIn(
             "inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true",
             workflow,
