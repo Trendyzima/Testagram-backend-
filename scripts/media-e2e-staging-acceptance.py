@@ -133,6 +133,16 @@ def main() -> None:
 
     payload = fixture_png()
     digest = hashlib.sha256(payload).hexdigest()
+
+    denied_status, _ = json_request(
+        api, "/api/media/upload-intent", method="POST",
+        body={"name": "unauthenticated-staging-probe.png", "content_type": "image/png",
+              "visibility": "private", "size_bytes": len(payload)},
+    )
+    if denied_status != 401:
+        fail(f"Unauthenticated private upload-intent request was not rejected (HTTP {denied_status})")
+    print("PASS: unauthenticated private upload intent rejected")
+
     key = ""
     asset_ready = False
     deleted = False
@@ -186,6 +196,12 @@ def main() -> None:
             fail("Data Centre media did not reach protected/ready state within the staging acceptance window")
         print("PASS: Data Centre B2/R2 verification, replica protection and Backend metadata commit")
 
+        unauth_status, _ = json_request(
+            api, "/api/media/private-download-url", method="POST", body={"key": key}
+        )
+        if unauth_status != 401:
+            fail(f"Unauthenticated private download grant was not rejected (HTTP {unauth_status})")
+
         status, envelope = json_request(api, "/api/media/private-download-url", method="POST",
                                         bearer=access, body={"key": key})
         direct = envelope_data(status, envelope, {200}, "private Data Centre download grant")
@@ -221,6 +237,12 @@ def main() -> None:
         if range_status != 206 or range_body != payload[:4] or not range_headers.get("Content-Range", "").startswith(f"bytes 0-3/{len(payload)}"):
             fail("Private CDN byte-range playback failed")
         print("PASS: private CDN anonymous denial, authorized playback, byte ranges and cache isolation")
+
+        unauth_delete_status, _ = json_request(
+            api, "/api/media/delete", method="POST", body={"key": key}
+        )
+        if unauth_delete_status != 401:
+            fail(f"Unauthenticated private media deletion was not rejected (HTTP {unauth_delete_status})")
 
         for attempt in range(30):
             status, envelope = json_request(api, "/api/media/delete", method="POST", bearer=access,
