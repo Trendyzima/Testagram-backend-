@@ -10,6 +10,14 @@ import urllib.parse
 import urllib.request
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 def fail(message: str) -> "NoReturn":
     print(f"::error::{message}", file=sys.stderr)
     raise SystemExit(1)
