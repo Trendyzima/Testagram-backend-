@@ -56,6 +56,7 @@ func permissionForAction(action string) (string, error) {
 	case "finance.execute": return "finance.initiate", nil
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.request", nil
+	case "staff.webauthn.enroll": return "staff.manage", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -65,6 +66,7 @@ func approvalPermissionForAction(action string) (string, error) {
 	case "finance.execute": return "finance.approve", nil
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.approve", nil
+	case "staff.webauthn.enroll": return "staff.manage", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -369,6 +371,482 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	return nextStatus, nil
 }
 
+func issueStaffWebAuthnEnrollmentAuthorization(ctx context.Context, tx pgx.Tx, requestID, targetReference, requesterID string, rawPayload []byte) error {
+	var payload struct {
+		TargetUserID string `json:"target_user_id"`
+	}
+	if err := json.Unmarshal(rawPayload, &payload); err != nil || payload.TargetUserID != targetReference {
+		return errors.New("staff enrollment approval payload is not bound to its target")
+	}
+	if len(targetReference) != 36 || !regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}package main
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/hmac"
+	"encoding/base64"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"errors"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+
+func (a *app) consumeAdminRateLimit(ctx context.Context, actorID, operation string, limit int, window time.Duration) (bool, error) {
+	ctx,cancel:=context.WithTimeout(ctx,2*time.Second); defer cancel()
+	digest:=sha256.Sum256([]byte(actorID+"\x00"+operation))
+	key:=hex.EncodeToString(digest[:])
+	var count int
+	err:=a.database.QueryRow(ctx, `INSERT INTO testagram_auth.admin_rate_limits AS current
+		(rate_key,window_started_at,request_count) VALUES($1,now(),1)
+		ON CONFLICT(rate_key) DO UPDATE SET
+			request_count=CASE WHEN current.window_started_at <= now()-($2 * interval '1 second') THEN 1 ELSE current.request_count+1 END,
+			window_started_at=CASE WHEN current.window_started_at <= now()-($2 * interval '1 second') THEN now() ELSE current.window_started_at END
+		RETURNING request_count`,key,int64(window.Seconds())).Scan(&count)
+	if err!=nil { return false,err }
+	return count<=limit,nil
+}
+type sensitiveActionInput struct {
+	ActionType string `json:"action_type"`
+	TargetReference string `json:"target_reference"`
+	Reason string `json:"reason"`
+	Payload json.RawMessage `json:"payload"`
+}
+type decisionInput struct { Decision string `json:"decision"`; Reason string `json:"reason"` }
+
+func normalizeSensitiveDecision(decision string) (string, error) {
+	decision = strings.TrimSpace(decision)
+	if decision == "" { return "approved", nil }
+	if decision != "approved" && decision != "rejected" { return "", errors.New("unsupported decision") }
+	return decision, nil
+}
+
+func permissionForAction(action string) (string, error) {
+	switch action {
+	case "identity.approve": return "identity.review", nil
+	case "finance.execute": return "finance.initiate", nil
+	case "security.change": return "security.manage", nil
+	case "deployment.production": return "deployment.request", nil
+	case "staff.webauthn.enroll": return "staff.manage", nil
+	default: return "", errors.New("unsupported sensitive action")
+	}
+}
+func approvalPermissionForAction(action string) (string, error) {
+	switch action {
+	case "identity.approve": return "identity.review", nil
+	case "finance.execute": return "finance.approve", nil
+	case "security.change": return "security.manage", nil
+	case "deployment.production": return "deployment.approve", nil
+	case "staff.webauthn.enroll": return "staff.manage", nil
+	default: return "", errors.New("unsupported sensitive action")
+	}
+}
+func (a *app) hasPermission(user authUser, permission string) (bool, error) {
+	if staffRole(user) == "owner" { return true, nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var granted bool
+	err := a.database.QueryRow(ctx, "SELECT granted FROM testagram_auth.native_staff_permission_overrides WHERE user_id=$1::uuid AND permission_key=$2", user.ID, permission).Scan(&granted)
+	if err == nil { return granted, nil }
+	if !errors.Is(err, pgx.ErrNoRows) { return false, err }
+	err = a.database.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM testagram_auth.staff_role_grants rg JOIN testagram_auth.staff_role_permissions rp ON rp.role=rg.role WHERE rg.user_id=$1::uuid AND rg.revoked_at IS NULL AND rp.permission_key=$2)", user.ID, permission).Scan(&granted)
+	return granted, err
+}
+func (a *app) requirePermission(w http.ResponseWriter, r *http.Request, permission string) (session, authUser, bool) {
+	s, user, ok := a.requireStaff(w, r)
+	if !ok { return session{}, authUser{}, false }
+	allowed, err := a.hasPermission(user, permission)
+	if err != nil { writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error":"Permission service is unavailable"}); return session{}, authUser{}, false }
+	if !allowed { writeJSON(w, http.StatusForbidden, map[string]string{"error":"Your staff account does not have permission for this action"}); return session{}, authUser{}, false }
+	return s, user, true
+}
+func validateRecentStepUpToken(s session, secret []byte, now time.Time) (nativeElevationClaims, error) {
+	var claims nativeElevationClaims
+	parts := strings.Split(s.ElevatedToken, ".")
+	if len(parts) != 3 || len(secret) < 32 {
+		return claims, errors.New("a verified WebAuthn elevation is required")
+	}
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	var header struct {
+		Algorithm string `json:"alg"`
+		Type      string `json:"typ"`
+	}
+	if err != nil || json.Unmarshal(headerBytes, &header) != nil || header.Algorithm != "HS256" || header.Type != "JWT" {
+		return claims, errors.New("invalid MFA token header")
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(signature, mac.Sum(nil)) {
+		return claims, errors.New("invalid MFA elevation signature")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || json.Unmarshal(payload, &claims) != nil {
+		return claims, errors.New("invalid MFA elevation claims")
+	}
+	accessParts := strings.Split(s.AccessToken, ".")
+	if len(accessParts) != 3 {
+		return claims, errors.New("native session binding unavailable")
+	}
+	accessPayload, err := base64.RawURLEncoding.DecodeString(accessParts[1])
+	var native nativeElevationClaims
+	if err != nil || json.Unmarshal(accessPayload, &native) != nil {
+		return claims, errors.New("native session binding unavailable")
+	}
+	nowUnix := now.UTC().Unix()
+	if claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" || claims.Role != "authenticated" ||
+		claims.Subject == "" || claims.Subject != native.Subject || claims.SessionID == "" || claims.SessionID != native.SessionID ||
+		claims.TokenVersion < 1 || claims.TokenVersion != native.TokenVersion ||
+		claims.IssuedAt <= 0 || claims.IssuedAt > nowUnix+60 || claims.ExpiresAt <= nowUnix || claims.ExpiresAt <= claims.IssuedAt ||
+		claims.ExpiresAt-claims.IssuedAt > 300 || claims.MFAAuthenticatedAt <= 0 || claims.MFAAuthenticatorID == "" ||
+		claims.MFAAuthenticatedAt > nowUnix+60 || nowUnix-claims.MFAAuthenticatedAt > 300 {
+		return claims, errors.New("expired or invalid native MFA elevation")
+	}
+	return claims, nil
+}
+
+func (a *app) requireRecentStepUpClaims(w http.ResponseWriter, s session) (nativeElevationClaims, bool) {
+	secret := []byte(strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	claims, err := validateRecentStepUpToken(s, secret, time.Now().UTC())
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return nativeElevationClaims{}, false
+	}
+	credentialID, err := hex.DecodeString(claims.MFAAuthenticatorID)
+	rpid := strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+	if err != nil || len(credentialID) == 0 || rpid == "" || a.database == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential bound to this elevation is unavailable"})
+		return nativeElevationClaims{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var active bool
+	err = a.database.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM testagram_auth.staff_principals sp
+			JOIN testagram_auth.staff_webauthn_credentials wc
+			  ON wc.user_id=sp.user_id AND wc.rpid=$2 AND wc.credential_id=$3
+			 AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+			WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
+		)
+	`, claims.Subject, rpid, credentialID).Scan(&active)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "WebAuthn credential status is unavailable"})
+		return nativeElevationClaims{}, false
+	}
+	if !active {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "The WebAuthn credential used for MFA has been revoked or is no longer trusted"})
+		return nativeElevationClaims{}, false
+	}
+	return claims, true
+}
+
+func (a *app) requireRecentStepUp(w http.ResponseWriter, s session) bool {
+	_, ok := a.requireRecentStepUpClaims(w, s)
+	return ok
+}
+
+func (a *app) handleSensitiveActionRequest(w http.ResponseWriter,r *http.Request) {
+	var input sensitiveActionInput; if !decodeBody(w,r,&input) { return }
+	permission,err:=permissionForAction(input.ActionType); if err!=nil { writeJSON(w,400,map[string]string{"error":"Unsupported sensitive action type"}); return }
+	s,actor,ok:=a.requirePermission(w,r,permission); if !ok { return }
+	if !a.requireRecentStepUp(w,s) { return }
+	if allowed,rateErr:=a.consumeAdminRateLimit(r.Context(),actor.ID,"sensitive-request",10,time.Hour); rateErr!=nil { writeJSON(w,503,map[string]string{"error":"Security rate-limit service is unavailable"}); return } else if !allowed { writeJSON(w,429,map[string]string{"error":"Too many sensitive-action requests. Try again later."}); return }
+	input.TargetReference=strings.TrimSpace(input.TargetReference); input.Reason=strings.TrimSpace(input.Reason)
+	if len(input.TargetReference)<1 || len(input.TargetReference)>200 || len(input.Reason)<12 || len(input.Reason)>1000 { writeJSON(w,400,map[string]string{"error":"A target reference and a reason of at least 12 characters are required"}); return }
+	payload:=input.Payload; if len(payload)==0 { payload=json.RawMessage("{}") }
+	var value any; if err:=json.Unmarshal(payload,&value); err!=nil { writeJSON(w,400,map[string]string{"error":"Payload must be valid JSON"}); return }
+	object,ok:=value.(map[string]any)
+	if !ok { writeJSON(w,400,map[string]string{"error":"Payload must be a JSON object"}); return }
+	canonical,err:=json.Marshal(object); if err!=nil || len(canonical)>12<<10 { writeJSON(w,400,map[string]string{"error":"Payload is invalid or too large"}); return }
+	digest:=sha256.Sum256(canonical)
+	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second); defer cancel()
+	tx,err:=a.database.Begin(ctx); if err!=nil { writeJSON(w,503,map[string]string{"error":"Approval service is unavailable"}); return }
+	defer func(){_ = tx.Rollback(context.Background())}()
+	var id string
+	err=tx.QueryRow(ctx,"INSERT INTO testagram_auth.native_sensitive_action_requests (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256,required_approvals) VALUES($1,$2,$3,$4,$5::jsonb,$6,2) RETURNING id::text",input.ActionType,actor.ID,input.TargetReference,input.Reason,string(canonical),hex.EncodeToString(digest[:])).Scan(&id)
+	if err==nil { _,err=tx.Exec(ctx,"INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,request_id,metadata) VALUES($1,'sensitive_action.requested',$2,$3,jsonb_build_object('action_type',$4))",actor.ID,input.TargetReference,id,input.ActionType) }
+	if err==nil { err=tx.Commit(ctx) }
+	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not safely record the approval request"}); return }
+	writeJSON(w,201,map[string]any{"id":id,"status":"pending","required_approvals":2,"message":"Request recorded. Two different authorised staff members must approve it. The action has not been executed."})
+}
+type identityReviewSnapshot struct {
+	ApplicationID              string `json:"application_id"`
+	Email                       string `json:"email"`
+	Username                    string `json:"username"`
+	DisplayName                 string `json:"display_name"`
+	EvidenceFingerprintSHA256   string `json:"evidence_fingerprint_sha256"`
+	EvidenceAuditReference      string `json:"evidence_audit_reference"`
+	TermsVersion                string `json:"terms_version"`
+	PrivacyVersion              string `json:"privacy_version"`
+}
+
+func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, applicationID, reviewerID, decision, reason string, rawPayload []byte, approvalCount int) (string, error) {
+	var snapshot identityReviewSnapshot
+	if err := json.Unmarshal(rawPayload, &snapshot); err != nil {
+		return "", errors.New("identity approval payload is invalid")
+	}
+	if snapshot.ApplicationID != applicationID ||
+		len(snapshot.EvidenceAuditReference) < 8 || len(snapshot.EvidenceAuditReference) > 200 {
+		return "", errors.New("identity approval payload is not bound to an auditable application")
+	}
+
+	var email, username, displayName, termsVersion, privacyVersion, applicationStatus, linkedRequestID string
+	var evidenceFingerprint []byte
+	var adultVerified bool
+	err := tx.QueryRow(ctx, `
+		SELECT email, username, display_name, evidence_fingerprint_sha256,
+		       terms_version, privacy_version, status, adult_verified_at IS NOT NULL,
+		       native_sensitive_action_request_id::text
+		FROM testagram_identity.identity_applications
+		WHERE id=$1::uuid
+		FOR UPDATE
+	`, applicationID).Scan(&email, &username, &displayName, &evidenceFingerprint,
+		&termsVersion, &privacyVersion, &applicationStatus, &adultVerified, &linkedRequestID)
+	if err != nil {
+		return "", errors.New("identity application was not found")
+	}
+	if linkedRequestID != requestID {
+		return "", errors.New("identity application is not linked to this approval request")
+	}
+	if applicationStatus != "verified" && applicationStatus != "under_review" {
+		return "", errors.New("identity application is no longer reviewable")
+	}
+	var actionType, requestStatus, targetReference, requesterID, requesterService string
+	var requiredApprovals, recordedApprovals int
+	err = tx.QueryRow(ctx, `
+		SELECT action_type, status, target_reference, COALESCE(requested_by_user_id::text,''), requested_by_service, required_approvals
+		FROM testagram_auth.native_sensitive_action_requests
+		WHERE id=$1::uuid
+		FOR UPDATE
+	`, requestID).Scan(&actionType, &requestStatus, &targetReference, &requesterID, &requesterService, &requiredApprovals)
+	if err != nil || actionType != "identity.approve" || targetReference != applicationID || requiredApprovals != 2 || requesterID != "" || requesterService != "identity_pipeline" {
+		return "", errors.New("linked approval request does not match the identity application")
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT count(DISTINCT approver_user_id)
+		FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid AND decision='approved'
+	`, requestID).Scan(&recordedApprovals)
+	if err != nil || recordedApprovals != approvalCount {
+		return "", errors.New("approval count does not match the durable approval ledger")
+	}
+	if decision == "rejected" && requestStatus != "rejected" {
+		return "", errors.New("rejected identity decision is not reflected in the approval ledger")
+	}
+	if decision == "approved" && approvalCount > 2 {
+		return "", errors.New("identity approval has more than two approvers")
+	}
+	if decision == "approved" && approvalCount == 2 && requestStatus != "approved" {
+		return "", errors.New("completed two-person approval is not reflected in the approval ledger")
+	}
+	if decision == "approved" && approvalCount < 2 && requestStatus != "pending" {
+		return "", errors.New("incomplete approval request is not pending")
+	}
+	if !adultVerified {
+		return "", errors.New("verified adult evidence is required before review decisions")
+	}
+	if snapshot.Email != email || snapshot.Username != username ||
+		snapshot.DisplayName != displayName ||
+		snapshot.EvidenceFingerprintSHA256 != hex.EncodeToString(evidenceFingerprint) ||
+		snapshot.TermsVersion != termsVersion || snapshot.PrivacyVersion != privacyVersion {
+		return "", errors.New("identity application changed after the review request was created")
+	}
+
+	var wasEvidenceReviewer bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1 FROM testagram_identity.identity_application_reviews
+		  WHERE application_id=$1::uuid AND reviewer_user_id=$2::uuid
+		    AND review_stage='evidence_review'
+		)
+	`, applicationID, reviewerID).Scan(&wasEvidenceReviewer)
+	if err != nil || wasEvidenceReviewer {
+		return "", errors.New("evidence reviewers cannot approve account activation")
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_identity.identity_application_reviews
+		  (application_id, reviewer_user_id, review_stage, decision, reason, evidence_audit_reference)
+		VALUES ($1::uuid, $2, 'account_approval', $3, $4, $5)
+	`, applicationID, reviewerID, decision, reason, snapshot.EvidenceAuditReference)
+	if err != nil {
+		return "", errors.New("identity review was already recorded or could not be persisted")
+	}
+
+	nextStatus := "under_review"
+	if decision == "rejected" {
+		nextStatus = "rejected"
+	} else if approvalCount >= 2 {
+		nextStatus = "approved"
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE testagram_identity.identity_applications
+		SET status=$2, updated_at=now()
+		WHERE id=$1::uuid
+	`, applicationID, nextStatus)
+	if err != nil {
+		return "", errors.New("identity application status could not be updated")
+	}
+	if decision == "approved" && approvalCount > 2 {
+		return "", errors.New("identity approval has more than two approvers")
+	}
+	if decision == "approved" && approvalCount == 2 {
+		rows, err := tx.Query(ctx, `
+			SELECT approver_user_id::text
+			FROM testagram_auth.native_sensitive_action_approvals
+			WHERE request_id=$1::uuid AND decision='approved'
+			ORDER BY created_at ASC, id ASC
+			LIMIT 2
+		`, requestID)
+		if err != nil {
+			return "", errors.New("independent account approvers could not be loaded")
+		}
+		approvers := make([]string, 0, 2)
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return "", errors.New("independent account approvers could not be loaded")
+			}
+			approvers = append(approvers, id)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return "", errors.New("independent account approvers could not be loaded")
+		}
+		rows.Close()
+		if len(approvers) != 2 || approvers[0] == approvers[1] {
+			return "", errors.New("exactly two distinct account approvers are required")
+		}
+		var tokenSeed, jtiSeed [32]byte
+		if _, err := rand.Read(tokenSeed[:]); err != nil {
+			return "", errors.New("provisioning authorization seed could not be generated")
+		}
+		if _, err := rand.Read(jtiSeed[:]); err != nil {
+			return "", errors.New("provisioning authorization identifier could not be generated")
+		}
+		tokenDigest := sha256.Sum256(tokenSeed[:])
+		jtiDigest := sha256.Sum256(jtiSeed[:])
+		_, err = tx.Exec(ctx, `
+			INSERT INTO testagram_identity.identity_approval_tokens
+			  (token_sha256,jti_sha256,application_id,first_approver_user_id,second_approver_user_id,expires_at)
+			VALUES ($1,$2,$3::uuid,$4::uuid,$5::uuid,now()+interval '15 minutes')
+		`, tokenDigest[:], jtiDigest[:], applicationID, approvers[0], approvers[1])
+		if err != nil {
+			return "", fmt.Errorf("provisioning authorization could not be initialized: %w", err)
+		}
+	}
+
+	return nextStatus, nil
+}
+
+).MatchString(targetReference) {
+		return errors.New("staff enrollment target is not a canonical UUID")
+	}
+
+	var eligible bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM testagram_auth.staff_principals sp
+			JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+			WHERE sp.user_id=$1::uuid
+			  AND sp.enabled=TRUE
+			  AND sp.mfa_enrolled_at IS NULL
+			  AND i.disabled_at IS NULL
+			  AND i.email_verified_at IS NOT NULL
+			  AND EXISTS (
+				SELECT 1 FROM testagram_auth.staff_role_grants rg
+				WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM testagram_auth.staff_webauthn_credentials wc
+				WHERE wc.user_id=sp.user_id AND wc.revoked_at IS NULL
+			  )
+		)
+	`, targetReference).Scan(&eligible)
+	if err != nil || !eligible {
+		return errors.New("target is not an active, verified, unenrolled staff principal")
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT approver_user_id::text
+		FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid AND decision='approved'
+		ORDER BY created_at ASC,id ASC
+		LIMIT 3
+	`, requestID)
+	if err != nil {
+		return errors.New("independent WebAuthn approvers could not be loaded")
+	}
+	approvers := make([]string, 0, 3)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return errors.New("independent WebAuthn approvers could not be read")
+		}
+		approvers = append(approvers, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return errors.New("independent WebAuthn approvers could not be read")
+	}
+	rows.Close()
+	if len(approvers) != 2 || approvers[0] == approvers[1] ||
+		(requesterID != "" && (approvers[0] == requesterID || approvers[1] == requesterID)) {
+		return errors.New("exactly two distinct non-requesting WebAuthn approvers are required")
+	}
+
+	// Serialize issuance per target, retire expired unused authorizations, and
+	// ensure a second approved request cannot create a competing live token.
+	if _, err := tx.Exec(ctx, `
+		UPDATE testagram_auth.staff_webauthn_enrollment_authorizations
+		SET revoked_at=now()
+		WHERE user_id=$1::uuid AND consumed_at IS NULL
+		  AND revoked_at IS NULL AND expires_at<=now()
+	`, targetReference); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_auth.staff_webauthn_enrollment_authorizations
+		  (user_id,authorized_by,authorization_method,reason,expires_at,
+		   request_id,first_approver_user_id,second_approver_user_id)
+		VALUES ($1::uuid,$2::uuid,'dual_control',$3,now()+interval '30 minutes',
+		        $4::uuid,$2::uuid,$5::uuid)
+	`, targetReference, approvers[0], "Two-person WebAuthn enrollment approval", requestID, approvers[1])
+	if err != nil {
+		return errors.New("a live enrollment authorization already exists or could not be issued")
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_auth.native_staff_lifecycle_events
+		  (request_id,actor_user_id,target_user_id,action,metadata)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,'webauthn_enrollment_authorized',
+		        jsonb_build_object('first_approver',$4::text,'second_approver',$5::text,'authorization_ttl_seconds',1800))
+	`, requestID, approvers[1], targetReference, approvers[0], approvers[1])
+	if err != nil {
+		return errors.New("staff lifecycle enrollment audit could not be recorded")
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_auth.native_admin_security_audit
+		  (actor_user_id,action,target_reference,request_id,metadata)
+		VALUES ($1::uuid,'staff.webauthn.enrollment_authorized',$2,$3::uuid,
+		        jsonb_build_object('first_approver',$4::text,'second_approver',$5::text))
+	`, approvers[1], targetReference, requestID, approvers[0], approvers[1])
+	return err
+}
+
 func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, webauthnRPID string, webauthnCredentialID []byte, decision, reason string) (string, string, int, error) {
 	var actionType, requesterID, requesterService, requestStatus, targetReference string
 	var payload []byte
@@ -444,6 +922,11 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		}
 		if tag.RowsAffected() != 1 {
 			return "", "", 0, errors.New("approval request changed while recording the decision")
+		}
+	}
+	if actionType == "staff.webauthn.enroll" && state == "approved" {
+		if err := issueStaffWebAuthnEnrollmentAuthorization(ctx, tx, requestID, targetReference, requesterID, payload); err != nil {
+			return "", "", 0, err
 		}
 	}
 
@@ -573,7 +1056,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	if !a.requireRecentStepUp(w,s) { return }
 	canAudit,err:=a.hasPermission(user,"audit.read")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
-	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve"}
+	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve","staff.manage"}
 	canReview:=canAudit
 	if !canReview {
 		for _,permission:=range approvalPermissions {
