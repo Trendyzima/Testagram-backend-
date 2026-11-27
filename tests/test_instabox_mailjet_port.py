@@ -17,6 +17,28 @@ class NativeMailDeploymentTest(unittest.TestCase):
             self.assertNotIn("MAILJET_SECRET_KEY", content, str(path))
             self.assertNotIn("api.mailjet.com", content, str(path))
 
+    def test_retired_mail_provider_and_relay_settings_are_absent_from_runtime_surfaces(self):
+        retired = (
+            "MAILJET_API_KEY",
+            "MAILJET_SECRET_KEY",
+            "SMTP_HOST",
+            "SMTP_USERNAME",
+            "SMTP_PASSWORD",
+            "AUTH_FROM_EMAIL",
+        )
+        surfaces = (
+            SCRIPT,
+            WORKFLOW,
+            COMPOSE,
+            SMTP,
+            ROOT / "deploy" / "self-hosted" / ".env.example",
+            ROOT / "deploy" / "self-hosted" / "README.md",
+        )
+        for path in surfaces:
+            content = path.read_text(encoding="utf-8")
+            for name in retired:
+                self.assertNotIn(name, content, f"{name} reintroduced in {path.relative_to(ROOT)}")
+
     def test_vps_generates_and_persists_mail_encryption_key(self):
         script = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("ensure_hex_secret TESTAGRAM_MAIL_ENCRYPTION_KEY", script)
