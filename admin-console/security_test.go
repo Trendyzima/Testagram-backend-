@@ -22,6 +22,7 @@ func TestSensitiveActionPermissionMapping(t *testing.T) {
 		{"finance.execute", "finance.initiate", "finance.approve"},
 		{"security.change", "security.manage", "security.manage"},
 		{"deployment.production", "deployment.request", "deployment.approve"},
+		{"staff.webauthn.enroll", "staff.webauthn.enroll.approve", "staff.webauthn.enroll.approve"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.action, func(t *testing.T) {
@@ -148,6 +149,67 @@ func TestStaffPermissionMutationRemainsClosedUntilTwoPersonExecutorExists(t *tes
 	} {
 		if strings.Contains(handler, forbidden) {
 			t.Fatalf("staff permission handler must not mutate permissions directly; found %q", forbidden)
+		}
+	}
+}
+
+
+func TestStaffWebAuthnEnrollmentEndpointRequiresDualControlLedger(t *testing.T) {
+	handlerSource, err := os.ReadFile("webauthn.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(handlerSource)
+	if strings.Contains(source, "Staff enrollment authorization requires two independent Testagram approvals. No enrollment authorization was created.") {
+		t.Fatal("the WebAuthn enrollment authorization endpoint is still the HTTP 501 stub")
+	}
+	for _, required := range []string{
+		"native_sensitive_action_requests",
+		"staff.webauthn.enroll",
+		"required_approvals",
+		"staff_webauthn_enrollment_authorization_is_valid",
+		"revoked_at IS NULL",
+		"consumed_at",
+		"handleStaffWebAuthnAuthorizationRevoke",
+		"webauthn_enrollment_revoked",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("WebAuthn enrollment flow is missing required guard %q", required)
+		}
+	}
+	securitySource, err := os.ReadFile("security.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	security := string(securitySource)
+	for _, required := range []string{
+		"issueStaffWebAuthnEnrollmentAuthorization",
+		"first_approver_user_id",
+		"second_approver_user_id",
+		"webauthn_enrollment_authorized",
+		"FOR UPDATE OF sp,i",
+	} {
+		if !strings.Contains(security, required) {
+			t.Fatalf("dual-control executor is missing required invariant %q", required)
+		}
+	}
+	migration, err := os.ReadFile("../migrations/20261128_native_staff_webauthn_dual_control.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(migration)
+	for _, required := range []string{
+		"first_approver_user_id<>second_approver_user_id",
+		"staff_webauthn_enrollment_authorization_is_valid",
+		"native_staff_webauthn_enrollment_approver_permission",
+		"staff.webauthn.enroll.approve",
+		"webauthn_enrollment_revoked",
+		"native_sensitive_action_approvals",
+		"consumed_at IS NULL AND revoked_at IS NULL",
+		"staff WebAuthn enrollment authorizations are immutable audit evidence",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("dual-control migration is missing database invariant %q", required)
 		}
 	}
 }

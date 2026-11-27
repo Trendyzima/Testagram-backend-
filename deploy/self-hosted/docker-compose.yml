@@ -78,6 +78,7 @@ services:
       - ../../migrations/20261121_native_staff_webauthn.sql:/docker-entrypoint-initdb.d/060_native_staff_webauthn.sql:ro
       - ../../migrations/061_native_sensitive_action_integrity.sql:/docker-entrypoint-initdb.d/061_native_sensitive_action_integrity.sql:ro
       - ../../migrations/20261127_native_staff_lifecycle_executor.sql:/docker-entrypoint-initdb.d/20261127_native_staff_lifecycle_executor.sql:ro
+      - ../../migrations/20261128_native_staff_webauthn_dual_control.sql:/docker-entrypoint-initdb.d/20261128_native_staff_webauthn_dual_control.sql:ro
       - ../../migrations/062_testagram_knowledge_engine.sql:/docker-entrypoint-initdb.d/062_testagram_knowledge_engine.sql:ro
       - ../../migrations/20261120_social_platform_product_foundation.sql:/docker-entrypoint-initdb.d/063_testagram_social_platform_product_foundation.sql:ro
       - ../../migrations/064_knowledge_topic_seed_catalog.sql:/docker-entrypoint-initdb.d/064_knowledge_topic_seed_catalog.sql:ro

@@ -6,6 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "migrations"
 TARGET = "061_native_sensitive_action_integrity.sql"
+WEBAUTHN_DUAL_CONTROL = "20261128_native_staff_webauthn_dual_control.sql"
+STAFF_LIFECYCLE = "20261127_native_staff_lifecycle_executor.sql"
 PREREQUISITES = (
     "20261019_testagram_independent_auth.sql",
     "20261115_testagram_native_auth_cutover_foundation.sql",
@@ -45,6 +47,12 @@ def main() -> None:
 
     assert f"../../migrations/{TARGET}:/docker-entrypoint-initdb.d/{TARGET}:ro" in compose
     assert f"apply_migration {TARGET}" in runner
+    assert f"../../migrations/{WEBAUTHN_DUAL_CONTROL}:/docker-entrypoint-initdb.d/{WEBAUTHN_DUAL_CONTROL}:ro" in compose
+    migration_list = runner[runner.index("for file in"):runner.index("apply_migration() {")]
+    assert WEBAUTHN_DUAL_CONTROL in migration_list, "runner omits dual-control enrollment migration"
+    assert migration_list.index(TARGET) < migration_list.index(STAFF_LIFECYCLE) < migration_list.index(
+        WEBAUTHN_DUAL_CONTROL
+    ), "dual-control enrollment schema must follow the sensitive-action ledger and staff lifecycle tables"
     assert runner.index("apply_migration 060_native_staff_webauthn.sql") < runner.index(
         f"apply_migration {TARGET}"
     ), "WebAuthn credentials must exist before sensitive-action integrity triggers are installed"
@@ -61,6 +69,8 @@ def main() -> None:
         "migrations/20261118_native_admin_console.sql",
         "migrations/20261121_native_staff_webauthn.sql",
         f"migrations/{TARGET}",
+        f"migrations/{STAFF_LIFECYCLE}",
+        f"migrations/{WEBAUTHN_DUAL_CONTROL}",
     )
     positions = [admin_job.index(item) for item in ordered]
     assert positions == sorted(positions), "Backend PostgreSQL integration migration order regressed"
@@ -71,7 +81,19 @@ def main() -> None:
         "testagram_auth.staff_webauthn_credentials",
     ):
         assert dependency in sql, f"expected dependency reference missing: {dependency}"
+
+    enrollment_sql = (MIGRATIONS / WEBAUTHN_DUAL_CONTROL).read_text()
+    for invariant in (
+        "first_approver_user_id<>second_approver_user_id",
+        "staff_webauthn_enrollment_authorization_is_valid",
+        "native_sensitive_action_approvals",
+        "consumed_at IS NULL AND revoked_at IS NULL",
+    ):
+        assert invariant in enrollment_sql, f"missing WebAuthn dual-control invariant: {invariant}"
     assert "BEGIN;" in sql and "COMMIT;" in sql, "migration must remain transactional"
+    assert "BEGIN;" in enrollment_sql and "COMMIT;" in enrollment_sql, (
+        "WebAuthn dual-control migration must remain transactional"
+    )
     print("Native sensitive-action migration dependency order: PASS")
 
 
