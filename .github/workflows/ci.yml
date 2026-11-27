@@ -1398,6 +1398,14 @@ jobs:
               SELECT 1 FROM testagram_auth.staff_role_permissions
               WHERE role='engineer' AND permission_key='deployment.approve'
             ) THEN RAISE EXCEPTION 'engineers must not receive production approval by default'; END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='administrator' AND permission_key='staff.webauthn.enroll.approve'
+            ) THEN RAISE EXCEPTION 'administrators must receive the dedicated WebAuthn enrollment approval permission'; END IF;
+            IF EXISTS (
+              SELECT 1 FROM testagram_auth.staff_role_permissions
+              WHERE role='engineer' AND permission_key='staff.webauthn.enroll.approve'
+            ) THEN RAISE EXCEPTION 'engineers must not receive staff WebAuthn enrollment approval by default'; END IF;
           END $permissions$;
           INSERT INTO testagram_auth.native_staff_permission_overrides
             (user_id,permission_key,granted,reason,changed_by_user_id)
@@ -1715,9 +1723,6 @@ jobs:
             ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174005',digest('123e4567-e89b-42d3-a456-426614174005','sha256'));
           INSERT INTO testagram_auth.staff_webauthn_credentials(rpid,user_id,credential_id,credential,user_verified,clone_warning) VALUES
             ('ops.testagram.invalid','123e4567-e89b-42d3-a456-426614174005',digest('credential:123e4567-e89b-42d3-a456-426614174005','sha256'),decode('05','hex'),TRUE,FALSE);
-          INSERT INTO testagram_auth.native_staff_permission_overrides(user_id,permission_key,granted,reason,changed_by_user_id) VALUES
-            ('123e4567-e89b-42d3-a456-426614174002','staff.manage',TRUE,'Temporary CI enrollment approval','123e4567-e89b-42d3-a456-426614174001'),
-            ('123e4567-e89b-42d3-a456-426614174005','staff.manage',TRUE,'Temporary CI enrollment approval','123e4567-e89b-42d3-a456-426614174001');
           UPDATE testagram_auth.staff_principals
           SET mfa_enrolled_at=NULL
           WHERE user_id='123e4567-e89b-42d3-a456-426614174004';
