@@ -493,6 +493,9 @@ END;
 $seed_historical_verification_events$;
 SQL
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+# Re-apply the retention extension after the older audit migration so its
+# historical CHECK-constraint definition cannot remove the new retention events.
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
 psql_ci <<'SQL'
 DO $verify_historical_verification_events$
 BEGIN
@@ -543,12 +546,30 @@ BEGIN
   SET status='deleted',verified_at=NULL
   WHERE id=evidence_id AND status='quarantined';
 
+  INSERT INTO testagram_identity.verification_events
+    (session_id,event_type,actor_type,actor_reference,request_id,metadata)
+  VALUES
+    (session_id,'identity_evidence_quarantined','system',
+     'identity-evidence-retention-worker','ci-retention-quarantine',
+     jsonb_build_object('evidence_id',evidence_id::text)),
+    (session_id,'identity_evidence_deleted','system',
+     'identity-evidence-retention-worker','ci-retention-delete',
+     jsonb_build_object('evidence_id',evidence_id::text));
+
   IF NOT EXISTS (
     SELECT 1 FROM testagram_identity.verification_evidence
     WHERE id=evidence_id AND status='deleted'
       AND uploaded_at IS NOT NULL AND verified_at IS NULL
   ) THEN
     RAISE EXCEPTION 'expired evidence did not reach the terminal deleted state';
+  END IF;
+  IF (
+    SELECT count(*) FROM testagram_identity.verification_events
+    WHERE session_id=session_id
+      AND event_type IN ('identity_evidence_quarantined','identity_evidence_deleted')
+      AND request_id IN ('ci-retention-quarantine','ci-retention-delete')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'identity evidence retention transitions were not auditable';
   END IF;
 END;
 $evidence_retention$;
