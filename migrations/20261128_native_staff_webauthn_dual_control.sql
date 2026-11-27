@@ -152,6 +152,46 @@ AS $function$
 $function$;
 
 
+-- The historical staff-role migration conditionally created this catalog only
+-- while provider-keyed staff_roles still existed. That table is archived before
+-- the native migration runner reaches 061, so create the native permission map
+-- explicitly here rather than relying on the retired provider table.
+CREATE TABLE IF NOT EXISTS testagram_auth.staff_role_permissions (
+  role TEXT NOT NULL CHECK (role IN ('owner','administrator','engineer','operations','support','moderator')),
+  permission_key TEXT NOT NULL REFERENCES testagram_auth.admin_permissions(permission_key) ON DELETE CASCADE,
+  PRIMARY KEY (role,permission_key)
+);
+
+INSERT INTO testagram_auth.staff_role_permissions(role,permission_key) VALUES
+  ('administrator','identity.review'),
+  ('administrator','moderation.manage'),
+  ('administrator','advertising.manage'),
+  ('administrator','marketplace.manage'),
+  ('administrator','tv.manage'),
+  ('administrator','engineering.read'),
+  ('administrator','operations.manage'),
+  ('administrator','audit.read'),
+  ('engineer','engineering.read'),
+  ('engineer','deployment.request'),
+  ('operations','engineering.read'),
+  ('operations','operations.manage'),
+  ('operations','deployment.request'),
+  ('support','moderation.manage'),
+  ('moderator','moderation.manage')
+ON CONFLICT DO NOTHING;
+
+REVOKE ALL ON testagram_auth.staff_role_permissions FROM PUBLIC;
+DO $permission_grants$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='testagram_app') THEN
+    GRANT SELECT ON testagram_auth.staff_role_permissions TO testagram_app;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+    GRANT SELECT ON testagram_auth.staff_role_permissions TO service_role;
+  END IF;
+END;
+$permission_grants$;
+
 CREATE OR REPLACE FUNCTION testagram_auth.assert_staff_webauthn_enrollment_approver_permission()
 RETURNS trigger
 LANGUAGE plpgsql
