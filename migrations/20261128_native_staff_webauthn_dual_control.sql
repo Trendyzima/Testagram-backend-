@@ -134,6 +134,61 @@ AS $function$
 $function$;
 
 
+CREATE OR REPLACE FUNCTION testagram_auth.assert_staff_webauthn_enrollment_approver_permission()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v_action_type TEXT;
+  v_override BOOLEAN;
+  v_allowed BOOLEAN := FALSE;
+BEGIN
+  SELECT action_type INTO v_action_type
+  FROM testagram_auth.native_sensitive_action_requests
+  WHERE id=NEW.request_id;
+  IF v_action_type IS DISTINCT FROM 'staff.webauthn.enroll' THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM testagram_auth.staff_role_grants
+    WHERE user_id=NEW.approver_user_id
+      AND role='owner' AND revoked_at IS NULL
+  ) THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT granted INTO v_override
+  FROM testagram_auth.native_staff_permission_overrides
+  WHERE user_id=NEW.approver_user_id
+    AND permission_key='staff.manage';
+  IF FOUND THEN
+    v_allowed := v_override;
+  ELSE
+    SELECT EXISTS (
+      SELECT 1
+      FROM testagram_auth.staff_role_grants rg
+      JOIN testagram_auth.staff_role_permissions rp ON rp.role=rg.role
+      WHERE rg.user_id=NEW.approver_user_id
+        AND rg.revoked_at IS NULL
+        AND rp.permission_key='staff.manage'
+    ) INTO v_allowed;
+  END IF;
+
+  IF NOT v_allowed THEN
+    RAISE EXCEPTION 'staff WebAuthn enrollment approver lacks staff.manage permission';
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS native_staff_webauthn_enrollment_approver_permission
+  ON testagram_auth.native_sensitive_action_approvals;
+CREATE TRIGGER native_staff_webauthn_enrollment_approver_permission
+  BEFORE INSERT ON testagram_auth.native_sensitive_action_approvals
+  FOR EACH ROW
+  EXECUTE FUNCTION testagram_auth.assert_staff_webauthn_enrollment_approver_permission();
+
 CREATE OR REPLACE FUNCTION testagram_auth.guard_staff_webauthn_enrollment_authorization()
 RETURNS trigger
 LANGUAGE plpgsql
