@@ -315,8 +315,8 @@ func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Req
 		WHERE ea.user_id=$1::uuid AND ea.consumed_at IS NULL
 		  AND ea.revoked_at IS NULL AND ea.expires_at>now()
 		  AND ea.request_id IS NOT NULL
-		  AND testagram_auth.staff_webauthn_enrollment_authorization_is_valid(ea.id,ea.user_id)
-	)`,user.ID).Scan(&enrollmentAuthorized);err!=nil||!enrollmentAuthorized{writeJSON(w,403,map[string]string{"error":"Staff enrollment requires an unexpired, unconsumed two-person authorization with both approvers still eligible."});return}
+		  AND testagram_auth.staff_webauthn_enrollment_authorization_is_valid(ea.id,ea.user_id,$2)
+	)`,user.ID,rpid).Scan(&enrollmentAuthorized);err!=nil||!enrollmentAuthorized{writeJSON(w,403,map[string]string{"error":"Staff enrollment requires an unexpired, unconsumed two-person authorization with both approvers still eligible."});return}
  if strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")!=true{writeJSON(w,503,map[string]string{"error":"Staff WebAuthn enrollment is closed by production policy."});return}
  options,sd,err:=wa.BeginRegistration(u,webauthn.WithRegistrationOrigin(a.publicOrigin),webauthn.WithExclusions(webauthn.Credentials(u.credentials).CredentialDescriptors()))
  if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not create registration ceremony"});return}
@@ -347,8 +347,8 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
 		WHERE ea.user_id=$1::uuid AND ea.consumed_at IS NULL
 		  AND ea.revoked_at IS NULL AND ea.expires_at>now()
 		  AND ea.request_id IS NOT NULL
-		  AND testagram_auth.staff_webauthn_enrollment_authorization_is_valid(ea.id,ea.user_id)
-		ORDER BY ea.created_at LIMIT 1 FOR UPDATE OF ea`,user.ID).Scan(&authorizationID);err!=nil{writeJSON(w,403,map[string]string{"error":"Two-person enrollment authorization is missing, expired, revoked, already consumed or has an ineligible approver"});return}
+		  AND testagram_auth.staff_webauthn_enrollment_authorization_is_valid(ea.id,ea.user_id,$2)
+		ORDER BY ea.created_at LIMIT 1 FOR UPDATE OF ea`,user.ID,rpid).Scan(&authorizationID);err!=nil{writeJSON(w,403,map[string]string{"error":"Two-person enrollment authorization is missing, expired, revoked, already consumed or has an ineligible approver"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil{writeJSON(w,403,map[string]string{"error":"Staff enrollment is not authorized"});return}
  if len(u.credentials)>0&&!a.requireRecentStepUp(w,s){return}
  req:=r.Clone(r.Context());req.Body=io.NopCloser(bytes.NewReader(input.Response));req.ContentLength=int64(len(input.Response))
