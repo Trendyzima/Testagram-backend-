@@ -250,3 +250,35 @@ func TestIdentityEvidenceClientUsesSeparateTokenAndRoutePrefix(t *testing.T) {
 	deleted, err := client.Delete(ctx, owner, owner, "identity-evidence-private", key)
 	if err != nil || deleted != "delete_pending" { t.Fatalf("identity evidence delete = %q, %v", deleted, err) }
 }
+
+
+func TestIdentityEvidenceRejectsNonB2Readiness(t *testing.T) {
+	for _, response := range []string{
+		`{"status":"ready","namespace":"identity-evidence-private","provider":"cloudflare_r2","primary":"verified"}`,
+		`{"status":"ready","namespace":"media-private","provider":"backblaze_b2","primary":"verified"}`,
+		`{"status":"ready","namespace":"identity-evidence-private","provider":"backblaze_b2","primary":"pending"}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(response))
+		}))
+		client, err := NewIdentityEvidenceClient(server.URL, testToken, server.Client())
+		if err != nil { server.Close(); t.Fatal(err) }
+		if err := client.Ready(context.Background()); err == nil {
+			server.Close()
+			t.Fatalf("identity evidence accepted unsafe readiness response: %s", response)
+		}
+		server.Close()
+	}
+}
+
+func TestIdentityEvidenceRejectsR2DownloadGrant(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"url":"https://r2.example/identity-object","provider":"cloudflare_r2"}`))
+	}))
+	defer server.Close()
+	client, err := NewIdentityEvidenceClient(server.URL, testToken, server.Client())
+	if err != nil { t.Fatal(err) }
+	if _, err := client.DownloadURL(context.Background(), "requester", "owner", "identity-evidence-private", "identity/object"); err == nil {
+		t.Fatal("identity evidence accepted a Cloudflare R2 download grant")
+	}
+}
