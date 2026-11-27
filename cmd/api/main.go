@@ -1358,9 +1358,6 @@ func main() {
 			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "image/gif": {}, "image/avif": {},
 			"video/mp4": {}, "video/webm": {},
 		}
-		identityEvidenceTypes := map[string]struct{}{
-			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "application/pdf": {},
-		}
 		virtualStorageManager, err = virtualstorage.New(provider, []virtualstorage.Namespace{
 			{Name: "media-private", PhysicalBucket: env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))), MaxObjectBytes: 500 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
 			{Name: "media-public", PhysicalBucket: env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))), Public: true, MaxObjectBytes: 20 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
