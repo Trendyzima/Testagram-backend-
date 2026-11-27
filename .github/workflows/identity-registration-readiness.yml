@@ -1,0 +1,32 @@
+name: Native identity registration readiness preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging_only:
+        description: Confirm TESTAGRAM_STAGING_API_URL is an isolated non-production staging API
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-staging-identity-readiness
+  cancel-in-progress: false
+
+jobs:
+  identity-readiness:
+    if: inputs.confirm_staging_only == true
+    name: Verify native registration prerequisites without creating an applicant
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 5
+    env:
+      TESTAGRAM_STAGING_API_URL: ${{ vars.TESTAGRAM_STAGING_API_URL }}
+      CONFIRM_STAGING_ONLY: ${{ inputs.confirm_staging_only }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check staging origin and identity readiness gates
+        run: python3 scripts/identity-readiness-preflight.py
