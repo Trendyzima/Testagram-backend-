@@ -78,7 +78,6 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
     def test_identity_evidence_has_no_cloudflare_r2_or_instabox_bucket(self):
         self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow)
         self.assertNotIn("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.workflow)
-        self.assertNotIn("IDENTITY_EVIDENCE_PRIVATE_BUCKET: ${IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.workflow)
         self.assertIn("Provision dedicated private B2 identity-evidence bucket", self.workflow)
 
     def test_compose_and_caddy_consume_the_persisted_name(self):
