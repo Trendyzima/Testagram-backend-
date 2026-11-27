@@ -60,6 +60,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn('if [[ "$early_fresh_gate" == true && "$early_dc_media_enabled" != true ]]', self.workflow)
         self.assertIn('media_enabled=$early_dc_media_enabled', self.workflow)
         self.assertIn('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then', self.deployer)
+        self.assertIn('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then\n  b2_endpoint=', self.deployer)
         self.assertIn('FRESH_MEDIA_ENABLED=$FRESH_MEDIA_ENABLED', self.deployer)
         self.assertIn('FRESH_MEDIA_ENABLED=true requires DATA_CENTRE_MEDIA_ENABLED=true', self.deployer)
         self.assertIn("B2 identity evidence bucket must be configured and distinct from general-media buckets.", self.deployer)
