@@ -100,16 +100,16 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 			var mediaRaw []byte
 			var username, displayName, avatarKey string
 			var protected, following bool
-			if err := rows.Scan(&post.ID,&post.UserID,&post.Content,&post.Visibility,&mediaRaw,
-				&post.Language,&post.CreatedAt,&post.LikesCount,&post.RepliesCount,&post.RepostsCount,
-				&username,&displayName,&avatarKey,&protected,&following); err != nil {
+			if err := rows.Scan(&post.ID, &post.UserID, &post.Content, &post.Visibility, &mediaRaw,
+				&post.Language, &post.CreatedAt, &post.LikesCount, &post.RepliesCount, &post.RepostsCount,
+				&username, &displayName, &avatarKey, &protected, &following); err != nil {
 				logPostSearchFailure("scan", requestID, err)
 				rows.Close()
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_SEARCH_FAILED", "Search results could not be decoded", requestID))
 				return
 			}
 			_ = json.Unmarshal(mediaRaw, &post.MediaIDs)
-			post.Author = map[string]any{"id":post.UserID,"username":username,"display_name":displayName,"avatar_key":avatarKey,"protected_account":protected}
+			post.Author = map[string]any{"id": post.UserID, "username": username, "display_name": displayName, "avatar_key": avatarKey, "protected_account": protected}
 			post.Origin = "local"
 			post.IsFollowing = following
 			posts = append(posts, post)
@@ -140,12 +140,12 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		for rows.Next() {
 			var id, username, displayName, avatarKey string
-			if err := rows.Scan(&id,&username,&displayName,&avatarKey); err != nil {
+			if err := rows.Scan(&id, &username, &displayName, &avatarKey); err != nil {
 				rows.Close()
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("PEOPLE_SEARCH_FAILED", "Search results could not be decoded", requestID))
 				return
 			}
-			users = append(users,map[string]any{"id":id,"user_id":id,"username":username,"display_name":displayName,"avatar_url":avatarKey})
+			users = append(users, map[string]any{"id": id, "user_id": id, "username": username, "display_name": displayName, "avatar_url": avatarKey})
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -154,5 +154,5 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
-	writeJSON(w,http.StatusOK,map[string]any{"ok":true,"data":map[string]any{"posts":posts,"users":users,"next_cursor":nil},"error":nil,"request_id":requestID})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": map[string]any{"posts": posts, "users": users, "next_cursor": nil}, "error": nil, "request_id": requestID})
 }
