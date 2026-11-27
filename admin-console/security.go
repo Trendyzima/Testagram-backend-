@@ -755,28 +755,27 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 		return errors.New("staff enrollment target is not a canonical UUID")
 	}
 
-	var eligible bool
+	var lockedTarget string
 	err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM testagram_auth.staff_principals sp
-			JOIN testagram_auth.identities i ON i.user_id=sp.user_id
-			WHERE sp.user_id=$1::uuid
-			  AND sp.enabled=TRUE
-			  AND sp.mfa_enrolled_at IS NULL
-			  AND i.disabled_at IS NULL
-			  AND i.email_verified_at IS NOT NULL
-			  AND EXISTS (
-				SELECT 1 FROM testagram_auth.staff_role_grants rg
-				WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-			  )
-			  AND NOT EXISTS (
-				SELECT 1 FROM testagram_auth.staff_webauthn_credentials wc
-				WHERE wc.user_id=sp.user_id AND wc.revoked_at IS NULL
-			  )
-		)
-	`, targetReference).Scan(&eligible)
-	if err != nil || !eligible {
+		SELECT sp.user_id::text
+		FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+		WHERE sp.user_id=$1::uuid
+		  AND sp.enabled=TRUE
+		  AND sp.mfa_enrolled_at IS NULL
+		  AND i.disabled_at IS NULL
+		  AND i.email_verified_at IS NOT NULL
+		  AND EXISTS (
+			SELECT 1 FROM testagram_auth.staff_role_grants rg
+			WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM testagram_auth.staff_webauthn_credentials wc
+			WHERE wc.user_id=sp.user_id AND wc.revoked_at IS NULL
+		  )
+		FOR UPDATE OF sp,i
+	`, targetReference).Scan(&lockedTarget)
+	if err != nil || lockedTarget != targetReference {
 		return errors.New("target is not an active, verified, unenrolled staff principal")
 	}
 
