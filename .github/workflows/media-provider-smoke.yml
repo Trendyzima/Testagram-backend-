@@ -163,7 +163,7 @@ jobs:
           b2_host="$(python3 -c 'import sys,urllib.parse; print((urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower().rstrip("."))' "$MEDIA_SMOKE_B2_ENDPOINT")"
           [[ -n "$r2_host" && -n "$b2_host" && "$r2_host" != "$b2_host" ]] || { echo "::error::Three-provider media B2 and R2 endpoints must resolve to distinct hostnames"; exit 1; }
           for provider in R2 B2; do
-            for namespace in PRIVATE PUBLIC IDENTITY; do
+            for namespace in PRIVATE PUBLIC; do
               name="MEDIA_SMOKE_${provider}_${namespace}_BUCKET"
               bucket="${!name:-}"
               [[ -n "$bucket" ]] || { echo "::error::Missing dedicated staging bucket: $name"; exit 1; }
@@ -172,8 +172,7 @@ jobs:
             done
             private="MEDIA_SMOKE_${provider}_PRIVATE_BUCKET"
             public="MEDIA_SMOKE_${provider}_PUBLIC_BUCKET"
-            identity="MEDIA_SMOKE_${provider}_IDENTITY_BUCKET"
-            [[ "${!private}" != "${!public}" && "${!private}" != "${!identity}" && "${!public}" != "${!identity}" ]] || { echo "::error::$provider namespace buckets must be distinct"; exit 1; }
+            [[ "${!private}" != "${!public}" ]] || { echo "::error::$provider private and public general-media buckets must be distinct"; exit 1; }
           done
       - name: Verify upload, three independent SHA-256 copies, restore, repair and tombstone deletion
         run: go test -count=1 -run '^TestLiveMediaReplicationLifecycle$' -v ./internal/virtualstorage
