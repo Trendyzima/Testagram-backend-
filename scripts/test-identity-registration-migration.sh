@@ -62,6 +62,7 @@ for migration in \
   migrations/20261121_native_identity_intake_optional_fingerprint.sql \
   migrations/20261121_native_staff_webauthn.sql \
   migrations/061_native_sensitive_action_integrity.sql \
+  migrations/20261127_native_staff_lifecycle_executor.sql \
   migrations/20261124_testagram_email_verification_otp.sql; do
   psql_ci < "$migration"
 done
@@ -96,6 +97,8 @@ psql_ci < migrations/20261120_native_verification_decider.sql
 psql_ci < migrations/20261121_native_identity_intake_optional_fingerprint.sql
 psql_ci < migrations/20261121_native_staff_webauthn.sql
 psql_ci < migrations/061_native_sensitive_action_integrity.sql
+psql_ci < migrations/20261127_native_staff_lifecycle_executor.sql
+psql_ci < migrations/20261127_native_staff_lifecycle_executor.sql
 psql_ci < migrations/061_native_sensitive_action_integrity.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
 psql_ci < migrations/20261122_testagram_mail_outbox.sql
