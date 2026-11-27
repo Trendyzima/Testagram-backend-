@@ -120,6 +120,14 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("identity_evidence_deleted", sql)
         self.assertIn("verification_events_append_only", (ROOT / "migrations" / "20261114_native_identity_integrity.sql").read_text(encoding="utf-8"))
         self.assertIn("identity evidence retention quarantine and physical deletion audit", SOURCE)
+        migration_script = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+        legacy_provisioning = "psql_ci < migrations/20261116_native_approved_identity_provisioning.sql"
+        retention_reapply = f"psql_ci < migrations/{migration}"
+        self.assertGreater(
+            migration_script.rindex(retention_reapply),
+            migration_script.rindex(legacy_provisioning),
+            "retention event types must be restored after the legacy provisioning migration resets the event CHECK",
+        )
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
