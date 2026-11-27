@@ -146,7 +146,7 @@ if [[ "$(git -C "$DATACENTRE" rev-parse --is-shallow-repository)" == "true" ]]; 
   git -C "$DATACENTRE" fetch --unshallow origin main
 fi
 DATA_CENTRE_RUNTIME_SHA="$(git -C "$DATACENTRE" log -1 --format=%H -- \
-  go.mod go.sum internal/videomedia backend/services/media backend/services/video \
+  go.mod go.sum internal/videomedia backend/internal/nativeauth backend/services/media backend/services/video \
   backend/services/video-worker .github/workflows/publish-runtime-images.yml)"
 [[ "$DATA_CENTRE_RUNTIME_SHA" =~ ^[a-f0-9]{40}$ ]] || {
   echo "::error::Could not resolve the Data Centre media/video runtime source revision."
