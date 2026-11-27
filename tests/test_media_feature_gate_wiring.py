@@ -58,7 +58,9 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
         self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
         self.assertIn("B2 identity-evidence bucket ACL is private", self.workflow)
-        self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow + self.deployer)
+        self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow)
+        self.assertNotIn("DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
+        self.assertNotIn("write_dc_env_value CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
         self.assertIn("provider-native privacy was verified by the deployment workflow", self.deployer)
 
     def test_pinned_minio_client_alias_commands_use_supported_flags(self):
