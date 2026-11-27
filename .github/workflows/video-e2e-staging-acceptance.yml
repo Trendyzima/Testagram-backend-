@@ -66,6 +66,22 @@ jobs:
           fi
           flutter pub get
           flutter analyze integration_test/video_feed_staging_test.dart
+      - name: Record exact Backend harness and Flutter client source revisions
+        id: revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          client_sha="$(git -C flutter-client rev-parse HEAD)"
+          echo "flutter_client_sha=$client_sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Staging acceptance source revisions"
+            echo "- Backend acceptance harness: $GITHUB_SHA"
+            echo "- Flutter client tested on Android: $client_sha"
+            echo "- These are source revisions, not proof of deployed service image digests."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify native login, refresh rotation, replay and session revocation on the same staging API
+        if: inputs.confirm_staging_only == true
+        run: python3 scripts/native-auth-staging-smoke.py
       - name: Install FFmpeg for disposable MP4 fixture
         run: |
           sudo apt-get update
