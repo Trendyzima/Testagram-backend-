@@ -44,7 +44,7 @@ func (s *service) identityEvidenceCreateUploadURL(ctx context.Context, ownerID, 
 }
 
 // Verify the uploaded object in the Data Centre's dedicated Backblaze B2 bucket and wait for its protected state. No cross-provider replica is involved.
-func (s *service) identityEvidenceVerifyAndReplicate(ctx context.Context, ownerID, objectKey, contentType string, size int64, sha256Hex string) error {
+func (s *service) identityEvidenceVerifyAndProtect(ctx context.Context, ownerID, objectKey, contentType string, size int64, sha256Hex string) error {
 	if s.identityEvidenceMedia == nil {
 		return errors.New("private Data Centre identity evidence service is not configured")
 	}

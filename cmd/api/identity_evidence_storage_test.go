@@ -84,7 +84,7 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 	if err != nil || uploadURL != "https://b2.example/signed-upload" {
 		t.Fatalf("upload URL = %q, %v", uploadURL, err)
 	}
-	if err := svc.identityEvidenceVerifyAndReplicate(ctx, owner, key, "image/jpeg", 1024, digest); err != nil {
+	if err := svc.identityEvidenceVerifyAndProtect(ctx, owner, key, "image/jpeg", 1024, digest); err != nil {
 		t.Fatalf("verify and replicate: %v", err)
 	}
 	if err := svc.identityEvidenceDelete(ctx, owner, key); err != nil {
