@@ -25,7 +25,7 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready", "namespace": "identity-evidence-private", "provider": "backblaze_b2", "primary": "verified"})
 	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/upload-url", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("X-Testagram-API-Version") != "1" {
@@ -44,11 +44,11 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 		if input.OwnerID != owner || input.Namespace != identityEvidenceNamespace || input.Key != key || input.ContentType != "image/jpeg" || input.SizeBytes != 1024 {
 			t.Fatalf("unexpected identity evidence upload request: %+v", input)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"intent_id": "intent-1", "upload_url": "https://b2.example/signed-upload", "expires_at": time.Now().Add(10 * time.Minute), "max_bytes": 1024, "primary": "backblaze_b2"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"intent_id": "intent-1", "upload_url": "https://s3.us-west-004.backblazeb2.com/signed-upload", "expires_at": time.Now().Add(10 * time.Minute), "max_bytes": 1024, "primary": "backblaze_b2"})
 	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/verify", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "replication_pending", "sha256": digest})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "protected", "sha256": digest})
 	})
 	mux.HandleFunc("GET /internal/v1/identity-evidence/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("owner_id") != owner || r.URL.Query().Get("namespace") != identityEvidenceNamespace || r.URL.Query().Get("key") != key {
@@ -81,7 +81,7 @@ func TestIdentityEvidenceUsesPrivateDataCentreLifecycle(t *testing.T) {
 		t.Fatalf("storage readiness: %v", err)
 	}
 	uploadURL, err := svc.identityEvidenceCreateUploadURL(ctx, owner, key, "image/jpeg", 1024)
-	if err != nil || uploadURL != "https://b2.example/signed-upload" {
+	if err != nil || uploadURL != "https://s3.us-west-004.backblazeb2.com/signed-upload" {
 		t.Fatalf("upload URL = %q, %v", uploadURL, err)
 	}
 	if err := svc.identityEvidenceVerifyAndProtect(ctx, owner, key, "image/jpeg", 1024, digest); err != nil {
