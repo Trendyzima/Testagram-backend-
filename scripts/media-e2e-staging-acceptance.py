@@ -154,7 +154,7 @@ def main() -> None:
             fail("Backend returned an invalid media upload intent")
         upload_url = urllib.parse.urljoin(api + "/", upload_path)
         parsed_upload = urllib.parse.urlsplit(upload_url)
-        if parsed_upload.scheme != "https" or parsed_upload.hostname != api_host:
+        if parsed_upload.scheme != "https" or (parsed_upload.hostname or "").lower().rstrip(".") != api_host or parsed_upload.username or parsed_upload.password or parsed_upload.fragment:
             fail("Upload gateway URL escaped the authenticated staging Backend origin")
         put_status, _, _ = raw_request(upload_url, method="PUT",
                                        headers={"Authorization": f"Bearer {access}", "Content-Type": "image/png"},
