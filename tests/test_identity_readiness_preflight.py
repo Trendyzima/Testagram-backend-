@@ -32,7 +32,7 @@ class IdentityReadinessPreflightTests(unittest.TestCase):
             503, {"error": {"code": "IDENTITY_STORAGE_UNAVAILABLE"}}
         )
         self.assertFalse(ready)
-        self.assertIn("private evidence storage", message)
+        self.assertIn("Private evidence storage", message)
 
     def test_reports_missing_policy_versions(self):
         ready, message = MODULE.classify_response(
