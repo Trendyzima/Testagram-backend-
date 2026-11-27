@@ -51,6 +51,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261124_testagram_social_email_consent.sql",
             "20261125_testagram_mail_delivery_events.sql",
             "20261126_testagram_native_mail_feedback.sql",
+            "20261127_identity_evidence_retention_audit.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -104,6 +105,21 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("LookupMX", (ROOT / "cmd/api/mail_smtp.go").read_text(encoding="utf-8"))
         self.assertIn("List-Unsubscribe-Post", (ROOT / "cmd/api/mail.go").read_text(encoding="utf-8"))
         self.assertIn("socialEmailUnsubscribe", (ROOT / "cmd/api/mail_unsubscribe.go").read_text(encoding="utf-8"))
+
+    def test_identity_evidence_retention_audit_migration_is_mounted_and_applied(self):
+        migration = "20261127_identity_evidence_retention_audit.sql"
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        sql = (ROOT / "migrations" / migration).read_text(encoding="utf-8")
+        self.assertIn(
+            f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
+            compose,
+        )
+        self.assertIn(f"apply_migration {migration}", SOURCE)
+        self.assertIn(migration, SOURCE.split("for file in", 1)[1].split("; do", 1)[0])
+        self.assertIn("identity_evidence_quarantined", sql)
+        self.assertIn("identity_evidence_deleted", sql)
+        self.assertIn("verification_events_append_only", (ROOT / "migrations" / "20261115_identity_evidence_access_audit.sql").read_text(encoding="utf-8"))
+        self.assertIn("identity evidence retention quarantine and physical deletion audit", SOURCE)
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
