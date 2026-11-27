@@ -106,6 +106,10 @@ func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "WebAuthn elevation does not belong to the authenticated staff principal"})
 		return
 	}
+	if !strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"), "true") {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Staff WebAuthn enrollment is closed by production policy"})
+		return
+	}
 	targetID := strings.TrimSpace(r.PathValue("id"))
 	if len(targetID) != 36 || !regexp.MustCompile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$").MatchString(targetID) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A canonical staff UUID is required"})
