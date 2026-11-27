@@ -10,6 +10,10 @@ Public self-service signup at `/api/auth/signup` is intentionally fail-closed an
 
 The normal Backend CI exercises PostgreSQL identity schema and session lifecycle invariants, including refresh-token rotation, replay detection, logout, logout-all, and concurrent refresh attempts. Flutter CI exercises secure refresh-token persistence, in-memory access tokens, refresh retry after a 401, and sign-out behavior. API contract CI validates the published native-auth routes and security scheme.
 
+## Registration readiness preflight
+
+The manual workflow `.github/workflows/identity-registration-readiness.yml` checks the live registration prerequisites without creating an applicant. It sends deliberately invalid applicant fields to `/api/identity/applications`; the only passing response is HTTP 400 `INVALID_REGISTRATION_APPLICATION`, which is reached after the Backend has checked the explicit identity-review feature gate, the PostgreSQL/WebAuthn quorum, the private Admin Console attestation, private evidence storage and registration policy versions. It refuses canonical production hosts and performs no application, evidence, account or email write. This is a readiness diagnostic, not proof that an applicant can complete evidence review or receive an account.
+
 ## Deployed staging acceptance
 
 The workflow `.github/workflows/native-auth-staging-smoke.yml` is manual and staging-only. It exercises the deployed API in this order:
