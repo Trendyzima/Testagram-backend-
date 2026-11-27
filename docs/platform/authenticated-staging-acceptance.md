@@ -14,7 +14,6 @@ The workflow uses the `staging` GitHub Actions environment. It does not deploy s
 Environment variables:
 - `TESTAGRAM_STAGING_API_URL` — HTTPS origin of the isolated staging Backend API.
 - `TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED=true` — confirms the staging Backend is configured with FRESH_MEDIA_ENABLED.
-- `TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED=true` — confirms the staging Backend is configured with DATA_CENTRE_MEDIA_ENABLED.
 - `TESTAGRAM_STAGING_CDN_BASE_URL` — HTTPS origin of the staging private-media CDN.
 - `TESTAGRAM_STAGING_B2_HOST` — hostname only for the staging Backblaze B2 S3 endpoint.
 - `TESTAGRAM_STAGING_R2_HOST` — hostname only for the staging Cloudflare R2 S3 endpoint.
