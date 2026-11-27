@@ -423,6 +423,7 @@ write_env_value CLOUDFLARE_EMAIL_API_TOKEN ""
 write_env_value VIRTUAL_STORAGE_ENABLED true
 # Remove the retired R2 identity bucket setting from older VPS environments.
 write_env_value CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET ""
+write_env_value IDENTITY_EVIDENCE_PRIVATE_BUCKET ""
 write_env_value B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET ""
 write_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
 write_env_value TESTAGRAM_TERMS_VERSION "$TESTAGRAM_TERMS_VERSION"
