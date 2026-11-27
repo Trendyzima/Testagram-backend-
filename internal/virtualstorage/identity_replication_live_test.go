@@ -3,10 +3,6 @@ package virtualstorage
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
