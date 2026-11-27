@@ -227,6 +227,22 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("Backend acceptance harness: $GITHUB_SHA", workflow)
         self.assertIn("Flutter client tested on Android: $client_sha", workflow)
 
+    def test_data_centre_media_staging_smoke_fails_closed_when_feature_flag_is_off(self):
+        script = ROOT / "scripts/media-e2e-staging-acceptance.py"
+        result = subprocess.run(
+            ["python3", str(script)],
+            env={
+                **os.environ,
+                "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "false",
+                "TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED": "true",
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("must explicitly enable FRESH_MEDIA_ENABLED", result.stderr)
+
     def test_native_auth_staging_smoke_refuses_canonical_production_hosts(self):
         script = ROOT / "scripts/native-auth-staging-smoke.py"
         for host in ("api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site", "cdn.testagram.site", "api.testagram.site."):
