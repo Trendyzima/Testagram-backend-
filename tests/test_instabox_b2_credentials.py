@@ -31,7 +31,7 @@ class TestInstaBoxB2ApplicationKeyWiring(unittest.TestCase):
     def test_rejects_r2_style_or_malformed_keys_before_b2_bucket_operations(self):
         key_id_check = self.workflow.index("The Backblaze B2 application key ID must be 25 characters")
         secret_check = self.workflow.index("The Backblaze B2 provisioning key is too short")
-        bucket_create = self.workflow.index('mc mb --ignore-existing "b2/$B2_BUCKET"')
+        bucket_create = self.workflow.index('mc mb --ignore-existing "b2_provision/$B2_BUCKET"')
         self.assertLess(key_id_check, bucket_create)
         self.assertLess(secret_check, bucket_create)
         self.assertIn("${#B2_ACCESS_KEY_ID} -ne 25", self.workflow)
