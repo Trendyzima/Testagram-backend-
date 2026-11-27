@@ -869,7 +869,7 @@ func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusNotFound, errorBody("EVIDENCE_NOT_FOUND", "Evidence upload was not found", requestID(r)))
 		return
 	}
-	if err := s.identityEvidenceVerifyAndReplicate(ctx, access.ApplicationID, objectKey, contentType, size, hex.EncodeToString(digest)); err != nil {
+	if err := s.identityEvidenceVerifyAndProtect(ctx, access.ApplicationID, objectKey, contentType, size, hex.EncodeToString(digest)); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("EVIDENCE_REPLICATION_INCOMPLETE", "Evidence was received but could not be verified across all private storage providers. Retry submission.", requestID(r)))
 		return
 	}
