@@ -228,6 +228,10 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("integration_test/native_auth_staging_test.dart", workflow)
         self.assertIn("TESTAGRAM_STAGING_AUTH_EMAIL", workflow)
         self.assertIn("TESTAGRAM_STAGING_AUTH_PASSWORD", workflow)
+        android_auth = workflow.index("integration_test/native_auth_staging_test.dart")
+        android_video = workflow.index("integration_test/video_feed_staging_test.dart")
+        self.assertLess(android_auth, android_video)
+        self.assertIn("TESTAGRAM_API_URL=$TESTAGRAM_STAGING_API_URL", workflow)
 
     def test_data_centre_media_staging_smoke_fails_closed_when_feature_flag_is_off(self):
         script = ROOT / "scripts/media-e2e-staging-acceptance.py"
