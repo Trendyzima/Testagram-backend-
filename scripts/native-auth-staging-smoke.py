@@ -26,7 +26,7 @@ def request(base: str, path: str, *, method: str = "GET", body: dict | None = No
         headers["Authorization"] = f"Bearer {bearer}"
     req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=20) as response:
+        with OPENER.open(req, timeout=20) as response:
             raw = response.read(1 << 20)
             status = response.status
     except urllib.error.HTTPError as error:
