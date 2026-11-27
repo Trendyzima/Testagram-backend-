@@ -176,7 +176,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             ROOT / ".github/workflows/media-provider-smoke.yml"
         ).read_text()
         self.assertIn("Retired", identity_smoke)
-        self.assertIn("Testagram-data-centre-/.github/workflows/media-provider-smoke.yml", identity_smoke)
+        self.assertIn("Testagram-data-centre-/.github/workflows/media-provider-staging-acceptance.yml", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_R2_ENDPOINT", identity_smoke)
         self.assertIn("environment: media-staging", media_smoke)
