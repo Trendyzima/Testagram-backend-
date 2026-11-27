@@ -13,9 +13,9 @@ type identityEvidenceRetentionItem struct {
 }
 
 // runIdentityEvidenceRetentionWorker removes expired identity evidence from
-// every configured private storage provider. Quarantine is committed first so
+// the dedicated private Backblaze B2 identity-evidence bucket only. Quarantine is committed first so
 // expired evidence immediately disappears from reviewer queues; failed deletes
-// remain quarantined and are retried on the next pass.
+// remain quarantined and are retried against B2 on the next pass.
 func (s *service) runIdentityEvidenceRetentionWorker(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
