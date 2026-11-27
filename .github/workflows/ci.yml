@@ -745,7 +745,8 @@ jobs:
           policy_terms_expression = "$" + "{{ vars.TESTAGRAM_TERMS_VERSION || '2026-11-11' }}"
           policy_privacy_expression = "$" + "{{ vars.TESTAGRAM_PRIVACY_VERSION || '2026-11-11' }}"
           assert f"TESTAGRAM_TERMS_VERSION: {policy_terms_expression}" in deploy_workflow and f"TESTAGRAM_PRIVACY_VERSION: {policy_privacy_expression}" in deploy_workflow, "deployment must use the same existing policy-version defaults as the Flutter client when repository variables are absent"
-          assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in compose and "IDENTITY_EVIDENCE_PRIVATE_BUCKET" in minio_init and 'mc anonymous set none "local/$identity_bucket"' in minio_init, "identity evidence must use a dedicated private MinIO bucket"
+          assert "IDENTITY_EVIDENCE_PRIVATE_BUCKET" not in compose and "IDENTITY_EVIDENCE_PRIVATE_BUCKET" not in minio_init and "identity_bucket" not in minio_init, "identity evidence must never be stored in Backend/InstaBox MinIO"
+          assert "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" not in compose and "CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" not in compose, "provider identity bucket configuration must remain outside the Backend container"
           assert "CLOUDFLARE_R2_SECRET_ACCESS_KEY" in compose and "B2_S3_SECRET_ACCESS_KEY" in compose, "three-provider replication credentials must reach Backend only through environment mapping"
           deploy = deploy_workflow + "\n" + deploy_script
           assert "B2_S3_PUBLIC_BUCKET" in deploy and "CLOUDFLARE_R2_PUBLIC_BUCKET" in deploy and 'MEDIA_REPLICATION_ENABLED' in deploy, "deployment must wire distinct provider buckets and keep replication explicitly gated"
@@ -775,14 +776,16 @@ jobs:
           assert "20261113_identity_idswyft_intake.sql" not in identity_migration_test, "retired Idswyft intake migration must not be applied by identity CI"
           live_replication = Path("internal/virtualstorage/identity_replication_live_test.go").read_text()
           provider_smoke = Path(".github/workflows/media-provider-smoke.yml").read_text()
-          assert "TestLiveIdentityEvidenceReplicationLifecycle" in live_replication and "TestLiveIdentityEvidenceReplicationLifecycle" in provider_smoke and "confirm_live_provider_writes" in provider_smoke, "identity evidence must have an explicit, gated live MinIO/B2/R2 lifecycle acceptance test"
+          identity_acceptance = Path("docs/identity-evidence-staging-acceptance.md").read_text()
+          assert "TestLiveIdentityEvidenceReplicationLifecycle" not in live_replication and "identity-evidence-replication:" not in provider_smoke, "Backend must not run a multi-provider identity-evidence smoke"
+          assert "MEDIA_SMOKE_R2_IDENTITY_BUCKET" not in provider_smoke and "MEDIA_SMOKE_B2_IDENTITY_BUCKET" not in provider_smoke and "dedicated private Backblaze B2 identity-evidence bucket" in identity_acceptance and "media-provider-staging-acceptance.yml" in identity_acceptance, "identity evidence must use the Data Centre's dedicated B2-only acceptance path"
           identity_smoke_workflow = Path(".github/workflows/identity-evidence-staging-smoke.yml").read_text()
-          assert "workflow_dispatch:" in identity_smoke_workflow and "Retired" in identity_smoke_workflow and "Testagram-data-centre-/.github/workflows/media-provider-smoke.yml" in identity_smoke_workflow, "Backend-local identity evidence smoke must be retired in favor of the Data Centre provider lifecycle"
+          assert "workflow_dispatch:" in identity_smoke_workflow and "Retired" in identity_smoke_workflow and "Testagram-data-centre-/.github/workflows/media-provider-staging-acceptance.yml" in identity_smoke_workflow, "Backend-local identity evidence smoke must be retired in favor of the Data Centre provider lifecycle"
           assert "IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET" not in identity_smoke_workflow and "IDENTITY_SMOKE_R2_IDENTITY_BUCKET" not in identity_smoke_workflow and "IDENTITY_SMOKE_B2_IDENTITY_BUCKET" not in identity_smoke_workflow, "retired Backend-local identity smoke must not access provider buckets"
-          replica = Path("internal/virtualstorage/replication.go").read_text()
+          evidence_storage = Path("cmd/api/identity_evidence_storage.go").read_text()
           reviewer_evidence = Path("cmd/api/identity_review.go").read_text()
           reviewer_tests = Path("cmd/api/identity_review_evidence_test.go").read_text()
-          assert "RestorePrimary" in replica and "ReplicaDownloadURLs" in replica and "fetchIdentityEvidenceBytes" in reviewer_evidence, "reviewer evidence must fail over only to checksum-verified replicas and restore the VPS primary"
+          assert "identityEvidenceMedia.DownloadURL" in evidence_storage and "fetchIdentityEvidenceBytes" in reviewer_evidence and "ReplicaDownloadURLs" not in evidence_storage and "RestorePrimary" not in evidence_storage, "reviewer evidence must stream only from the Data Centre's verified B2 object; no provider replica fallback"
           assert "TestFetchIdentityEvidenceBytesRejectsChecksumMismatch" in reviewer_tests and "TestFetchIdentityEvidenceBytesDoesNotFollowRedirects" in reviewer_tests, "reviewer evidence proxy must reject corrupt and redirected object responses"
           admin = Path("admin-console/main.go").read_text()
           admin_security = Path("admin-console/security.go").read_text()

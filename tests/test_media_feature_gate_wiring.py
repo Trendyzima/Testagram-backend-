@@ -57,9 +57,11 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
 
     def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
         self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
-        self.assertIn("Verified R2 identity-evidence bucket has r2.dev disabled", self.workflow)
         self.assertIn("B2 identity-evidence bucket ACL is private", self.workflow)
-        self.assertIn("provider-native privacy was verified by the deployment workflow", self.deployer)
+        self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow)
+        self.assertNotIn("DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
+        self.assertNotIn("write_dc_env_value CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
+        self.assertIn("identity evidence has no R2 or InstaBox storage copy", self.deployer)
 
     def test_pinned_minio_client_alias_commands_use_supported_flags(self):
         for source in (self.workflow, self.deployer):
@@ -73,20 +75,10 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_production_evidence_bucket_names_are_dedicated_and_provisioned_private(self):
         for token in (
             "testagram-identity-evidence-production-b2",
-            "testagram-identity-evidence-production-r2",
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
-            '/domains/managed',
-            '''body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")''',
-            '''request = urllib.request.Request(''',
-            '''"Content-Type": "application/json"''',
-            'managed_status="$(cat "$managed_status_file")"',
-            'result.enabled == false',
-            '/domains/custom',
             'mc stat "b2/$B2_BUCKET"',
-            'mc stat "r2/$R2_IDENTITY_BUCKET"',
             "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
-            "CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
@@ -183,15 +175,16 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             ROOT / ".github/workflows/media-provider-smoke.yml"
         ).read_text()
         self.assertIn("Retired", identity_smoke)
-        self.assertIn("Testagram-data-centre-/.github/workflows/media-provider-smoke.yml", identity_smoke)
+        self.assertIn("Testagram-data-centre-/.github/workflows/media-provider-staging-acceptance.yml", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_R2_ENDPOINT", identity_smoke)
         self.assertIn("environment: media-staging", media_smoke)
         self.assertIn("B2_ENDPOINT: ${{ vars.MEDIA_STAGING_B2_ENDPOINT }}", media_smoke)
         self.assertIn("B2_REGION: ${{ vars.MEDIA_STAGING_B2_REGION }}", media_smoke)
-        self.assertIn("environment: identity-evidence-staging", media_smoke)
-        self.assertIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_B2_ENDPOINT }}", media_smoke)
-        self.assertIn("IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_R2_ENDPOINT }}", media_smoke)
+        self.assertNotIn("environment: identity-evidence-staging", media_smoke)
+        self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT", media_smoke)
+        self.assertNotIn("IDENTITY_SMOKE_R2_ENDPOINT", media_smoke)
+        self.assertNotIn("MEDIA_SMOKE_R2_IDENTITY_BUCKET", media_smoke)
         self.assertNotIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
         self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
 
@@ -336,17 +329,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
 
 
-    def test_dedicated_identity_evidence_buckets_are_independent_of_legacy_replicator(self):
+    def test_identity_evidence_bucket_is_b2_only_and_independent_of_legacy_replicator(self):
         for token in (
             'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"',
-            'DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-r2}"',
             'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
             'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
-            'CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'mc stat "b2/$B2_BUCKET"',
-            'mc stat "r2/$R2_BUCKET"',
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
-            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'internal/v1/identity-evidence/readyz',
         ):
             with self.subTest(token=token):
@@ -428,7 +417,9 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
 
     def test_backend_provider_acceptance_requires_distinct_b2_r2_endpoints(self):
         workflow = (ROOT / ".github/workflows/media-provider-smoke.yml").read_text()
-        self.assertIn("Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames", workflow)
+        self.assertNotIn("Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames", workflow)
+        self.assertNotIn("MEDIA_SMOKE_R2_IDENTITY_BUCKET", workflow)
+        self.assertNotIn("Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames", workflow)
         self.assertIn("Three-provider media B2 and R2 endpoints must resolve to distinct hostnames", workflow)
 
 

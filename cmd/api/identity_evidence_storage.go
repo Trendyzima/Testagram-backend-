@@ -43,6 +43,7 @@ func (s *service) identityEvidenceCreateUploadURL(ctx context.Context, ownerID, 
 	return grant.UploadURL, nil
 }
 
+// Verify the uploaded object in the Data Centre's dedicated Backblaze B2 bucket and wait for its protected state. No cross-provider replica is involved.
 func (s *service) identityEvidenceVerifyAndReplicate(ctx context.Context, ownerID, objectKey, contentType string, size int64, sha256Hex string) error {
 	if s.identityEvidenceMedia == nil {
 		return errors.New("private Data Centre identity evidence service is not configured")
@@ -68,7 +69,7 @@ func (s *service) identityEvidenceVerifyAndReplicate(ctx context.Context, ownerI
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for Data Centre evidence replication: %w", ctx.Err())
+			return fmt.Errorf("timed out waiting for Data Centre B2 evidence verification: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}

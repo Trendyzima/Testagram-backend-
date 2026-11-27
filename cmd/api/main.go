@@ -1358,13 +1358,9 @@ func main() {
 			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "image/gif": {}, "image/avif": {},
 			"video/mp4": {}, "video/webm": {},
 		}
-		identityEvidenceTypes := map[string]struct{}{
-			"image/jpeg": {}, "image/png": {}, "image/webp": {}, "application/pdf": {},
-		}
 		virtualStorageManager, err = virtualstorage.New(provider, []virtualstorage.Namespace{
 			{Name: "media-private", PhysicalBucket: env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media"))), MaxObjectBytes: 500 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
 			{Name: "media-public", PhysicalBucket: env("MEDIA_PUBLIC_BUCKET", env("R2_PUBLIC_BUCKET", env("PUBLIC_MEDIA_BUCKET", "testagram-public-media"))), Public: true, MaxObjectBytes: 20 << 20, AllowedTypes: allowedTypes, UploadTTL: 10 * time.Minute, DownloadTTL: 5 * time.Minute},
-			{Name: "identity-evidence-private", PhysicalBucket: env("IDENTITY_EVIDENCE_PRIVATE_BUCKET", env("MEDIA_PRIVATE_BUCKET", env("R2_PRIVATE_BUCKET", env("MINIO_BUCKET", "testagram-private-media")))), MaxObjectBytes: 15 << 20, AllowedTypes: identityEvidenceTypes, UploadTTL: 5 * time.Minute, DownloadTTL: 5 * time.Minute},
 		})
 		if err != nil {
 			log.Fatalf("configure virtual storage namespaces: %v", err)
@@ -1375,7 +1371,7 @@ func main() {
 		if !virtualStorageEnabled || primaryVirtualStorageProvider == nil || virtualStorageManager == nil {
 			log.Fatal("MEDIA_REPLICATION_ENABLED=true requires VIRTUAL_STORAGE_ENABLED=true and the Instabox VPS primary S3 provider")
 		}
-		mediaReplicator, err = configureIdentityMediaReplicator(primaryVirtualStorageProvider)
+		mediaReplicator, err = configureMediaReplicator(primaryVirtualStorageProvider)
 		if err != nil {
 			log.Fatalf("configure durable media replication: %v", err)
 		}
@@ -1387,7 +1383,7 @@ func main() {
 		if err != nil || !mediaReplicationSchemaReady {
 			log.Fatal("MEDIA_REPLICATION_ENABLED requires the media replica ledger and outbox migrations to be applied")
 		}
-		log.Printf("durable media replication worker enabled (Instabox VPS + Cloudflare R2 + Backblaze B2)")
+		log.Printf("general media replication worker enabled (Instabox VPS + Cloudflare R2 + Backblaze B2); identity evidence is isolated in Data Centre Backblaze-only storage")
 	}
 	var replicationStore *replication.Store
 	var replicationReceiver http.Handler

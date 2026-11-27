@@ -14,6 +14,10 @@ The Backend now has an opt-in, durable object-replication path for virtual-stora
 
 The queue and placement ledger are private server-side metadata. Public-only cross-backend metadata replication remains a separate mechanism and never exports private object details.
 
+## Identity-evidence exclusion
+
+This Backend multi-provider worker handles ordinary media namespaces only (`media-private` and `media-public`). It must never accept or replicate `identity-evidence-private`. Identity-verification photos and documents are owned by the private Data Centre identity-evidence API and stored only in its dedicated private Backblaze B2 identity bucket. The Backend authorizes upload/reviewer access and verifies the Data Centre's B2 checksum/size/content-type response; it does not create an InstaBox MinIO, Cloudflare R2 or general-media replica for identity evidence. If the dedicated B2 object cannot be verified or read, identity registration/review fails closed. Disaster-recovery backup is a separately controlled encrypted backup, not a serving replica.
+
 ## Enablement contract
 
 Keep `MEDIA_REPLICATION_ENABLED=false` until all three providers are provisioned and the end-to-end object-origin suite has passed.

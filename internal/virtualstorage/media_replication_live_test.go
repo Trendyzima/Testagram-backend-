@@ -40,7 +40,7 @@ func liveMediaS3Provider(t *testing.T, prefix string) *S3Provider {
 
 func TestLiveMediaReplicationLifecycle(t *testing.T) {
 	if os.Getenv("TESTAGRAM_LIVE_MEDIA_REPLICATION") != "true" {
-		t.Skip("set TESTAGRAM_LIVE_MEDIA_REPLICATION=true with dedicated Instabox VPS, R2 and B2 staging buckets")
+		t.Skip("set TESTAGRAM_LIVE_MEDIA_REPLICATION=true with dedicated Instabox VPS, R2 and B2 general-media staging buckets")
 	}
 
 	instabox := liveMediaS3Provider(t, "MEDIA_SMOKE_INSTABOX")
@@ -50,17 +50,14 @@ func TestLiveMediaReplicationLifecycle(t *testing.T) {
 	instaboxBuckets := map[string]string{
 		"media-private":           liveMediaRequiredEnv(t, "MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET"),
 		"media-public":            liveMediaRequiredEnv(t, "MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET"),
-		"identity-evidence-private": liveMediaRequiredEnv(t, "MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET"),
 	}
 	r2Buckets := map[string]string{
 		"media-private":           liveMediaRequiredEnv(t, "MEDIA_SMOKE_R2_PRIVATE_BUCKET"),
 		"media-public":            liveMediaRequiredEnv(t, "MEDIA_SMOKE_R2_PUBLIC_BUCKET"),
-		"identity-evidence-private": liveMediaRequiredEnv(t, "MEDIA_SMOKE_R2_IDENTITY_BUCKET"),
 	}
 	b2Buckets := map[string]string{
 		"media-private":           liveMediaRequiredEnv(t, "MEDIA_SMOKE_B2_PRIVATE_BUCKET"),
 		"media-public":            liveMediaRequiredEnv(t, "MEDIA_SMOKE_B2_PUBLIC_BUCKET"),
-		"identity-evidence-private": liveMediaRequiredEnv(t, "MEDIA_SMOKE_B2_IDENTITY_BUCKET"),
 	}
 	for name, buckets := range map[string]map[string]string{
 		"Instabox VPS": instaboxBuckets, "Cloudflare R2": r2Buckets, "Backblaze B2": b2Buckets,
@@ -93,7 +90,6 @@ func TestLiveMediaReplicationLifecycle(t *testing.T) {
 	}{
 		{namespace: "media-private", contentType: "image/webp", payload: []byte("TESTAGRAM-PRIVATE-MEDIA-STAGING-CONTENT\n")},
 		{namespace: "media-public", contentType: "image/webp", payload: []byte("TESTAGRAM-PUBLIC-MEDIA-STAGING-CONTENT\n")},
-		{namespace: "identity-evidence-private", contentType: "application/pdf", payload: []byte("%PDF-1.7\nTESTAGRAM-IDENTITY-EVIDENCE-STAGING\n%%EOF\n")},
 	}
 
 	for _, testCase := range cases {
