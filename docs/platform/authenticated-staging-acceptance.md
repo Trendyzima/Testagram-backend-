@@ -9,6 +9,8 @@ It requires all three explicit workflow confirmations:
 
 The workflow uses the `staging` GitHub Actions environment. It does not deploy services or change production.
 
+The Android AuthScreen integration step requires Flutter PR #166 to be merged to the Flutter default branch first, because this workflow checks out Flutter `main` and runs `integration_test/native_auth_staging_test.dart`. Backend PR #576 must also be merged before this workflow is available on Backend `main`.
+
 ## Required staging environment
 
 Environment variables:
