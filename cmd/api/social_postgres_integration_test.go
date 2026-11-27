@@ -90,6 +90,24 @@ RETURNING attempts`, rateBucket).Scan(&attempts)
 		}
 	}
 
+	// Defensive JSONB filtering must not error if legacy media metadata is
+	// encountered outside the current posts-table array constraint.
+	var ordinarySearchAllowed, mediaOnlySearchAllowed bool
+	mediaPredicate := `NOT $1::boolean OR CASE
+		WHEN jsonb_typeof($2::jsonb)='array' THEN jsonb_array_length($2::jsonb)>0
+		ELSE false
+	END`
+	legacyMediaJSON := `{"legacy":"object"}`
+	if err := tx.QueryRow(ctx, `SELECT `+mediaPredicate, false, legacyMediaJSON).Scan(&ordinarySearchAllowed); err != nil {
+		t.Fatalf("ordinary search over legacy media metadata: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT `+mediaPredicate, true, legacyMediaJSON).Scan(&mediaOnlySearchAllowed); err != nil {
+		t.Fatalf("media-only search over legacy media metadata: %v", err)
+	}
+	if !ordinarySearchAllowed || mediaOnlySearchAllowed {
+		t.Fatalf("legacy media metadata search allowed ordinary/media-only = %v/%v, want true/false", ordinarySearchAllowed, mediaOnlySearchAllowed)
+	}
+
 	// Post media references are native storage object keys in PostgreSQL;
 	// there is no PostgREST media_assets/post_media join.
 	mediaKey := "tenants/" + authorID + "/integration-" + suffix + ".jpg"
@@ -331,14 +349,14 @@ WHERE p.author_id=$2 AND p.deleted_at IS NULL AND a.account_status='active'
 				JOIN testagram_local.accounts a ON a.user_id=f.follower_id
 				WHERE f.following_id=$1 AND f.status='accepted' AND a.account_status='active'`,
 			owner: authorID,
-			want: viewerID,
+			want:  viewerID,
 		},
 		"following": {
 			query: `SELECT a.user_id::text FROM testagram_local.follows f
 				JOIN testagram_local.accounts a ON a.user_id=f.following_id
 				WHERE f.follower_id=$1 AND f.status='accepted' AND a.account_status='active'`,
 			owner: viewerID,
-			want: authorID,
+			want:  authorID,
 		},
 	}
 	for kind, fixture := range connectionQueries {

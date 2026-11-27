@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Verify pinned Go CDN image, scratch healthcheck and writable cache volume
         env:
-          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:bb7e1b067223cb7140e8cf10ee86562d039b0370d9d5c5f8dc1bef22e5d00b14
+          TESTAGRAM_CDN_IMAGE: ghcr.io/trendyzima/testagram-edge@sha256:37c7c68088bf3a6b04a243d3d0cf3c64633b33ac4d767775911808707eeda865
         run: |
           set -euo pipefail
           docker pull "$TESTAGRAM_CDN_IMAGE"
@@ -125,9 +125,12 @@ jobs:
           pin = re.search(r"(?m)^TESTAGRAM_CDN_IMAGE=(\S+)$", env_example)
           if "TESTAGRAM_CDN_IMAGE" not in image_template or not pin or "@sha256:" not in pin.group(1):
               raise SystemExit("Go CDN image must be pinned by immutable digest in the Compose environment.")
-          for source_path in (pathlib.Path("../../scripts/start-instabox-deployment.sh"), pathlib.Path("../../.github/workflows/self-hosted-stack.yml")):
-              if pin.group(1) not in source_path.read_text(encoding="utf-8"):
-                  raise SystemExit(f"CDN image pin differs from {source_path.name}.")
+          workflow_source = pathlib.Path("../../.github/workflows/self-hosted-stack.yml").read_text(encoding="utf-8")
+          if pin.group(1) not in workflow_source:
+              raise SystemExit("CDN image pin differs from the self-hosted validation workflow.")
+          deploy_source = pathlib.Path("../../scripts/start-instabox-deployment.sh").read_text(encoding="utf-8")
+          if not all(marker in deploy_source for marker in ("resolve_cdn_image", "CDN_RUNTIME_SHA", "org.opencontainers.image.revision", "RepoDigests")):
+              raise SystemExit("Deployment script must resolve the Go CDN image from its source revision and verify its immutable digest.")
           if env.get("LISTEN_ADDR") != ":8081":
               raise SystemExit("Go CDN must listen on the Caddy/Instabox internal port 8081.")
           if env.get("ORIGIN_URL") != "http://api:8080":
@@ -294,6 +297,7 @@ jobs:
           done
           result=$(docker compose exec -T postgres psql -U testagram -d testagram -v ON_ERROR_STOP=1 -Atc "select to_regclass('public.vps_nodes') is not null and to_regclass('public.vps_workloads') is not null and to_regclass('testagram_hosting.domains') is not null and to_regclass('testagram_hosting.recovery_drills') is not null and to_regclass('testagram_hosting.audit_events') is not null")
           test "$result" = "t"
+          COMPOSE_FILE="$PWD/docker-compose.yml" ENV_FILE="$PWD/.env" bash ../../scripts/check-social-search-schema.sh
           docker compose down -v
       - name: Ensure no live secrets were added to the example
         run: |

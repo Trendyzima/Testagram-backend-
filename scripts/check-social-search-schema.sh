@@ -44,6 +44,7 @@ required_columns(table_name, column_name) AS (
     ('testagram_local.accounts','avatar_key'),
     ('testagram_local.accounts','protected_account'),
     ('testagram_local.accounts','account_status'),
+    ('testagram_local.accounts','discoverable_by_username'),
     ('testagram_local.posts','id'),
     ('testagram_local.posts','author_id'),
     ('testagram_local.posts','text'),
