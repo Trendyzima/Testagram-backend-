@@ -22,7 +22,7 @@ func TestSensitiveActionPermissionMapping(t *testing.T) {
 		{"finance.execute", "finance.initiate", "finance.approve"},
 		{"security.change", "security.manage", "security.manage"},
 		{"deployment.production", "deployment.request", "deployment.approve"},
-		{"staff.webauthn.enroll", "staff.manage", "staff.manage"},
+		{"staff.webauthn.enroll", "staff.webauthn.enroll.approve", "staff.webauthn.enroll.approve"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.action, func(t *testing.T) {
@@ -202,6 +202,7 @@ func TestStaffWebAuthnEnrollmentEndpointRequiresDualControlLedger(t *testing.T) 
 		"first_approver_user_id<>second_approver_user_id",
 		"staff_webauthn_enrollment_authorization_is_valid",
 		"native_staff_webauthn_enrollment_approver_permission",
+		"staff.webauthn.enroll.approve",
 		"webauthn_enrollment_revoked",
 		"native_sensitive_action_approvals",
 		"consumed_at IS NULL AND revoked_at IS NULL",
