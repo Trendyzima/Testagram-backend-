@@ -623,6 +623,10 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 				return
 			}
 			if !canReviewIdentity { v.Payload = nil }
+		} else if v.ActionType == "staff.role_change" || v.ActionType == "staff.revoke" || v.ActionType == "staff.permission_change" || v.ActionType == "staff.webauthn.enroll" {
+			canManageStaff, permissionErr := a.hasPermission(user, "staff.manage")
+			if permissionErr != nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
+			if !canManageStaff { v.Payload = nil }
 		} else {
 			v.Payload = nil
 		}
