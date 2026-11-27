@@ -14,6 +14,14 @@ import urllib.request
 import zlib
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 PRODUCTION_HOSTS = {
     "api.testagram.site",
     "testagram.site",
@@ -49,7 +57,7 @@ def json_request(base: str, path: str, *, method: str = "GET", body: dict | None
         headers["Authorization"] = f"Bearer {bearer}"
     req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with OPENER.open(req, timeout=timeout) as response:
             raw, status = response.read(1 << 20), response.status
     except urllib.error.HTTPError as error:
         raw, status = error.read(1 << 20), error.code
@@ -68,7 +76,7 @@ def raw_request(url: str, *, method: str = "GET", headers: dict | None = None,
                 body: bytes | None = None, timeout: int = 45) -> tuple[int, dict, bytes]:
     req = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with OPENER.open(req, timeout=timeout) as response:
             return response.status, dict(response.headers.items()), response.read(32 << 20)
     except urllib.error.HTTPError as error:
         return error.code, dict(error.headers.items()), error.read(32 << 20)
@@ -185,7 +193,7 @@ def main() -> None:
         direct = envelope_data(status, envelope, {200}, "private Data Centre download grant")
         direct_url = direct.get("url", "")
         parsed_direct = urllib.parse.urlsplit(direct_url)
-        if parsed_direct.scheme != "https" or parsed_direct.hostname not in allowed_provider_hosts:
+        if parsed_direct.scheme != "https" or parsed_direct.hostname not in allowed_provider_hosts or parsed_direct.username or parsed_direct.password or parsed_direct.fragment:
             fail("Private download grant did not resolve to the configured staging B2/R2 origins")
         direct_status, direct_headers, direct_body = raw_request(direct_url)
         if direct_status != 200 or direct_body != payload or direct_headers.get("Content-Type", "").split(";")[0].strip() != "image/png":
@@ -198,18 +206,18 @@ def main() -> None:
         cdn_url = cdn_grant.get("url", "")
         cdn_authorization = cdn_grant.get("authorization", "")
         parsed_cdn = urllib.parse.urlsplit(cdn_url)
-        if parsed_cdn.scheme != "https" or parsed_cdn.hostname != cdn_host or not parsed_cdn.path.startswith("/v1/") or not cdn_authorization.startswith("Bearer "):
+        if parsed_cdn.scheme != "https" or parsed_cdn.hostname != cdn_host or parsed_cdn.username or parsed_cdn.password or parsed_cdn.fragment or not parsed_cdn.path.startswith("/v1/") or not cdn_authorization.startswith("Bearer "):
             fail("Private CDN grant did not target the configured staging CDN origin")
 
         anon_status, anon_headers, _ = raw_request(cdn_url)
         if anon_status not in (401, 403, 404):
             fail(f"Anonymous request to private CDN object was not denied (HTTP {anon_status})")
-        if "private" not in anon_headers.get("Cache-Control", "").lower() and "no-store" not in anon_headers.get("Cache-Control", "").lower():
+        if not all(marker in anon_headers.get("Cache-Control", "").lower() for marker in ("private", "no-store")):
             fail("Private CDN denial did not preserve private/no-store cache policy")
 
         viewer_headers = {"X-Testagram-Viewer-Authorization": cdn_authorization}
         cdn_status, cdn_headers, cdn_body = raw_request(cdn_url, headers=viewer_headers)
-        if cdn_status != 200 or cdn_body != payload or cdn_headers.get("Cache-Control", "").lower() != "private, no-store":
+        if cdn_status != 200 or cdn_body != payload or not all(marker in cdn_headers.get("Cache-Control", "").lower() for marker in ("private", "no-store")):
             fail("Authorized private CDN playback did not return exact bytes with private/no-store caching")
         range_status, range_headers, range_body = raw_request(
             cdn_url, headers={**viewer_headers, "Range": "bytes=0-3"}
@@ -245,10 +253,25 @@ def main() -> None:
     finally:
         if key and asset_ready and not deleted:
             try:
-                json_request(api, "/api/media/delete", method="POST", bearer=access,
-                             body={"key": key}, timeout=15)
+                for _ in range(10):
+                    cleanup_status, cleanup_envelope = json_request(
+                        api, "/api/media/delete", method="POST", bearer=access,
+                        body={"key": key}, timeout=15,
+                    )
+                    cleanup_data = cleanup_envelope.get("data")
+                    if cleanup_status == 200 and isinstance(cleanup_data, dict) and cleanup_data.get("status") == "deleted":
+                        deleted = True
+                        break
+                    if cleanup_status != 202 or not isinstance(cleanup_data, dict) or cleanup_data.get("status") != "deletion_pending":
+                        break
+                    time.sleep(1)
+                if not deleted:
+                    print("::warning::Automatic cleanup remains pending; inspect the unique staging object before rerunning.")
             except SystemExit:
                 print("::warning::Automatic cleanup attempt could not be confirmed; inspect the unique staging object before rerunning.")
+        elif key and not asset_ready:
+            print("::warning::The unique upload intent did not reach ready state; confirm the Backend janitor removes its expired upload and object.");
+
 
 
 if __name__ == "__main__":
