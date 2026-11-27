@@ -116,10 +116,9 @@ func (p *identityHTTPFakeProvider) CopyFromProvider(_ context.Context, source vi
 }
 
 type identityHTTPDataCentreMedia struct {
-	manager    *virtualstorage.Manager
-	replicator *virtualstorage.Replicator
-	mu         sync.Mutex
-	states     map[string]datacentreclient.MediaStatus
+	manager *virtualstorage.Manager
+	mu      sync.Mutex
+	states  map[string]datacentreclient.MediaStatus
 }
 
 func (m *identityHTTPDataCentreMedia) Ready(context.Context) error { return nil }
@@ -134,16 +133,13 @@ func (m *identityHTTPDataCentreMedia) CreateUploadURL(ctx context.Context, owner
 	return datacentreclient.UploadGrant{IntentID: "test-intent", UploadURL: uploadURL, ExpiresAt: time.Now().Add(5 * time.Minute), MaxBytes: size, Primary: "test-primary"}, nil
 }
 func (m *identityHTTPDataCentreMedia) Verify(ctx context.Context, owner, namespace, key, contentType, sha256Hex string, size int64) (datacentreclient.Verification, error) {
-	if m.manager == nil || m.replicator == nil {
-		return datacentreclient.Verification{}, errors.New("fake Data Centre replication unavailable")
+	if m.manager == nil {
+		return datacentreclient.Verification{}, errors.New("fake Data Centre B2 identity storage unavailable")
 	}
 	if _, err := m.manager.VerifyUpload(ctx, owner, namespace, key, contentType, size); err != nil {
 		return datacentreclient.Verification{}, err
 	}
 	if err := m.manager.VerifyUploadChecksum(ctx, owner, namespace, key, maxIdentityEvidenceBytes, sha256Hex); err != nil {
-		return datacentreclient.Verification{}, err
-	}
-	if _, err := m.replicator.Replicate(ctx, owner, namespace, key, size, contentType, sha256Hex); err != nil {
 		return datacentreclient.Verification{}, err
 	}
 	m.mu.Lock()
@@ -174,10 +170,10 @@ func (m *identityHTTPDataCentreMedia) DownloadURL(ctx context.Context, requester
 	return datacentreclient.DownloadGrant{URL: downloadURL, Provider: "test-primary"}, nil
 }
 func (m *identityHTTPDataCentreMedia) Delete(ctx context.Context, requester, owner, namespace, key string) (string, error) {
-	if m.replicator == nil {
-		return "", errors.New("fake Data Centre media replicator unavailable")
+	if m.manager == nil {
+		return "", errors.New("fake Data Centre B2 identity storage unavailable")
 	}
-	if err := m.replicator.Delete(ctx, owner, namespace, key); err != nil {
+	if err := m.manager.Delete(ctx, requester, owner, namespace, key); err != nil {
 		return "", err
 	}
 	m.mu.Lock()
@@ -228,27 +224,8 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	}))
 	defer primaryServer.Close()
 	primary.uploadBase = primaryServer.URL
-	replicaR2 := newIdentityHTTPFakeProvider()
-	replicaB2 := newIdentityHTTPFakeProvider()
-
 	buckets := map[string]string{
-		"media-private":           "primary-private",
-		"media-public":            "primary-public",
-		identityEvidenceNamespace: "primary-identity-evidence",
-	}
-	replicaBuckets := func(prefix string) map[string]string {
-		return map[string]string{
-			"media-private":           prefix + "-private",
-			"media-public":            prefix + "-public",
-			identityEvidenceNamespace: prefix + "-identity-evidence",
-		}
-	}
-	replicator, err := virtualstorage.NewReplicator("primary", primary, buckets, []virtualstorage.ReplicaTarget{
-		{Name: "r2", Provider: replicaR2, Buckets: replicaBuckets("r2")},
-		{Name: "b2", Provider: replicaB2, Buckets: replicaBuckets("b2")},
-	})
-	if err != nil {
-		t.Fatal(err)
+		identityEvidenceNamespace: "dedicated-b2-identity-evidence",
 	}
 	manager, err := virtualstorage.New(primary, []virtualstorage.Namespace{{
 		Name:           identityEvidenceNamespace,
@@ -331,7 +308,7 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	// This test isolates the evidence-media lifecycle after the separate
 	// PostgreSQL/Admin Console readiness integration has passed. The registration
 	// HTTP journey exercises the real readiness gate without a test override.
-	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager, replicator: replicator}, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
+	svc := &service{db: db, identityEvidenceMedia: &identityHTTPDataCentreMedia{manager: manager}, identityReviewWebAuthnReady: true, identityReviewWebAuthnPrerequisites: func(context.Context) bool { return true }}
 	router := svc.routes()
 
 	idempotencyKey, err := authRandomToken()
@@ -495,14 +472,14 @@ func TestNativeIdentityEvidenceHTTPUploadSubmitAndReplayIntegration(t *testing.T
 	if firstSubmit.Code != http.StatusAccepted || !strings.Contains(firstSubmit.Body.String(), `"status":"manual_review"`) {
 		t.Fatalf("evidence submission status=%d body=%s", firstSubmit.Code, firstSubmit.Body.String())
 	}
-	for providerName, provider := range map[string]*identityHTTPFakeProvider{"primary": primary, "r2": replicaR2, "b2": replicaB2} {
-		provider.mu.Lock()
-		count := len(provider.objects)
-		provider.mu.Unlock()
-		if count != 1 {
-			t.Fatalf("%s provider has %d objects after verified replication; want exactly one", providerName, count)
-		}
+	primary.mu.Lock()
+	identityObjectCount := len(primary.objects)
+	primary.mu.Unlock()
+	if identityObjectCount != 1 {
+		t.Fatalf("dedicated B2 identity bucket has %d objects after verification; want exactly one", identityObjectCount)
 	}
+	// This integration harness deliberately has no R2 or InstaBox provider
+	// attached to the identity namespace: the only evidence copy is in B2.
 
 	var eventCountBefore int
 	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.verification_events WHERE session_id=$1::uuid", created.SessionID).Scan(&eventCountBefore); err != nil {
