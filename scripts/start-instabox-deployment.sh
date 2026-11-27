@@ -135,9 +135,71 @@ TESTAGRAM_MAIL_EGRESS_IPV4="$(bash "$BACKEND/scripts/verify-instabox-native-mail
 export TESTAGRAM_MAIL_EGRESS_IPV4
 echo "Verified current InstaBox outbound SMTP IPv4 and PTR identity."
 sync_repo https://github.com/Trendyzima/Testagram-data-centre-.git "$DATACENTRE"
+
+sync_repo https://github.com/Trendyzima/cdn-.git "$REPOS/cdn"
+if [[ "$(git -C "$REPOS/cdn" rev-parse --is-shallow-repository)" == "true" ]]; then
+  git -C "$REPOS/cdn" fetch --unshallow origin main
+fi
+CDN_RUNTIME_SHA="$(git -C "$REPOS/cdn" log -1 --format=%H -- go.mod go.sum Dockerfile cmd internal .github/workflows/container-release.yml)"
+[[ "$CDN_RUNTIME_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+  echo "::error::Could not resolve the Go CDN runtime source revision."
+  exit 1
+}
+resolve_cdn_image() {
+  local image="$1" tag revision repo_digests digest
+  tag="$image:sha-$CDN_RUNTIME_SHA"
+  sudo docker pull "$tag"
+  revision="$(sudo docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$tag")"
+  if [[ "$revision" != "$CDN_RUNTIME_SHA" ]]; then
+    echo "::error::Go CDN image was built from $revision, expected $CDN_RUNTIME_SHA."
+    return 1
+  fi
+  repo_digests="$(sudo docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$tag")"
+  digest="$(grep -F "$image@sha256:" <<<"$repo_digests" | head -n 1 || true)"
+  if [[ ! "$digest" =~ ^ghcr\.io/trendyzima/testagram-edge@sha256:[a-f0-9]{64}$ ]]; then
+    echo "::error::Go CDN image did not resolve to an immutable GHCR manifest digest."
+    return 1
+  fi
+  printf '%s' "$digest"
+}
 sync_repo https://github.com/Trendyzima/the-algorithm.git "$REPOS/algorithm"
 sync_repo https://github.com/Trendyzima/federated-content.git "$REPOS/federated-content"
 sync_repo https://github.com/Trendyzima/testagram-flutter-client-.git "$REPOS/flutter-client"
+
+# Resolve the most recent source revision that can affect the Data Centre
+# media/video runtime. The image workflow publishes all three images for this
+# exact commit; a missing tag or mismatched OCI revision aborts deployment.
+if [[ "$(git -C "$DATACENTRE" rev-parse --is-shallow-repository)" == "true" ]]; then
+  git -C "$DATACENTRE" fetch --unshallow origin main
+fi
+DATA_CENTRE_RUNTIME_SHA="$(git -C "$DATACENTRE" log -1 --format=%H -- \
+  go.mod go.sum internal/videomedia backend/internal/nativeauth backend/services/media backend/services/video \
+  backend/services/video-worker .github/workflows/publish-runtime-images.yml)"
+[[ "$DATA_CENTRE_RUNTIME_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+  echo "::error::Could not resolve the Data Centre media/video runtime source revision."
+  exit 1
+}
+resolve_data_centre_image() {
+  local image="$1" tag revision repo_digests digest
+  tag="$image:sha-$DATA_CENTRE_RUNTIME_SHA"
+  sudo docker pull "$tag"
+  revision="$(sudo docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$tag")"
+  if [[ "$revision" != "$DATA_CENTRE_RUNTIME_SHA" ]]; then
+    echo "::error::Data Centre image $image was built from $revision, expected $DATA_CENTRE_RUNTIME_SHA."
+    return 1
+  fi
+  repo_digests="$(sudo docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$tag")"
+  digest="$(grep -E "^$image@sha256:[a-f0-9]{64}$" <<<"$repo_digests" | head -n 1 || true)"
+  if [[ ! "$digest" =~ ^ghcr\.io/trendyzima/testagram-(media|video|video-worker)@sha256:[a-f0-9]{64}$ ]]; then
+    echo "::error::Data Centre image $image did not resolve to an immutable GHCR manifest digest."
+    return 1
+  fi
+  printf '%s' "$digest"
+}
+TESTAGRAM_MEDIA_IMAGE="$(resolve_data_centre_image ghcr.io/trendyzima/testagram-media)"
+TESTAGRAM_VIDEO_IMAGE="$(resolve_data_centre_image ghcr.io/trendyzima/testagram-video)"
+TESTAGRAM_VIDEO_WORKER_IMAGE="$(resolve_data_centre_image ghcr.io/trendyzima/testagram-video-worker)"
+echo "Resolved Data Centre runtime images from source $DATA_CENTRE_RUNTIME_SHA (manifest digests verified)."
 
 BASE_ENV="$BACKEND/deploy/self-hosted/.env"
 BASE_COMPOSE="$BACKEND/deploy/self-hosted/docker-compose.yml"
@@ -445,7 +507,7 @@ if [[ "$FEDERATION_INGRESS_TOKEN" == "$FEDERATION_BACKEND_INTERNAL_TOKEN" ]]; th
 fi
 FEDERATION_INTERNAL_TOKEN="$FEDERATION_INGRESS_TOKEN"
 write_env_value FEDERATION_INTERNAL_TOKEN "$FEDERATION_INTERNAL_TOKEN"
-TESTAGRAM_CDN_IMAGE="ghcr.io/trendyzima/testagram-edge@sha256:bb7e1b067223cb7140e8cf10ee86562d039b0370d9d5c5f8dc1bef22e5d00b14"
+TESTAGRAM_CDN_IMAGE="$(resolve_cdn_image ghcr.io/trendyzima/testagram-edge)"
 write_env_value TESTAGRAM_CDN_IMAGE "$TESTAGRAM_CDN_IMAGE"
 # Preserve the exact immutable image selected by the protected deployment
 # workflow. For a recovery run without an override, retain only the previously
@@ -653,6 +715,9 @@ TESTAGRAM_EGRESS_NETWORK=testagram-egress
 TESTAGRAM_VIDEO_NETWORK=$TESTAGRAM_VIDEO_NETWORK
 TESTAGRAM_ALGORITHM_IMAGE=$TESTAGRAM_ALGORITHM_IMAGE
 TESTAGRAM_FEDERATION_IMAGE=$TESTAGRAM_FEDERATION_IMAGE
+TESTAGRAM_MEDIA_IMAGE=$TESTAGRAM_MEDIA_IMAGE
+TESTAGRAM_VIDEO_IMAGE=$TESTAGRAM_VIDEO_IMAGE
+TESTAGRAM_VIDEO_WORKER_IMAGE=$TESTAGRAM_VIDEO_WORKER_IMAGE
 ALGORITHM_INTERNAL_TOKEN=$ALGORITHM_INTERNAL_TOKEN
 FEDERATION_INTERNAL_TOKEN=$FEDERATION_INTERNAL_TOKEN
 FEDERATION_INGRESS_TOKEN=$FEDERATION_INGRESS_TOKEN
@@ -687,6 +752,9 @@ write_dc_env_value() {
 }
 
 write_dc_env_value TESTAGRAM_VIDEO_NETWORK "$TESTAGRAM_VIDEO_NETWORK"
+write_dc_env_value TESTAGRAM_MEDIA_IMAGE "$TESTAGRAM_MEDIA_IMAGE"
+write_dc_env_value TESTAGRAM_VIDEO_IMAGE "$TESTAGRAM_VIDEO_IMAGE"
+write_dc_env_value TESTAGRAM_VIDEO_WORKER_IMAGE "$TESTAGRAM_VIDEO_WORKER_IMAGE"
 
 read_dc_env_value() {
   sed -n "s/^$1=//p" "$DC_ENV" | tail -n 1
@@ -876,10 +944,19 @@ if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compo
     sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" config -q
   fi
   if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" run --rm migrate; then
-    if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" pull algorithm federation-api && sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build --force-recreate algorithm federation-api platform worker video-worker; then
+    if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" pull algorithm federation-api video video-worker && sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build --force-recreate algorithm federation-api platform worker video-worker; then
       overlay_status=core_services_running
       if sudo docker compose --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --build video notification; then
-        overlay_status=all_data_centre_services_running
+        if [[ "$media_enabled" == true ]]; then
+          if sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" pull media && sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" up -d --force-recreate media; then
+            overlay_status=all_data_centre_services_running
+          else
+            overlay_status=private_media_service_failed
+          fi
+        else
+          sudo docker compose --profile media --env-file "$DC_ENV" -f "$DATACENTRE/backend/docker-compose.yml" stop media >/dev/null 2>&1 || true
+          overlay_status=all_data_centre_services_running
+        fi
       else
         overlay_status=core_data_centre_services_failed
       fi
@@ -984,6 +1061,11 @@ fi
 echo "Verified Go CDN immutable image digest: ${TESTAGRAM_CDN_IMAGE##*@}"
 verify_running_image algorithm "$TESTAGRAM_ALGORITHM_IMAGE"
 verify_running_image federation-api "$TESTAGRAM_FEDERATION_IMAGE"
+verify_running_image video "$TESTAGRAM_VIDEO_IMAGE"
+verify_running_image video-worker "$TESTAGRAM_VIDEO_WORKER_IMAGE"
+if [[ "$media_enabled" == true ]]; then
+  verify_running_image media "$TESTAGRAM_MEDIA_IMAGE"
+fi
 
 # Prove Backend-to-Algorithm service DNS, the shared private token and the
 # exact candidate JSON contract with a real authenticated request from api.
@@ -1287,4 +1369,3 @@ if [[ "$code" != "0" ]]; then
   exit 1
 fi
 echo "Remote deployment started."
-
