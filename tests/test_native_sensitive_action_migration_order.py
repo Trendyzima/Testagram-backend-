@@ -48,12 +48,11 @@ def main() -> None:
     assert f"../../migrations/{TARGET}:/docker-entrypoint-initdb.d/{TARGET}:ro" in compose
     assert f"apply_migration {TARGET}" in runner
     assert f"../../migrations/{WEBAUTHN_DUAL_CONTROL}:/docker-entrypoint-initdb.d/{WEBAUTHN_DUAL_CONTROL}:ro" in compose
-    assert f"apply_migration {WEBAUTHN_DUAL_CONTROL}" in runner
-    assert runner.index(f"apply_migration {TARGET}") < runner.index(
-        f"apply_migration {STAFF_LIFECYCLE}"
-    ) < runner.index(f"apply_migration {WEBAUTHN_DUAL_CONTROL}"), (
-        "dual-control enrollment schema must follow the sensitive-action ledger and staff lifecycle tables"
-    )
+    migration_list = runner[runner.index("for file in \\\\"):runner.index("apply_migration() {")]
+    assert WEBAUTHN_DUAL_CONTROL in migration_list, "runner omits dual-control enrollment migration"
+    assert migration_list.index(TARGET) < migration_list.index(STAFF_LIFECYCLE) < migration_list.index(
+        WEBAUTHN_DUAL_CONTROL
+    ), "dual-control enrollment schema must follow the sensitive-action ledger and staff lifecycle tables"
     assert runner.index("apply_migration 060_native_staff_webauthn.sql") < runner.index(
         f"apply_migration {TARGET}"
     ), "WebAuthn credentials must exist before sensitive-action integrity triggers are installed"
