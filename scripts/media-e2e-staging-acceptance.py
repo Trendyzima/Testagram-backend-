@@ -27,6 +27,7 @@ PRODUCTION_HOSTS = {
     "testagram.site",
     "www.testagram.site",
     "media.testagram.site",
+    "cdn.testagram.site",
 }
 
 
