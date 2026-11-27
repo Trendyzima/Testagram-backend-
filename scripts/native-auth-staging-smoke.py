@@ -82,8 +82,9 @@ def main() -> None:
     parsed = urllib.parse.urlsplit(raw_base)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         fail("TESTAGRAM_STAGING_API_URL must be a clean HTTPS origin")
-    if parsed.path not in ("", "/") or parsed.hostname.lower() == "api.testagram.site":
-        fail("Refusing to run against a non-staging path or the production API host")
+    production_hosts = {"api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site"}
+    if parsed.path not in ("", "/") or parsed.hostname.lower() in production_hosts:
+        fail("Refusing to run against a non-staging path or a canonical production Testagram host")
     base = raw_base.rstrip("/")
 
     first = login(base, email, password)
