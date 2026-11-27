@@ -210,6 +210,7 @@ for file in \
   20261121_native_identity_intake_optional_fingerprint.sql \
   060_native_staff_webauthn.sql \
   061_native_sensitive_action_integrity.sql \
+  20261127_native_staff_lifecycle_executor.sql \
   20261124_testagram_email_verification_otp.sql \
   20261124_testagram_social_email_consent.sql \
   20261125_testagram_mail_delivery_events.sql \
@@ -250,6 +251,7 @@ apply_migration 059_native_identity_approval_circuit.sql
 apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 apply_migration 060_native_staff_webauthn.sql
 apply_migration 061_native_sensitive_action_integrity.sql
+apply_migration 20261127_native_staff_lifecycle_executor.sql
 apply_migration 20261124_testagram_email_verification_otp.sql
 apply_migration 20261124_testagram_social_email_consent.sql
 apply_migration 20261125_testagram_mail_delivery_events.sql
@@ -267,5 +269,5 @@ if [[ "$(schema_ready)" != "t" ]]; then
   exit 1
 fi
 
-echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Testagram-native mail outbox, VERP return paths, inbound feedback ledger, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and native approval circuit."
+echo "Verified native identity applications, independent approvals, one-time provisioning, native session/refresh storage, password recovery, encrypted Testagram-native mail outbox, VERP return paths, inbound feedback ledger, Federation actor-consent eligibility, runtime grants, native staff reviewer grants, native admin-console ledgers, native staff lifecycle invitation and audit ledgers, native identity approval circuit, staged evidence/account reviews, UUID-based reviewer columns and verification decision attribution, evidence audit, status access, and native approval circuit."
 echo "Retain the verified pre-migration backup until release acceptance and a separate restore drill are complete."
