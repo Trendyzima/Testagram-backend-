@@ -515,7 +515,7 @@ psql_ci <<'SQL'
 DO $evidence_retention$
 DECLARE
   app_id uuid := gen_random_uuid();
-  session_id uuid := gen_random_uuid();
+  v_session_id uuid := gen_random_uuid();
   evidence_id uuid := gen_random_uuid();
 BEGIN
   INSERT INTO testagram_identity.identity_applications
@@ -530,7 +530,7 @@ BEGIN
   INSERT INTO testagram_identity.verification_sessions
     (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,expires_at)
   VALUES
-    (session_id,app_id,decode(repeat('e',64),'hex'),'age_assurance',18,'in_progress',now()+interval '1 day');
+    (v_session_id,app_id,decode(repeat('e',64),'hex'),'age_assurance',18,'in_progress',now()+interval '1 day');
 
   INSERT INTO testagram_identity.verification_evidence
     (id,session_id,object_key,content_type,size_bytes,sha256,status,retention_until)
@@ -549,10 +549,10 @@ BEGIN
   INSERT INTO testagram_identity.verification_events
     (session_id,event_type,actor_type,actor_reference,request_id,metadata)
   VALUES
-    (session_id,'identity_evidence_quarantined','system',
+    (v_session_id,'identity_evidence_quarantined','system',
      'identity-evidence-retention-worker','ci-retention-quarantine',
      jsonb_build_object('evidence_id',evidence_id::text)),
-    (session_id,'identity_evidence_deleted','system',
+    (v_session_id,'identity_evidence_deleted','system',
      'identity-evidence-retention-worker','ci-retention-delete',
      jsonb_build_object('evidence_id',evidence_id::text));
 
@@ -565,7 +565,7 @@ BEGIN
   END IF;
   IF (
     SELECT count(*) FROM testagram_identity.verification_events
-    WHERE session_id=session_id
+    WHERE session_id=v_session_id
       AND event_type IN ('identity_evidence_quarantined','identity_evidence_deleted')
       AND request_id IN ('ci-retention-quarantine','ci-retention-delete')
   ) <> 2 THEN
