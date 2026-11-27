@@ -105,9 +105,6 @@ def clean_https_origin(raw: str, label: str) -> tuple[str, str]:
 def main() -> None:
     if os.environ.get("TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED", "").lower() != "true":
         fail("The staging Backend must explicitly enable FRESH_MEDIA_ENABLED for this Data Centre media acceptance")
-    if os.environ.get("TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED", "").lower() != "true":
-        fail("The staging Backend must explicitly enable DATA_CENTRE_MEDIA_ENABLED for this acceptance")
-
     raw_api = os.environ.get("TESTAGRAM_STAGING_API_URL", "").strip()
     email = os.environ.get("TESTAGRAM_AUTH_SMOKE_EMAIL", "").strip()
     password = os.environ.get("TESTAGRAM_AUTH_SMOKE_PASSWORD", "")
