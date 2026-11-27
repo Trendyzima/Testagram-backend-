@@ -840,7 +840,7 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
       mc mb --ignore-existing "b2/$B2_BUCKET"
       mc stat "b2/$B2_BUCKET" >/dev/null
     '
-  echo "Verified access to the provider-prepared dedicated identity evidence buckets in B2 and R2; provider-native privacy was verified by the deployment workflow."
+  echo "Verified access to the dedicated private Backblaze B2 identity-evidence bucket; identity evidence has no R2 or InstaBox storage copy."
   ensure_random_secret FRESH_DATA_CENTRE_INTERNAL_TOKEN
   ensure_random_secret IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN
   if [[ "$IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN" == "$FRESH_DATA_CENTRE_INTERNAL_TOKEN" ]]; then
