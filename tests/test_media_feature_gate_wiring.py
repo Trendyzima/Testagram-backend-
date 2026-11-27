@@ -353,6 +353,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
 
     def test_identity_evidence_provider_key_is_forwarded_separately_from_ordinary_b2_key(self):
         for token in (
+            "B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}",
+            "B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}",
             "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID: ${{ secrets.B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID }}",
             "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY }}",
             'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:$b2_identity_access',
@@ -367,6 +369,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("B2_IDENTITY_SECRET", self.deployer)
         self.assertNotIn('-e B2_ACCESS="$B2_S3_ACCESS_KEY_ID"', self.deployer)
         self.assertNotIn('mc mb --ignore-existing "b2/$B2_BUCKET"', self.deployer)
+        self.assertNotIn("B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID", self.workflow)
+        self.assertNotIn("B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY", self.workflow)
 
     def test_optional_fingerprint_migration_is_mounted_for_remote_preflight(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
