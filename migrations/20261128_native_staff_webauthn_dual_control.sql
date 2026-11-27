@@ -3,6 +3,22 @@
 -- authorizations must reference an approved staff.webauthn.enroll request and both signers.
 BEGIN;
 
+ALTER TABLE testagram_auth.native_staff_lifecycle_events
+  DROP CONSTRAINT IF EXISTS native_staff_lifecycle_events_action_check;
+ALTER TABLE testagram_auth.native_staff_lifecycle_events
+  ADD CONSTRAINT native_staff_lifecycle_events_action_check
+  CHECK (action IN (
+    'invitation_created',
+    'role_granted',
+    'role_revoked',
+    'staff_disabled',
+    'permission_changed',
+    'webauthn_enrollment_authorized',
+    'webauthn_enrollment_revoked',
+    'invitation_accepted',
+    'invitation_revoked'
+  ));
+
 ALTER TABLE testagram_auth.staff_webauthn_enrollment_authorizations
   ADD COLUMN IF NOT EXISTS request_id UUID
     REFERENCES testagram_auth.native_sensitive_action_requests(id) ON DELETE RESTRICT,
