@@ -387,7 +387,7 @@ func (s *service) identityReviewEvidence(w http.ResponseWriter, r *http.Request)
 	}
 	payload, err := s.identityEvidenceDownload(ctx, applicationID, objectKey, size, contentType, expectedSHA256)
 	if err != nil || int64(len(payload)) != size {
-		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Verified evidence could not be retrieved from primary or replicas", requestID(r)))
+		writeJSON(w, http.StatusBadGateway, errorBody("PRIVATE_EVIDENCE_STORAGE_UNAVAILABLE", "Verified evidence could not be retrieved from the dedicated Backblaze B2 identity bucket", requestID(r)))
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store, max-age=0")
