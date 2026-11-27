@@ -77,8 +77,13 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             "testagram-identity-evidence-production-b2",
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
-            'mc stat "b2/$B2_BUCKET"',
+            'mc stat "b2_provision/$B2_BUCKET"',
             "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
+            'mc stat "b2_media/$B2_MEDIA_BUCKET"',
+            'mc stat "b2_identity/$B2_BUCKET"',
+            'if mc stat "b2_media/$B2_BUCKET"',
+            'if mc stat "b2_identity/$B2_MEDIA_BUCKET"',
+            'B2 provisioning, ordinary-media and identity-evidence credentials must be three distinct application keys.',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.workflow)
