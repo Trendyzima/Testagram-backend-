@@ -217,6 +217,86 @@ func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func (a *app) handleStaffWebAuthnAuthorizationRevoke(w http.ResponseWriter, r *http.Request) {
+	s, actor, ok := a.requireStaff(w, r, "owner")
+	if !ok { return }
+	claims, ok := a.requireRecentStepUpClaims(w, s)
+	if !ok { return }
+	if claims.Subject != actor.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "WebAuthn elevation does not belong to the authenticated staff principal"})
+		return
+	}
+	targetID := strings.TrimSpace(r.PathValue("id"))
+	if len(targetID) != 36 || !regexp.MustCompile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$").MatchString(targetID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A canonical staff UUID is required"})
+		return
+	}
+	var input struct { Reason string `json:"reason"` }
+	if !decodeBody(w, r, &input) { return }
+	input.Reason = strings.TrimSpace(input.Reason)
+	if len(input.Reason) < 12 || len(input.Reason) > 1000 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A revocation reason of 12 to 1000 characters is required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	tx, err := a.database.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Enrollment authorization service is unavailable"})
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	rows, err := tx.Query(ctx, `
+		UPDATE testagram_auth.staff_webauthn_enrollment_authorizations
+		SET revoked_at=now()
+		WHERE user_id=$1::uuid AND request_id IS NOT NULL
+		  AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()
+		RETURNING id,request_id::text
+	`, targetID)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Could not revoke the enrollment authorization"})
+		return
+	}
+	if !rows.Next() {
+		rows.Close()
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "No live, unused dual-control enrollment authorization exists for this staff member"})
+		return
+	}
+	var authorizationID int64
+	var requestID string
+	if err := rows.Scan(&authorizationID, &requestID); err != nil {
+		rows.Close()
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Could not read the revoked authorization"})
+		return
+	}
+	if rows.Next() {
+		rows.Close()
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Multiple live enrollment authorizations violate the uniqueness invariant"})
+		return
+	}
+	rows.Close()
+	_, err = tx.Exec(ctx, `
+		INSERT INTO testagram_auth.native_staff_lifecycle_events
+		  (request_id,actor_user_id,target_user_id,action,metadata)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,'webauthn_enrollment_revoked',
+		        jsonb_build_object('authorization_id',$4::bigint,'reason',$5::text))
+	`, requestID, actor.ID, targetID, authorizationID, input.Reason)
+	if err == nil {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO testagram_auth.native_admin_security_audit
+			  (actor_user_id,action,target_reference,request_id,metadata)
+			VALUES ($1::uuid,'staff.webauthn.enrollment_revoked',$2,$3::uuid,
+			        jsonb_build_object('authorization_id',$4::bigint,'reason',$5::text))
+		`, actor.ID, targetID, requestID, authorizationID, input.Reason)
+	}
+	if err == nil { err = tx.Commit(ctx) }
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Revocation audit could not be committed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": true, "authorization_id": authorizationID})
+}
+
 func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Request){
  s,user,ok:=a.requireStaff(w,r);if !ok{return}
  if !a.requireStaffWebAuthnRuntime(w,r,true){return}
