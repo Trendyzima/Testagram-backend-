@@ -99,7 +99,7 @@ def clean_https_origin(raw: str, label: str) -> tuple[str, str]:
         fail(f"{label} must be a clean HTTPS origin")
     if parsed.hostname.lower() in PRODUCTION_HOSTS:
         fail(f"Refusing to run against canonical production host for {label}")
-    return raw.rstrip("/"), parsed.hostname.lower()
+    return raw.rstrip("/"), parsed.hostname.lower().rstrip(".")
 
 
 def main() -> None:
@@ -112,8 +112,8 @@ def main() -> None:
     email = os.environ.get("TESTAGRAM_AUTH_SMOKE_EMAIL", "").strip()
     password = os.environ.get("TESTAGRAM_AUTH_SMOKE_PASSWORD", "")
     raw_cdn = os.environ.get("TESTAGRAM_STAGING_CDN_BASE_URL", "").strip()
-    b2_host = os.environ.get("TESTAGRAM_STAGING_B2_HOST", "").strip().lower()
-    r2_host = os.environ.get("TESTAGRAM_STAGING_R2_HOST", "").strip().lower()
+    b2_host = os.environ.get("TESTAGRAM_STAGING_B2_HOST", "").strip().lower().rstrip(".")
+    r2_host = os.environ.get("TESTAGRAM_STAGING_R2_HOST", "").strip().lower().rstrip(".")
     if not raw_api or not email or not password or not raw_cdn or not b2_host or not r2_host:
         fail("Configure staging API, CDN origin, B2/R2 provider hosts and dedicated verified smoke identity")
 
@@ -122,7 +122,7 @@ def main() -> None:
     if cdn_host in PRODUCTION_HOSTS or b2_host in PRODUCTION_HOSTS or r2_host in PRODUCTION_HOSTS:
         fail("Production provider/CDN hosts are not permitted in staging acceptance")
     allowed_provider_hosts = {b2_host, r2_host}
-    if not all(host and "/" not in host and ":" not in host and "@" not in host for host in allowed_provider_hosts):
+    if not all(host and not any(char.isspace() for char in host) and "/" not in host and ":" not in host and "@" not in host for host in allowed_provider_hosts):
         fail("Expected B2/R2 provider settings must be hostnames only")
 
     status, envelope = json_request(api, "/api/auth/login", method="POST",
@@ -194,7 +194,7 @@ def main() -> None:
         direct = envelope_data(status, envelope, {200}, "private Data Centre download grant")
         direct_url = direct.get("url", "")
         parsed_direct = urllib.parse.urlsplit(direct_url)
-        if parsed_direct.scheme != "https" or parsed_direct.hostname not in allowed_provider_hosts or parsed_direct.username or parsed_direct.password or parsed_direct.fragment:
+        if parsed_direct.scheme != "https" or (parsed_direct.hostname or "").lower().rstrip(".") not in allowed_provider_hosts or parsed_direct.username or parsed_direct.password or parsed_direct.fragment:
             fail("Private download grant did not resolve to the configured staging B2/R2 origins")
         direct_status, direct_headers, direct_body = raw_request(direct_url)
         if direct_status != 200 or direct_body != payload or direct_headers.get("Content-Type", "").split(";")[0].strip() != "image/png":
@@ -207,7 +207,7 @@ def main() -> None:
         cdn_url = cdn_grant.get("url", "")
         cdn_authorization = cdn_grant.get("authorization", "")
         parsed_cdn = urllib.parse.urlsplit(cdn_url)
-        if parsed_cdn.scheme != "https" or parsed_cdn.hostname != cdn_host or parsed_cdn.username or parsed_cdn.password or parsed_cdn.fragment or not parsed_cdn.path.startswith("/v1/") or not cdn_authorization.startswith("Bearer "):
+        if parsed_cdn.scheme != "https" or (parsed_cdn.hostname or "").lower().rstrip(".") != cdn_host or parsed_cdn.username or parsed_cdn.password or parsed_cdn.fragment or not parsed_cdn.path.startswith("/v1/") or not cdn_authorization.startswith("Bearer "):
             fail("Private CDN grant did not target the configured staging CDN origin")
 
         anon_status, anon_headers, _ = raw_request(cdn_url)
