@@ -243,6 +243,28 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("must explicitly enable FRESH_MEDIA_ENABLED", result.stderr)
 
+    def test_data_centre_media_staging_smoke_rejects_production_cdn_host(self):
+        script = ROOT / "scripts/media-e2e-staging-acceptance.py"
+        result = subprocess.run(
+            ["python3", str(script)],
+            env={
+                **os.environ,
+                "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "true",
+                "TESTAGRAM_STAGING_DATA_CENTRE_MEDIA_ENABLED": "true",
+                "TESTAGRAM_STAGING_API_URL": "https://staging-api.example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
+                "TESTAGRAM_STAGING_CDN_BASE_URL": "https://cdn.testagram.site",
+                "TESTAGRAM_STAGING_B2_HOST": "s3.us-west-004.backblazeb2.com",
+                "TESTAGRAM_STAGING_R2_HOST": "test.r2.cloudflarestorage.com",
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("canonical production host for TESTAGRAM_STAGING_CDN_BASE_URL", result.stderr)
+
     def test_native_auth_staging_smoke_refuses_canonical_production_hosts(self):
         script = ROOT / "scripts/native-auth-staging-smoke.py"
         for host in ("api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site", "cdn.testagram.site", "api.testagram.site."):
