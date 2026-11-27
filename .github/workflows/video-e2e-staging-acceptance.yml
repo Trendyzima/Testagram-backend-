@@ -113,10 +113,7 @@ jobs:
           profile: pixel_6
           script: |
             cd flutter-client
-            flutter test integration_test/native_auth_staging_test.dart -d emulator-5554 \\
-              --dart-define="TESTAGRAM_API_URL=$TESTAGRAM_STAGING_API_URL" \\
-              --dart-define="TESTAGRAM_STAGING_AUTH_EMAIL=$TESTAGRAM_AUTH_SMOKE_EMAIL" \\
-              --dart-define="TESTAGRAM_STAGING_AUTH_PASSWORD=$TESTAGRAM_AUTH_SMOKE_PASSWORD"
+            flutter test integration_test/native_auth_staging_test.dart -d emulator-5554 --dart-define="TESTAGRAM_API_URL=$TESTAGRAM_STAGING_API_URL" --dart-define="TESTAGRAM_STAGING_AUTH_EMAIL=$TESTAGRAM_AUTH_SMOKE_EMAIL" --dart-define="TESTAGRAM_STAGING_AUTH_PASSWORD=$TESTAGRAM_AUTH_SMOKE_PASSWORD"
             flutter test integration_test/video_feed_staging_test.dart -d emulator-5554 \
               --dart-define="TESTAGRAM_STAGING_API_URL=$TESTAGRAM_STAGING_API_URL" \
               --dart-define="TESTAGRAM_STAGING_ACCESS_TOKEN=$TESTAGRAM_STAGING_ACCESS_TOKEN" \
