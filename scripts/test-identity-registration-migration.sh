@@ -601,6 +601,9 @@ psql_ci < migrations/20261116_native_auth_runtime_grants.sql
 psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
 psql_ci < migrations/20261116_native_approved_identity_provisioning.sql
 psql_ci < migrations/20261116_native_auth_runtime_grants.sql
+# Native provisioning resets the older event constraint; re-apply the retention
+# extension after all legacy migrations before exercising the Go retention worker.
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
 psql_ci <<'SQL'
 DO $native_auth_schema$
 BEGIN
