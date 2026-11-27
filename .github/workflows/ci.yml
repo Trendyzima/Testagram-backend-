@@ -64,6 +64,8 @@ jobs:
           python3 -m py_compile scripts/video-e2e-staging-acceptance.py
       - name: Test video staging acceptance output contract
         run: python3 -m unittest discover -s tests -p 'test_video_staging_acceptance_outputs.py' -v
+      - name: Verify media staging origin separation and provider wiring
+        run: python3 tests/test_media_feature_gate_wiring.py -v
       - name: Resolve and verify Go modules
         run: |
           go mod tidy

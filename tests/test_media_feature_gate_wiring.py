@@ -384,6 +384,54 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn("github.event_name == 'pull_request'", deploy_gate)
         self.assertIn("environment: production", self.workflow)
 
+    def test_data_centre_media_staging_smoke_rejects_shared_b2_r2_provider_host(self):
+        script = ROOT / "scripts/media-e2e-staging-acceptance.py"
+        result = subprocess.run(
+            ["python3", str(script)],
+            env={
+                **os.environ,
+                "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "true",
+                "TESTAGRAM_STAGING_API_URL": "https://staging-api.example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
+                "TESTAGRAM_STAGING_CDN_BASE_URL": "https://staging-cdn.example.invalid",
+                "TESTAGRAM_STAGING_B2_HOST": "s3.us-west-004.backblazeb2.com",
+                "TESTAGRAM_STAGING_R2_HOST": "s3.us-west-004.backblazeb2.com",
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("four distinct origins", result.stderr)
+
+    def test_data_centre_media_staging_smoke_rejects_api_and_cdn_host_collision(self):
+        script = ROOT / "scripts/media-e2e-staging-acceptance.py"
+        result = subprocess.run(
+            ["python3", str(script)],
+            env={
+                **os.environ,
+                "TESTAGRAM_STAGING_FRESH_MEDIA_ENABLED": "true",
+                "TESTAGRAM_STAGING_API_URL": "https://staging-api.example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
+                "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
+                "TESTAGRAM_STAGING_CDN_BASE_URL": "https://staging-api.example.invalid",
+                "TESTAGRAM_STAGING_B2_HOST": "s3.us-west-004.backblazeb2.com",
+                "TESTAGRAM_STAGING_R2_HOST": "account.r2.cloudflarestorage.com",
+            },
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("four distinct origins", result.stderr)
+
+    def test_backend_provider_acceptance_requires_distinct_b2_r2_endpoints(self):
+        workflow = (ROOT / ".github/workflows/media-provider-smoke.yml").read_text()
+        self.assertIn("Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames", workflow)
+        self.assertIn("Three-provider media B2 and R2 endpoints must resolve to distinct hostnames", workflow)
+
+
 
 if __name__ == "__main__":
     unittest.main()

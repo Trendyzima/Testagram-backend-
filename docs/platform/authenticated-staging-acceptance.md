@@ -26,7 +26,7 @@ Environment secrets:
 
 The smoke identity must already be a dedicated, approved, active and email-verified staging account. The workflow does not create identities, approve applicants, send verification email, or bypass identity review. The native-auth smoke deliberately replays a refresh token and calls `logout-all`, which revokes every session belonging to that identity. Never use a human, shared, or production account for this workflow.
 
-The CDN and object-store hostnames must be staging-only. The media acceptance script rejects canonical production Testagram hosts, requires clean HTTPS origins, refuses redirects for signed object URLs, and never prints bearer tokens, signed URLs or CDN authorization assertions.
+The CDN and object-store hostnames must be staging-only. The API, CDN, B2 and R2 hostnames must also be four distinct origins, so one endpoint cannot masquerade as separate provider replication. The media acceptance script rejects canonical production Testagram hosts, requires clean HTTPS origins, refuses redirects for signed object URLs, and never prints bearer tokens, signed URLs or CDN authorization assertions.
 
 ## What the combined workflow proves
 

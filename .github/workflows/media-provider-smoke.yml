@@ -165,6 +165,9 @@ jobs:
             if [ -z "${!name:-}" ]; then echo "::error::Missing staging configuration: $name"; exit 1; fi
           done
           [[ "$IDENTITY_SMOKE_R2_ENDPOINT" == https://* && "$IDENTITY_SMOKE_B2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
+          r2_host="$(python3 -c 'import sys,urllib.parse; print((urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower().rstrip("."))' "$IDENTITY_SMOKE_R2_ENDPOINT")"
+          b2_host="$(python3 -c 'import sys,urllib.parse; print((urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower().rstrip("."))' "$IDENTITY_SMOKE_B2_ENDPOINT")"
+          [[ -n "$r2_host" && -n "$b2_host" && "$r2_host" != "$b2_host" ]] || { echo "::error::Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames"; exit 1; }
           [[ "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Private and public buckets must be distinct"; exit 1; }
           [[ "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" && "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Identity evidence buckets must be separate from public and ordinary private media buckets"; exit 1; }
           for bucket in "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET"; do
@@ -241,6 +244,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$MEDIA_SMOKE_R2_ENDPOINT" == https://* && "$MEDIA_SMOKE_B2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
+          r2_host="$(python3 -c 'import sys,urllib.parse; print((urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower().rstrip("."))' "$MEDIA_SMOKE_R2_ENDPOINT")"
+          b2_host="$(python3 -c 'import sys,urllib.parse; print((urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower().rstrip("."))' "$MEDIA_SMOKE_B2_ENDPOINT")"
+          [[ -n "$r2_host" && -n "$b2_host" && "$r2_host" != "$b2_host" ]] || { echo "::error::Three-provider media B2 and R2 endpoints must resolve to distinct hostnames"; exit 1; }
           for provider in R2 B2; do
             for namespace in PRIVATE PUBLIC IDENTITY; do
               name="MEDIA_SMOKE_${provider}_${namespace}_BUCKET"

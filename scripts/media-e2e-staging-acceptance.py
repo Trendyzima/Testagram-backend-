@@ -119,6 +119,8 @@ def main() -> None:
     if cdn_host in PRODUCTION_HOSTS or b2_host in PRODUCTION_HOSTS or r2_host in PRODUCTION_HOSTS:
         fail("Production provider/CDN hosts are not permitted in staging acceptance")
     allowed_provider_hosts = {b2_host, r2_host}
+    if len({api_host, cdn_host, b2_host, r2_host}) != 4:
+        fail("Staging API, CDN, B2 and R2 hosts must be four distinct origins")
     if not all(host and not any(char.isspace() for char in host) and "/" not in host and ":" not in host and "@" not in host for host in allowed_provider_hosts):
         fail("Expected B2/R2 provider settings must be hostnames only")
 
