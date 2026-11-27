@@ -156,6 +156,12 @@ $function$;
 -- while provider-keyed staff_roles still existed. That table is archived before
 -- the native migration runner reaches 061, so create the native permission map
 -- explicitly here rather than relying on the retired provider table.
+INSERT INTO testagram_auth.admin_permissions(permission_key,description,sensitive)
+VALUES ('staff.webauthn.enroll.approve',
+        'Approve staff WebAuthn authenticator enrollment through independent dual control',TRUE)
+ON CONFLICT (permission_key) DO UPDATE
+SET description=EXCLUDED.description,sensitive=EXCLUDED.sensitive;
+
 CREATE TABLE IF NOT EXISTS testagram_auth.staff_role_permissions (
   role TEXT NOT NULL CHECK (role IN ('owner','administrator','engineer','operations','support','moderator')),
   permission_key TEXT NOT NULL REFERENCES testagram_auth.admin_permissions(permission_key) ON DELETE CASCADE,
@@ -171,6 +177,7 @@ INSERT INTO testagram_auth.staff_role_permissions(role,permission_key) VALUES
   ('administrator','engineering.read'),
   ('administrator','operations.manage'),
   ('administrator','audit.read'),
+  ('administrator','staff.webauthn.enroll.approve'),
   ('engineer','engineering.read'),
   ('engineer','deployment.request'),
   ('operations','engineering.read'),
@@ -219,7 +226,7 @@ BEGIN
   SELECT granted INTO v_override
   FROM testagram_auth.native_staff_permission_overrides
   WHERE user_id=NEW.approver_user_id
-    AND permission_key='staff.manage';
+    AND permission_key='staff.webauthn.enroll.approve';
   IF FOUND THEN
     v_allowed := v_override;
   ELSE
@@ -229,7 +236,7 @@ BEGIN
       JOIN testagram_auth.staff_role_permissions rp ON rp.role=rg.role
       WHERE rg.user_id=NEW.approver_user_id
         AND rg.revoked_at IS NULL
-        AND rp.permission_key='staff.manage'
+        AND rp.permission_key='staff.webauthn.enroll.approve'
     ) INTO v_allowed;
   END IF;
 
