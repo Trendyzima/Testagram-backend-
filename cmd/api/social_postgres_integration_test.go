@@ -349,14 +349,14 @@ WHERE p.author_id=$2 AND p.deleted_at IS NULL AND a.account_status='active'
 				JOIN testagram_local.accounts a ON a.user_id=f.follower_id
 				WHERE f.following_id=$1 AND f.status='accepted' AND a.account_status='active'`,
 			owner: authorID,
-			want: viewerID,
+			want:  viewerID,
 		},
 		"following": {
 			query: `SELECT a.user_id::text FROM testagram_local.follows f
 				JOIN testagram_local.accounts a ON a.user_id=f.following_id
 				WHERE f.follower_id=$1 AND f.status='accepted' AND a.account_status='active'`,
 			owner: viewerID,
-			want: authorID,
+			want:  authorID,
 		},
 	}
 	for kind, fixture := range connectionQueries {
