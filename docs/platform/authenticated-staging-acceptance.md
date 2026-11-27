@@ -34,7 +34,8 @@ The CDN and object-store hostnames must be staging-only. The media acceptance sc
 4. **CDN authorization:** anonymous private-object access is denied; the viewer assertion permits exact byte delivery and range requests; private responses retain `private, no-store`.
 5. **Durable deletion:** Backend deletion purges CDN state, deletes Data Centre B2/R2 objects and metadata sidecars, and the script confirms private-origin and CDN access are gone.
 6. **Creator video:** the existing video acceptance harness uploads, processes, publishes a disposable staging video, verifies HLS playback and engagement, then cleans it up.
-7. **Flutter:** the exact checked-out Flutter source SHA is recorded and the staging video feed is exercised on an Android emulator.
+7. **Flutter native authentication:** the actual AuthScreen signs in on Android, the refresh credential survives a new NativeAuthClient instance through platform secure storage, refresh rotation succeeds, and logout revokes the access session.
+8. **Flutter video:** the exact checked-out Flutter source SHA is recorded and the staging video feed is exercised on the same Android emulator.
 
 The workflow summary records the Backend acceptance-harness SHA and Flutter client SHA. Those are source revisions, not proof of deployed service image digests. Record the Backend, Data Centre, video worker and CDN immutable image digests separately for a same-deployment release certificate.
 
