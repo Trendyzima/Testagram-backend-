@@ -47,6 +47,7 @@ for migration in \
   migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
   migrations/20261115_identity_evidence_access_audit.sql \
+  migrations/20261127_identity_evidence_retention_audit.sql \
   migrations/20261115_native_identity_status_access.sql \
   migrations/20261019_dual_backend_replication.sql \
   migrations/20261019_testagram_local_accounts_posts.sql \
@@ -75,6 +76,8 @@ psql_ci < migrations/20261114_native_identity_evidence.sql
 psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
