@@ -120,8 +120,8 @@ section "Public HTTPS liveness probes"
 # Dependency readiness is intentionally private and is verified through
 # Docker healthchecks and internal listener probes later in this read-only audit.
 check_http "Backend liveness" "https://api.testagram.site/healthz"
-check_http "Backend people search (read-only)" "https://api.testagram.site/api/search?q=testagram%26kind=people"
-check_http "Backend post search (read-only)" "https://api.testagram.site/api/search?q=testagram%26kind=posts"
+check_http "Backend people search (read-only)" "https://api.testagram.site/api/search?q=testagram&kind=people"
+check_http "Backend post search (read-only)" "https://api.testagram.site/api/search?q=testagram&kind=posts"
 check_http "Go CDN liveness" "https://media.testagram.site/healthz"
 check_http "Staff console liveness" "https://ops.testagram.site/healthz"
 
