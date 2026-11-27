@@ -760,20 +760,18 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 		SELECT sp.user_id::text
 		FROM testagram_auth.staff_principals sp
 		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+		JOIN testagram_auth.staff_role_grants active_role
+		  ON active_role.user_id=sp.user_id AND active_role.revoked_at IS NULL
 		WHERE sp.user_id=$1::uuid
 		  AND sp.enabled=TRUE
 		  AND sp.mfa_enrolled_at IS NULL
 		  AND i.disabled_at IS NULL
 		  AND i.email_verified_at IS NOT NULL
-		  AND EXISTS (
-			SELECT 1 FROM testagram_auth.staff_role_grants rg
-			WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM testagram_auth.staff_webauthn_credentials wc
 			WHERE wc.user_id=sp.user_id AND wc.revoked_at IS NULL
 		  )
-		FOR UPDATE OF sp,i
+		FOR UPDATE OF sp,i,active_role
 	`, targetReference).Scan(&lockedTarget)
 	if err != nil || lockedTarget != targetReference {
 		return errors.New("target is not an active, verified, unenrolled staff principal")
@@ -804,6 +802,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	}
 	rows.Close()
 	if len(approvers) != 2 || approvers[0] == approvers[1] ||
+		approvers[0] == targetReference || approvers[1] == targetReference ||
 		(requesterID != "" && (approvers[0] == requesterID || approvers[1] == requesterID)) {
 		return errors.New("exactly two distinct non-requesting WebAuthn approvers are required")
 	}
