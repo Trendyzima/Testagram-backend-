@@ -452,14 +452,6 @@ if [[ "$(read_env_value MEDIA_REPLICATION_ENABLED)" == "true" ]]; then
     echo "::error::B2 private and public buckets must be distinct."
     exit 1
   }
-  [[ "$(read_env_value)" != "$(read_env_value B2_S3_PRIVATE_BUCKET)" && "$(read_env_value)" != "$(read_env_value B2_S3_PUBLIC_BUCKET)" ]] || {
-    echo "::error::B2 identity evidence bucket must be dedicated and distinct from private/public media."
-    exit 1
-  }
-  [[ "$(read_env_value)" != "$(read_env_value CLOUDFLARE_R2_PRIVATE_BUCKET)" && "$(read_env_value)" != "$(read_env_value CLOUDFLARE_R2_PUBLIC_BUCKET)" ]] || {
-    echo "::error::R2 identity evidence bucket must be dedicated and distinct from private/public media."
-    exit 1
-  }
   [[ "$(read_env_value CLOUDFLARE_R2_PRIVATE_BUCKET)" != "$(read_env_value CLOUDFLARE_R2_PUBLIC_BUCKET)" ]] || {
     echo "::error::R2 private and public buckets must be distinct."
     exit 1
