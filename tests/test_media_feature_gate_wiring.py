@@ -194,6 +194,25 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
         self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
 
+    def test_native_auth_staging_smoke_refuses_canonical_production_hosts(self):
+        script = ROOT / "scripts/native-auth-staging-smoke.py"
+        for host in ("api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site"):
+            with self.subTest(host=host):
+                result = subprocess.run(
+                    ["python3", str(script)],
+                    env={
+                        **__import__("os").environ,
+                        "TESTAGRAM_STAGING_API_URL": f"https://{host}",
+                        "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
+                        "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
+                    },
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("canonical production Testagram host", result.stderr)
+
     def test_deployer_normalizes_boolean_flags_before_fail_closed_validation(self):
         self.assertIn("normalize_boolean FRESH_MEDIA_ENABLED false", self.deployer)
         self.assertIn("normalize_boolean DATA_CENTRE_MEDIA_ENABLED false", self.deployer)
