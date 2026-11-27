@@ -274,6 +274,11 @@ func (a *app) handleStaffWebAuthnAuthorizationRevoke(w http.ResponseWriter, r *h
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "Multiple live enrollment authorizations violate the uniqueness invariant"})
 		return
 	}
+	if rows.Err() != nil {
+		rows.Close()
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Could not verify enrollment authorization uniqueness"})
+		return
+	}
 	rows.Close()
 	_, err = tx.Exec(ctx, `
 		INSERT INTO testagram_auth.native_staff_lifecycle_events
