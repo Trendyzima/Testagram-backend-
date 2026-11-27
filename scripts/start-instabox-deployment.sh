@@ -239,7 +239,6 @@ MINIO_BUCKET=testagram-private-media
 PUBLIC_MEDIA_BUCKET=testagram-public-media
 MINIO_MEDIA_ACCESS_KEY=testagram-media-api
 MINIO_MEDIA_SECRET_KEY=$MINIO_MEDIA_SECRET_KEY
-IDENTITY_EVIDENCE_PRIVATE_BUCKET=testagram-identity-evidence-private
 VIRTUAL_STORAGE_ENABLED=true
 MEDIA_REPLICATION_ENABLED=false
 TESTAGRAM_TERMS_VERSION=${TESTAGRAM_TERMS_VERSION:-2026-11-11}
@@ -524,9 +523,9 @@ set -a
 source "$BASE_ENV"
 set +a
 # Restore the Data Centre-only provider inputs in memory after reading Backend .env.
-B2_S3_ENDPOINT="$DC_B2_S3_ENDPOINT"; B2_S3_REGION="$DC_B2_S3_REGION"; B2_S3_BUCKET="$DC_B2_S3_BUCKET";="$DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
+B2_S3_ENDPOINT="$DC_B2_S3_ENDPOINT"; B2_S3_REGION="$DC_B2_S3_REGION"; B2_S3_BUCKET="$DC_B2_S3_BUCKET"; B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="$DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
 B2_S3_ACCESS_KEY_ID="$DC_B2_S3_ACCESS_KEY_ID"; B2_S3_SECRET_ACCESS_KEY="$DC_B2_S3_SECRET_ACCESS_KEY"
-CLOUDFLARE_R2_ENDPOINT="$DC_R2_ENDPOINT"; CLOUDFLARE_R2_REGION="$DC_R2_REGION"; CLOUDFLARE_R2_BUCKET="$DC_R2_BUCKET";="$DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
+CLOUDFLARE_R2_ENDPOINT="$DC_R2_ENDPOINT"; CLOUDFLARE_R2_REGION="$DC_R2_REGION"; CLOUDFLARE_R2_BUCKET="$DC_R2_BUCKET"
 CLOUDFLARE_R2_ACCESS_KEY_ID="$DC_R2_ACCESS_KEY_ID"; CLOUDFLARE_R2_SECRET_ACCESS_KEY="$DC_R2_SECRET_ACCESS_KEY"; CLOUDFLARE_R2_METADATA_BUCKET="$DC_R2_METADATA_BUCKET"
 DATA_CENTRE_MEDIA_ENABLED="$DC_MEDIA_PROFILE_ENABLED"; FRESH_MEDIA_ENABLED="$DC_FRESH_MEDIA_ENABLED"
 export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET MINIO_METADATA_ACCESS_KEY MINIO_METADATA_SECRET_KEY
@@ -759,8 +758,7 @@ write_dc_env_value VPS_MINIO_METADATA_BUCKET "$MINIO_METADATA_BUCKET"
 write_dc_env_value VPS_MINIO_METADATA_ACCESS_KEY_ID "$MINIO_METADATA_ACCESS_KEY"
 write_dc_env_value VPS_MINIO_METADATA_SECRET_ACCESS_KEY "$MINIO_METADATA_SECRET_KEY"
 write_dc_env_value CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
-write_dc_env_value "$DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
-write_dc_env_value "$DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
+write_dc_env_value B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET "$DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
 write_dc_env_value DATA_CENTRE_MEDIA_ENABLED "$DC_MEDIA_PROFILE_ENABLED"
 write_dc_env_value FRESH_MEDIA_ENABLED "$DC_FRESH_MEDIA_ENABLED"
 # Federation owns a dedicated least-privilege PostgreSQL role in the
@@ -828,16 +826,14 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
     value="${!key:-}"
     if [[ -n "$value" ]]; then write_dc_env_value "$key" "$value"; fi
   done
-  for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET VPS_MINIO_METADATA_BUCKET VPS_MINIO_METADATA_ACCESS_KEY_ID VPS_MINIO_METADATA_SECRET_ACCESS_KEY; do
+  for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET VPS_MINIO_METADATA_BUCKET VPS_MINIO_METADATA_ACCESS_KEY_ID VPS_MINIO_METADATA_SECRET_ACCESS_KEY; do
     if [[ -z "${!key:-}" ]]; then
       echo "::error::DATA_CENTRE_MEDIA_ENABLED=true requires complete B2/R2/MinIO metadata configuration; missing $key (value redacted)."
       exit 1
     fi
   done
   [[ "$CLOUDFLARE_R2_METADATA_BUCKET" != "$CLOUDFLARE_R2_BUCKET" ]] || { echo "::error::R2 media and metadata buckets must be distinct."; exit 1; }
-  [[ "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$B2_S3_BUCKET" && "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$B2_S3_PRIVATE_BUCKET" && "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$B2_S3_PUBLIC_BUCKET" ]] || { echo "::error::B2 identity evidence bucket must be dedicated and distinct from media buckets."; exit 1; }
   [[ -n "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" && "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$B2_S3_BUCKET" && "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${B2_S3_PRIVATE_BUCKET:-}" && "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${B2_S3_PUBLIC_BUCKET:-}" ]] || { echo "::error::B2 identity evidence bucket must be configured and distinct from general-media buckets."; exit 1; }
-  [[ "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$CLOUDFLARE_R2_BUCKET" && "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${CLOUDFLARE_R2_PRIVATE_BUCKET:-}" && "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "${CLOUDFLARE_R2_PUBLIC_BUCKET:-}" && "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" != "$CLOUDFLARE_R2_METADATA_BUCKET" ]] || { echo "::error::R2 identity evidence bucket must be distinct from media and metadata buckets."; exit 1; }
   [[ "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ ]] || { echo "::error::B2 identity evidence bucket name must be valid."; exit 1; }
   [[ "$B2_S3_ENDPOINT" == https://* && "$CLOUDFLARE_R2_ENDPOINT" == https://* ]] || {
     echo "::error::B2 and R2 media endpoints must both use HTTPS."
@@ -1181,13 +1177,12 @@ if [[ "$media_enabled" == true ]]; then
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_ENDPOINT "$B2_S3_ENDPOINT"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_REGION "$B2_S3_REGION"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_BUCKET "$B2_S3_BUCKET"
-  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
+  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET "$B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_ACCESS_KEY_ID "$B2_S3_ACCESS_KEY_ID"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_SECRET_ACCESS_KEY "$B2_S3_SECRET_ACCESS_KEY"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_ENDPOINT "$CLOUDFLARE_R2_ENDPOINT"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_REGION "$CLOUDFLARE_R2_REGION"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_BUCKET "$CLOUDFLARE_R2_BUCKET"
-  verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media "$CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_ACCESS_KEY_ID "$CLOUDFLARE_R2_ACCESS_KEY_ID"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_SECRET_ACCESS_KEY "$CLOUDFLARE_R2_SECRET_ACCESS_KEY"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_ENDPOINT "http://object-storage:9000"
@@ -1283,11 +1278,11 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
   b2_private="${B2_S3_PRIVATE_BUCKET:-}" b2_public="${B2_S3_PUBLIC_BUCKET:-}" b2_identity="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"
   b2_access="$B2_S3_ACCESS_KEY_ID" b2_secret="$B2_S3_SECRET_ACCESS_KEY"
   r2_endpoint="${CLOUDFLARE_R2_ENDPOINT:-}" r2_region="${CLOUDFLARE_R2_REGION:-}" r2_bucket="${CLOUDFLARE_R2_BUCKET:-}"
-  r2_private="${CLOUDFLARE_R2_PRIVATE_BUCKET:-}" r2_public="${CLOUDFLARE_R2_PUBLIC_BUCKET:-}" r2_identity="${CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"
+  r2_private="${CLOUDFLARE_R2_PRIVATE_BUCKET:-}" r2_public="${CLOUDFLARE_R2_PUBLIC_BUCKET:-}"
   r2_access="$CLOUDFLARE_R2_ACCESS_KEY_ID" r2_secret="$CLOUDFLARE_R2_SECRET_ACCESS_KEY"
 else
   b2_endpoint="" b2_region="" b2_bucket="" b2_private="" b2_public="" b2_identity="" b2_access="" b2_secret=""
-  r2_endpoint="" r2_region="" r2_bucket="" r2_private="" r2_public="" r2_identity="" r2_access="" r2_secret=""
+  r2_endpoint="" r2_region="" r2_bucket="" r2_private="" r2_public="" r2_access="" r2_secret=""
 fi
 
 remote_command_bytes="$(LC_ALL=C printf '%s' "$REMOTE_COMMAND" | wc -c | tr -d '[:space:]')"
@@ -1327,10 +1322,10 @@ payload="$(jq -nc \
   --arg b2_private "$b2_private" --arg b2_public "$b2_public" --arg b2_identity "$b2_identity" \
   --arg b2_access "$b2_access" --arg b2_secret "$b2_secret" \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
-  --arg r2_private "$r2_private" --arg r2_public "$r2_public" --arg r2_identity "$r2_identity" \
+  --arg r2_private "$r2_private" --arg r2_public "$r2_public" \
   --arg r2_access "$r2_access" --arg r2_secret "$r2_secret" \
   --arg r2_metadata_bucket "${CLOUDFLARE_R2_METADATA_BUCKET:-}" \
-  '{cmd:$cmd,stdin:$stdin,envs:{TESTAGRAM_WEB_IMAGE:$web_image,CLOUDFLARE_API_TOKEN:$cloudflare_dns_token,CLOUDFLARE_WORKERS_DEPLOY_TOKEN:$cloudflare_worker_token,CLOUDFLARE_ACCOUNT_ID:$cloudflare_account_id,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$r2_identity,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
+  '{cmd:$cmd,stdin:$stdin,envs:{TESTAGRAM_WEB_IMAGE:$web_image,CLOUDFLARE_API_TOKEN:$cloudflare_dns_token,CLOUDFLARE_WORKERS_DEPLOY_TOKEN:$cloudflare_worker_token,CLOUDFLARE_ACCOUNT_ID:$cloudflare_account_id,TESTAGRAM_AUTH_JWT_SECRET:$auth_jwt_secret,AUTH_PUBLIC_BASE_URL:$auth_public_base_url,FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token,EDGE_PROXY_SHARED_TOKEN:$edge_proxy_token,TESTAGRAM_EDGE_RECOVERY_READINESS_TOKEN:$edge_recovery_readiness_token,DATA_CENTRE_MEDIA_ENABLED:$media_enabled,MEDIA_REPLICATION_ENABLED:$media_replication_enabled,FRESH_MEDIA_ENABLED:$fresh_media_enabled,TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:$identity_review_webauthn_enabled,TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED:$staff_webauthn_enrollment_enabled,TESTAGRAM_WEBAUTHN_READINESS_TOKEN:$webauthn_readiness_token,TESTAGRAM_WEBAUTHN_RPID:$webauthn_rpid,TESTAGRAM_WEBAUTHN_ORIGINS:$webauthn_origins,CONFIRM_NATIVE_IDENTITY_MIGRATIONS:$identity_migration_confirmation,TESTAGRAM_TERMS_VERSION:$terms_version,TESTAGRAM_PRIVACY_VERSION:$privacy_version,MEDIA_MODERATION_TOKEN:$moderation_token,MPESA_ENV:$mpesa_env,MPESA_SHORTCODE:$mpesa_shortcode,MPESA_PASSKEY:$mpesa_passkey,MPESA_CONSUMER_KEY:$mpesa_consumer_key,MPESA_CONSUMER_SECRET:$mpesa_consumer_secret,MPESA_CALLBACK_URL:$mpesa_callback,ADMIN_SERVICE_AUTH_KEY:$admin_service_key,B2_S3_ENDPOINT:$b2_endpoint,B2_S3_REGION:$b2_region,B2_S3_BUCKET:$b2_bucket,B2_S3_PRIVATE_BUCKET:$b2_private,B2_S3_PUBLIC_BUCKET:$b2_public,B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:$b2_identity,B2_S3_ACCESS_KEY_ID:$b2_access,B2_S3_SECRET_ACCESS_KEY:$b2_secret,CLOUDFLARE_R2_ENDPOINT:$r2_endpoint,CLOUDFLARE_R2_REGION:$r2_region,CLOUDFLARE_R2_BUCKET:$r2_bucket,CLOUDFLARE_R2_PRIVATE_BUCKET:$r2_private,CLOUDFLARE_R2_PUBLIC_BUCKET:$r2_public,CLOUDFLARE_R2_METADATA_BUCKET:$r2_metadata_bucket,CLOUDFLARE_R2_ACCESS_KEY_ID:$r2_access,CLOUDFLARE_R2_SECRET_ACCESS_KEY:$r2_secret},timeoutSeconds:90}')"
 response_file="$(mktemp)"
 if ! http_status="$(printf '%s' "$payload" | curl --silent --show-error --connect-timeout 10 --max-time 120 \
   --output "$response_file" --write-out '%{http_code}' -X POST \
