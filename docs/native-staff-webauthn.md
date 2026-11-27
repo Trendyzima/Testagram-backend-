@@ -93,7 +93,12 @@ Console attestation and Backend PostgreSQL query both pass on each request.
 This implementation enrolls and authenticates already-provisioned staff principals.
 It does not yet implement a complete staff invitation, role-change or revocation
 workflow in the Admin Console; those handlers remain fail-closed and return
-501. Do not enable general staff onboarding or use a one-person shortcut to
+501. The generic two-person sensitive-action ledger records decisions but does
+not execute staff provisioning, role mutation, revocation or enrollment
+authorization. A green approval-ledger row is therefore not evidence that a
+staff principal or authenticator was provisioned. The first-owner bootstrap
+procedure is a separate audited operator action; do not extrapolate it into a
+bulk staff-creation shortcut. Do not enable general staff onboarding or use a one-person shortcut to
 create staff roles. Until the dedicated two-person staff-provisioning workflow
 is implemented and independently tested, initial principal creation and
 emergency recovery must use the documented audited operator procedure with
