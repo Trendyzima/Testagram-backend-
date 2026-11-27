@@ -215,7 +215,7 @@ def main() -> None:
         if not all(marker in anon_headers.get("Cache-Control", "").lower() for marker in ("private", "no-store")):
             fail("Private CDN denial did not preserve private/no-store cache policy")
 
-        viewer_headers = {"X-Testagram-Viewer-Authorization": cdn_authorization}
+        viewer_headers = {"Authorization": cdn_authorization}
         cdn_status, cdn_headers, cdn_body = raw_request(cdn_url, headers=viewer_headers)
         if cdn_status != 200 or cdn_body != payload or not all(marker in cdn_headers.get("Cache-Control", "").lower() for marker in ("private", "no-store")):
             fail("Authorized private CDN playback did not return exact bytes with private/no-store caching")
