@@ -24,7 +24,7 @@ concurrency:
 jobs:
   verify-b2:
     if: inputs.confirm_b2_object_write == true
-    name: Verify existing B2 credentials and object lifecycle
+    name: Verify dedicated staging B2 credentials and object lifecycle
     runs-on: ubuntu-latest
     environment: media-staging
     timeout-minutes: 10
@@ -35,12 +35,12 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_B2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_B2_SECRET_ACCESS_KEY }}
     steps:
-      - name: Validate existing B2 settings
+      - name: Validate dedicated media-staging B2 settings
         shell: bash
         run: |
           set -euo pipefail
           for name in B2_ENDPOINT B2_REGION B2_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
-            [[ -n "${!name:-}" ]] || { echo "::error::Missing existing repository secret: $name"; exit 1; }
+            [[ -n "${!name:-}" ]] || { echo "::error::Missing media-staging environment setting: $name"; exit 1; }
           done
           [[ "$B2_ENDPOINT" == https://* ]] || { echo "::error::B2 endpoint must use HTTPS"; exit 1; }
           [[ "$B2_BUCKET" =~ (^|[-_])(ci|staging|smoke)([-_]|$) ]] || { echo "::error::B2 bucket must explicitly identify isolated CI/staging/smoke data"; exit 1; }
@@ -91,7 +91,7 @@ jobs:
         run: |
           {
             echo "### Backblaze B2 storage smoke test"
-            echo "- Reused existing repository B2 secrets; no additional credentials required."
+            echo "- Used dedicated media-staging environment credentials; no repository-wide provider credentials were used."
             echo "- Verified one temporary object by read-back and SHA-256."
             echo "- Verified logical deletion."
             echo "- This does not test R2, cross-provider replication, CDN delivery, or production media readiness."
