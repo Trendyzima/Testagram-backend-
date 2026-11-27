@@ -47,6 +47,7 @@ for migration in \
   migrations/20261114_native_identity_evidence.sql \
   migrations/20261114_native_identity_integrity.sql \
   migrations/20261115_identity_evidence_access_audit.sql \
+  migrations/20261127_identity_evidence_retention_audit.sql \
   migrations/20261115_native_identity_status_access.sql \
   migrations/20261019_dual_backend_replication.sql \
   migrations/20261019_testagram_local_accounts_posts.sql \
@@ -76,6 +77,8 @@ psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261114_native_identity_integrity.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_native_identity_status_access.sql
 psql_ci < migrations/20261115_testagram_native_auth_cutover_foundation.sql
@@ -490,6 +493,9 @@ END;
 $seed_historical_verification_events$;
 SQL
 psql_ci < migrations/20261115_identity_evidence_access_audit.sql
+# Re-apply the retention extension after the older audit migration so its
+# historical CHECK-constraint definition cannot remove the new retention events.
+psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
 psql_ci <<'SQL'
 DO $verify_historical_verification_events$
 BEGIN
@@ -509,7 +515,7 @@ psql_ci <<'SQL'
 DO $evidence_retention$
 DECLARE
   app_id uuid := gen_random_uuid();
-  session_id uuid := gen_random_uuid();
+  v_session_id uuid := gen_random_uuid();
   evidence_id uuid := gen_random_uuid();
 BEGIN
   INSERT INTO testagram_identity.identity_applications
@@ -524,12 +530,12 @@ BEGIN
   INSERT INTO testagram_identity.verification_sessions
     (id,application_id,session_token_sha256,purpose,requested_minimum_age,status,expires_at)
   VALUES
-    (session_id,app_id,decode(repeat('e',64),'hex'),'age_assurance',18,'in_progress',now()+interval '1 day');
+    (v_session_id,app_id,decode(repeat('e',64),'hex'),'age_assurance',18,'in_progress',now()+interval '1 day');
 
   INSERT INTO testagram_identity.verification_evidence
     (id,session_id,object_key,content_type,size_bytes,sha256,status,retention_until)
   VALUES
-    (evidence_id,session_id,'identity/ci/evidence.pdf','application/pdf',10,
+    (evidence_id,v_session_id,'identity/ci/evidence.pdf','application/pdf',10,
      decode(repeat('f',64),'hex'),'upload_pending',now()-interval '1 minute');
 
   UPDATE testagram_identity.verification_evidence
@@ -540,12 +546,30 @@ BEGIN
   SET status='deleted',verified_at=NULL
   WHERE id=evidence_id AND status='quarantined';
 
+  INSERT INTO testagram_identity.verification_events
+    (session_id,event_type,actor_type,actor_reference,request_id,metadata)
+  VALUES
+    (v_session_id,'identity_evidence_quarantined','system',
+     'identity-evidence-retention-worker','ci-retention-quarantine',
+     jsonb_build_object('evidence_id',evidence_id::text)),
+    (v_session_id,'identity_evidence_deleted','system',
+     'identity-evidence-retention-worker','ci-retention-delete',
+     jsonb_build_object('evidence_id',evidence_id::text));
+
   IF NOT EXISTS (
     SELECT 1 FROM testagram_identity.verification_evidence
     WHERE id=evidence_id AND status='deleted'
       AND uploaded_at IS NOT NULL AND verified_at IS NULL
   ) THEN
     RAISE EXCEPTION 'expired evidence did not reach the terminal deleted state';
+  END IF;
+  IF (
+    SELECT count(*) FROM testagram_identity.verification_events
+    WHERE session_id=v_session_id
+      AND event_type IN ('identity_evidence_quarantined','identity_evidence_deleted')
+      AND request_id IN ('ci-retention-quarantine','ci-retention-delete')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'identity evidence retention transitions were not auditable';
   END IF;
 END;
 $evidence_retention$;
@@ -723,7 +747,8 @@ for migration in \
   migrations/20261124_testagram_email_verification_otp.sql \
   migrations/20261124_testagram_social_email_consent.sql \
   migrations/20261125_testagram_mail_delivery_events.sql \
-  migrations/20261126_testagram_native_mail_feedback.sql; do
+  migrations/20261126_testagram_native_mail_feedback.sql \
+  migrations/20261127_identity_evidence_retention_audit.sql; do
   psql_ci < "$migration"
 done
 
