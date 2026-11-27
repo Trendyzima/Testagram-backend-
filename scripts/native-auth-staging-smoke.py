@@ -81,6 +81,15 @@ def require_status(base: str, path: str, expected: int, *, method: str = "GET",
     return envelope
 
 
+def require_error_code(base: str, path: str, expected_status: int, expected_code: str, *,
+                       method: str = "POST", body: dict | None = None) -> None:
+    envelope = require_status(base, path, expected_status, method=method, body=body)
+    error = envelope.get("error")
+    code = error.get("code") if isinstance(error, dict) else None
+    if code != expected_code:
+        fail(f"{method} {path}: expected error code {expected_code}, received {code or 'UNKNOWN'}")
+
+
 def main() -> None:
     raw_base = os.environ.get("TESTAGRAM_STAGING_API_URL", "").strip()
     email = os.environ.get("TESTAGRAM_AUTH_SMOKE_EMAIL", "").strip()
@@ -94,6 +103,13 @@ def main() -> None:
     if parsed.path not in ("", "/") or parsed.hostname.lower().rstrip(".") in production_hosts:
         fail("Refusing to run against a non-staging path or a canonical production Testagram host")
     base = raw_base.rstrip("/")
+
+    require_status(base, "/api/me/profile", 401)
+    require_error_code(
+        base, "/api/auth/signup", 403, "IDENTITY_REVIEW_REQUIRED",
+        body={"email": "blocked-signup@example.invalid", "username": "blocked_signup", "password": "not-a-real-password"},
+    )
+    print("PASS: anonymous profile access is denied and legacy public signup remains fail-closed")
 
     first = login(base, email, password)
     require_status(base, "/api/me/profile", 200, bearer=first["access_token"])
@@ -119,12 +135,16 @@ def main() -> None:
     second = login(base, email, password)
     require_status(base, "/api/auth/logout", 200, method="POST", body={}, bearer=second["access_token"])
     require_status(base, "/api/me/profile", 401, bearer=second["access_token"])
-    print("PASS: logout revokes the active access session")
+    require_status(base, "/api/auth/refresh", 401, method="POST",
+                   body={"refresh_token": second["refresh_token"]})
+    print("PASS: logout revokes both access and refresh credentials")
 
     third = login(base, email, password)
     require_status(base, "/api/auth/logout-all", 200, method="POST", body={}, bearer=third["access_token"])
     require_status(base, "/api/me/profile", 401, bearer=third["access_token"])
-    print("PASS: logout-all revokes the active session and token version")
+    require_status(base, "/api/auth/refresh", 401, method="POST",
+                   body={"refresh_token": third["refresh_token"]})
+    print("PASS: logout-all revokes access and refresh credentials across the account")
     print("PASS: Testagram native authentication staging smoke completed")
 
 
