@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -96,21 +97,239 @@ func (a *app) saveStaffChallenge(ctx context.Context,userID,kind string,sd *weba
 }
 
 func (a *app) handleStaffWebAuthnAuthorize(w http.ResponseWriter, r *http.Request) {
-	s, _, ok := a.requireStaff(w, r, "owner")
+	s, actor, ok := a.requireStaff(w, r, "owner")
 	if !ok {
 		return
 	}
-	if !a.requireRecentStepUp(w, s) {
+	claims, ok := a.requireRecentStepUpClaims(w, s)
+	if !ok {
+		return
+	}
+	if claims.Subject != actor.ID {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "WebAuthn elevation does not belong to the authenticated staff principal"})
 		return
 	}
 
-	// A single owner approval is not sufficient to authorize staff enrollment.
-	// Keep this endpoint fail-closed until enrollment authorization is created
-	// by the same durable two-person staff lifecycle approval transaction that
-	// provisions the target principal. Operator bootstrap remains a separate,
-	// audited deployment procedure.
-	writeJSON(w, http.StatusNotImplemented, map[string]string{
-		"error": "Staff enrollment authorization requires two independent Testagram approvals. No enrollment authorization was created.",
+	targetID := strings.TrimSpace(r.PathValue("id"))
+	if len(targetID) != 36 || !regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	nativeauth "github.com/Trendyzima/Testagram-backend-/internal/nativeauth"
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
+)
+
+type nativeElevationClaims struct {
+ Subject string `json:"sub"`
+ Email string `json:"email"`
+ Role string `json:"role"`
+ Issuer string `json:"iss"`
+ Audience string `json:"aud"`
+ IssuedAt int64 `json:"iat"`
+ ExpiresAt int64 `json:"exp"`
+ TokenVersion int64 `json:"ver"`
+ SessionID string `json:"sid"`
+ MFAAuthenticatedAt int64 `json:"mfa_at,omitempty"`
+ MFAAuthenticatorID string `json:"mfa_credential,omitempty"`
+ JWTID string `json:"jti,omitempty"`
+}
+
+type staffWebAuthnUser struct {
+ id string
+ name string
+ handle []byte
+ credentials []webauthn.Credential
+}
+func (u *staffWebAuthnUser) WebAuthnID() []byte { return u.handle }
+func (u *staffWebAuthnUser) WebAuthnName() string { return u.name }
+func (u *staffWebAuthnUser) WebAuthnDisplayName() string { return u.name }
+func (u *staffWebAuthnUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
+
+func (a *app) staffWebAuthn() (*webauthn.WebAuthn,string,error) {
+ rpid:=strings.TrimSpace(os.Getenv("TESTAGRAM_WEBAUTHN_RPID"))
+ origins:=strings.FieldsFunc(os.Getenv("TESTAGRAM_WEBAUTHN_ORIGINS"),func(r rune)bool{return r==','||r==' '||r=='\n'})
+ if rpid==""||len(origins)==0{return nil,"",errors.New("explicit WebAuthn RP ID and origins are required")}
+ for _,origin:=range origins { if !strings.HasPrefix(origin,"https://")&&!(strings.HasPrefix(origin,"http://localhost")||strings.HasPrefix(origin,"http://127.0.0.1")){return nil,"",errors.New("WebAuthn origins must use HTTPS outside localhost")} }
+ wa,err:=webauthn.New(&webauthn.Config{
+  RPID:rpid,RPDisplayName:"Testagram Staff",RPOrigins:origins,
+  AuthenticatorSelection:protocol.AuthenticatorSelection{UserVerification:protocol.VerificationRequired},
+  Timeouts:webauthn.TimeoutsConfig{Registration:webauthn.TimeoutConfig{Enforce:true,Timeout:2*time.Minute},Login:webauthn.TimeoutConfig{Enforce:true,Timeout:90*time.Second}},
+ })
+ return wa,rpid,err
+}
+
+func (a *app) loadStaffWebAuthnUser(ctx context.Context,id,rpid string)(*staffWebAuthnUser,error){
+ u:=&staffWebAuthnUser{id:id}
+ if err:=a.database.QueryRow(ctx,"SELECT i.email_normalized FROM testagram_auth.staff_principals sp JOIN testagram_auth.identities i ON i.user_id=sp.user_id WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE",id).Scan(&u.name);err!=nil{return nil,err}
+ handle:=make([]byte,32);if _,err:=rand.Read(handle);err!=nil{return nil,err}
+ if err:=a.database.QueryRow(ctx,"INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle) VALUES($1,$2::uuid,$3) ON CONFLICT(rpid,user_id) DO UPDATE SET user_id=EXCLUDED.user_id RETURNING user_handle",rpid,id,handle).Scan(&u.handle);err!=nil{return nil,err}
+ rows,err:=a.database.Query(ctx,"SELECT credential FROM testagram_auth.staff_webauthn_credentials WHERE rpid=$1 AND user_id=$2::uuid AND revoked_at IS NULL ORDER BY id",rpid,id)
+ if err!=nil{return nil,err};defer rows.Close()
+ for rows.Next(){
+  var encrypted []byte
+  if err:=rows.Scan(&encrypted);err!=nil{return nil,err}
+  if len(encrypted)<a.aead.NonceSize(){return nil,errors.New("invalid encrypted credential")}
+  plain,err:=a.aead.Open(nil,encrypted[:a.aead.NonceSize()],encrypted[a.aead.NonceSize():],[]byte("testagram-staff-webauthn-credential-v1"))
+  if err!=nil{return nil,errors.New("stored credential integrity verification failed")}
+  var c webauthn.Credential
+  if err:=json.Unmarshal(plain,&c);err!=nil{return nil,err}
+  u.credentials=append(u.credentials,c)
+ }
+ return u,rows.Err()
+}
+func (a *app) encryptStaffCredential(c *webauthn.Credential)([]byte,error){
+ plain,err:=json.Marshal(c);if err!=nil{return nil,err}
+ nonce:=make([]byte,a.aead.NonceSize());if _,err=rand.Read(nonce);err!=nil{return nil,err}
+ return append(nonce,a.aead.Seal(nil,nonce,plain,[]byte("testagram-staff-webauthn-credential-v1"))...),nil
+}
+func (a *app) saveStaffChallenge(ctx context.Context,userID,kind string,sd *webauthn.SessionData)error{
+ plain,err:=json.Marshal(sd);if err!=nil{return err}
+ sum:=sha256.Sum256([]byte(sd.Challenge))
+ aad:=[]byte("testagram-staff-webauthn-session-v1:"+userID+":"+kind+":"+base64.RawURLEncoding.EncodeToString(sum[:]))
+ nonce:=make([]byte,a.aead.NonceSize());if _,err=rand.Read(nonce);err!=nil{return err}
+ encrypted:=append(nonce,a.aead.Seal(nil,nonce,plain,aad)...)
+ _,err=a.database.Exec(ctx,"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE expires_at<=now()")
+ if err!=nil{return err}
+ _,err=a.database.Exec(ctx,"INSERT INTO testagram_auth.staff_webauthn_challenges(challenge_hash,user_id,ceremony,session_data,expires_at) VALUES($1,$2::uuid,$3,$4,LEAST($5::timestamptz,now()+interval '2 minutes'))",sum[:],userID,kind,encrypted,sd.Expires)
+ return err
+}
+
+).MatchString(targetID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A canonical staff UUID is required"})
+		return
+	}
+	if targetID == actor.ID {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "An administrator cannot request enrollment authorization for their own account"})
+		return
+	}
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	input.Reason = strings.TrimSpace(input.Reason)
+	if len(input.Reason) < 12 || len(input.Reason) > 1000 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "A reason of 12 to 1000 characters is required"})
+		return
+	}
+	if allowed, err := a.consumeAdminRateLimit(r.Context(), actor.ID, "webauthn-enrollment-authorization-request", 5, time.Hour); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Security rate-limit service is unavailable"})
+		return
+	} else if !allowed {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Too many enrollment authorization requests. Try again later."})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	tx, err := a.database.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Staff enrollment approval service is unavailable"})
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	var lockedTarget string
+	err = tx.QueryRow(ctx, `
+		SELECT sp.user_id::text
+		FROM testagram_auth.staff_principals sp
+		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+		WHERE sp.user_id=$1::uuid
+		  AND sp.enabled=TRUE
+		  AND sp.mfa_enrolled_at IS NULL
+		  AND i.disabled_at IS NULL
+		  AND i.email_verified_at IS NOT NULL
+		  AND EXISTS (
+			SELECT 1 FROM testagram_auth.staff_role_grants rg
+			WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM testagram_auth.staff_webauthn_credentials wc
+			WHERE wc.user_id=sp.user_id AND wc.revoked_at IS NULL
+		  )
+		FOR UPDATE OF sp,i
+	`, targetID).Scan(&lockedTarget)
+	if err != nil || lockedTarget != targetID {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Target must be an enabled, email-verified staff principal without an enrolled authenticator"})
+		return
+	}
+
+	var existing bool
+	err = tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM testagram_auth.native_sensitive_action_requests
+			WHERE action_type='staff.webauthn.enroll'
+			  AND target_reference=$1
+			  AND status='pending'
+			  AND expires_at>now()
+		) OR EXISTS (
+			SELECT 1 FROM testagram_auth.staff_webauthn_enrollment_authorizations
+			WHERE user_id=$1::uuid AND consumed_at IS NULL
+			  AND revoked_at IS NULL AND expires_at>now()
+		)
+	`, targetID).Scan(&existing)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Could not check existing enrollment approvals"})
+		return
+	}
+	if existing {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "A pending request or live enrollment authorization already exists for this staff member"})
+		return
+	}
+
+	payload, err := json.Marshal(struct {
+		TargetUserID string `json:"target_user_id"`
+	}{TargetUserID: targetID})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not prepare the immutable enrollment request"})
+		return
+	}
+	digest := sha256.Sum256(payload)
+	var requestID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO testagram_auth.native_sensitive_action_requests
+		  (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256,required_approvals)
+		VALUES ('staff.webauthn.enroll',$1::uuid,$2,$3,$4::jsonb,$5,2)
+		RETURNING id::text
+	`, actor.ID, targetID, input.Reason, string(payload), fmt.Sprintf("%x", digest[:])).Scan(&requestID)
+	if err == nil {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO testagram_auth.native_admin_security_audit
+			  (actor_user_id,action,target_reference,request_id,metadata)
+			VALUES ($1::uuid,'staff.webauthn.enrollment_requested',$2,$3::uuid,
+			        jsonb_build_object('required_approvals',2,'requester',$1::text))
+		`, actor.ID, targetID, requestID)
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Could not safely record the two-person enrollment request"})
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok": true,
+		"request_id": requestID,
+		"status": "pending",
+		"required_approvals": 2,
+		"message": "Request recorded. Two different eligible staff members must approve with WebAuthn. No enrollment authorization exists until both approvals are committed.",
 	})
 }
 
@@ -122,7 +341,13 @@ func (a *app) handleStaffWebAuthnRegisterBegin(w http.ResponseWriter,r *http.Req
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil{writeJSON(w,503,map[string]string{"error":"Canonical staff identity or credential store unavailable"});return}
  if len(u.credentials)>0&&!a.requireRecentStepUp(w,s){return}
  var enrollmentAuthorized bool
- if err:=a.database.QueryRow(r.Context(),"SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_webauthn_enrollment_authorizations WHERE user_id=$1::uuid AND consumed_at IS NULL AND expires_at>now())",user.ID).Scan(&enrollmentAuthorized);err!=nil||!enrollmentAuthorized{writeJSON(w,403,map[string]string{"error":"Staff enrollment requires an unexpired independent authorization."});return}
+ if err:=a.database.QueryRow(r.Context(),`SELECT EXISTS(
+		SELECT 1 FROM testagram_auth.staff_webauthn_enrollment_authorizations ea
+		WHERE ea.user_id=$1::uuid AND ea.consumed_at IS NULL
+		  AND ea.revoked_at IS NULL AND ea.expires_at>now()
+		  AND ea.request_id IS NOT NULL
+		  AND testagram_auth.staff_webauthn_enrollment_authorization_is_valid(ea.id,ea.user_id)
+	)`,user.ID).Scan(&enrollmentAuthorized);err!=nil||!enrollmentAuthorized{writeJSON(w,403,map[string]string{"error":"Staff enrollment requires an unexpired, unconsumed two-person authorization with both approvers still eligible."});return}
  if strings.EqualFold(os.Getenv("TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED"),"true")!=true{writeJSON(w,503,map[string]string{"error":"Staff WebAuthn enrollment is closed by production policy."});return}
  options,sd,err:=wa.BeginRegistration(u,webauthn.WithRegistrationOrigin(a.publicOrigin),webauthn.WithExclusions(webauthn.Credentials(u.credentials).CredentialDescriptors()))
  if err!=nil{writeJSON(w,503,map[string]string{"error":"Could not create registration ceremony"});return}
@@ -148,7 +373,13 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
  plain,e:=a.aead.Open(nil,raw[:a.aead.NonceSize()],raw[a.aead.NonceSize():],aad)
  if e!=nil||json.Unmarshal(plain,&sd)!=nil{writeJSON(w,503,map[string]string{"error":"Stored registration state failed integrity verification"});return}
  var authorizationID int64
- if err=tx.QueryRow(r.Context(),"SELECT id FROM testagram_auth.staff_webauthn_enrollment_authorizations WHERE user_id=$1::uuid AND consumed_at IS NULL AND expires_at>now() ORDER BY created_at LIMIT 1 FOR UPDATE",user.ID).Scan(&authorizationID);err!=nil{writeJSON(w,403,map[string]string{"error":"Enrollment authorization is missing, expired or already consumed"});return}
+ if err=tx.QueryRow(r.Context(),`SELECT ea.id
+		FROM testagram_auth.staff_webauthn_enrollment_authorizations ea
+		WHERE ea.user_id=$1::uuid AND ea.consumed_at IS NULL
+		  AND ea.revoked_at IS NULL AND ea.expires_at>now()
+		  AND ea.request_id IS NOT NULL
+		  AND testagram_auth.staff_webauthn_enrollment_authorization_is_valid(ea.id,ea.user_id)
+		ORDER BY ea.created_at LIMIT 1 FOR UPDATE OF ea`,user.ID).Scan(&authorizationID);err!=nil{writeJSON(w,403,map[string]string{"error":"Two-person enrollment authorization is missing, expired, revoked, already consumed or has an ineligible approver"});return}
  u,err:=a.loadStaffWebAuthnUser(r.Context(),user.ID,rpid);if err!=nil{writeJSON(w,403,map[string]string{"error":"Staff enrollment is not authorized"});return}
  if len(u.credentials)>0&&!a.requireRecentStepUp(w,s){return}
  req:=r.Clone(r.Context());req.Body=io.NopCloser(bytes.NewReader(input.Response));req.ContentLength=int64(len(input.Response))
