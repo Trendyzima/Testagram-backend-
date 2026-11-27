@@ -371,7 +371,7 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 	return nextStatus, nil
 }
 
-func issueStaffWebAuthnEnrollmentAuthorization(ctx context.Context, tx pgx.Tx, requestID, targetReference, requesterID string, rawPayload []byte) error {
+func issueStaffWebAuthnEnrollmentAuthorization(ctx context.Context, tx pgx.Tx, requestID, targetReference, requesterID, expectedRPID string, rawPayload []byte) error {
 	var payload struct { TargetUserID string `json:"target_user_id"` }
 	if err := json.Unmarshal(rawPayload, &payload); err != nil || payload.TargetUserID != targetReference {
 		return errors.New("staff enrollment approval payload is not bound to its target")
@@ -403,7 +403,7 @@ func issueStaffWebAuthnEnrollmentAuthorization(ctx context.Context, tx pgx.Tx, r
 	}
 
 	rows, err := tx.Query(ctx, `
-		SELECT approver_user_id::text
+		SELECT approver_user_id::text,webauthn_rpid
 		FROM testagram_auth.native_sensitive_action_approvals
 		WHERE request_id=$1::uuid AND decision='approved'
 		ORDER BY created_at ASC,id ASC
@@ -411,15 +411,19 @@ func issueStaffWebAuthnEnrollmentAuthorization(ctx context.Context, tx pgx.Tx, r
 	`, requestID)
 	if err != nil { return errors.New("independent WebAuthn approvers could not be loaded") }
 	approvers := make([]string, 0, 3)
+	approverRPs := make([]string, 0, 3)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil { rows.Close(); return errors.New("independent WebAuthn approvers could not be read") }
+		var id, rp string
+		if err := rows.Scan(&id, &rp); err != nil { rows.Close(); return errors.New("independent WebAuthn approvers could not be read") }
 		approvers = append(approvers, id)
+		approverRPs = append(approverRPs, rp)
 	}
 	if err := rows.Err(); err != nil { rows.Close(); return errors.New("independent WebAuthn approvers could not be read") }
 	rows.Close()
 	if len(approvers) != 2 || approvers[0] == approvers[1] ||
 		approvers[0] == targetReference || approvers[1] == targetReference ||
+		len(approverRPs) != 2 || expectedRPID == "" ||
+		approverRPs[0] != expectedRPID || approverRPs[1] != expectedRPID ||
 		(requesterID != "" && (approvers[0] == requesterID || approvers[1] == requesterID)) {
 		return errors.New("exactly two distinct non-requesting WebAuthn approvers are required")
 	}
@@ -528,7 +532,7 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		if tag.RowsAffected() != 1 { return "", "", 0, errors.New("approval request changed while recording the decision") }
 	}
 	if actionType == "staff.webauthn.enroll" && state == "approved" {
-		if err := issueStaffWebAuthnEnrollmentAuthorization(ctx, tx, requestID, targetReference, requesterID, payload); err != nil {
+		if err := issueStaffWebAuthnEnrollmentAuthorization(ctx, tx, requestID, targetReference, requesterID, webauthnRPID, payload); err != nil {
 			return "", "", 0, err
 		}
 	}
