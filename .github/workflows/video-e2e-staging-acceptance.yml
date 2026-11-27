@@ -104,6 +104,8 @@ jobs:
           TESTAGRAM_STAGING_ACCESS_TOKEN: ${{ steps.prepare.outputs.access_token }}
           TESTAGRAM_STAGING_VIDEO_ID: ${{ steps.prepare.outputs.video_id }}
           TESTAGRAM_STAGING_VIDEO_TITLE: ${{ steps.prepare.outputs.video_title }}
+          TESTAGRAM_AUTH_SMOKE_EMAIL: ${{ secrets.TESTAGRAM_AUTH_SMOKE_EMAIL }}
+          TESTAGRAM_AUTH_SMOKE_PASSWORD: ${{ secrets.TESTAGRAM_AUTH_SMOKE_PASSWORD }}
         with:
           api-level: 35
           target: google_apis
@@ -111,6 +113,10 @@ jobs:
           profile: pixel_6
           script: |
             cd flutter-client
+            flutter test integration_test/native_auth_staging_test.dart -d emulator-5554 \\
+              --dart-define="TESTAGRAM_API_URL=$TESTAGRAM_STAGING_API_URL" \\
+              --dart-define="TESTAGRAM_STAGING_AUTH_EMAIL=$TESTAGRAM_AUTH_SMOKE_EMAIL" \\
+              --dart-define="TESTAGRAM_STAGING_AUTH_PASSWORD=$TESTAGRAM_AUTH_SMOKE_PASSWORD"
             flutter test integration_test/video_feed_staging_test.dart -d emulator-5554 \
               --dart-define="TESTAGRAM_STAGING_API_URL=$TESTAGRAM_STAGING_API_URL" \
               --dart-define="TESTAGRAM_STAGING_ACCESS_TOKEN=$TESTAGRAM_STAGING_ACCESS_TOKEN" \
