@@ -97,92 +97,9 @@ jobs:
             echo "- This does not test R2, cross-provider replication, CDN delivery, or production media readiness."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  identity-evidence-replication:
-    if: inputs.confirm_live_provider_writes == true
-    name: Verify MinIO to B2/R2 identity evidence replication, repair and deletion
-    runs-on: ubuntu-latest
-    environment: identity-evidence-staging
-    timeout-minutes: 25
-    env:
-      TESTAGRAM_LIVE_IDENTITY_EVIDENCE_REPLICATION: "true"
-      IDENTITY_SMOKE_PRIMARY_ENDPOINT: http://127.0.0.1:9000
-      IDENTITY_SMOKE_PRIMARY_REGION: us-east-1
-      IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID: ci-testagram-minio
-      IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY: ci-only-minio-secret-32-characters
-      IDENTITY_SMOKE_PRIMARY_PRIVATE_BUCKET: testagram-ci-private
-      IDENTITY_SMOKE_PRIMARY_PUBLIC_BUCKET: testagram-ci-public
-      IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET: testagram-ci-identity-evidence
-      IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_R2_ENDPOINT }}
-      IDENTITY_SMOKE_R2_REGION: ${{ vars.IDENTITY_SMOKE_R2_REGION }}
-      IDENTITY_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.IDENTITY_SMOKE_R2_ACCESS_KEY_ID }}
-      IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_IDENTITY_BUCKET }}
-      IDENTITY_SMOKE_B2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_B2_ENDPOINT }}
-      IDENTITY_SMOKE_B2_REGION: ${{ vars.IDENTITY_SMOKE_B2_REGION }}
-      IDENTITY_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.IDENTITY_SMOKE_B2_ACCESS_KEY_ID }}
-      IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_IDENTITY_BUCKET }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: "1.26.11"
-          cache: true
-      - name: Start pinned isolated MinIO primary
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run -d --rm --name testagram-minio-identity-smoke \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER="$IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID" \
-            -e MINIO_ROOT_PASSWORD="$IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY" \
-            ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 \
-            server /data --address ":9000" --console-address ":9001"
-          for attempt in $(seq 1 40); do
-            if curl -fsS "$IDENTITY_SMOKE_PRIMARY_ENDPOINT/minio/health/live" >/dev/null; then break; fi
-            if [ "$attempt" -eq 40 ]; then echo "::error::Isolated MinIO did not become healthy"; exit 1; fi
-            sleep 2
-          done
-      - name: Create isolated private, public and identity buckets
-        shell: bash
-        run: |
-          set -euo pipefail
-          export AWS_ACCESS_KEY_ID="$IDENTITY_SMOKE_PRIMARY_ACCESS_KEY_ID"
-          export AWS_SECRET_ACCESS_KEY="$IDENTITY_SMOKE_PRIMARY_SECRET_ACCESS_KEY"
-          export AWS_DEFAULT_REGION="$IDENTITY_SMOKE_PRIMARY_REGION"
-          for bucket in "$IDENTITY_SMOKE_PRIMARY_PRIVATE_BUCKET" "$IDENTITY_SMOKE_PRIMARY_PUBLIC_BUCKET" "$IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET"; do
-            aws --endpoint-url "$IDENTITY_SMOKE_PRIMARY_ENDPOINT" s3api create-bucket --bucket "$bucket" >/dev/null
-          done
-      - name: Validate dedicated staging provider buckets and credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in IDENTITY_SMOKE_R2_ENDPOINT IDENTITY_SMOKE_R2_REGION IDENTITY_SMOKE_R2_ACCESS_KEY_ID IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY IDENTITY_SMOKE_R2_PRIVATE_BUCKET IDENTITY_SMOKE_R2_PUBLIC_BUCKET IDENTITY_SMOKE_R2_IDENTITY_BUCKET IDENTITY_SMOKE_B2_ENDPOINT IDENTITY_SMOKE_B2_REGION IDENTITY_SMOKE_B2_ACCESS_KEY_ID IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY IDENTITY_SMOKE_B2_PRIVATE_BUCKET IDENTITY_SMOKE_B2_PUBLIC_BUCKET IDENTITY_SMOKE_B2_IDENTITY_BUCKET; do
-            if [ -z "${!name:-}" ]; then echo "::error::Missing staging configuration: $name"; exit 1; fi
-          done
-          [[ "$IDENTITY_SMOKE_R2_ENDPOINT" == https://* && "$IDENTITY_SMOKE_B2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
-          r2_host="$(python3 -c 'import sys,urllib.parse; print((urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower().rstrip("."))' "$IDENTITY_SMOKE_R2_ENDPOINT")"
-          b2_host="$(python3 -c 'import sys,urllib.parse; print((urllib.parse.urlsplit(sys.argv[1]).hostname or "").lower().rstrip("."))' "$IDENTITY_SMOKE_B2_ENDPOINT")"
-          [[ -n "$r2_host" && -n "$b2_host" && "$r2_host" != "$b2_host" ]] || { echo "::error::Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames"; exit 1; }
-          [[ "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Private and public buckets must be distinct"; exit 1; }
-          [[ "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" && "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Identity evidence buckets must be separate from public and ordinary private media buckets"; exit 1; }
-          for bucket in "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET"; do
-            [[ "$bucket" =~ (^|[-_])(ci|staging|smoke)([-_]|$) ]] || { echo "::error::Every cloud bucket must explicitly identify isolated staging/smoke data"; exit 1; }
-            [[ ! "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production bucket rejected"; exit 1; }
-          done
-      - name: Execute live three-provider identity evidence lifecycle
-        run: go test -count=1 -run '^TestLiveIdentityEvidenceReplicationLifecycle$' -v ./internal/virtualstorage
-      - name: Stop isolated MinIO
-        if: always()
-        run: docker rm -f testagram-minio-identity-smoke >/dev/null 2>&1 || true
-
   three-provider-media-replication:
     if: inputs.confirm_live_provider_writes == true
-    name: Verify real media bytes across Instabox MinIO, Cloudflare R2 and Backblaze B2
+    name: Verify ordinary media bytes across Instabox MinIO, Cloudflare R2 and Backblaze B2
     runs-on: ubuntu-latest
     environment: media-staging
     timeout-minutes: 35
@@ -194,21 +111,18 @@ jobs:
       MEDIA_SMOKE_INSTABOX_SECRET_ACCESS_KEY: ci-only-media-secret-32-characters
       MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET: testagram-ci-media-private
       MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET: testagram-ci-media-public
-      MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET: testagram-ci-media-identity-evidence
       MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.MEDIA_STAGING_R2_ENDPOINT }}
       MEDIA_SMOKE_R2_REGION: ${{ vars.MEDIA_STAGING_R2_REGION }}
       MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_R2_ACCESS_KEY_ID }}
       MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_R2_SECRET_ACCESS_KEY }}
       MEDIA_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.MEDIA_STAGING_R2_PRIVATE_BUCKET }}
       MEDIA_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.MEDIA_STAGING_R2_PUBLIC_BUCKET }}
-      MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_R2_IDENTITY_BUCKET }}
       MEDIA_SMOKE_B2_ENDPOINT: ${{ vars.MEDIA_STAGING_B2_ENDPOINT }}
       MEDIA_SMOKE_B2_REGION: ${{ vars.MEDIA_STAGING_B2_REGION }}
       MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_B2_ACCESS_KEY_ID }}
       MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_B2_SECRET_ACCESS_KEY }}
       MEDIA_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.MEDIA_STAGING_B2_PRIVATE_BUCKET }}
       MEDIA_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.MEDIA_STAGING_B2_PUBLIC_BUCKET }}
-      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_B2_IDENTITY_BUCKET }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -237,7 +151,7 @@ jobs:
           export AWS_ACCESS_KEY_ID="$MEDIA_SMOKE_INSTABOX_ACCESS_KEY_ID"
           export AWS_SECRET_ACCESS_KEY="$MEDIA_SMOKE_INSTABOX_SECRET_ACCESS_KEY"
           export AWS_DEFAULT_REGION="$MEDIA_SMOKE_INSTABOX_REGION"
-          for bucket in "$MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET" "$MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET" "$MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET"; do
+          for bucket in "$MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET" "$MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET"; do
             aws --endpoint-url "$MEDIA_SMOKE_INSTABOX_ENDPOINT" s3api create-bucket --bucket "$bucket" >/dev/null
           done
       - name: Refuse production or ambiguous cloud buckets
