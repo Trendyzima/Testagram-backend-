@@ -51,9 +51,18 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_workflow_local_fresh_media_gate_name_does_not_shadow_step_environment(self):
         self.assertEqual(self.workflow.count('fresh_gate_enabled="$(normalize_flag'), 2)
         self.assertNotIn('fresh_media_enabled="$(normalize_flag', self.workflow)
-        self.assertIn('Internal workflow error: R2 provisioning ran without both media gates.', self.workflow)
-        self.assertIn('Internal workflow error: B2 provisioning ran without both media gates.', self.workflow)
+        self.assertIn('Internal workflow error: R2 provisioning ran without the Data Centre service gate.', self.workflow)
+        self.assertIn('Internal workflow error: B2 provisioning ran without the Data Centre service gate.', self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
+
+    def test_identity_storage_service_can_run_while_general_media_uploads_stay_disabled(self):
+        self.assertNotIn("DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must match", self.workflow + self.deployer)
+        self.assertIn('if [[ "$early_fresh_gate" == true && "$early_dc_media_enabled" != true ]]', self.workflow)
+        self.assertIn('media_enabled=$early_dc_media_enabled', self.workflow)
+        self.assertIn('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then', self.deployer)
+        self.assertIn('FRESH_MEDIA_ENABLED=$FRESH_MEDIA_ENABLED', self.deployer)
+        self.assertIn('FRESH_MEDIA_ENABLED=true requires DATA_CENTRE_MEDIA_ENABLED=true', self.deployer)
+        self.assertIn("B2 identity evidence bucket must be configured and distinct from general-media buckets.", self.deployer)
 
     def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
         self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
