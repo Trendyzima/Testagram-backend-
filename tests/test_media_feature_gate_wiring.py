@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression tests for explicit Testagram media deployment approvals."""
 from pathlib import Path
+import os
 import re
 import subprocess
 import unittest
@@ -201,7 +202,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
                 result = subprocess.run(
                     ["python3", str(script)],
                     env={
-                        **__import__("os").environ,
+                        **os.environ,
                         "TESTAGRAM_STAGING_API_URL": f"https://{host}",
                         "TESTAGRAM_AUTH_SMOKE_EMAIL": "staging-test@example.invalid",
                         "TESTAGRAM_AUTH_SMOKE_PASSWORD": "not-a-real-password",
