@@ -56,6 +56,7 @@ func permissionForAction(action string) (string, error) {
 	case "finance.execute": return "finance.initiate", nil
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.request", nil
+	case "staff.role_change", "staff.revoke", "staff.permission_change", "staff.webauthn.enroll": return "staff.manage", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -65,6 +66,7 @@ func approvalPermissionForAction(action string) (string, error) {
 	case "finance.execute": return "finance.approve", nil
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.approve", nil
+	case "staff.role_change", "staff.revoke", "staff.permission_change", "staff.webauthn.enroll": return "staff.manage", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -218,7 +220,6 @@ func recordIdentityApplicationReview(ctx context.Context, tx pgx.Tx, requestID, 
 		len(snapshot.EvidenceAuditReference) < 8 || len(snapshot.EvidenceAuditReference) > 200 {
 		return "", errors.New("identity approval payload is not bound to an auditable application")
 	}
-
 	var email, username, displayName, termsVersion, privacyVersion, applicationStatus, linkedRequestID string
 	var evidenceFingerprint []byte
 	var adultVerified bool
@@ -433,12 +434,16 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 	} else if approvalCount >= 2 {
 		state = "approved"
 	}
+	if state == "approved" && actionType != "identity.approve" {
+		if err := executeApprovedStaffLifecycle(ctx, tx, requestID, actionType, requesterID, targetReference, payload); err != nil {
+			return "", "", 0, fmt.Errorf("approved staff lifecycle action could not be executed: %w", err)
+		}
+	}
 	if state != "pending" {
 		tag, err := tx.Exec(ctx, `
 			UPDATE testagram_auth.native_sensitive_action_requests
 			SET status=$2, decided_at=now()
-			WHERE id=$1::uuid AND status='pending'
-		`, requestID, state)
+			WHERE id=$1::uuid AND status='pending'		`, requestID, state)
 		if err != nil {
 			return "", "", 0, err
 		}
@@ -560,7 +565,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	response := map[string]any{
 		"ok": true, "status": state, "approval_count": count,
 		"required_approvals": 2,
-		"message": "Decision recorded. The underlying action is not executed by this approval ledger.",
+		"message": "Decision recorded. The approved action was executed atomically with the final approval.",
 	}
 	if action == "identity.approve" {
 		response["application_status"] = applicationState
@@ -573,7 +578,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	if !a.requireRecentStepUp(w,s) { return }
 	canAudit,err:=a.hasPermission(user,"audit.read")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
-	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve"}
+	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve","staff.manage"}
 	canReview:=canAudit
 	if !canReview {
 		for _,permission:=range approvalPermissions {
@@ -657,8 +662,7 @@ func (a *app) handleStaffList(w http.ResponseWriter,r *http.Request) {
 		JOIN testagram_auth.identities i ON i.user_id=sp.user_id
 		LEFT JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id
 		GROUP BY sp.user_id,i.email_normalized,sp.enabled,sp.mfa_enrolled_at,sp.created_at
-		ORDER BY sp.created_at DESC LIMIT 500`)
-	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load native staff directory"}); return }
+		ORDER BY sp.created_at DESC LIMIT 500`)	if err!=nil { writeJSON(w,503,map[string]string{"error":"Could not load native staff directory"}); return }
 	defer rows.Close()
 	type staffItem struct {
 		UserID string `json:"user_id"`
