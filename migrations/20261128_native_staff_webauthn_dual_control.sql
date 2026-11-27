@@ -110,6 +110,9 @@ AS $function$
       ON target_identity.user_id=target_staff.user_id
      AND target_identity.disabled_at IS NULL
      AND target_identity.email_verified_at IS NOT NULL
+    JOIN testagram_auth.staff_role_grants target_role
+      ON target_role.user_id=target_staff.user_id
+     AND target_role.revoked_at IS NULL
     WHERE ea.id=p_authorization_id
       AND ea.user_id=p_user_id
       AND ea.authorization_method='dual_control'
@@ -118,6 +121,8 @@ AS $function$
       AND ea.consumed_at IS NULL
       AND ea.revoked_at IS NULL
       AND ea.expires_at>now()
+      AND first_approval.approver_user_id<>target_staff.user_id
+      AND second_approval.approver_user_id<>target_staff.user_id
       AND req.requested_by_user_id IS DISTINCT FROM first_approval.approver_user_id
       AND req.requested_by_user_id IS DISTINCT FROM second_approval.approver_user_id
       AND NOT EXISTS (
