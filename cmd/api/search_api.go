@@ -18,11 +18,11 @@ func logPostSearchFailure(stage, requestID string, err error) {
 	if errors.As(err, &pgErr) {
 		// Log only structured PostgreSQL diagnostics. Never log SQL text, row
 		// values, bearer tokens, or provider URLs from a failed search request.
-		log.Printf("event=post_search_failure stage=%s request_id=%s sqlstate=%s schema=%s table=%s column=%s constraint=%s",
+		log.Printf("event=post_search_failure stage=%s request_id=%q sqlstate=%s schema=%q table=%q column=%q constraint=%q",
 			stage, requestID, pgErr.Code, pgErr.SchemaName, pgErr.TableName, pgErr.ColumnName, pgErr.ConstraintName)
 		return
 	}
-	log.Printf("event=post_search_failure stage=%s request_id=%s error_type=%T", stage, requestID, err)
+	log.Printf("event=post_search_failure stage=%s request_id=%q error_type=%T", stage, requestID, err)
 }
 
 func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
