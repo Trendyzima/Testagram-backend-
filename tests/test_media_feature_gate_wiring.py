@@ -185,8 +185,14 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("Testagram-data-centre-/.github/workflows/media-provider-smoke.yml", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT", identity_smoke)
         self.assertNotIn("IDENTITY_SMOKE_R2_ENDPOINT", identity_smoke)
-        self.assertIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
-        self.assertIn("B2_REGION: ${{ secrets.B2_S3_REGION }}", media_smoke)
+        self.assertIn("environment: media-staging", media_smoke)
+        self.assertIn("B2_ENDPOINT: ${{ vars.MEDIA_STAGING_B2_ENDPOINT }}", media_smoke)
+        self.assertIn("B2_REGION: ${{ vars.MEDIA_STAGING_B2_REGION }}", media_smoke)
+        self.assertIn("environment: identity-evidence-staging", media_smoke)
+        self.assertIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_B2_ENDPOINT }}", media_smoke)
+        self.assertIn("IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_R2_ENDPOINT }}", media_smoke)
+        self.assertNotIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
+        self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
 
     def test_deployer_normalizes_boolean_flags_before_fail_closed_validation(self):
         self.assertIn("normalize_boolean FRESH_MEDIA_ENABLED false", self.deployer)
