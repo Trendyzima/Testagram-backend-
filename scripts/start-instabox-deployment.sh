@@ -31,8 +31,8 @@ normalize_boolean DATA_CENTRE_MEDIA_ENABLED false
 normalize_boolean MEDIA_REPLICATION_ENABLED false
 normalize_boolean TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED false
 normalize_boolean TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED false
-if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]; then
-  echo "::error::FRESH_MEDIA_ENABLED and DATA_CENTRE_MEDIA_ENABLED must both be true or both be false; refusing an ambiguous media profile."
+if [[ "$FRESH_MEDIA_ENABLED" == "true" && "$DATA_CENTRE_MEDIA_ENABLED" != "true" ]]; then
+  echo "::error::FRESH_MEDIA_ENABLED=true requires DATA_CENTRE_MEDIA_ENABLED=true so the private Data Centre media service is available."
   exit 1
 fi
 # Ordinary Testagram account creation uses the native /api/auth/signup flow:
@@ -815,11 +815,13 @@ CLOUDFLARE_R2_ACCESS_KEY_ID="$DC_R2_ACCESS_KEY_ID"; CLOUDFLARE_R2_SECRET_ACCESS_
 DATA_CENTRE_MEDIA_ENABLED="$DC_MEDIA_PROFILE_ENABLED"; FRESH_MEDIA_ENABLED="$DC_FRESH_MEDIA_ENABLED"
 export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET MINIO_METADATA_ACCESS_KEY MINIO_METADATA_SECRET_KEY
 
-# The private media service is enabled only when both independent providers
-# are fully configured. It remains off otherwise; Backend must not receive a
-# half-configured URL/token pair.
+# DATA_CENTRE_MEDIA_ENABLED provisions the private B2/R2/metadata service,
+# including its isolated B2-only identity-evidence namespace. FRESH_MEDIA_ENABLED
+# is a separate Backend feature gate for new general-media uploads.
+# Keep the service available for identity evidence while general-media uploads
+# remain disabled until their own staging acceptance passes.
 media_enabled=false
-if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then
+if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then
   media_enabled=true
   for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET B2_S3_PUBLIC_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_PRIVATE_BUCKET CLOUDFLARE_R2_PUBLIC_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY; do
     value="${!key:-}"
@@ -887,7 +889,7 @@ if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:
   set +a
   # Provider credentials stay scoped to the Data Centre Compose env file.
   export -n B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_ACCESS_KEY_ID B2_S3_SECRET_ACCESS_KEY B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY CLOUDFLARE_R2_ENDPOINT CLOUDFLARE_R2_REGION CLOUDFLARE_R2_BUCKET CLOUDFLARE_R2_ACCESS_KEY_ID CLOUDFLARE_R2_SECRET_ACCESS_KEY CLOUDFLARE_R2_METADATA_BUCKET MINIO_METADATA_ACCESS_KEY MINIO_METADATA_SECRET_KEY
-  echo "Data Centre private media profile enabled with B2/R2 and MinIO metadata configuration (all values redacted)."
+  echo "Data Centre private media service enabled with B2/R2 and MinIO metadata configuration; FRESH_MEDIA_ENABLED=$FRESH_MEDIA_ENABLED (all values redacted)."
 else
   # Explicitly remove stale Data Centre provider/client secrets when
   # the private media profile is switched off.
