@@ -118,7 +118,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn(migration, SOURCE.split("for file in", 1)[1].split("; do", 1)[0])
         self.assertIn("identity_evidence_quarantined", sql)
         self.assertIn("identity_evidence_deleted", sql)
-        self.assertIn("verification_events_append_only", (ROOT / "migrations" / "20261115_identity_evidence_access_audit.sql").read_text(encoding="utf-8"))
+        self.assertIn("verification_events_append_only", (ROOT / "migrations" / "20261114_native_identity_integrity.sql").read_text(encoding="utf-8"))
         self.assertIn("identity evidence retention quarantine and physical deletion audit", SOURCE)
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
