@@ -302,7 +302,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("normalize_boolean MEDIA_REPLICATION_ENABLED false", self.deployer)
         self.assertIn("tr -d", self.deployer)
         self.assertIn("surrounding whitespace is ignored", self.deployer)
-        self.assertIn("refusing an ambiguous media profile", self.deployer)
+        self.assertIn("FRESH_MEDIA_ENABLED=true requires DATA_CENTRE_MEDIA_ENABLED=true", self.deployer)
 
     def test_boolean_normalizer_accepts_whitespace_and_rejects_invalid_values(self):
         match = re.search(r"normalize_boolean\(\) \{.*?\n\}", self.deployer, re.S)
@@ -349,7 +349,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"',
             'DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID="${B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:-}"',
             'DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY="${B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:-}"',
-            'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
+            'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then',
             'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID',
             'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY',
