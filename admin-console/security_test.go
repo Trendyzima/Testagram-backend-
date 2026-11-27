@@ -170,6 +170,8 @@ func TestStaffWebAuthnEnrollmentEndpointRequiresDualControlLedger(t *testing.T) 
 		"staff_webauthn_enrollment_authorization_is_valid",
 		"revoked_at IS NULL",
 		"consumed_at",
+		"handleStaffWebAuthnAuthorizationRevoke",
+		"webauthn_enrollment_revoked",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("WebAuthn enrollment flow is missing required guard %q", required)
@@ -199,6 +201,8 @@ func TestStaffWebAuthnEnrollmentEndpointRequiresDualControlLedger(t *testing.T) 
 	for _, required := range []string{
 		"first_approver_user_id<>second_approver_user_id",
 		"staff_webauthn_enrollment_authorization_is_valid",
+		"native_staff_webauthn_enrollment_approver_permission",
+		"webauthn_enrollment_revoked",
 		"native_sensitive_action_approvals",
 		"consumed_at IS NULL AND revoked_at IS NULL",
 		"staff WebAuthn enrollment authorizations are immutable audit evidence",
