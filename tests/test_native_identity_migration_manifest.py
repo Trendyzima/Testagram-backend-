@@ -46,6 +46,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261121_native_identity_intake_optional_fingerprint.sql",
             "060_native_staff_webauthn.sql",
             "061_native_sensitive_action_integrity.sql",
+            "20261127_native_staff_lifecycle_executor.sql",
             "20261124_testagram_email_verification_otp.sql",
             "20261124_testagram_social_email_consent.sql",
             "20261125_testagram_mail_delivery_events.sql",
@@ -147,6 +148,32 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn("native sensitive-action requests are append-only", sql)
         self.assertIn("native_sensitive_action_request_append_only", sql)
         self.assertIn("native sensitive-action rejection decision is missing", sql)
+
+    def test_native_staff_lifecycle_executor_migration_is_mounted_and_applied(self):
+        migration = "20261127_native_staff_lifecycle_executor.sql"
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
+            compose,
+        )
+        self.assertIn(f"apply_migration {migration}", SOURCE)
+        sql = (ROOT / "migrations" / migration).read_text(encoding="utf-8")
+        for expected in (
+            "staff.invite",
+            "staff.role_change",
+            "staff.revoke",
+            "staff.permission_change",
+            "staff.webauthn.enroll",
+            "native_staff_invitations",
+            "token_sha256",
+            "native_staff_lifecycle_events",
+            "native_staff_lifecycle_events_append_only",
+            "reject_native_staff_lifecycle_event_mutation",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, sql)
+        self.assertIn("token_sha256 BYTEA NOT NULL UNIQUE", sql)
+        self.assertNotIn("token TEXT", sql)
 
     def test_archive_migrations_are_mounted_and_applied_in_order(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
