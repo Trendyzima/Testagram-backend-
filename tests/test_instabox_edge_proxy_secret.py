@@ -75,15 +75,11 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         self.assertIn("did not become ready within 300 seconds", machine)
         self.assertIn("exit 1", machine)
 
-    def test_r2_managed_domain_update_uses_validated_json_file_body(self):
-        start = self.workflow.index("r2_managed_url=")
-        end = self.workflow.index("managed_check_status=", start)
-        request = self.workflow[start:end]
-        self.assertIn('body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")', request)
-        self.assertIn("urllib.request.Request(", request)
-        self.assertIn('"Content-Type": "application/json"', request)
-        self.assertIn("result.enabled == false", self.workflow)
-        self.assertIn('method="PUT"', request)
+    def test_identity_evidence_has_no_cloudflare_r2_or_instabox_bucket(self):
+        self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow)
+        self.assertNotIn("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.workflow)
+        self.assertNotIn("IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.workflow)
+        self.assertIn("Provision dedicated private B2 identity-evidence bucket", self.workflow)
 
     def test_compose_and_caddy_consume_the_persisted_name(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
