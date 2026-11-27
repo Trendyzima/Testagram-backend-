@@ -49,3 +49,46 @@ Never rewrite or delete an applied migration. Any database cleanup must be a new
 - PostgreSQL integration for signup, identity review, dual-control provisioning, email verification, login, refresh rotation, logout and staff WebAuthn.
 - Media upload, checksum, replication, private CDN authorization and deletion integration tests.
 - Production smoke tests proving that only the native route contract is served and no outbound identity-provider traffic occurs.
+
+
+## Native mail is the only supported mail architecture
+
+Testagram owns transactional email, account-verification OTPs, password-recovery messages, notification mail, delivery state and feedback processing. Production mail is sent by the Testagram Backend's native direct-to-recipient-MX transport from the InstaBox deployment. It is not delegated to a hosted email API or an authenticated relay account.
+
+### Permanently retired configuration
+
+The following names are historical/forbidden configuration identifiers. They must not be added to application code, deployment scripts, Compose files, workflow environments, GitHub Actions secrets/variables, VPS environment templates, operator instructions, examples, tests that configure runtime values, or any new service contract:
+
+| Retired identifier | Retirement reason | Required native behavior |
+|---|---|---|
+| `MAILJET_API_KEY` | Hosted Mailjet API credential | No external mail-provider API or API key |
+| `MAILJET_SECRET_KEY` | Hosted Mailjet API credential | No external mail-provider API or API secret |
+| `SMTP_HOST` | Configurable third-party SMTP relay endpoint | Resolve recipient MX records and connect directly to recipient MX on TCP/25 |
+| `SMTP_USERNAME` | Authenticated relay account | No SMTP AUTH; do not introduce relay credentials |
+| `SMTP_PASSWORD` | Authenticated relay password | No SMTP AUTH; do not introduce relay credentials |
+| `AUTH_FROM_EMAIL` | Legacy sender-address override | Use the code-owned sender identity `no-reply@testagram.site`; changes require an explicit reviewed architecture decision and coordinated DNS/DKIM/DMARC update |
+
+The retired names may appear in this architecture document and in negative CI assertions solely to explain and enforce the prohibition. They must not appear as active settings, sample values, workflow expressions, secrets, variables, or runtime fallbacks.
+
+### Supported native mail contract
+
+- The Backend's PostgreSQL transactional outbox is the durable source of pending mail work. Messages are encrypted at rest with the native mail encryption key; delivery attempts, leases, uncertainty, terminal failures and delivery events are recorded in the native mail schema.
+- The InstaBox deployment generates and persists the native encryption and VERP keys on the VPS. Keep the keys stable across restarts and deployments; never regenerate them on every deploy, commit them, print them to logs, or move their values into chat.
+- The sender resolves the recipient domain's MX records and connects directly to those MX hosts on TCP/25. STARTTLS is required. SMTP AUTH is not used. A network that blocks outbound TCP/25 is a hard delivery blocker, not a reason to silently fall back to a provider.
+- The sender identity is code-owned as `no-reply@testagram.site`. DKIM signing uses the Testagram-owned private key and selector. SPF, DKIM, DMARC, MX/bounce routing, reverse DNS/PTR and forward-confirmed identity must be validated against live DNS and actual delivery evidence.
+- VERP return paths and the native bounce-feedback endpoint correlate bounces to outbox records. Outbound delivery must remain fail-closed until the required bounce ingress readiness checks pass. Do not bypass that gate to make the readiness probe green.
+- A successful local queue insert or SMTP acceptance is not proof of inbox delivery. Acceptance requires real external mailbox tests, authentication/alignment checks, bounce and complaint handling, retry/idempotency tests, restart/key-persistence checks and operational monitoring.
+- Native email verification is one gate in account activation; it must not be conflated with identity-evidence review, staff enrollment or administrative authorization.
+
+### New-service and future-build rules
+
+1. Before adding any email feature, inspect and extend the existing native mail outbox, templates, consent policy, transport and feedback pipeline. Do not create a second mail subsystem.
+2. Do not add a vendor SDK, hosted email API, SMTP relay account, provider-specific webhook, provider credentials, or environment-variable fallback. Any proposal to change this architecture requires an explicit owner-approved architecture decision recorded here before implementation.
+3. Do not add compatibility aliases for retired settings. Missing native configuration must fail closed with a clear diagnostic; it must never activate a legacy transport.
+4. Keep secrets in protected deployment storage. The native encryption/VERP/DKIM material is provisioned and persisted on InstaBox according to the reviewed deployment contract; never copy secret values into repository files or CI logs.
+5. Add regression tests whenever mail configuration, delivery, DNS, deployment or feedback code changes. CI must reject the retired names in runtime/deployment surfaces and verify that direct-MX delivery, STARTTLS, no-auth transport and native key persistence remain intact.
+6. Historical references in this document and negative tests are policy evidence, not permission to restore the old integrations.
+
+### Production readiness gates
+
+Native mail is production-ready only after all of the following have passed with evidence: external Gmail and Outlook delivery; SPF/DKIM/DMARC alignment; correct PTR and forward DNS; TCP/25 reachability from the actual InstaBox machine; bounce ingress authentication and correlation; suppression/consent behavior; duplicate/replay and retry safety; uncertain SMTP outcome handling; encrypted outbox/key persistence across restart and restore; and monitoring/alerting for queue age, dead letters, bounce rates and delivery failures. A dry-run build, DNS record presence, or secret-name listing alone does not satisfy these gates.
