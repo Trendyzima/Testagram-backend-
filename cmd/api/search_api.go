@@ -3,11 +3,27 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func logPostSearchFailure(stage, requestID string, err error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// Log only structured PostgreSQL diagnostics. Never log SQL text, row
+		// values, bearer tokens, or provider URLs from a failed search request.
+		log.Printf("event=post_search_failure stage=%s request_id=%s sqlstate=%s schema=%s table=%s column=%s constraint=%s",
+			stage, requestID, pgErr.Code, pgErr.SchemaName, pgErr.TableName, pgErr.ColumnName, pgErr.ConstraintName)
+		return
+	}
+	log.Printf("event=post_search_failure stage=%s request_id=%s error_type=%T", stage, requestID, err)
+}
 
 func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 	userID, requestID, ok := s.socialOptionalReadAuth(w, r)
@@ -57,7 +73,10 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 			JOIN testagram_local.accounts a ON a.user_id=p.author_id
 			WHERE p.deleted_at IS NULL AND a.account_status='active'
 			  AND p.text ILIKE '%' || $2 || '%'
-			  AND (NOT $4::boolean OR jsonb_array_length(p.media_ids)>0)
+			  AND (NOT $4::boolean OR CASE
+				WHEN jsonb_typeof(p.media_ids)='array' THEN jsonb_array_length(p.media_ids)>0
+				ELSE false
+			  END)
 			  AND (
 				($1::uuid IS NULL AND p.visibility='public' AND NOT a.protected_account)
 				OR ($1::uuid IS NOT NULL AND (p.author_id=$1::uuid
@@ -72,6 +91,7 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 				WHERE m.muter_id=$1::uuid AND m.muted_id=p.author_id))
 			ORDER BY p.created_at DESC,p.id DESC LIMIT $3`, viewer, query, limit, mediaOnly)
 		if err != nil {
+			logPostSearchFailure("query", requestID, err)
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_SEARCH_FAILED", "Posts could not be searched", requestID))
 			return
 		}
@@ -83,6 +103,7 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 			if err := rows.Scan(&post.ID,&post.UserID,&post.Content,&post.Visibility,&mediaRaw,
 				&post.Language,&post.CreatedAt,&post.LikesCount,&post.RepliesCount,&post.RepostsCount,
 				&username,&displayName,&avatarKey,&protected,&following); err != nil {
+				logPostSearchFailure("scan", requestID, err)
 				rows.Close()
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_SEARCH_FAILED", "Search results could not be decoded", requestID))
 				return
@@ -94,12 +115,14 @@ func (s *service) searchAPI(w http.ResponseWriter, r *http.Request) {
 			posts = append(posts, post)
 		}
 		if err := rows.Err(); err != nil {
+			logPostSearchFailure("iterate", requestID, err)
 			rows.Close()
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("POST_SEARCH_FAILED", "Search results could not be loaded", requestID))
 			return
 		}
 		rows.Close()
 		if err := s.attachHomeFeedMediaURLs(ctx, userID, posts); err != nil {
+			logPostSearchFailure("media_authorization", requestID, err)
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("SEARCH_MEDIA_FAILED", "Search media could not be authorized", requestID))
 			return
 		}
