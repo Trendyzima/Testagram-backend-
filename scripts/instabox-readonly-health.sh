@@ -104,10 +104,24 @@ check_http() {
   fi
 }
 
+section "Native post-search database schema"
+SOCIAL_SCHEMA_CHECK="$ROOT/repos/backend/scripts/check-social-search-schema.sh"
+if [[ -f "$SOCIAL_SCHEMA_CHECK" ]]; then
+  if bash "$SOCIAL_SCHEMA_CHECK"; then
+    pass "Native post-search relations, columns and privileges"
+  else
+    fail "Native post-search database schema is incomplete; see exact missing relation/column/privilege diagnostics above"
+  fi
+else
+  fail "Native post-search schema checker is missing: $SOCIAL_SCHEMA_CHECK"
+fi
+
 section "Public HTTPS liveness probes"
 # Dependency readiness is intentionally private and is verified through
 # Docker healthchecks and internal listener probes later in this read-only audit.
 check_http "Backend liveness" "https://api.testagram.site/healthz"
+check_http "Backend people search (read-only)" "https://api.testagram.site/api/search?q=testagram&kind=people"
+check_http "Backend post search (read-only)" "https://api.testagram.site/api/search?q=testagram&kind=posts"
 check_http "Go CDN liveness" "https://media.testagram.site/healthz"
 check_http "Staff console liveness" "https://ops.testagram.site/healthz"
 

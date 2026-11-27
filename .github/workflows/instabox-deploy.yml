@@ -54,6 +54,8 @@ jobs:
         shell: bash
         run: |
           bash -n scripts/start-instabox-deployment.sh
+          bash -n scripts/check-social-search-schema.sh
+          bash -n deploy/self-hosted/apply-social-core-migrations.sh
           bash -n scripts/reconcile-native-mail-dns.sh
           bash -n scripts/verify-instabox-native-mail-egress.sh
           bash -n scripts/reconcile-instabox-native-mail-dns.sh
