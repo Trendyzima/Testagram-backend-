@@ -61,7 +61,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow)
         self.assertNotIn("DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
         self.assertNotIn("write_dc_env_value CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
-        self.assertIn("provider-native privacy was verified by the deployment workflow", self.deployer)
+        self.assertIn("identity evidence has no R2 or InstaBox storage copy", self.deployer)
 
     def test_pinned_minio_client_alias_commands_use_supported_flags(self):
         for source in (self.workflow, self.deployer):
@@ -77,13 +77,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             "testagram-identity-evidence-production-b2",
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
-            '/domains/managed',
-            '''body = json.dumps({"enabled": False}, separators=(",", ":")).encode("utf-8")''',
-            '''request = urllib.request.Request(''',
             '''"Content-Type": "application/json"''',
-            'managed_status="$(cat "$managed_status_file")"',
-            'result.enabled == false',
-            '/domains/custom',
             'mc stat "b2/$B2_BUCKET"',
             "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
         ):
@@ -342,7 +336,6 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then',
             'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'mc stat "b2/$B2_BUCKET"',
-            'mc stat "r2/$R2_BUCKET"',
             'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
             'internal/v1/identity-evidence/readyz',
         ):
@@ -427,6 +420,7 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/media-provider-smoke.yml").read_text()
         self.assertNotIn("Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames", workflow)
         self.assertNotIn("MEDIA_SMOKE_R2_IDENTITY_BUCKET", workflow)
+        self.assertNotIn("Identity-evidence B2 and R2 endpoints must resolve to distinct hostnames", workflow)
         self.assertIn("Three-provider media B2 and R2 endpoints must resolve to distinct hostnames", workflow)
 
 
