@@ -36,13 +36,13 @@ Required environment variables:
 - `MEDIA_STAGING_B2_ENDPOINT`, `MEDIA_STAGING_B2_REGION`, `MEDIA_STAGING_B2_BUCKET`
 - `MEDIA_STAGING_B2_PRIVATE_BUCKET`, `MEDIA_STAGING_B2_PUBLIC_BUCKET`, `MEDIA_STAGING_B2_IDENTITY_BUCKET`
 - `MEDIA_STAGING_R2_ENDPOINT`, `MEDIA_STAGING_R2_REGION`
-- `MEDIA_STAGING_R2_PRIVATE_BUCKET`, `MEDIA_STAGING_R2_PUBLIC_BUCKET`, `MEDIA_STAGING_R2_IDENTITY_BUCKET`
+- `MEDIA_STAGING_R2_PRIVATE_BUCKET`, `MEDIA_STAGING_R2_PUBLIC_BUCKET`, `MEDIA_STAGING_R2_IDENTITY_BUCKET`, `MEDIA_STAGING_R2_METADATA_BUCKET`
 
 Required environment secrets:
 - `MEDIA_STAGING_B2_ACCESS_KEY_ID`, `MEDIA_STAGING_B2_SECRET_ACCESS_KEY`
 - `MEDIA_STAGING_R2_ACCESS_KEY_ID`, `MEDIA_STAGING_R2_SECRET_ACCESS_KEY`
 
-All bucket names must explicitly contain `ci`, `staging` or `smoke`, must not contain `prod` or `production`, and must be distinct across private, public and identity namespaces. The single-provider B2 smoke uses its own `MEDIA_STAGING_B2_BUCKET`; the three-provider job uses the six namespace buckets and an isolated ephemeral MinIO primary.
+All bucket names must explicitly contain `ci`, `staging` or `smoke`, must not contain `prod` or `production`, and must be distinct across private, public, identity and metadata namespaces. The single-provider B2 smoke uses its own `MEDIA_STAGING_B2_BUCKET`; the Backend three-provider job uses the six namespace buckets and an isolated ephemeral MinIO primary. The separate Data Centre staging workflow also requires `MEDIA_STAGING_R2_METADATA_BUCKET` and creates an ephemeral MinIO metadata store.
 
 Run **Actions → Backblaze B2 storage smoke test** with `confirm_b2_object_write=true` for the B2-only round trip. On the current workflow revision, `confirm_live_provider_writes=true` starts both the identity-evidence and three-provider media jobs; configure both environments before using it.
 
