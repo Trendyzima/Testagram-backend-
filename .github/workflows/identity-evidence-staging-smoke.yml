@@ -14,5 +14,5 @@ jobs:
       - name: Explain the replacement acceptance workflow
         run: |
           echo "::notice::This legacy workflow tested Backend-local virtual storage and is not evidence of the native identity flow."
-          echo "::notice::Use Trendyzima/Testagram-data-centre-/.github/workflows/media-provider-smoke.yml with its explicit staging-write confirmation."
+          echo "::notice::Use Trendyzima/Testagram-data-centre-/.github/workflows/media-provider-staging-acceptance.yml with its explicit staging-write confirmation."
           echo "::notice::The current Backend identity registration path has no local object-storage fallback."
