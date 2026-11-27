@@ -160,13 +160,20 @@ func isPrivateServiceHost(host string) bool {
 // Ready confirms the private media service and its dedicated metadata database are reachable.
 func (c *Client) Ready(ctx context.Context) error {
 	var result struct {
-		Status string `json:"status"`
+		Status    string `json:"status"`
+		Namespace string `json:"namespace"`
+		Provider  string `json:"provider"`
+		Primary   string `json:"primary"`
 	}
 	if err := c.get(ctx, c.prefix+"/readyz", &result); err != nil {
 		return err
 	}
 	if result.Status != "ready" {
-		return errors.New("Data Centre identity evidence readiness probe returned an invalid status")
+		return errors.New("Data Centre media readiness probe returned an invalid status")
+	}
+	if c.prefix == "/internal/v1/identity-evidence" &&
+		(result.Namespace != "identity-evidence-private" || result.Provider != "backblaze_b2" || result.Primary != "verified") {
+		return errors.New("Data Centre identity evidence readiness is not backed by the dedicated verified Backblaze B2 bucket")
 	}
 	return nil
 }
@@ -232,6 +239,9 @@ func (c *Client) DownloadURLMethod(ctx context.Context, requesterID, ownerID, na
 	}
 	if !validProviderURL(result.URL) || (result.Provider != "cloudflare_r2" && result.Provider != "backblaze_b2") {
 		return DownloadGrant{}, errors.New("Data Centre returned an invalid media delivery URL")
+	}
+	if c.prefix == "/internal/v1/identity-evidence" && result.Provider != "backblaze_b2" {
+		return DownloadGrant{}, errors.New("identity evidence downloads must resolve exclusively to the dedicated Backblaze B2 bucket")
 	}
 	return result, nil
 }
