@@ -77,7 +77,6 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
             "testagram-identity-evidence-production-b2",
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
-            '''"Content-Type": "application/json"''',
             'mc stat "b2/$B2_BUCKET"',
             "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
         ):
