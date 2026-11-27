@@ -391,7 +391,9 @@ func (a *app) handleStaffWebAuthnRegisterFinish(w http.ResponseWriter,r *http.Re
  if err!=nil{writeJSON(w,409,map[string]string{"error":"Credential already exists or could not be stored"});return}
  tag,err:=tx.Exec(r.Context(),"UPDATE testagram_auth.staff_principals SET mfa_enrolled_at=COALESCE(mfa_enrolled_at,now()) WHERE user_id=$1::uuid AND enabled=TRUE",user.ID)
  if err!=nil||tag.RowsAffected()!=1{writeJSON(w,503,map[string]string{"error":"Could not activate staff MFA enrollment"});return}
- if _,err=tx.Exec(r.Context(),"UPDATE testagram_auth.staff_webauthn_enrollment_authorizations SET consumed_at=now() WHERE id=$1 AND consumed_at IS NULL",authorizationID);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not consume enrollment authorization"});return}
+ if tag,consumeErr:=tx.Exec(r.Context(),`UPDATE testagram_auth.staff_webauthn_enrollment_authorizations
+		SET consumed_at=now()
+		WHERE id=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,authorizationID);consumeErr!=nil||tag.RowsAffected()!=1{writeJSON(w,503,map[string]string{"error":"Enrollment authorization could not be consumed exactly once"});return}
  if _,err=tx.Exec(r.Context(),"DELETE FROM testagram_auth.staff_webauthn_challenges WHERE challenge_hash=$1",sum[:]);err!=nil{writeJSON(w,503,map[string]string{"error":"Could not consume registration challenge"});return}
  if err=tx.Commit(r.Context());err!=nil{writeJSON(w,503,map[string]string{"error":"Could not commit WebAuthn enrollment"});return}
  writeJSON(w,200,map[string]any{"ok":true,"credential_id":base64.RawURLEncoding.EncodeToString(credential.ID)})
