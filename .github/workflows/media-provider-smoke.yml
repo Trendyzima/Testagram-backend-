@@ -26,13 +26,14 @@ jobs:
     if: inputs.confirm_b2_object_write == true
     name: Verify existing B2 credentials and object lifecycle
     runs-on: ubuntu-latest
+    environment: media-staging
     timeout-minutes: 10
     env:
-      B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
-      B2_REGION: ${{ secrets.B2_S3_REGION }}
-      B2_BUCKET: ${{ secrets.B2_S3_BUCKET }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
+      B2_ENDPOINT: ${{ vars.MEDIA_STAGING_B2_ENDPOINT }}
+      B2_REGION: ${{ vars.MEDIA_STAGING_B2_REGION }}
+      B2_BUCKET: ${{ vars.MEDIA_STAGING_B2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_B2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_B2_SECRET_ACCESS_KEY }}
     steps:
       - name: Validate existing B2 settings
         shell: bash
@@ -42,7 +43,9 @@ jobs:
             [[ -n "${!name:-}" ]] || { echo "::error::Missing existing repository secret: $name"; exit 1; }
           done
           [[ "$B2_ENDPOINT" == https://* ]] || { echo "::error::B2 endpoint must use HTTPS"; exit 1; }
-          echo "Existing B2 endpoint, bucket and credentials are present. Values are not printed."
+          [[ "$B2_BUCKET" =~ (^|[-_])(ci|staging|smoke)([-_]|$) ]] || { echo "::error::B2 bucket must explicitly identify isolated CI/staging/smoke data"; exit 1; }
+          [[ ! "$B2_BUCKET" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production B2 bucket rejected"; exit 1; }
+          echo "Dedicated staging B2 endpoint, bucket and credentials are present. Values are not printed."
 
       - name: Write, read back, verify SHA-256 and delete one temporary object
         shell: bash
@@ -98,6 +101,7 @@ jobs:
     if: inputs.confirm_live_provider_writes == true
     name: Verify MinIO to B2/R2 identity evidence replication, repair and deletion
     runs-on: ubuntu-latest
+    environment: identity-evidence-staging
     timeout-minutes: 25
     env:
       TESTAGRAM_LIVE_IDENTITY_EVIDENCE_REPLICATION: "true"
@@ -108,20 +112,20 @@ jobs:
       IDENTITY_SMOKE_PRIMARY_PRIVATE_BUCKET: testagram-ci-private
       IDENTITY_SMOKE_PRIMARY_PUBLIC_BUCKET: testagram-ci-public
       IDENTITY_SMOKE_PRIMARY_IDENTITY_BUCKET: testagram-ci-identity-evidence
-      IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
-      IDENTITY_SMOKE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
-      IDENTITY_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_R2_IDENTITY_BUCKET || vars.MEDIA_SMOKE_R2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
-      IDENTITY_SMOKE_B2_REGION: ${{ secrets.B2_S3_REGION }}
-      IDENTITY_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
-      IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
-      IDENTITY_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PRIVATE_BUCKET }}
-      IDENTITY_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PUBLIC_BUCKET }}
-      IDENTITY_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_B2_IDENTITY_BUCKET || vars.MEDIA_SMOKE_B2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_R2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_R2_ENDPOINT }}
+      IDENTITY_SMOKE_R2_REGION: ${{ vars.IDENTITY_SMOKE_R2_REGION }}
+      IDENTITY_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.IDENTITY_SMOKE_R2_ACCESS_KEY_ID }}
+      IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.IDENTITY_SMOKE_R2_SECRET_ACCESS_KEY }}
+      IDENTITY_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_PUBLIC_BUCKET }}
+      IDENTITY_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.IDENTITY_SMOKE_R2_IDENTITY_BUCKET }}
+      IDENTITY_SMOKE_B2_ENDPOINT: ${{ vars.IDENTITY_SMOKE_B2_ENDPOINT }}
+      IDENTITY_SMOKE_B2_REGION: ${{ vars.IDENTITY_SMOKE_B2_REGION }}
+      IDENTITY_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.IDENTITY_SMOKE_B2_ACCESS_KEY_ID }}
+      IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.IDENTITY_SMOKE_B2_SECRET_ACCESS_KEY }}
+      IDENTITY_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_PRIVATE_BUCKET }}
+      IDENTITY_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_PUBLIC_BUCKET }}
+      IDENTITY_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.IDENTITY_SMOKE_B2_IDENTITY_BUCKET }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -162,9 +166,10 @@ jobs:
           done
           [[ "$IDENTITY_SMOKE_R2_ENDPOINT" == https://* && "$IDENTITY_SMOKE_B2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
           [[ "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Private and public buckets must be distinct"; exit 1; }
-          [[ "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Identity evidence must never use a public bucket"; exit 1; }
+          [[ "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" && "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" && "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET" != "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" ]] || { echo "::error::Identity evidence buckets must be separate from public and ordinary private media buckets"; exit 1; }
           for bucket in "$IDENTITY_SMOKE_R2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_R2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_R2_IDENTITY_BUCKET" "$IDENTITY_SMOKE_B2_PRIVATE_BUCKET" "$IDENTITY_SMOKE_B2_PUBLIC_BUCKET" "$IDENTITY_SMOKE_B2_IDENTITY_BUCKET"; do
-            if [[ "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]]; then echo "::error::Use dedicated staging buckets, not production buckets"; exit 1; fi
+            [[ "$bucket" =~ (^|[-_])(ci|staging|smoke)([-_]|$) ]] || { echo "::error::Every cloud bucket must explicitly identify isolated staging/smoke data"; exit 1; }
+            [[ ! "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production bucket rejected"; exit 1; }
           done
       - name: Execute live three-provider identity evidence lifecycle
         run: go test -count=1 -run '^TestLiveIdentityEvidenceReplicationLifecycle$' -v ./internal/virtualstorage
@@ -176,6 +181,7 @@ jobs:
     if: inputs.confirm_live_provider_writes == true
     name: Verify real media bytes across Instabox MinIO, Cloudflare R2 and Backblaze B2
     runs-on: ubuntu-latest
+    environment: media-staging
     timeout-minutes: 35
     env:
       TESTAGRAM_LIVE_MEDIA_REPLICATION: "true"
@@ -186,20 +192,20 @@ jobs:
       MEDIA_SMOKE_INSTABOX_PRIVATE_BUCKET: testagram-ci-media-private
       MEDIA_SMOKE_INSTABOX_PUBLIC_BUCKET: testagram-ci-media-public
       MEDIA_SMOKE_INSTABOX_IDENTITY_BUCKET: testagram-ci-media-identity-evidence
-      MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
-      MEDIA_SMOKE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION }}
-      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      MEDIA_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PRIVATE_BUCKET }}
-      MEDIA_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_R2_PUBLIC_BUCKET }}
-      MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_R2_IDENTITY_BUCKET }}
-      MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
-      MEDIA_SMOKE_B2_REGION: ${{ secrets.B2_S3_REGION }}
-      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
-      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
-      MEDIA_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PRIVATE_BUCKET }}
-      MEDIA_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.MEDIA_SMOKE_B2_PUBLIC_BUCKET }}
-      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_SMOKE_B2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.MEDIA_STAGING_R2_ENDPOINT }}
+      MEDIA_SMOKE_R2_REGION: ${{ vars.MEDIA_STAGING_R2_REGION }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_R2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_R2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_PRIVATE_BUCKET: ${{ vars.MEDIA_STAGING_R2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_R2_PUBLIC_BUCKET: ${{ vars.MEDIA_STAGING_R2_PUBLIC_BUCKET }}
+      MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_R2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_B2_ENDPOINT: ${{ vars.MEDIA_STAGING_B2_ENDPOINT }}
+      MEDIA_SMOKE_B2_REGION: ${{ vars.MEDIA_STAGING_B2_REGION }}
+      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_B2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_B2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_B2_PRIVATE_BUCKET: ${{ vars.MEDIA_STAGING_B2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_B2_PUBLIC_BUCKET: ${{ vars.MEDIA_STAGING_B2_PUBLIC_BUCKET }}
+      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_B2_IDENTITY_BUCKET }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
