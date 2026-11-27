@@ -723,7 +723,7 @@ jobs:
           assert "secrets.FEDERATION_BACKEND_INTERNAL_TOKEN" not in deploy_workflow, "deployment must not require a manually configured Federation read secret"
           assert 'FEDERATION_BACKEND_INTERNAL_TOKEN="${FEDERATION_BACKEND_INTERNAL_TOKEN:-$(openssl rand -hex 32)}"' in deploy_script, "deployment must generate a strong Federation service credential when none is supplied"
           assert "envs:{" in deploy_script and "FEDERATION_BACKEND_INTERNAL_TOKEN:$federation_token" in deploy_script, "native deployment must forward Federation credentials"
-          dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then')
+          dc_media_gate = deploy.index('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then')
           dc_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', dc_media_gate)
           backend_media_gate = deploy.index('if [[ "$(read_env_value MEDIA_REPLICATION_ENABLED)" == "true" ]]; then')
           backend_credential_copy = deploy.index('for key in B2_S3_ENDPOINT B2_S3_REGION B2_S3_BUCKET B2_S3_PRIVATE_BUCKET', backend_media_gate)
@@ -731,7 +731,7 @@ jobs:
           compose = Path("deploy/self-hosted/docker-compose.yml").read_text()
           minio_init = Path("deploy/self-hosted/minio-tools/init.sh").read_text()
           assert 'write_env_value FRESH_MEDIA_ENABLED "$FRESH_MEDIA_ENABLED"' in deploy and 'write_env_value FRESH_MEDIA_ENABLED "$media_enabled"' not in deploy and "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" in compose and "FRESH_MEDIA_ENABLED:$fresh_media_enabled" in deploy, "the explicit Fresh Media approval must reach the Backend runtime feature gate without being inferred from the Data Centre flag"
-          assert 'if [[ "${FRESH_MEDIA_ENABLED:-false}" != "${DATA_CENTRE_MEDIA_ENABLED:-false}" ]]' in deploy and "refusing an ambiguous media profile" in deploy, "Fresh Media and Data Centre media approvals must match explicitly"
+          assert 'if [[ "$FRESH_MEDIA_ENABLED" == "true" && "$DATA_CENTRE_MEDIA_ENABLED" != "true" ]]' in deploy and "FRESH_MEDIA_ENABLED=true requires DATA_CENTRE_MEDIA_ENABLED=true" in deploy, "general-media uploads must require the Data Centre service without forcing identity storage to activate general-media uploads"
           assert 'write_env_value VIRTUAL_STORAGE_ENABLED true' in deploy and "VIRTUAL_STORAGE_ENABLED: ${VIRTUAL_STORAGE_ENABLED:-true}" in compose, "private evidence storage must be enabled on the VPS"
           assert "TESTAGRAM_IDENTITY_REGISTRATION_ENABLED" not in deploy_workflow + deploy_script + compose, "the retired environment switch must not bypass real staff WebAuthn readiness"
           identity_intake = Path("cmd/api/identity_native.go").read_text()
