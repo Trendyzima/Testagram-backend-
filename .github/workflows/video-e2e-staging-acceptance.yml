@@ -69,7 +69,7 @@ jobs:
             flutter create --org com.testagram --project-name app --platforms=android .
           fi
           flutter pub get
-          flutter analyze integration_test/video_feed_staging_test.dart
+          flutter analyze integration_test/native_auth_staging_test.dart integration_test/video_feed_staging_test.dart
       - name: Record exact Backend harness and Flutter client source revisions
         id: revisions
         shell: bash
