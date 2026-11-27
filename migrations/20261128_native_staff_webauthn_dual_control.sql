@@ -57,7 +57,8 @@ CREATE INDEX IF NOT EXISTS staff_webauthn_enrollment_request_target_idx
 
 CREATE OR REPLACE FUNCTION testagram_auth.staff_webauthn_enrollment_authorization_is_valid(
   p_authorization_id BIGINT,
-  p_user_id UUID
+  p_user_id UUID,
+  p_rpid TEXT
 )
 RETURNS BOOLEAN
 LANGUAGE SQL
@@ -76,6 +77,7 @@ AS $function$
       ON first_approval.request_id=req.id
      AND first_approval.approver_user_id=ea.first_approver_user_id
      AND first_approval.decision='approved'
+     AND first_approval.webauthn_rpid=p_rpid
     JOIN testagram_auth.staff_principals first_staff
       ON first_staff.user_id=first_approval.approver_user_id
      AND first_staff.enabled=TRUE
