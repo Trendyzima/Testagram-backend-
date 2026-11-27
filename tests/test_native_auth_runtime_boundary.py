@@ -57,6 +57,18 @@ class NativeAuthRuntimeBoundaryTests(unittest.TestCase):
                         content = path.read_text(encoding="utf-8", errors="ignore")
                         self.assertNotIn(fixture, content, f"{path.relative_to(ROOT)} must not invoke a test fixture")
 
+    def test_staging_auth_smoke_checks_public_signup_and_anonymous_access_are_denied(self):
+        smoke = (ROOT / "scripts/native-auth-staging-smoke.py").read_text(encoding="utf-8")
+        self.assertIn('require_status(base, "/api/me/profile", 401)', smoke)
+        self.assertIn('"/api/auth/signup", 403, "IDENTITY_REVIEW_REQUIRED"', smoke)
+
+    def test_staging_auth_smoke_checks_logout_revokes_refresh_credentials(self):
+        smoke = (ROOT / "scripts/native-auth-staging-smoke.py").read_text(encoding="utf-8")
+        self.assertIn('body={"refresh_token": second["refresh_token"]}', smoke)
+        self.assertIn('body={"refresh_token": third["refresh_token"]}', smoke)
+        self.assertIn("logout revokes both access and refresh credentials", smoke)
+        self.assertIn("logout-all revokes access and refresh credentials across the account", smoke)
+
     def test_retired_provider_is_absent_from_runtime_and_deployment_inputs(self):
         paths = [ROOT / name for name in RUNTIME_FILES]
         for root_name in RUNTIME_ROOTS:
