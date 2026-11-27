@@ -35,7 +35,7 @@ Do not restore old routes as aliases without proving a current client dependency
 
 ## Storage and delivery boundaries
 
-The Backend owns upload authorization, quotas, metadata, checksums, lifecycle state, replication outboxes and deletion jobs. Binary objects live in the configured private object-storage origins; the Data Centre owns processing/replication workers; the CDN transports authorized bytes but never grants access. Only verified replicas may be selected for delivery. Credentials remain server-side.
+The Backend owns identity upload authorization and reviewer access. Identity-evidence bytes and their sidecars live only in the dedicated private Backblaze B2 identity bucket managed by the Data Centre; they are not sent to InstaBox, Cloudflare R2, the general-media replication outbox or the CDN. The Data Centre verifies the B2 object and fails closed on provider failure or checksum mismatch. Separately, ordinary media may use the InstaBox VPS, Cloudflare R2 and Backblaze B2 general-media topology. The CDN transports authorized ordinary media bytes but never grants identity-evidence access. Credentials remain server-side.
 
 ## Historical identity records
 
