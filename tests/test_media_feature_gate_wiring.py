@@ -195,6 +195,19 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn("B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
         self.assertNotIn("IDENTITY_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}", media_smoke)
 
+    def test_authenticated_video_staging_acceptance_runs_native_auth_first(self):
+        workflow = (ROOT / ".github/workflows/video-e2e-staging-acceptance.yml").read_text()
+        auth_step = workflow.index("scripts/native-auth-staging-smoke.py")
+        video_prepare = workflow.index("scripts/video-e2e-staging-acceptance.py")
+        self.assertLess(auth_step, video_prepare)
+        self.assertIn(
+            "inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true",
+            workflow,
+        )
+        self.assertIn('git -C flutter-client rev-parse HEAD', workflow)
+        self.assertIn("Backend acceptance harness: $GITHUB_SHA", workflow)
+        self.assertIn("Flutter client tested on Android: $client_sha", workflow)
+
     def test_native_auth_staging_smoke_refuses_canonical_production_hosts(self):
         script = ROOT / "scripts/native-auth-staging-smoke.py"
         for host in ("api.testagram.site", "testagram.site", "www.testagram.site", "media.testagram.site"):
