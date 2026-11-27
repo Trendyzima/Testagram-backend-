@@ -1276,7 +1276,7 @@ if ! grep -Fq "export TESTAGRAM_WEB_IMAGE=\"$TESTAGRAM_WEB_IMAGE\"" <<<"$REMOTE_
   exit 1
 fi
 
-if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" && "${FRESH_MEDIA_ENABLED:-false}" == "true" ]]; then
+if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then
   b2_endpoint="${B2_S3_ENDPOINT:-}" b2_region="${B2_S3_REGION:-}" b2_bucket="${B2_S3_BUCKET:-}"
   b2_private="${B2_S3_PRIVATE_BUCKET:-}" b2_public="${B2_S3_PUBLIC_BUCKET:-}" b2_identity="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-}"
   b2_access="$B2_S3_ACCESS_KEY_ID" b2_secret="$B2_S3_SECRET_ACCESS_KEY"
