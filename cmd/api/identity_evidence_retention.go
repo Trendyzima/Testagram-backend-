@@ -8,8 +8,10 @@ import (
 
 type identityEvidenceRetentionItem struct {
 	id            string
+	sessionID     string
 	applicationID string
 	objectKey     string
+	status        string
 }
 
 // runIdentityEvidenceRetentionWorker removes expired identity evidence from
@@ -45,7 +47,7 @@ func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
-	rows, err := tx.Query(batchCtx, `SELECT e.id::text,v.application_id::text,e.object_key
+	rows, err := tx.Query(batchCtx, `SELECT e.id::text,e.session_id::text,v.application_id::text,e.object_key,e.status
 		FROM testagram_identity.verification_evidence e
 		JOIN testagram_identity.verification_sessions v ON v.id=e.session_id
 		WHERE e.retention_until<=now()
@@ -59,7 +61,7 @@ func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) err
 	items := make([]identityEvidenceRetentionItem, 0, 50)
 	for rows.Next() {
 		var item identityEvidenceRetentionItem
-		if err := rows.Scan(&item.id, &item.applicationID, &item.objectKey); err != nil {
+		if err := rows.Scan(&item.id, &item.sessionID, &item.applicationID, &item.objectKey, &item.status); err != nil {
 			rows.Close()
 			return err
 		}
@@ -78,6 +80,17 @@ func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) err
 		if err != nil {
 			return err
 		}
+		if item.status != "quarantined" {
+			_, err = tx.Exec(batchCtx, `INSERT INTO testagram_identity.verification_events
+				(session_id,event_type,actor_type,actor_reference,request_id,metadata)
+				VALUES ($1::uuid,'identity_evidence_quarantined','system',
+				        'identity-evidence-retention-worker',$2,
+				        jsonb_build_object('evidence_id',$3,'retention_action','quarantine'))`,
+				item.sessionID, "retention-quarantine:"+item.id, item.id)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if err := tx.Commit(batchCtx); err != nil {
 		return err
@@ -94,10 +107,30 @@ func (s *service) processIdentityEvidenceRetentionBatch(ctx context.Context) err
 			continue
 		}
 
-		_, err := s.db.Exec(batchCtx, `UPDATE testagram_identity.verification_evidence
+		deleteTx, err := s.db.Begin(batchCtx)
+		if err != nil {
+			return err
+		}
+		tag, err := deleteTx.Exec(batchCtx, `UPDATE testagram_identity.verification_evidence
 			SET status='deleted',verified_at=NULL,uploaded_at=COALESCE(uploaded_at,now())
 			WHERE id=$1::uuid AND status='quarantined'`, item.id)
 		if err != nil {
+			_ = deleteTx.Rollback(context.Background())
+			return err
+		}
+		if tag.RowsAffected() > 0 {
+			_, err = deleteTx.Exec(batchCtx, `INSERT INTO testagram_identity.verification_events
+				(session_id,event_type,actor_type,actor_reference,request_id,metadata)
+				VALUES ($1::uuid,'identity_evidence_deleted','system',
+				        'identity-evidence-retention-worker',$2,
+				        jsonb_build_object('evidence_id',$3,'retention_action','provider_delete_confirmed'))`,
+				item.sessionID, "retention-delete:"+item.id, item.id)
+			if err != nil {
+				_ = deleteTx.Rollback(context.Background())
+				return err
+			}
+		}
+		if err := deleteTx.Commit(batchCtx); err != nil {
 			return err
 		}
 	}
