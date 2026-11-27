@@ -88,7 +88,7 @@ func executeApprovedStaffLifecycle(ctx context.Context, tx pgx.Tx, requestID, ac
  }
  if targetReference!=p.UserID { return errors.New("staff lifecycle target does not match the immutable request reference") }
  var targetExists bool
- if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_principals sp JOIN testagram_auth.identities i ON i.user_id=sp.user_id WHERE sp.user_id=$1::uuid AND i.disabled_at IS NULL)`,p.UserID).Scan(&targetExists);err!=nil || !targetExists {
+ if err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_principals sp JOIN testagram_auth.identities i ON i.user_id=sp.user_id WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND i.disabled_at IS NULL)`,p.UserID).Scan(&targetExists);err!=nil || !targetExists {
   return errors.New("target must be an existing enabled native identity with a staff principal")
  }
  switch action {
@@ -110,12 +110,19 @@ func executeApprovedStaffLifecycle(ctx context.Context, tx pgx.Tx, requestID, ac
    for _,actor:=range approvals { if _,e=tx.Exec(ctx,`INSERT INTO testagram_auth.native_staff_lifecycle_events(request_id,actor_user_id,target_user_id,action,role) VALUES($1::uuid,$2::uuid,$3::uuid,'role_revoked',$4)`,requestID,actor,p.UserID,p.Role);e!=nil{return e} }
   }
  case "staff.revoke":
+  var isOwner bool
+  if e:=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_role_grants WHERE user_id=$1::uuid AND role='owner' AND revoked_at IS NULL)`,p.UserID).Scan(&isOwner);e!=nil{return e}
+  if isOwner {
+   var owners int
+   if e:=tx.QueryRow(ctx,`SELECT count(DISTINCT sp.user_id) FROM testagram_auth.staff_principals sp JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.role='owner' AND rg.revoked_at IS NULL JOIN testagram_auth.identities i ON i.user_id=sp.user_id WHERE sp.enabled=TRUE AND i.disabled_at IS NULL`).Scan(&owners);e!=nil{return e}
+   if owners<=2{return errors.New("cannot revoke an owner while doing so would leave fewer than two active owners")}
+  }
   tag,e:=tx.Exec(ctx,`UPDATE testagram_auth.staff_principals SET enabled=FALSE WHERE user_id=$1::uuid AND enabled=TRUE`,p.UserID)
   if e!=nil{return e};if tag.RowsAffected()!=1{return errors.New("target staff principal is already disabled")}
   if _,e=tx.Exec(ctx,`UPDATE testagram_auth.staff_role_grants SET revoked_at=now(),revoked_by=$2::uuid WHERE user_id=$1::uuid AND revoked_at IS NULL`,p.UserID,requesterID);e!=nil{return e}
   for _,actor:=range approvals { if _,e=tx.Exec(ctx,`INSERT INTO testagram_auth.native_staff_lifecycle_events(request_id,actor_user_id,target_user_id,action) VALUES($1::uuid,$2::uuid,$3::uuid,'staff_disabled')`,requestID,actor,p.UserID);e!=nil{return e} }
  case "staff.permission_change":
-  if p.Granted==nil || strings.TrimSpace(p.Permission)=="" || len(p.Permission)>100 || len(strings.TrimSpace(p.Reason))<8 || len(p.Reason)>500 { return errors.New("permission change requires permission, granted flag and reason") }
+  if p.Granted==nil || strings.TrimSpace(p.Permission)=="" || len(p.Permission)>100 || len(strings.TrimSpace(p.Reason))<8 || len(p.Reason)>500 || p.Permission=="staff.manage" { return errors.New("permission change requires a registered non-bootstrap permission, granted flag and reason") }
   var permissionExists bool
   if e:=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_auth.admin_permissions WHERE permission_key=$1)`,p.Permission).Scan(&permissionExists);e!=nil || !permissionExists { return errors.New("permission key is not registered") }
   if _,e:=tx.Exec(ctx,`
