@@ -90,29 +90,22 @@ RETURNING attempts`, rateBucket).Scan(&attempts)
 		}
 	}
 
-	// Historical or malformed media metadata must not make ordinary post
-	// search fail. media_only=true should safely exclude non-array JSON values.
-	var malformedMediaPostID string
-	if err := tx.QueryRow(ctx, `INSERT INTO testagram_local.posts(author_id,text,visibility,media_ids)
-		VALUES($1,$2,'public','{"legacy":"object"}'::jsonb) RETURNING id::text`,
-		authorID, "legacy media metadata "+suffix).Scan(&malformedMediaPostID); err != nil {
-		t.Fatalf("insert legacy malformed media metadata fixture: %v", err)
-	}
-	var ordinarySearchCount, mediaOnlySearchCount int
-	mediaPredicate := `NOT $2::boolean OR CASE
-		WHEN jsonb_typeof(media_ids)='array' THEN jsonb_array_length(media_ids)>0
+	// Defensive JSONB filtering must not error if legacy media metadata is
+	// encountered outside the current posts-table array constraint.
+	var ordinarySearchAllowed, mediaOnlySearchAllowed bool
+	mediaPredicate := `NOT $1::boolean OR CASE
+		WHEN jsonb_typeof($2::jsonb)='array' THEN jsonb_array_length($2::jsonb)>0
 		ELSE false
 	END`
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM testagram_local.posts WHERE id=$1 AND (`+mediaPredicate+`)`,
-		malformedMediaPostID, false).Scan(&ordinarySearchCount); err != nil {
+	legacyMediaJSON := `{"legacy":"object"}`
+	if err := tx.QueryRow(ctx, `SELECT `+mediaPredicate, false, legacyMediaJSON).Scan(&ordinarySearchAllowed); err != nil {
 		t.Fatalf("ordinary search over legacy media metadata: %v", err)
 	}
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM testagram_local.posts WHERE id=$1 AND (`+mediaPredicate+`)`,
-		malformedMediaPostID, true).Scan(&mediaOnlySearchCount); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT `+mediaPredicate, true, legacyMediaJSON).Scan(&mediaOnlySearchAllowed); err != nil {
 		t.Fatalf("media-only search over legacy media metadata: %v", err)
 	}
-	if ordinarySearchCount != 1 || mediaOnlySearchCount != 0 {
-		t.Fatalf("legacy media metadata search counts = ordinary:%d media-only:%d, want 1/0", ordinarySearchCount, mediaOnlySearchCount)
+	if !ordinarySearchAllowed || mediaOnlySearchAllowed {
+		t.Fatalf("legacy media metadata search allowed ordinary/media-only = %v/%v, want true/false", ordinarySearchAllowed, mediaOnlySearchAllowed)
 	}
 
 	// Post media references are native storage object keys in PostgreSQL;
