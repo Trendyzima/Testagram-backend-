@@ -48,7 +48,7 @@ def main() -> None:
     assert f"../../migrations/{TARGET}:/docker-entrypoint-initdb.d/{TARGET}:ro" in compose
     assert f"apply_migration {TARGET}" in runner
     assert f"../../migrations/{WEBAUTHN_DUAL_CONTROL}:/docker-entrypoint-initdb.d/{WEBAUTHN_DUAL_CONTROL}:ro" in compose
-    migration_list = runner[runner.index("for file in \\\\"):runner.index("apply_migration() {")]
+    migration_list = runner[runner.index("for file in"):runner.index("apply_migration() {")]
     assert WEBAUTHN_DUAL_CONTROL in migration_list, "runner omits dual-control enrollment migration"
     assert migration_list.index(TARGET) < migration_list.index(STAFF_LIFECYCLE) < migration_list.index(
         WEBAUTHN_DUAL_CONTROL
