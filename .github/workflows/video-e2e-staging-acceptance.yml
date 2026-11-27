@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   video-e2e:
+    if: inputs.confirm_staging_only == true && inputs.confirm_public_feed_test == true && inputs.confirm_video_cleanup == true
     name: Upload, transcode, publish, stream, engage and clean up
     runs-on: ubuntu-latest
     environment: staging
