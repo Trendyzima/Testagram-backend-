@@ -9,7 +9,7 @@ The Backend is the sole authority for Testagram-native credentials, account stat
 1. An applicant creates an idempotent identity application with accepted policy declarations.
 2. Backend creates an applicant-scoped verification session. This is not an account or a login session.
 3. Evidence upload reservations are private, size/type/SHA-256 bound and idempotent. Backend stores bytes privately and records only opaque object references and integrity metadata.
-4. Evidence is sealed for manual review only after byte verification, replication and audit requirements pass.
+4. Evidence is sealed for manual review only after the dedicated Backblaze B2 object passes byte-count, content-type and SHA-256 verification and the audit requirements pass. Identity evidence is not replicated to InstaBox or Cloudflare R2.
 5. Two distinct identity reviewers and two distinct account approvers must independently approve. One approval cannot provision an account.
 6. A one-time application-scoped provisioning authorization is redeemed transactionally. Backend creates the canonical Testagram identity and profile and records the provisioning ledger.
 7. Backend sends a single-use email-verification link. Only successful verification changes native provisioning to active.
@@ -34,4 +34,4 @@ The supported product runtime has no external identity-provider integration, tok
 
 ## Release boundary
 
-Registration remains fail-closed until the private evidence bucket, verified replicas, email transport, policy versions, PostgreSQL grants and independent approval workflow pass staging acceptance. Source-code implementation and green CI do not prove that the production API or Flutter build has been switched to native auth. Production cutover and account activation require separate explicit approval.
+Registration remains fail-closed until the dedicated private Backblaze B2 evidence bucket, B2-only upload/read-back/delete acceptance, email transport, policy versions, PostgreSQL grants and independent approval workflow pass staging acceptance. Source-code implementation and green CI do not prove that the production API or Flutter build has been switched to native auth. Production cutover and account activation require separate explicit approval.
