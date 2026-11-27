@@ -207,11 +207,14 @@ func TestIdentityEvidenceClientUsesSeparateTokenAndRoutePrefix(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "ready", "namespace": "identity-evidence-private",
+			"provider": "backblaze_b2", "primary": "verified",
+		})
 	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/upload-url", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token { t.Fatal("identity evidence token was not used") }
-		_ = json.NewEncoder(w).Encode(UploadGrant{IntentID:"identity-intent",UploadURL:"https://b2.example/identity",ExpiresAt:time.Now().Add(5*time.Minute),MaxBytes:1024,Primary:"backblaze_b2"})
+		_ = json.NewEncoder(w).Encode(UploadGrant{IntentID:"identity-intent",UploadURL:"https://s3.us-west-004.backblazeb2.com/identity",ExpiresAt:time.Now().Add(5*time.Minute),MaxBytes:1024,Primary:"backblaze_b2"})
 	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/verify", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token { t.Fatal("identity evidence verify used the wrong token") }
@@ -220,6 +223,9 @@ func TestIdentityEvidenceClientUsesSeparateTokenAndRoutePrefix(t *testing.T) {
 	mux.HandleFunc("GET /internal/v1/identity-evidence/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token || r.URL.Query().Get("namespace") != "identity-evidence-private" { t.Fatal("identity evidence status escaped its route/token boundary") }
 		_ = json.NewEncoder(w).Encode(MediaStatus{Status:"protected",ContentType:"image/jpeg",SizeBytes:1024,SHA256:digest})
+	})
+	mux.HandleFunc("POST /internal/v1/identity-evidence/download-url", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://s3.us-west-004.backblazeb2.com/identity-download", "provider": "backblaze_b2"})
 	})
 	mux.HandleFunc("POST /internal/v1/identity-evidence/delete", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token { t.Fatal("identity evidence delete used the wrong token") }
@@ -239,6 +245,70 @@ func TestIdentityEvidenceClientUsesSeparateTokenAndRoutePrefix(t *testing.T) {
 	if err != nil || verified.Status != "replication_pending" { t.Fatalf("identity evidence verify = %+v, %v", verified, err) }
 	status, err := client.Status(ctx, owner, "identity-evidence-private", key)
 	if err != nil || status.Status != "protected" { t.Fatalf("identity evidence status = %+v, %v", status, err) }
+	download, err := client.DownloadURL(ctx, owner, owner, "identity-evidence-private", key)
+	if err != nil || download.Provider != "backblaze_b2" { t.Fatalf("B2-only identity evidence download = %+v, %v", download, err) }
 	deleted, err := client.Delete(ctx, owner, owner, "identity-evidence-private", key)
 	if err != nil || deleted != "delete_pending" { t.Fatalf("identity evidence delete = %q, %v", deleted, err) }
+}
+
+
+func TestIdentityEvidenceRejectsNonB2Readiness(t *testing.T) {
+	for _, response := range []string{
+		`{"status":"ready","namespace":"identity-evidence-private","provider":"cloudflare_r2","primary":"verified"}`,
+		`{"status":"ready","namespace":"media-private","provider":"backblaze_b2","primary":"verified"}`,
+		`{"status":"ready","namespace":"identity-evidence-private","provider":"backblaze_b2","primary":"pending"}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(response))
+		}))
+		client, err := NewIdentityEvidenceClient(server.URL, testToken, server.Client())
+		if err != nil { server.Close(); t.Fatal(err) }
+		if err := client.Ready(context.Background()); err == nil {
+			server.Close()
+			t.Fatalf("identity evidence accepted unsafe readiness response: %s", response)
+		}
+		server.Close()
+	}
+}
+
+func TestIdentityEvidenceRejectsR2DownloadGrant(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"url":"https://r2.example/identity-object","provider":"cloudflare_r2"}`))
+	}))
+	defer server.Close()
+	client, err := NewIdentityEvidenceClient(server.URL, testToken, server.Client())
+	if err != nil { t.Fatal(err) }
+	if _, err := client.DownloadURL(context.Background(), "requester", "owner", "identity-evidence-private", "identity/object"); err == nil {
+		t.Fatal("identity evidence accepted a Cloudflare R2 download grant")
+	}
+}
+
+
+func TestValidB2ProviderURLRequiresBackblazeS3Host(t *testing.T) {
+	for _, raw := range []string{
+		"https://s3.us-west-004.backblazeb2.com/bucket/object",
+		"https://s3.eu-central-003.backblazeb2.com/bucket/object",
+	} {
+		if !validB2ProviderURL(raw) { t.Fatalf("valid Backblaze B2 URL rejected: %s", raw) }
+	}
+	for _, raw := range []string{
+		"https://r2.example/object",
+		"https://s3.amazonaws.com/bucket/object",
+		"https://backblazeb2.com.evil.example/object",
+		"http://s3.us-west-004.backblazeb2.com/object",
+	} {
+		if validB2ProviderURL(raw) { t.Fatalf("non-Backblaze URL accepted as B2: %s", raw) }
+	}
+}
+
+func TestIdentityEvidenceRejectsB2LabelOnNonBackblazeHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"url":"https://r2.example/identity-object","provider":"backblaze_b2"}`))
+	}))
+	defer server.Close()
+	client, err := NewIdentityEvidenceClient(server.URL, testToken, server.Client())
+	if err != nil { t.Fatal(err) }
+	if _, err := client.DownloadURL(context.Background(), "requester", "owner", "identity-evidence-private", "identity/object"); err == nil {
+		t.Fatal("identity evidence accepted a non-Backblaze host labelled as B2")
+	}
 }
