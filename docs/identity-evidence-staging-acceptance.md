@@ -28,7 +28,7 @@ Use dedicated S3 keys restricted to the six cloud buckets above. Every cloud end
 
 ## Run the acceptance workflow
 
-1. Confirm that all nine staging buckets exist and are empty or contain only disposable smoke data.
+1. Confirm that the six dedicated cloud buckets exist and contain only disposable smoke data; the workflow creates the three isolated MinIO buckets at runtime.
 2. Create and configure both `identity-evidence-staging` and `media-staging` environments as described in [media provider staging acceptance](media-provider-staging-acceptance.md). The current workflow shares `confirm_live_provider_writes` between its identity-evidence and three-provider media jobs, so both environments are required for that run.
 3. Open **Actions → Backblaze B2 storage smoke test → Run workflow** and set `confirm_live_provider_writes=true`. Each job attaches its own environment and reads only environment-scoped staging variables and secrets.
 4. Review the run summary. A passing run must prove:
