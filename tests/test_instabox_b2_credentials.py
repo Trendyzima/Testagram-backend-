@@ -31,6 +31,7 @@ class TestInstaBoxB2ApplicationKeyWiring(unittest.TestCase):
             "DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY",
             "identity-evidence bucket must be configured",
             "identity evidence requires its own bucket-scoped",
+            '--arg b2_identity "$b2_identity"',
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.workflow + self.deployer)
