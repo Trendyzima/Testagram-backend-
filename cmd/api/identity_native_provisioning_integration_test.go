@@ -552,6 +552,9 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if consentCount != 3 {
 		t.Fatalf("ordinary signup must persist Terms, Privacy and age self-declaration, got %d records", consentCount)
 	}
+	if _, err := db.Exec(ctx, "DELETE FROM testagram_auth.registration_consents WHERE user_id=$1::uuid", basicUserID); err != nil {
+		t.Fatalf("cleanup ordinary signup consent fixture: %v", err)
+	}
 	if _, err := db.Exec(ctx, "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", basicUserID); err != nil {
 		t.Fatalf("cleanup ordinary signup fixture: %v", err)
 	}
