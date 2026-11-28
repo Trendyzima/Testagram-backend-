@@ -51,7 +51,7 @@ if [[ "$TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED" == "true" ]]; then
   [[ -n "${TESTAGRAM_WEBAUTHN_RPID:-}" ]] || { echo "::error::Identity review requires TESTAGRAM_WEBAUTHN_RPID."; exit 1; }
   [[ "${TESTAGRAM_WEBAUTHN_ORIGINS:-}" == https://* ]] || { echo "::error::Identity review requires HTTPS TESTAGRAM_WEBAUTHN_ORIGINS."; exit 1; }
 fi
-[[ -n "$TESTAGRAM_TERMS_VERSION" && ${#TESTAGRAM_TERMS_VERSION} -le 64 ]] || { echo "::error::Identity registration requires TESTAGRAM_TERMS_VERSION (1-64 characters)."; exit 1; }
+[[ -n "$TESTAGRAM_TERMS_VERSION" && ${#TESTAGRAM_TERMS_VERSION} -le 64 ]] || { echo "::error::Native account registration requires TESTAGRAM_TERMS_VERSION (1-64 characters)."; exit 1; }
 [[ -n "$TESTAGRAM_PRIVACY_VERSION" && ${#TESTAGRAM_PRIVACY_VERSION} -le 64 ]] || { echo "::error::Native account registration requires TESTAGRAM_PRIVACY_VERSION (1-64 characters)."; exit 1; }
 # Create an ephemeral, cryptographically strong service credential when no
 # operator-provided value is supplied. It is transferred over the authenticated
