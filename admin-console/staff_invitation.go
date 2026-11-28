@@ -109,8 +109,11 @@ func (a *app) handleInvite(w http.ResponseWriter, r *http.Request) {
 		  AND i.disabled_at IS NULL
 		  AND NOT EXISTS (
 		    SELECT 1 FROM testagram_auth.staff_principals sp
-		    JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
 		    WHERE sp.user_id=i.user_id
+		      AND (sp.enabled=TRUE OR EXISTS (
+		        SELECT 1 FROM testagram_auth.staff_role_grants rg
+		        WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		      ))
 		  )
 		FOR UPDATE OF i
 	`, email).Scan(&targetID)
@@ -283,8 +286,11 @@ func (a *app) handleAcceptStaffInvitation(w http.ResponseWriter, r *http.Request
 	err = tx.QueryRow(ctx, `
 		SELECT EXISTS (
 		  SELECT 1 FROM testagram_auth.staff_principals sp
-		  JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
 		  WHERE sp.user_id=$1::uuid
+		    AND (sp.enabled=TRUE OR EXISTS (
+		      SELECT 1 FROM testagram_auth.staff_role_grants rg
+		      WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		    ))
 		)
 	`, user.ID).Scan(&alreadyActive)
 	if err != nil || alreadyActive {
@@ -391,8 +397,11 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 	err = tx.QueryRow(ctx, `
 		SELECT EXISTS (
 		  SELECT 1 FROM testagram_auth.staff_principals sp
-		  JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
 		  WHERE sp.user_id=$1::uuid
+		    AND (sp.enabled=TRUE OR EXISTS (
+		      SELECT 1 FROM testagram_auth.staff_role_grants rg
+		      WHERE rg.user_id=sp.user_id AND rg.revoked_at IS NULL
+		    ))
 		) OR EXISTS (
 		  SELECT 1 FROM testagram_auth.native_staff_invitations
 		  WHERE email_normalized=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()
