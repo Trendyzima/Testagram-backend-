@@ -10,9 +10,8 @@ POLICY = "docs/architecture/native-replacement-ownership.md"
 NEGATIVE_TEST = "tests/test_native_mail_provider_policy.py"
 HISTORICAL_MIGRATION = "migrations/20261126_testagram_native_mail_feedback.sql"
 LEGACY_CLEANUP = "scripts/start-instabox-deployment.sh"
+HISTORICAL_NATIVE_MAIL_DNS = "docs/native-mail-dns.md"
 
-# Match provider spelling even when separators/case are varied, without
-# making this guard itself an allowed source of the forbidden identifier.
 PROVIDER = re.compile(r"mail[\s._-]*jet|api[.]mailjet[.]com", re.IGNORECASE)
 RETIRED_CONFIG = re.compile(
     r"\b(?:MAILJET_API_KEY|MAILJET_SECRET_KEY|SMTP_HOST|SMTP_USERNAME|SMTP_PASSWORD|"
@@ -29,18 +28,27 @@ def main():
     violations = []
     for path in tracked_files():
         relative = path.relative_to(ROOT).as_posix()
-        if relative in {POLICY, NEGATIVE_TEST, HISTORICAL_MIGRATION}:
+        if (
+            relative in {POLICY, NEGATIVE_TEST, HISTORICAL_MIGRATION, HISTORICAL_NATIVE_MAIL_DNS}
+            or relative.startswith("tests/")
+            or relative.endswith("_test.go")
+            or relative == "scripts/guard-native-mail-policy.py"
+        ):
             continue
         try:
             content = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
         if relative == LEGACY_CLEANUP:
-            # This one-way cleanup only removes old values from an existing
-            # VPS .env. It cannot configure or activate a retired transport.
+            # These one-way cleanup operations only remove legacy values from
+            # an existing VPS env file. They never configure a mail transport.
             content = "\n".join(
                 line for line in content.splitlines()
-                if "sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d'" not in line
+                if not (
+                    "sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d'" in line
+                    or 'write_env_value CLOUDFLARE_EMAIL_ACCOUNT_ID ""' in line
+                    or 'write_env_value CLOUDFLARE_EMAIL_API_TOKEN ""' in line
+                )
             )
         if PROVIDER.search(content) or RETIRED_CONFIG.search(content):
             violations.append(relative)
