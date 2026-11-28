@@ -180,7 +180,7 @@ services:
       TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: ${TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED:-false}
       TESTAGRAM_WEBAUTHN_RPID: ${TESTAGRAM_WEBAUTHN_RPID:-}
       TESTAGRAM_WEBAUTHN_ORIGINS: ${TESTAGRAM_WEBAUTHN_ORIGINS:-}
-      # Canonical API gate; unset/empty remains closed even if a client build exposes the form.
+      # Optional identity-evidence intake gate only. Ordinary native signup and email verification do not depend on it.
       AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
       TESTAGRAM_MAIL_VERP_KEY: ${TESTAGRAM_MAIL_VERP_KEY:-}
