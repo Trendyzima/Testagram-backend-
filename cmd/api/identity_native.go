@@ -574,6 +574,10 @@ func identityEvidenceExtension(contentType string) (string, bool) {
 }
 
 func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Request) {
+	if !s.identityEvidenceStorageConfigured() {
+		http.NotFound(w, r)
+		return
+	}
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
 		return
@@ -719,6 +723,10 @@ func (s *service) identityEvidenceUploadURL(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request) {
+	if !s.identityEvidenceStorageConfigured() {
+		http.NotFound(w, r)
+		return
+	}
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
 		return
@@ -803,6 +811,10 @@ func (s *service) identityEvidenceUpload(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *service) identityEvidenceSubmit(w http.ResponseWriter, r *http.Request) {
+	if !s.identityEvidenceStorageConfigured() {
+		http.NotFound(w, r)
+		return
+	}
 	if !s.cors(w, r) {
 		writeJSON(w, http.StatusForbidden, errorBody("ORIGIN_NOT_ALLOWED", "Origin is not allowed", requestID(r)))
 		return
