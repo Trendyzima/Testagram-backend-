@@ -40,3 +40,12 @@ func TestStaffInvitationRoleAllowlist(t *testing.T) {
 		}
 	}
 }
+
+func TestStaffInvitationRevocationApprovalPermission(t *testing.T) {
+	permission, err := approvalPermissionForAction("staff.invitation.revoke")
+	if err != nil { t.Fatalf("revocation action must be reviewable: %v", err) }
+	if permission != "staff.invite.approve" { t.Fatalf("revocation permission=%q; want staff.invite.approve", permission) }
+	if _, err := approvalPermissionForAction("staff.invitation.delete"); err == nil {
+		t.Fatal("unsupported invitation action was accepted")
+	}
+}
