@@ -166,8 +166,8 @@ func (a *app) routes() http.Handler {
 	if err != nil { panic(err) }
 	mux := http.NewServeMux()
 	static := http.FileServer(http.FS(files))
-	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/index.html"; static.ServeHTTP(w, r) })
-	mux.HandleFunc("GET /staff/invitations/accept", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/index.html"; static.ServeHTTP(w, r) })
+	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/"; static.ServeHTTP(w, r) })
+	mux.HandleFunc("GET /staff/invitations/accept", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/"; static.ServeHTTP(w, r) })
 	mux.Handle("GET /", static)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
 	mux.HandleFunc("GET /api/session", a.handleSession)
