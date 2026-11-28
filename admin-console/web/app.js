@@ -89,7 +89,7 @@ function renderDashboard(user) {
   loadApprovalQueue();
   loadIdentityReviewQueue();
   loadAuditHistory();
-  if (user.role === "owner") { loadStaffDirectory(); loadPendingInvitations(); }
+  if (user.role === "owner") loadStaffDirectory();
   loadWebAuthnReadiness();
 }
 async function loadSession() {
@@ -287,6 +287,7 @@ async function authenticateStaffAuthenticator() {
     const result=await api("/api/admin/webauthn/assertion/finish",{challenge:begin.challenge,response:credentialJSON(credential)});
     byId("stepup-state").textContent="Backend-issued MFA elevation expires at "+new Date(result.expires_at*1000).toLocaleTimeString()+".";
     notice("Phishing-resistant WebAuthn verification succeeded.","success");
+    if (currentUser && currentUser.role === "owner") await loadPendingInvitations();
   } catch(e){notice(e.message,"error");} finally{busy(form,false);}
 }
 byId("webauthn-enroll").addEventListener("click",enrollStaffAuthenticator);
@@ -345,6 +346,7 @@ byId("invite-form").addEventListener("submit", async (event) => {
     byId("invite-reason").value = "";
     await loadApprovalQueue();
     await loadAuditHistory();
+    if (currentUser && currentUser.role === "owner") await loadPendingInvitations();
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
 });
