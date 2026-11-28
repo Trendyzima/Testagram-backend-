@@ -243,7 +243,8 @@ for file in \
   20261124_testagram_social_email_consent.sql \
   20261125_testagram_mail_delivery_events.sql \
   20261126_testagram_native_mail_feedback.sql \
-  20261127_identity_evidence_retention_audit.sql; do
+  20261127_identity_evidence_retention_audit.sql \
+  20261128_native_auth_registration_consent.sql; do
   docker compose --env-file "$env_file" -f "$compose_file" exec -T postgres test -r "/docker-entrypoint-initdb.d/$file"
 done
 
@@ -289,6 +290,7 @@ apply_migration 20261124_testagram_social_email_consent.sql
 apply_migration 20261125_testagram_mail_delivery_events.sql
 apply_migration 20261126_testagram_native_mail_feedback.sql
 apply_migration 20261127_identity_evidence_retention_audit.sql
+apply_migration 20261128_native_auth_registration_consent.sql
 
 if [[ "$(schema_ready)" != "t" ]]; then
   echo "::error::Native identity schema verification failed after migration. Backend startup must remain blocked."
