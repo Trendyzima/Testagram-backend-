@@ -202,7 +202,10 @@ jobs:
       CLOUDFLARE_WORKERS_DEPLOY_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       TESTAGRAM_AUTH_JWT_SECRET: ${{ secrets.TESTAGRAM_AUTH_JWT_SECRET }}
-      TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: 'true'
+      # Identity-evidence intake is a separate, optional capability. A normal
+      # backend deployment and public email-verified signup must not depend on
+      # reviewer/approver WebAuthn readiness.
+      TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED: ${{ vars.TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED || 'false' }}
       TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED: ${{ vars.TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED || 'false' }}
       TESTAGRAM_WEBAUTHN_READINESS_TOKEN: ${{ secrets.TESTAGRAM_WEBAUTHN_READINESS_TOKEN }}
       TESTAGRAM_WEBAUTHN_RPID: ${{ vars.TESTAGRAM_WEBAUTHN_RPID || '' }}
@@ -213,15 +216,18 @@ jobs:
     steps:
       - name: Check out deployment scripts
         uses: actions/checkout@v4
-      - name: Validate identity-review activation configuration
+      - name: Validate native authentication deployment configuration
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED" == "true" ]] || { echo "::error::Native identity applications must be explicitly enabled for this production deployment."; exit 1; }
-          [[ -n "$TESTAGRAM_WEBAUTHN_READINESS_TOKEN" && ${#TESTAGRAM_WEBAUTHN_READINESS_TOKEN} -ge 32 ]] || { echo "::error::Missing or short TESTAGRAM_WEBAUTHN_READINESS_TOKEN production secret."; exit 1; }
-          [[ -n "$TESTAGRAM_WEBAUTHN_RPID" ]] || { echo "::error::Missing TESTAGRAM_WEBAUTHN_RPID production variable."; exit 1; }
-          [[ "$TESTAGRAM_WEBAUTHN_ORIGINS" == https://* ]] || { echo "::error::TESTAGRAM_WEBAUTHN_ORIGINS must contain the HTTPS production origin."; exit 1; }
           [[ ${#TESTAGRAM_AUTH_JWT_SECRET} -ge 32 ]] || { echo "::error::TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters."; exit 1; }
+          # Identity evidence intake is independently gated. Only validate its
+          # reviewer/approver infrastructure when an operator explicitly opts in.
+          if [[ "$TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED" == "true" ]]; then
+            [[ -n "$TESTAGRAM_WEBAUTHN_READINESS_TOKEN" && ${#TESTAGRAM_WEBAUTHN_READINESS_TOKEN} -ge 32 ]] || { echo "::error::Missing or short TESTAGRAM_WEBAUTHN_READINESS_TOKEN production secret."; exit 1; }
+            [[ -n "$TESTAGRAM_WEBAUTHN_RPID" ]] || { echo "::error::Missing TESTAGRAM_WEBAUTHN_RPID production variable."; exit 1; }
+            [[ "$TESTAGRAM_WEBAUTHN_ORIGINS" == https://* ]] || { echo "::error::TESTAGRAM_WEBAUTHN_ORIGINS must contain the HTTPS production origin."; exit 1; }
+          fi
       - name: Validate edge proxy shared credential
         shell: bash
         run: |
