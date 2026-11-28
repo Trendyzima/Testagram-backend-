@@ -1501,7 +1501,11 @@ func main() {
 	}
 	go svc.runStorageDeletionWorker(signalCtx)
 	go svc.runStorageCleanupWorker(signalCtx)
-	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
+	if svc.identityEvidenceStorageConfigured() {
+		go svc.runIdentityEvidenceRetentionWorker(signalCtx)
+	} else {
+		log.Printf("identity evidence retention worker remains stopped; optional identity-evidence storage is disabled")
+	}
 	go svc.runMailOutboxWorker(signalCtx)
 
 	if bounceAddr := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR")); bounceAddr != "" {
