@@ -2,8 +2,7 @@
 
 Testagram owns outbound mail delivery, DKIM signing, outbox queueing, retries,
 VERP tokens, bounce correlation, suppression and delivery state. The Go mail
-engine runs on InstaBox and connects directly to recipient MX servers. There
-is no Mailjet, Resend or external outbound SMTP relay.
+engine runs on InstaBox and connects directly to recipient MX servers. No hosted outbound email API or authenticated SMTP relay is permitted.
 
 Cloudflare Email Routing is approved for one narrow purpose: receiving
 messages sent to `bounces.testagram.site` and invoking the Testagram bounce

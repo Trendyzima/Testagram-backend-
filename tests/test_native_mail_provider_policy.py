@@ -10,7 +10,7 @@ COMPOSE = ROOT / "deploy" / "self-hosted" / "docker-compose.yml"
 SMTP = ROOT / "cmd" / "api" / "mail_smtp.go"
 
 
-class NativeMailDeploymentTest(unittest.TestCase):
+class NativeMailProviderPolicyTest(unittest.TestCase):
     def test_no_external_provider_credentials_or_api(self):
         for path in (SCRIPT, WORKFLOW, COMPOSE, SMTP):
             content = path.read_text(encoding="utf-8")
