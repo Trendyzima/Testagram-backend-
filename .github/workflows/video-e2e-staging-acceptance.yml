@@ -54,7 +54,7 @@ jobs:
           ref: main
           path: flutter-client
       - name: Set up Java for Android instrumentation
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
