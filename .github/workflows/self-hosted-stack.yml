@@ -265,6 +265,8 @@ jobs:
           grep -q 'reverse_proxy flutter-web:8080' Caddyfile
       - name: Smoke-test fresh PostgreSQL migrations
         working-directory: deploy/self-hosted
+        env:
+          TESTAGRAM_MAIL_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
         run: |
           set -euo pipefail
           docker compose up -d postgres
