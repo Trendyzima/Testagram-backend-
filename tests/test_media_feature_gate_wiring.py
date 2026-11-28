@@ -71,13 +71,12 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("ordinary B2/R2 media and metadata only", self.deployer)
 
     def test_pinned_minio_client_alias_commands_use_supported_flags(self):
-        for source in (self.workflow, self.deployer):
-            alias_lines = [line for line in source.splitlines() if "mc alias set " in line]
-            self.assertTrue(alias_lines)
-            for line in alias_lines:
-                self.assertNotIn("--region", line)
-                self.assertIn("--api S3v4", line)
-                self.assertIn("--path auto", line)
+        alias_lines = [line for line in self.workflow.splitlines() + self.deployer.splitlines() if "mc alias set " in line]
+        self.assertTrue(alias_lines)
+        for line in alias_lines:
+            self.assertNotIn("--region", line)
+            self.assertIn("--api S3v4", line)
+            self.assertIn("--path auto", line)
 
     def test_production_deploy_does_not_provision_identity_evidence_storage(self):
         for token in (
