@@ -627,7 +627,7 @@ func executeStaffInvitationRevocation(ctx context.Context, tx pgx.Tx, requestID,
 		  AND a.approver_user_id<>$2::uuid AND a.approver_user_id<>$3::uuid
 	`,requestID,requesterID,targetID).Scan(&eligibleApprovers)
 	if err!=nil || eligibleApprovers!=2 { return errors.New("two distinct, currently eligible owner WebAuthn approvers are required") }
-	tag,err:=tx.Exec(ctx,`UPDATE testagram_auth.native_staff_invitations SET revoked_at=now() WHERE id=$1::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,request.InvitationID)
+	tag,err:=tx.Exec(ctx,`UPDATE testagram_auth.native_staff_invitations SET revoked_at=now(),revoked_by_request_id=$2::uuid WHERE id=$1::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,request.InvitationID,requestID)
 	if err!=nil || tag.RowsAffected()!=1 { return errors.New("invitation could not be atomically revoked") }
 	_,err=tx.Exec(ctx,`
 		INSERT INTO testagram_auth.native_staff_lifecycle_events(request_id,actor_user_id,target_user_id,target_email,action,role,metadata)
