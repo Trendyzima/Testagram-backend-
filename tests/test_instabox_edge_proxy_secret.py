@@ -75,10 +75,19 @@ class EdgeProxySharedSecretTests(unittest.TestCase):
         self.assertIn("did not become ready within 300 seconds", machine)
         self.assertIn("exit 1", machine)
 
-    def test_identity_evidence_has_no_cloudflare_r2_or_instabox_bucket(self):
-        self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow)
-        self.assertNotIn("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.workflow)
-        self.assertIn("Provision dedicated private B2 identity-evidence bucket", self.workflow)
+    def test_identity_evidence_storage_is_not_part_of_ordinary_production_deployment(self):
+        for forbidden in (
+            "R2_IDENTITY_BUCKET",
+            "CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET",
+            "Provision dedicated private B2 identity-evidence bucket",
+            "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET",
+            "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID",
+            "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.workflow)
+        self.assertIn('write_dc_env_value B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET ""', self.script)
+        self.assertIn('write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""', self.script)
 
     def test_compose_and_caddy_consume_the_persisted_name(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
