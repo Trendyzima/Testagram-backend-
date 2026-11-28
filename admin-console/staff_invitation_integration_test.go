@@ -134,13 +134,16 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 
 	var invitationID string
 	var storedHash, ciphertext, nonce []byte
+	fingerprintMAC := hmac.New(sha256.New, mailKey)
+	_, _ = fingerprintMAC.Write([]byte(strings.ToLower(targetEmail)))
+	fingerprint := fingerprintMAC.Sum(nil)
 	if err := pool.QueryRow(ctx, `
 		SELECT ni.id::text,ni.token_sha256,o.payload_ciphertext,o.payload_nonce
 		FROM testagram_auth.native_staff_invitations ni
-		JOIN testagram_mail.outbox o ON o.status='pending'
+		JOIN testagram_mail.outbox o ON o.recipient_fingerprint=$2 AND o.status='pending'
 		WHERE ni.request_id=$1::uuid
 		ORDER BY o.id DESC LIMIT 1
-	`, requestID).Scan(&invitationID, &storedHash, &ciphertext, &nonce); err != nil {
+	`, requestID, fingerprint).Scan(&invitationID, &storedHash, &ciphertext, &nonce); err != nil {
 		t.Fatalf("approved invitation or encrypted mail outbox row missing: %v", err)
 	}
 	block, err := aes.NewCipher(mailKey)
