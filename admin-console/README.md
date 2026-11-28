@@ -59,9 +59,19 @@ a substitute for Testagram account verification or authentication. After
 acceptance, an owner must separately authorize the invitee's two-person
 WebAuthn enrollment; the invitee cannot self-authorize MFA.
 
+A still-pending invitation can be revoked only by requesting
+`POST /api/staff/invitations/{id}/revoke` with a fresh owner WebAuthn step-up,
+then receiving two independent, currently eligible owner WebAuthn approvals.
+The second approval atomically sets `revoked_at` and appends the
+`invitation_revoked` lifecycle event; acceptance and revocation serialize on
+the invitation row. A revoked token cannot be accepted. This does not revoke
+an already accepted staff principal or replace the separate staff-access
+revocation workflow.
+
 Do not manually insert an owner or bypass the approval ledger to make the
-dashboard accessible. Role-change, revocation and permission mutations remain
-closed until their own atomic two-person executors are implemented.
+dashboard accessible. Staff role changes, active staff-access revocation and
+permission mutations remain closed until their own atomic two-person executors
+are implemented.
 
 The owner-only staff directory is read from canonical UUID identities and
 native staff grants. Permission overrides use
