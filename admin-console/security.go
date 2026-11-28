@@ -481,8 +481,9 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		if err := tx.QueryRow(ctx,`
 			SELECT ni.id::text
 			FROM testagram_auth.native_staff_invitations ni
-			JOIN testagram_auth.identities i ON i.email_normalized=ni.email_normalized
-			  AND i.email_verified_at IS NOT NULL AND i.disabled_at IS NULL
+			JOIN testagram_auth.native_sensitive_action_requests original
+			  ON original.id=ni.request_id AND original.action_type='staff.invite' AND original.status='approved'
+			JOIN testagram_auth.identities i ON i.user_id=original.target_reference::uuid
 			WHERE ni.id=$1::uuid AND ni.accepted_at IS NULL AND ni.revoked_at IS NULL AND ni.expires_at>now()
 			FOR UPDATE OF ni,i
 		`,invitation.InvitationID).Scan(&lockedID); err != nil || lockedID!=invitation.InvitationID {
