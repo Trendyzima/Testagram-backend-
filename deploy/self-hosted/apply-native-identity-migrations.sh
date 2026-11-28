@@ -73,6 +73,22 @@ WITH checks(check_name, ok) AS (VALUES
   ('testagram_app staff MFA timestamp update', COALESCE((SELECT has_column_privilege(oid,'testagram_auth.staff_principals','mfa_enrolled_at','UPDATE') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('native_staff_permission_overrides table', to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL),
   ('native_sensitive_action_requests table', to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL),
+  ('native staff invitation revocation action constraint', EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid=to_regclass('testagram_auth.native_sensitive_action_requests')
+      AND conname='native_sensitive_action_requests_action_type_check'
+      AND pg_get_constraintdef(oid) LIKE '%staff.invitation.revoke%'
+  )),
+  ('native staff invitation revocation request binding column', EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_auth' AND table_name='native_staff_invitations'
+      AND column_name='revoked_by_request_id'
+  )),
+  ('native staff invitation database revocation guard', EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid=to_regclass('testagram_auth.native_staff_invitations')
+      AND tgname='native_staff_invitation_mutation_guard' AND NOT tgisinternal
+  )),
   ('native_sensitive_action_requests.requested_by_service', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
   ('native sensitive action request source column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
   ('identity application review stage column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
@@ -222,6 +238,7 @@ for file in \
   20261127_native_staff_lifecycle_executor.sql \
   20261128_native_staff_webauthn_dual_control.sql \
   20261128_native_staff_webauthn_approver_permission_revalidation.sql \
+  20261128_z_staff_invitation_revocation.sql \
   20261124_testagram_email_verification_otp.sql \
   20261124_testagram_social_email_consent.sql \
   20261125_testagram_mail_delivery_events.sql \
@@ -266,6 +283,7 @@ apply_migration 061_native_sensitive_action_integrity.sql
 apply_migration 20261127_native_staff_lifecycle_executor.sql
 apply_migration 20261128_native_staff_webauthn_dual_control.sql
 apply_migration 20261128_native_staff_webauthn_approver_permission_revalidation.sql
+apply_migration 20261128_z_staff_invitation_revocation.sql
 apply_migration 20261124_testagram_email_verification_otp.sql
 apply_migration 20261124_testagram_social_email_consent.sql
 apply_migration 20261125_testagram_mail_delivery_events.sql

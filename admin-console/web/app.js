@@ -287,11 +287,50 @@ async function authenticateStaffAuthenticator() {
     const result=await api("/api/admin/webauthn/assertion/finish",{challenge:begin.challenge,response:credentialJSON(credential)});
     byId("stepup-state").textContent="Backend-issued MFA elevation expires at "+new Date(result.expires_at*1000).toLocaleTimeString()+".";
     notice("Phishing-resistant WebAuthn verification succeeded.","success");
+    if (currentUser && currentUser.role === "owner") await loadPendingInvitations();
   } catch(e){notice(e.message,"error");} finally{busy(form,false);}
 }
 byId("webauthn-enroll").addEventListener("click",enrollStaffAuthenticator);
 byId("stepup-form").addEventListener("submit",async event=>{event.preventDefault();await authenticateStaffAuthenticator();});
 
+
+
+async function loadPendingInvitations() {
+  const list=byId("invitation-list");
+  if(!list)return;
+  list.replaceChildren();
+  try {
+    const data=await api("/api/staff/invitations/pending");
+    const items=data.items||[];
+    if(!items.length) {
+      const empty=document.createElement("p"); empty.className="field-help";
+      empty.textContent="No live pending staff invitations."; list.appendChild(empty); return;
+    }
+    for(const item of items) {
+      const card=document.createElement("article"); card.className="approval-item";
+      const heading=document.createElement("b"); heading.textContent=item.email+" · "+item.role;
+      const detail=document.createElement("p");
+      detail.textContent="Issued "+new Date(item.created_at).toLocaleString()+" · expires "+new Date(item.expires_at).toLocaleString();
+      const revoke=document.createElement("button"); revoke.type="button"; revoke.className="button button-secondary";
+      revoke.textContent="Request two-person revocation";
+      revoke.addEventListener("click",async()=>{
+        const reason=window.prompt("Why must this pending invitation be revoked? (12–1000 characters)");
+        if(reason===null)return;
+        if(reason.trim().length<12||reason.trim().length>1000){notice("Enter a revocation reason between 12 and 1000 characters.","error");return;}
+        revoke.disabled=true;
+        try {
+          const result=await api("/api/staff/invitations/"+encodeURIComponent(item.id)+"/revoke",{reason:reason.trim()});
+          notice(result.message||"Two-person revocation request recorded.","success");
+          await loadApprovalQueue(); await loadAuditHistory(); await loadPendingInvitations();
+        } catch(error) { notice(error.message,"error"); revoke.disabled=false; }
+      });
+      card.append(heading,detail,revoke); list.appendChild(card);
+    }
+  } catch(error) {
+    const failed=document.createElement("p"); failed.className="field-help"; failed.textContent=error.message; list.appendChild(failed);
+  }
+}
+byId("invitation-refresh").addEventListener("click",loadPendingInvitations);
 
 byId("invite-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -307,6 +346,7 @@ byId("invite-form").addEventListener("submit", async (event) => {
     byId("invite-reason").value = "";
     await loadApprovalQueue();
     await loadAuditHistory();
+    if (currentUser && currentUser.role === "owner") await loadPendingInvitations();
   } catch (error) { notice(error.message, "error"); }
   finally { busy(form, false); }
 });
@@ -623,6 +663,7 @@ async function decideSensitiveAction(id, decision, reason, approveButton, reject
     notice(result.message || ("Decision recorded: " + result.status + "."), "success");
     await loadApprovalQueue();
     await loadAuditHistory();
+    if (currentUser && currentUser.role === "owner") await loadPendingInvitations();
   } catch (error) {
     notice(error.message, "error");
     approveButton.disabled = false;
