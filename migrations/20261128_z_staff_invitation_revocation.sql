@@ -1,10 +1,12 @@
 -- Add the controlled two-person staff invitation revocation action.
--- The existing token digest and acceptance checks remain unchanged; revocation
--- commits atomically with the second independent WebAuthn approval.
+-- Revocation is bound to the immutable approval request at both application and
+-- database boundaries. Existing unlinked revoked rows require explicit audit reconciliation.
 BEGIN;
+
 ALTER TABLE testagram_auth.native_staff_invitations
   ADD COLUMN IF NOT EXISTS revoked_by_request_id UUID
     REFERENCES testagram_auth.native_sensitive_action_requests(id) ON DELETE RESTRICT;
+
 DO $preflight$
 BEGIN
   IF EXISTS (
@@ -15,6 +17,7 @@ BEGIN
   END IF;
 END;
 $preflight$;
+
 ALTER TABLE testagram_auth.native_staff_invitations
   DROP CONSTRAINT IF EXISTS native_staff_invitation_revocation_request_pair_check;
 ALTER TABLE testagram_auth.native_staff_invitations
@@ -38,7 +41,9 @@ AS $function$
 DECLARE
   v_target_reference TEXT;
   v_original_target TEXT;
+  v_original_requester UUID;
   v_requester UUID;
+  v_target UUID;
   v_requester_eligible BOOLEAN;
   v_total_approvals INTEGER;
   v_eligible_approvals INTEGER;
@@ -46,6 +51,7 @@ BEGIN
   IF TG_OP='DELETE' THEN
     RAISE EXCEPTION 'native staff invitations are immutable lifecycle records';
   END IF;
+
   IF NEW.id IS DISTINCT FROM OLD.id
      OR NEW.request_id IS DISTINCT FROM OLD.request_id
      OR NEW.email_normalized IS DISTINCT FROM OLD.email_normalized
@@ -56,20 +62,24 @@ BEGIN
      OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
     RAISE EXCEPTION 'native staff invitation identity and token fields are immutable';
   END IF;
+
   IF OLD.accepted_at IS NOT NULL
      AND (NEW.accepted_at IS DISTINCT FROM OLD.accepted_at
        OR NEW.accepted_by_user_id IS DISTINCT FROM OLD.accepted_by_user_id) THEN
     RAISE EXCEPTION 'accepted staff invitation state is terminal';
   END IF;
+
   IF OLD.revoked_at IS NOT NULL
      AND (NEW.revoked_at IS DISTINCT FROM OLD.revoked_at
        OR NEW.revoked_by_request_id IS DISTINCT FROM OLD.revoked_by_request_id) THEN
     RAISE EXCEPTION 'revoked staff invitation state is terminal';
   END IF;
+
   IF NEW.revoked_at IS NOT NULL AND OLD.revoked_at IS NULL THEN
     IF NEW.revoked_by_request_id IS NULL THEN
       RAISE EXCEPTION 'staff invitation revocation requires its two-person request reference';
     END IF;
+
     SELECT req.target_reference,req.requested_by_user_id
       INTO v_target_reference,v_requester
     FROM testagram_auth.native_sensitive_action_requests req
@@ -81,21 +91,24 @@ BEGIN
     IF NOT FOUND OR v_requester IS NULL THEN
       RAISE EXCEPTION 'staff invitation revocation is not bound to an approved two-person request';
     END IF;
-    SELECT original.target_reference
-      INTO v_original_target
+
+    SELECT original.target_reference,original.requested_by_user_id
+      INTO v_original_target,v_original_requester
     FROM testagram_auth.native_sensitive_action_requests original
     WHERE original.id=OLD.request_id
       AND original.action_type='staff.invite'
       AND original.status='approved';
-    IF NOT FOUND OR v_original_target IS DISTINCT FROM v_target_reference THEN
+    IF NOT FOUND
+       OR v_original_target IS DISTINCT FROM v_target_reference
+       OR v_original_requester IS DISTINCT FROM OLD.created_by THEN
       RAISE EXCEPTION 'revocation target does not match the approved original invitation';
     END IF;
-    IF v_target_reference !~ '^[0-9a-fA-F-]{36}
-  'Set only by the atomic two-person staff.invitation.revoke executor; revoked tokens can never be accepted.';
-COMMIT;
- OR v_requester::text=v_target_reference THEN
-      RAISE EXCEPTION 'staff invitation revocation target or requester is invalid';
+
+    v_target := v_target_reference::uuid;
+    IF v_requester=v_target THEN
+      RAISE EXCEPTION 'staff invitation revocation requester cannot be its target';
     END IF;
+
     SELECT EXISTS (
       SELECT 1
       FROM testagram_auth.staff_principals sp
@@ -113,8 +126,14 @@ COMMIT;
     IF NOT v_requester_eligible THEN
       RAISE EXCEPTION 'staff invitation revocation requester is not a currently eligible owner';
     END IF;
-    SELECT count(*),count(DISTINCT a.approver_user_id)
-      INTO v_total_approvals,v_eligible_approvals
+
+    SELECT count(DISTINCT approver_user_id)
+      INTO v_total_approvals
+    FROM testagram_auth.native_sensitive_action_approvals
+    WHERE request_id=NEW.revoked_by_request_id AND decision='approved';
+
+    SELECT count(DISTINCT a.approver_user_id)
+      INTO v_eligible_approvals
     FROM testagram_auth.native_sensitive_action_approvals a
     JOIN testagram_auth.staff_principals sp
       ON sp.user_id=a.approver_user_id AND sp.enabled=TRUE
@@ -130,11 +149,13 @@ COMMIT;
     WHERE a.request_id=NEW.revoked_by_request_id
       AND a.decision='approved'
       AND a.approver_user_id<>v_requester
-      AND a.approver_user_id<>v_target_reference::uuid;
+      AND a.approver_user_id<>v_target;
+
     IF v_total_approvals<>2 OR v_eligible_approvals<>2 THEN
       RAISE EXCEPTION 'staff invitation revocation requires exactly two independent eligible owner WebAuthn approvals';
     END IF;
   END IF;
+
   RETURN NEW;
 END;
 $function$;
@@ -149,4 +170,5 @@ COMMENT ON COLUMN testagram_auth.native_staff_invitations.revoked_at IS
   'Set only by a database-guarded two-person staff.invitation.revoke request; revoked tokens can never be accepted.';
 COMMENT ON COLUMN testagram_auth.native_staff_invitations.revoked_by_request_id IS
   'Immutable reference to the approved two-person request that revoked this invitation.';
+
 COMMIT;
