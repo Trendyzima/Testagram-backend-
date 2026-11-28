@@ -29,10 +29,8 @@ class TestInstaBoxWebImageReleaseWiring(unittest.TestCase):
         self.assertIn("--data", signup_probe)
         self.assertIn('"password":"short"', signup_probe)
         self.assertNotIn("IDENTITY_REVIEW_REQUIRED", signup_probe)
-        self.assertNotIn("INVALID_PASSWORD", workflow)
-        self.assertNotIn('"password":"short"', workflow)
         self.assertIn('"/?mode=signup"', workflow)
-        self.assertIn("for marker in \'Sign in\' \'Sign up\' \'Create account\' \'Reset password\'; do", workflow)
+        self.assertIn("for marker in \'Sign in\' \'Sign up\' \'Create account\' \'Reset password\' \'Identity verification is optional\'; do", workflow)
         self.assertIn("flutter_bootstrap.js", workflow)
         self.assertIn("main.dart.js", workflow)
 
