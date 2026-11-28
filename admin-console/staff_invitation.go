@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	htmlstd "html"
 	"errors"
+	"net/http"
 	"net/mail"
 	"net/url"
 	"strings"
