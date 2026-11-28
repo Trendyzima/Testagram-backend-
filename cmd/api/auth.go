@@ -315,6 +315,19 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_SIGNUP", "Enter a valid email, username, and password of at least 12 characters", requestID(r)))
 			return true
 		}
+		// Signup alone depends on the versioned consent ledger. Keep this
+		// requirement out of global login readiness so existing accounts can
+		// still sign in if an additive signup migration has not yet been applied.
+		consentRows, consentSchemaErr := s.db.Query(ctx, "SELECT 1 FROM testagram_auth.registration_consents LIMIT 0")
+		if consentSchemaErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account consent service is not ready", requestID(r)))
+			return true
+		}
+		consentRows.Close()
+		if consentSchemaErr = consentRows.Err(); consentSchemaErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account consent service is not ready", requestID(r)))
+			return true
+		}
 		ok, err := s.authRateAllowed(ctx, "signup-ip", ip, 8)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Authentication store is unavailable", requestID(r)))
