@@ -18,9 +18,10 @@ type identityEvidenceMediaClient interface {
 	Delete(context.Context, string, string, string, string) (string, error)
 }
 
-// Identity evidence is owned by the Data Centre media service. There is
-// deliberately no Backend-local object-store fallback: missing service
-// configuration or readiness keeps public registration fail-closed.
+// Identity evidence is owned by the Data Centre media service. This is an
+// optional capability used only by identity-assurance endpoints. Missing
+// service configuration or readiness keeps those endpoints fail-closed; it
+// never blocks ordinary public signup, email verification, login or sessions.
 func (s *service) identityEvidenceStorageConfigured() bool {
 	return s.identityEvidenceMedia != nil
 }
