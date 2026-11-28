@@ -244,12 +244,12 @@ func (a *app) handleRevokeStaffInvitation(w http.ResponseWriter, r *http.Request
 	defer func(){ _=tx.Rollback(context.Background()) }()
 	var targetID, originalRequestID string
 	err=tx.QueryRow(ctx,`
-		SELECT i.user_id::text,ni.request_id::text
+		SELECT original.target_reference,ni.request_id::text
 		FROM testagram_auth.native_staff_invitations ni
 		JOIN testagram_auth.native_sensitive_action_requests original
 		  ON original.id=ni.request_id AND original.action_type='staff.invite' AND original.status='approved'
 		JOIN testagram_auth.identities i
-		  ON i.email_normalized=ni.email_normalized AND i.email_verified_at IS NOT NULL AND i.disabled_at IS NULL
+		  ON i.user_id=original.target_reference::uuid
 		WHERE ni.id=$1::uuid AND ni.accepted_at IS NULL AND ni.revoked_at IS NULL AND ni.expires_at>now()
 		FOR UPDATE OF ni,i
 	`,invitationID).Scan(&targetID,&originalRequestID)
@@ -580,21 +580,23 @@ func executeStaffInvitationRevocation(ctx context.Context, tx pgx.Tx, requestID,
 	if err:=tx.QueryRow(ctx,`SELECT count(DISTINCT approver_user_id) FROM testagram_auth.native_sensitive_action_approvals WHERE request_id=$1::uuid AND decision='approved'`,requestID).Scan(&count); err!=nil || count!=2 {
 		return errors.New("exactly two independent approvals are required to revoke an invitation")
 	}
-	var originalRequestID,email,role string
+	var originalRequestID,email,role,createdBy,targetID string
 	err:=tx.QueryRow(ctx,`
-		SELECT ni.request_id::text,ni.email_normalized,ni.role
+		SELECT ni.request_id::text,ni.email_normalized,ni.role,ni.created_by::text,original.target_reference
 		FROM testagram_auth.native_staff_invitations ni
+		JOIN testagram_auth.native_sensitive_action_requests original
+		  ON original.id=ni.request_id AND original.action_type='staff.invite' AND original.status='approved'
+		JOIN testagram_auth.identities i ON i.user_id=original.target_reference::uuid
 		WHERE ni.id=$1::uuid AND ni.accepted_at IS NULL AND ni.revoked_at IS NULL AND ni.expires_at>now()
-		FOR UPDATE
-	`,request.InvitationID).Scan(&originalRequestID,&email,&role)
-	if err!=nil { return errors.New("invitation was accepted, revoked, expired or no longer exists") }
-	var targetID string
-	err=tx.QueryRow(ctx,`SELECT user_id::text FROM testagram_auth.identities WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL FOR UPDATE`,email).Scan(&targetID)
-	if err!=nil || targetID!=targetReference || targetID==requesterID || targetID==approverID { return errors.New("invitation target no longer matches the immutable revocation request") }
-	var originalAction,originalStatus,originalTarget string
+		FOR UPDATE OF ni,i
+	`,request.InvitationID).Scan(&originalRequestID,&email,&role,&createdBy,&targetID)
+	if err!=nil || targetID!=targetReference || targetID==requesterID || targetID==approverID {
+		return errors.New("invitation target no longer matches the immutable revocation request")
+	}
+	var originalAction,originalStatus,originalTarget,originalRequester string
 	var originalPayload []byte
-	err=tx.QueryRow(ctx,`SELECT action_type,status,target_reference,payload FROM testagram_auth.native_sensitive_action_requests WHERE id=$1::uuid FOR UPDATE`,originalRequestID).Scan(&originalAction,&originalStatus,&originalTarget,&originalPayload)
-	if err!=nil || originalAction!="staff.invite" || originalStatus!="approved" || originalTarget!=targetID {
+	err=tx.QueryRow(ctx,`SELECT action_type,status,target_reference,COALESCE(requested_by_user_id::text,''),payload FROM testagram_auth.native_sensitive_action_requests WHERE id=$1::uuid FOR UPDATE`,originalRequestID).Scan(&originalAction,&originalStatus,&originalTarget,&originalRequester,&originalPayload)
+	if err!=nil || originalAction!="staff.invite" || originalStatus!="approved" || originalTarget!=targetID || originalRequester!=createdBy {
 		return errors.New("original invitation approval is not valid for this target")
 	}
 	var originalInvitation staffInvitationPayload
