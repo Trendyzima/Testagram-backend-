@@ -12,6 +12,23 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 )
 
+func TestIdentityEvidenceRoutesRemainUnavailableWithoutStorageConfiguration(t *testing.T) {
+	router := (&service{}).routes()
+	for _, item := range []struct{ method, path string }{
+		{http.MethodPost, "/api/identity/sessions/00000000-0000-4000-8000-000000000001/evidence/upload-url"},
+		{http.MethodPost, "/api/identity/sessions/00000000-0000-4000-8000-000000000001/evidence/submit"},
+		{http.MethodGet, "/api/admin/identity/sessions/00000000-0000-4000-8000-000000000001/evidence/00000000-0000-4000-8000-000000000002"},
+	} {
+		req := httptest.NewRequest(item.method, item.path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("identity evidence route %s %s returned %d without storage configuration; want 404",
+				item.method, item.path, rec.Code)
+		}
+	}
+}
+
 func TestNativeAuthReadinessDoesNotRequireIdentityProvisioningSchema(t *testing.T) {
 	for _, relation := range nativeAuthReadinessRelations() {
 		if relation == "testagram_identity.native_registration_provisioning" {
