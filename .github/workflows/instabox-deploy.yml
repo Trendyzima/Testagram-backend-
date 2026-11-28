@@ -847,7 +847,7 @@ jobs:
           }
           curl --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
             -H 'Cache-Control: no-cache' "$base/main.dart.js" -o "$tmp/main.dart.js"
-          for marker in 'Sign in' 'Sign up' 'Create account' 'Reset password' 'Identity verification is optional'; do
+          for marker in 'Sign in' 'Sign up' 'Create account' 'Reset password' 'You do not need an ID document, ID number, selfie or identity approval to create an account.'; do
             grep -aFq "$marker" "$tmp/main.dart.js" || {
               echo "::error::The production www Flutter bundle is missing required authentication entry: $marker"
               exit 1
