@@ -317,6 +317,22 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusTooManyRequests, errorBody("RATE_LIMITED", "Try again later", requestID(r)))
 			return true
 		}
+		// Usernames are public identifiers and must be reserved consistently
+		// across both canonical credentials and existing local profiles. Without
+		// this check a legacy profile could make email verification fail after
+		// signup had already promised that a verification message was queued.
+		var usernameTaken bool
+		if err := s.db.QueryRow(ctx, `
+			SELECT EXISTS(SELECT 1 FROM testagram_auth.identities WHERE lower(username)=lower($1))
+			    OR EXISTS(SELECT 1 FROM testagram_local.accounts WHERE lower(username)=lower($1))
+		`, in.Username).Scan(&usernameTaken); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Authentication store is unavailable", requestID(r)))
+			return true
+		}
+		if usernameTaken {
+			writeJSON(w, http.StatusConflict, errorBody("USERNAME_TAKEN", "That username is already in use. Choose another username.", requestID(r)))
+			return true
+		}
 		passwordHash, err := authPasswordHash(in.Password)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_PASSWORD", "Password must be 12–128 bytes", requestID(r)))
@@ -353,6 +369,21 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		ON CONFLICT DO NOTHING RETURNING user_id::text
 		`, email, in.Username, passwordHash, authTokenHash(token), otpHash).Scan(&userID)
 		if errors.Is(txErr, pgx.ErrNoRows) {
+			// ON CONFLICT DO NOTHING intentionally hides duplicate email
+			// addresses. Re-check public username ownership separately so a
+			// username collision is actionable without disclosing email state.
+			var usernameTaken bool
+			if checkErr := s.db.QueryRow(ctx, `
+				SELECT EXISTS(SELECT 1 FROM testagram_auth.identities WHERE lower(username)=lower($1))
+				    OR EXISTS(SELECT 1 FROM testagram_local.accounts WHERE lower(username)=lower($1))
+			`, in.Username).Scan(&usernameTaken); checkErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Authentication store is unavailable", requestID(r)))
+				return true
+			}
+			if usernameTaken {
+				writeJSON(w, http.StatusConflict, errorBody("USERNAME_TAKEN", "That username is already in use. Choose another username.", requestID(r)))
+				return true
+			}
 			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "If the address is eligible, a verification email will be sent."})
 			return true
 		}
