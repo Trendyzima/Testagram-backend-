@@ -57,7 +57,6 @@ func permissionForAction(action string) (string, error) {
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.request", nil
 	case "staff.webauthn.enroll": return "staff.webauthn.enroll.approve", nil
-	case "staff.invite": return "staff.invite.approve", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -68,6 +67,7 @@ func approvalPermissionForAction(action string) (string, error) {
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.approve", nil
 	case "staff.webauthn.enroll": return "staff.webauthn.enroll.approve", nil
+	case "staff.invite": return "staff.invite.approve", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -611,6 +611,10 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	}
 	s, approver, ok := a.requirePermission(w, r, permission)
 	if !ok {
+		return
+	}
+	if action == "staff.invite" && staffRole(approver) != "owner" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Only an active Testagram owner may approve staff invitations"})
 		return
 	}
 	stepUpClaims, stepUpOK := a.requireRecentStepUpClaims(w, s)
