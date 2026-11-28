@@ -110,3 +110,23 @@ func TestIdentityEvidenceRequiresDedicatedDataCentreClient(t *testing.T) {
 		t.Fatal("identity evidence readiness accepted a missing dedicated Data Centre client")
 	}
 }
+
+func TestIdentityEvidenceRoutesAreAbsentWithoutDedicatedDataCentreClient(t *testing.T) {
+	handler := (&service{}).routes()
+	paths := []string{
+		"/api/identity/sessions/00000000-0000-4000-8000-000000000001/evidence/upload-url",
+		"/api/identity/sessions/00000000-0000-4000-8000-000000000001/evidence/20000000-0000-4000-8000-000000000002/upload",
+		"/api/identity/sessions/00000000-0000-4000-8000-000000000001/evidence/submit",
+		"/api/admin/identity/sessions/00000000-0000-4000-8000-000000000001/evidence/20000000-0000-4000-8000-000000000002",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("identity evidence route %s is exposed without dedicated Data Centre storage: status=%d body=%s", path, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
