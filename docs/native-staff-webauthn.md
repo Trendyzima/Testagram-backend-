@@ -90,20 +90,26 @@ Console attestation and Backend PostgreSQL query both pass on each request.
 
 ## Staff principal lifecycle boundary
 
-This implementation enrolls and authenticates already-provisioned staff principals.
-It does not yet implement a complete staff invitation, role-change or revocation
-workflow in the Admin Console; those handlers remain fail-closed and return
-501. The generic two-person sensitive-action ledger records decisions but does
-not execute staff provisioning, role mutation, revocation or enrollment
-authorization. A green approval-ledger row is therefore not evidence that a
-staff principal or authenticator was provisioned. The first-owner bootstrap
-procedure is a separate audited operator action; do not extrapolate it into a
-bulk staff-creation shortcut. Do not enable general staff onboarding or use a one-person shortcut to
-create staff roles. Until the dedicated two-person staff-provisioning workflow
-is implemented and independently tested, initial principal creation and
-emergency recovery must use the documented audited operator procedure with
-separate approval evidence. Authenticator enrollment remains separately
-authorized, target-bound, time-limited and single-use.
+The Admin Console implements the invitation lifecycle through the native
+two-person sensitive-action executor: invitation request, two independent
+owner WebAuthn approvals, encrypted outbox queueing, verified-account
+acceptance, single-use token consumption, and two-person revocation of a
+pending invitation. A PostgreSQL trigger independently rejects direct
+revocation updates unless the exact approved request, original target and
+requester, and both eligible owner WebAuthn approvals are present.
+
+This is implementation and isolated PostgreSQL integration evidence only. It
+does not prove that a staging mailbox received a message, that operators
+completed real authenticator ceremonies, or that a recipient accepted a real
+invitation. Those remain separate staging acceptance gates. Do not infer live
+delivery from an outbox row or a green CI run.
+
+Staff role mutation and general staff-principal revocation remain separate
+lifecycle operations; invitation revocation does not implement either one.
+Keep enrollment and identity-review feature gates closed until the
+corresponding real staging ceremonies and independent review pass. The
+first-owner bootstrap remains a separate audited operator action and must not
+be used as a bulk staff-creation shortcut.
 
 ## Ceremony and elevation behavior
 
