@@ -285,10 +285,16 @@ func TestPublicSignupIsIndependentOfIdentityReviewAndReachesAuthStore(t *testing
 			wantError: "INVALID_JSON",
 		},
 		{
-			name:      "valid signup reaches auth store",
-			body:      `{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value"}`,
+			name:      "ordinary signup with legal acceptance reaches auth store without identity evidence",
+			body:      `{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value","terms_accepted":true,"privacy_accepted":true,"age_confirmed":true}`,
 			wantCode:  http.StatusServiceUnavailable,
 			wantError: "AUTH_STORE_UNAVAILABLE",
+		},
+		{
+			name:      "signup requires legal acceptance but no government identity fields",
+			body:      `{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value"}`,
+			wantCode:  http.StatusBadRequest,
+			wantError: "LEGAL_ACCEPTANCE_REQUIRED",
 		},
 	}
 	for _, tc := range cases {
