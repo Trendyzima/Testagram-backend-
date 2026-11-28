@@ -1292,7 +1292,7 @@ payload="$(jq -nc \
   --arg mpesa_consumer_secret "${MPESA_CONSUMER_SECRET:-}" --arg mpesa_callback "${MPESA_CALLBACK_URL:-}" \
   --arg admin_service_key "${ADMIN_SERVICE_AUTH_KEY:-}" \
   --arg b2_endpoint "$b2_endpoint" --arg b2_region "$b2_region" --arg b2_bucket "$b2_bucket" \
-  --arg b2_private "$b2_private" --arg b2_public "$b2_public" --arg b2_identity "$b2_identity" \
+  --arg b2_private "$b2_private" --arg b2_public "$b2_public" \
   --arg b2_access "$b2_access" --arg b2_secret "$b2_secret" \
   --arg r2_endpoint "$r2_endpoint" --arg r2_region "$r2_region" --arg r2_bucket "$r2_bucket" \
   --arg r2_private "$r2_private" --arg r2_public "$r2_public" \
