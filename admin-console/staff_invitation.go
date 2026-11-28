@@ -351,7 +351,7 @@ func (a *app) handleAcceptStaffInvitation(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requesterID, approverID, targetEmail string, payload []byte) error {
+func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requesterID, approverID, targetReference string, payload []byte) error {
 	var invitation staffInvitationPayload
 	if err := json.Unmarshal(payload, &invitation); err != nil {
 		return errors.New("staff invitation payload is invalid")
@@ -367,16 +367,25 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 		WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL
 		FOR UPDATE
 	`, email).Scan(&targetID)
-	if err != nil || targetID != targetEmail || targetID == requesterID || targetID == approverID {
+	if err != nil || targetID != targetReference || targetID == requesterID || targetID == approverID {
 		return errors.New("invitation target is missing, unverified, disabled or conflicts with an approver")
 	}
 
 	var requesterEligible bool
 	err = tx.QueryRow(ctx, `
 		SELECT EXISTS (
-		  SELECT 1 FROM testagram_auth.staff_principals sp
+		  SELECT 1
+		  FROM testagram_auth.staff_principals sp
+		  JOIN testagram_auth.identities i ON i.user_id=sp.user_id
 		  JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id
-		  WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND rg.role='owner' AND rg.revoked_at IS NULL
+		  WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		    AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+		    AND rg.role='owner' AND rg.revoked_at IS NULL
+		    AND EXISTS (
+		      SELECT 1 FROM testagram_auth.staff_webauthn_credentials wc
+		      WHERE wc.user_id=sp.user_id AND wc.revoked_at IS NULL
+		        AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+		    )
 		)
 	`, requesterID).Scan(&requesterEligible)
 	if err != nil || !requesterEligible {
@@ -460,8 +469,8 @@ func enqueueStaffInvitationMail(ctx context.Context, tx pgx.Tx, recipient, role,
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(env("ADMIN_PUBLIC_URL", "")), "/")
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") {
-		return errors.New("staff console public URL is unavailable")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
+		return errors.New("staff console public URL must be a canonical HTTPS origin")
 	}
 	link := baseURL + "/staff/invitations/accept?token=" + url.QueryEscape(token)
 	escapedLink := htmlstd.EscapeString(link)
