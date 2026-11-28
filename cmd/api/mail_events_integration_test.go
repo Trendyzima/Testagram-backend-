@@ -102,9 +102,6 @@ func TestNativeMailWorkerSuppressesPreviouslyComplainedRecipient(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_VERP_KEY", strings.Repeat("63", 32))
 	_, keyPath := writeTestDKIMKey(t, 0600)
 	t.Setenv("TESTAGRAM_DKIM_PRIVATE_KEY_FILE", keyPath)
-	t.Setenv("MAILJET_API_KEY", "")
-	t.Setenv("MAILJET_SECRET_KEY", "")
-	t.Setenv("AUTH_FROM_EMAIL", "")
 
 	svc := &service{db: db}
 	recipient := fmt.Sprintf("native-mail-suppression-%d@example.test", time.Now().UnixNano())
