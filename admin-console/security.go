@@ -68,6 +68,7 @@ func approvalPermissionForAction(action string) (string, error) {
 	case "deployment.production": return "deployment.approve", nil
 	case "staff.webauthn.enroll": return "staff.webauthn.enroll.approve", nil
 	case "staff.invite": return "staff.invite.approve", nil
+	case "staff.invitation.revoke": return "staff.invite.approve", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -539,9 +540,10 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 		}
 	}
 	if actionType == "staff.invite" && state == "approved" {
-		if err := executeStaffInvitation(ctx, tx, requestID, requesterID, approverID, targetReference, payload); err != nil {
-			return "", "", 0, err
-		}
+		if err := executeStaffInvitation(ctx, tx, requestID, requesterID, approverID, targetReference, payload); err != nil { return "", "", 0, err }
+	}
+	if actionType == "staff.invitation.revoke" && state == "approved" {
+		if err := executeStaffInvitationRevocation(ctx, tx, requestID, requesterID, approverID, targetReference, payload); err != nil { return "", "", 0, err }
 	}
 
 	applicationState := ""
@@ -613,7 +615,7 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if action == "staff.invite" && staffRole(approver) != "owner" {
+	if (action == "staff.invite" || action == "staff.invitation.revoke") && staffRole(approver) != "owner" {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Only an active Testagram owner may approve staff invitations"})
 		return
 	}
@@ -659,9 +661,8 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	message := "Decision recorded. The underlying action is not executed by this approval ledger."
-	if action == "staff.invite" && state == "approved" {
-		message = "Two-person approval completed. The invitation was created and its verification email was queued."
-	}
+	if action == "staff.invite" && state == "approved" { message = "Two-person approval completed. The invitation was created and its verification email was queued." }
+	if action == "staff.invitation.revoke" && state == "approved" { message = "Two-person approval completed. The pending invitation token was invalidated." }
 	response := map[string]any{
 		"ok": true, "status": state, "approval_count": count,
 		"required_approvals": 2,
