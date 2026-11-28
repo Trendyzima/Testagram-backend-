@@ -214,6 +214,8 @@ jobs:
           PY
       - name: Check public ports are limited to HTTPS edge
         working-directory: deploy/self-hosted
+        env:
+          TESTAGRAM_MAIL_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
         run: |
           docker compose config > /tmp/testagram-compose.yml
           if grep -Eq 'published: "(5432|6379|8787|8095|9001|9090)"' /tmp/testagram-compose.yml; then
