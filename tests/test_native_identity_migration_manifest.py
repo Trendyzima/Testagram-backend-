@@ -234,6 +234,20 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             with self.subTest(invariant=invariant):
                 self.assertIn(invariant, revalidation)
 
+    def test_identity_registration_postgres_fixture_applies_staff_webauthn_prerequisites(self):
+        script = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+        ordered = (
+            "migrations/061_native_sensitive_action_integrity.sql",
+            "migrations/20261127_native_staff_lifecycle_executor.sql",
+            "migrations/20261128_native_staff_webauthn_dual_control.sql",
+            "migrations/20261128_native_staff_webauthn_approver_permission_revalidation.sql",
+        )
+        initial = script.split("# Re-apply the new migration", 1)[0]
+        positions = [initial.index(item) for item in ordered]
+        self.assertEqual(positions, sorted(positions), "identity registration fixture must apply staff WebAuthn prerequisites in dependency order")
+        for migration in ordered[2:]:
+            self.assertIn(f"psql_ci < {migration}", script, f"fixture must reapply {migration} to test idempotency")
+
     def test_archive_migrations_are_mounted_and_applied_in_order(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
         apply_script = SOURCE
