@@ -1165,6 +1165,7 @@ if [[ "$media_enabled" == true ]]; then
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media VPS_MINIO_METADATA_SECRET_ACCESS_KEY "$MINIO_METADATA_SECRET_KEY"
   verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media CLOUDFLARE_R2_METADATA_BUCKET "$DC_R2_METADATA_BUCKET"
   sudo docker exec "$api_container" wget -q -O /dev/null http://media:8096/readyz
+  echo "Verified Backend-to-Data-Centre private media readiness for ordinary media; identity-evidence storage is disabled and not provisioned."
 fi
 
 # Exercise both credential directions against the live private service endpoints.
