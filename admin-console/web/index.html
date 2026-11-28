@@ -55,8 +55,9 @@
       </section>
 
       <section id="pending-screen" class="pending-card hidden">
-        <div class="pending-icon">◷</div><div class="eyebrow">ACCOUNT CREATED</div><h2>Approval required</h2>
+        <div class="pending-icon">◷</div><div class="eyebrow">STAFF INVITATION</div><h2>Approval required</h2>
         <p>Your account is signed in, but it has no staff role yet. Native staff access requires two independent approvals and MFA enrollment.</p>
+        <div id="accept-invitation-panel" class="hidden"><p>A verified Testagram staff invitation is ready for this account.</p><button id="accept-invitation" class="button button-primary" type="button">Accept staff invitation</button></div>
         <button id="pending-sign-out" class="button button-secondary" type="button">Sign out</button>
       </section>
 
@@ -79,7 +80,15 @@
             <div class="tool-row static-row"><span class="tool-icon">◉</span><span><b>Access policy</b><small>Staff roles are read from PostgreSQL and cannot be self-assigned.</small></span><span class="pill">ENFORCED</span></div>
           </section>
           <section id="invite-panel" class="panel hidden"><div class="panel-heading"><div><div class="eyebrow">OWNER TOOLS</div><h2>Staff provisioning</h2></div><span class="panel-symbol">⌁</span></div>
-            <p class="field-help">Staff invitations and role changes are paused until Testagram's two-person native provisioning and MFA enrollment workflow is complete. No external identity provider or direct one-person role assignment is accepted.</p>
+            <p class="field-help">Request a staff invitation. The account must already exist and have a verified email. Two different eligible owners must approve before Testagram sends the single-use invitation email. MFA enrollment is authorized separately.</p>
+            <form id="invite-form" class="form compact">
+              <label for="invite-email">Verified Testagram account email</label><input id="invite-email" type="email" autocomplete="email" required maxlength="254">
+              <label for="invite-role">Staff role</label><select id="invite-role" required>
+                <option value="identity_reviewer">Identity reviewer</option><option value="engineer">Engineer</option><option value="operations">Operations</option><option value="support">Support</option><option value="moderator">Moderator</option><option value="administrator">Administrator</option><option value="owner">Owner</option>
+              </select>
+              <label for="invite-reason">Business justification</label><textarea id="invite-reason" required minlength="12" maxlength="1000" rows="3"></textarea>
+              <button class="button button-primary full" type="submit">Request two-person invitation approval</button>
+            </form>
           </section>
         </div>
         <div class="content-grid">

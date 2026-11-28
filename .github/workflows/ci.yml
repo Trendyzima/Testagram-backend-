@@ -1329,6 +1329,10 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: go test ./admin-console -run '^TestRecordIdentityApplicationReviewIntegration$' -count=1 -v
+      - name: Run native two-person staff invitation lifecycle against PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
+        run: go test ./admin-console -run '^TestNativeStaffInvitationLifecycleIntegration$' -count=1 -v
       - name: Verify permission isolation and two-person approval ledger
         run: |
           set -euo pipefail

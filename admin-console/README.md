@@ -33,8 +33,8 @@ Testagram bearer sessions. It has no external identity-provider dependency.
    `/api/auth/forgot-password` and `/api/auth/reset-password` endpoints.
 7. Sign-out revokes the native Backend session and clears the encrypted cookie.
 
-Supported staff roles: owner, administrator, engineer, operations, support and
-moderator. Role and permission values are never accepted from browser fields.
+Supported staff roles: owner, administrator, identity reviewer, engineer,
+operations, support and moderator. Role and permission values are never accepted from browser fields.
 
 ## Staff provisioning and role changes
 
@@ -42,12 +42,26 @@ Staff principals are stored in `testagram_auth.staff_principals` and
 `testagram_auth.staff_role_grants`. A principal is eligible only when enabled,
 has an active approved role grant and has enrolled MFA.
 
-The console deliberately does not create staff identities or mutate role
-assignments directly. The two-person native staff provisioning workflow must
-create/enable the principal and grant/revoke roles with independent approvals.
-Until that workflow is complete, invitation, role-change and revocation
-mutations fail closed. Do not manually insert an owner or bypass the approval
-ledger to make the dashboard accessible.
+Staff invitations use the existing native sensitive-action ledger. An
+owner with a fresh WebAuthn step-up may request an invitation only for an
+existing Testagram identity whose email is already verified. The request binds
+the immutable payload to the target's canonical UUID and requires two distinct,
+currently eligible owners with active, user-verified WebAuthn credentials.
+Only the second approval creates the invitation row and queues the encrypted
+single-use email in `testagram_mail.outbox`, in the same PostgreSQL transaction
+as the approval transition.
+
+The invitation stores only a SHA-256 token digest and expires after seven days.
+Acceptance requires a live native session for the exact same email-verified
+identity, consumes the token once, and atomically enables the native staff
+principal and grants the approved role. The invitation email is therefore not
+a substitute for Testagram account verification or authentication. After
+acceptance, an owner must separately authorize the invitee's two-person
+WebAuthn enrollment; the invitee cannot self-authorize MFA.
+
+Do not manually insert an owner or bypass the approval ledger to make the
+dashboard accessible. Role-change, revocation and permission mutations remain
+closed until their own atomic two-person executors are implemented.
 
 The owner-only staff directory is read from canonical UUID identities and
 native staff grants. Permission overrides use

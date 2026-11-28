@@ -38,6 +38,16 @@ func TestSensitiveActionPermissionMapping(t *testing.T) {
 	}
 }
 
+func TestStaffInvitationIsApprovalOnlyAndOwnerGated(t *testing.T) {
+	if _, err := permissionForAction("staff.invite"); err == nil {
+		t.Fatal("generic sensitive-action requests must not create staff invitations")
+	}
+	permission, err := approvalPermissionForAction("staff.invite")
+	if err != nil || permission != "staff.invite.approve" {
+		t.Fatalf("staff invitation approval permission = %q, %v", permission, err)
+	}
+}
+
 func TestUnknownSensitiveActionIsRejected(t *testing.T) {
 	if _, err := permissionForAction("staff.promote"); err == nil {
 		t.Fatal("unknown action must not map to a permission")

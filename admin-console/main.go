@@ -166,7 +166,8 @@ func (a *app) routes() http.Handler {
 	if err != nil { panic(err) }
 	mux := http.NewServeMux()
 	static := http.FileServer(http.FS(files))
-	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/index.html"; static.ServeHTTP(w, r) })
+	mux.HandleFunc("GET /reset-password", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/"; static.ServeHTTP(w, r) })
+	mux.HandleFunc("GET /staff/invitations/accept", func(w http.ResponseWriter, r *http.Request) { r.URL.Path = "/"; static.ServeHTTP(w, r) })
 	mux.Handle("GET /", static)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
 	mux.HandleFunc("GET /api/session", a.handleSession)
@@ -177,6 +178,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/sign-out", a.handleSignOut)
 	mux.HandleFunc("GET /api/overview", a.handleOverview)
 	mux.HandleFunc("POST /api/staff/invite", a.handleInvite)
+	mux.HandleFunc("POST /api/staff/invitations/accept", a.handleAcceptStaffInvitation)
 	mux.HandleFunc("POST /api/admin/step-up", a.handleStaffWebAuthnLoginBegin)
 	mux.HandleFunc("POST /api/admin/staff/{id}/webauthn/enrollment-authorize", a.handleStaffWebAuthnAuthorize)
 	mux.HandleFunc("DELETE /api/admin/staff/{id}/webauthn/enrollment-authorize", a.handleStaffWebAuthnAuthorizationRevoke)
@@ -541,6 +543,18 @@ func (a *app) handleSignIn(w http.ResponseWriter, r *http.Request) {
 		RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour).Unix(),
 	}
 	if _, staff, sessionErr := a.currentUserFromSession(ctx, s); sessionErr != nil || !staff {
+		if sessionErr == nil {
+			pending, invitationErr := a.hasPendingStaffInvitation(ctx, envelope.Data.User.ID, envelope.Data.User.Email)
+			if invitationErr == nil && pending {
+				if err := a.setSession(w, s); err != nil {
+					_, _ = a.backendRequest(ctx, http.MethodPost, "/api/auth/logout", s.AccessToken, map[string]string{}, nil)
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Unable to create secure invitation session"})
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"ok": true, "invitation_pending": true})
+				return
+			}
+		}
 		_, revokeErr := a.backendRequest(ctx, http.MethodPost, "/api/auth/logout", s.AccessToken, map[string]string{}, nil)
 		if revokeErr != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "This account is not enabled for staff access, and its temporary sign-in session could not be revoked. Contact an administrator."})
@@ -647,11 +661,7 @@ func (a *app) requireStaff(w http.ResponseWriter,r *http.Request,roles ...string
 	return s,user,true
 }
 
-func (a *app) handleInvite(w http.ResponseWriter,r *http.Request) {
-	s,_,ok:=a.requireStaff(w,r,"owner");if !ok{return}
-	if !a.requireRecentStepUp(w,s){return}
-	writeJSON(w,http.StatusNotImplemented,map[string]string{"error":"Native staff invitation provisioning is not yet available. Staff access remains closed until the two-person Testagram provisioning workflow is completed."})
-}
+
 
 type promResponse struct {
 	Status string `json:"status"`
