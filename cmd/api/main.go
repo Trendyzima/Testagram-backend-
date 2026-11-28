@@ -1388,7 +1388,7 @@ func main() {
 		if err != nil || !mediaReplicationSchemaReady {
 			log.Fatal("MEDIA_REPLICATION_ENABLED requires the media replica ledger and outbox migrations to be applied")
 		}
-		log.Printf("general media replication worker enabled (Instabox VPS + Cloudflare R2 + Backblaze B2); identity evidence is isolated in Data Centre Backblaze-only storage")
+		log.Printf("general media replication worker enabled (Instabox VPS + Cloudflare R2 + Backblaze B2); optional identity evidence remains separately gated in the Data Centre")
 	}
 	var replicationStore *replication.Store
 	var replicationReceiver http.Handler
