@@ -136,7 +136,7 @@ BEGIN
       INTO v_eligible_approvals
     FROM testagram_auth.native_sensitive_action_approvals a
     JOIN testagram_auth.staff_principals sp
-      ON sp.user_id=a.approver_user_id AND sp.enabled=TRUE
+      ON sp.user_id=a.approver_user_id AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
     JOIN testagram_auth.identities i
       ON i.user_id=sp.user_id AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
     JOIN testagram_auth.staff_role_grants rg
