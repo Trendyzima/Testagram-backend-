@@ -42,7 +42,9 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.workflow)
         self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", self.workflow)
         self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", self.workflow)
-        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer.replace('write_env_value B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET ""', ''))
+        identity_bucket_lines = [line.strip() for line in self.deployer.splitlines() if "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET" in line]
+        self.assertTrue(identity_bucket_lines)
+        self.assertTrue(all(line.endswith('""') for line in identity_bucket_lines), identity_bucket_lines)
         self.assertNotIn("mc stat", self.deployer[self.deployer.find("media_enabled=false"):self.deployer.find("printf '%s\\n' \"$media_enabled\"")])
 
     def test_workflow_local_fresh_media_gate_name_does_not_shadow_step_environment(self):
@@ -360,8 +362,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertIn("'APPLY-NATIVE-IDENTITY-MIGRATIONS'", self.workflow)
 
     def test_b2_s3_credentials_are_trimmed_before_provider_calls(self):
-        self.assertIn("B2 S3 access key ID length after whitespace normalization", self.workflow)
-        self.assertIn("tr -d '\\r\\n[:space:]'", self.workflow)
+        self.assertIn('DC_B2_S3_ACCESS_KEY_ID="$(printf', self.deployer)
+        self.assertIn('DC_B2_S3_SECRET_ACCESS_KEY="$(printf', self.deployer)
         self.assertNotIn("DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", self.deployer)
         self.assertNotIn("DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", self.deployer)
 
