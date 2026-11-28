@@ -12,6 +12,32 @@ import (
 	"github.com/Trendyzima/Testagram-backend-/internal/media"
 )
 
+func TestNativeAuthReadinessDoesNotRequireIdentityProvisioningSchema(t *testing.T) {
+	for _, relation := range nativeAuthReadinessRelations() {
+		if relation == "testagram_identity.native_registration_provisioning" {
+			t.Fatal("ordinary native-auth readiness must not require the optional identity-provisioning schema")
+		}
+	}
+	for _, required := range []string{
+		"testagram_auth.identities",
+		"testagram_auth.sessions",
+		"testagram_auth.rate_limits",
+		"testagram_auth.security_audit",
+		"testagram_local.accounts",
+	} {
+		found := false
+		for _, relation := range nativeAuthReadinessRelations() {
+			if relation == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("native-auth readiness omitted required relation %s", required)
+		}
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	s := &service{}
 	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
