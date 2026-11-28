@@ -14,6 +14,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}", api)
         self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"', deploy)
         self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" admin-console TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"', deploy)
+        self.assertIn('build api admin-console', deploy)
+        self.assertIn('up -d --force-recreate object-storage object-init api admin-console flutter-web caddy', deploy)
 
     def test_vps_owns_and_mounts_dkim_private_key(self):
         script = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
