@@ -824,7 +824,7 @@ jobs:
           api_status="$(curl --silent --show-error --max-time 20 -o "$api_response" -w '%{http_code}' -X POST \
             "https://api.testagram.site/api/auth/signup" \
             -H 'Content-Type: application/json' \
-            --data '{"email":"signup-readiness@example.invalid","username":"signup_readiness","password":"short"}')"
+            --data '{"email":"signup-readiness@example.invalid","username":"signup_readiness","password":"short","terms_accepted":true,"privacy_accepted":true,"age_confirmed":true}')"
           api_error="$(jq -r '.error.code // empty' "$api_response" 2>/dev/null || true)"
           if [[ "$api_status" != "400" || "$api_error" != "INVALID_PASSWORD" ]]; then
             echo "::error::Production native signup did not reach ordinary password validation (HTTP $api_status, code=$api_error). Refusing to continue."
