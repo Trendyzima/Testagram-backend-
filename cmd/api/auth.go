@@ -279,14 +279,10 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("METHOD_NOT_ALLOWED", "POST required", requestID(r)))
 		return true
 	}
-	// Public self-service signup is fail-closed. Only the evidence-backed identity
-	// provisioning flow may create an account after independent evidence review and
-	// two-person approval. Keep this gate before database readiness checks so an
-	// unavailable review service cannot fall through to ordinary account creation.
-	if action == "signup" {
-		writeJSON(w, http.StatusForbidden, errorBody("IDENTITY_REVIEW_REQUIRED", "Identity evidence review and two-person account approval are required before account creation", requestID(r)))
-		return true
-	}
+	// Ordinary public signup is independent of the optional identity-review
+	// workflow. Email verification remains mandatory before the account can sign in.
+	// Privileged capabilities continue to enforce their own server-side identity
+	// assurance and approval requirements.
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	defer r.Body.Close()
 	var in authInput
