@@ -57,10 +57,11 @@ class NativeAuthRuntimeBoundaryTests(unittest.TestCase):
                         content = path.read_text(encoding="utf-8", errors="ignore")
                         self.assertNotIn(fixture, content, f"{path.relative_to(ROOT)} must not invoke a test fixture")
 
-    def test_staging_auth_smoke_checks_public_signup_and_anonymous_access_are_denied(self):
+    def test_staging_auth_smoke_checks_public_signup_is_independent_of_identity_review(self):
         smoke = (ROOT / "scripts/native-auth-staging-smoke.py").read_text(encoding="utf-8")
         self.assertIn('require_status(base, "/api/me/profile", 401)', smoke)
-        self.assertIn('"/api/auth/signup", 403, "IDENTITY_REVIEW_REQUIRED"', smoke)
+        self.assertIn('"/api/auth/signup", 400, "INVALID_PASSWORD"', smoke)
+        self.assertIn('independently of identity review', smoke)
 
     def test_staging_auth_smoke_checks_logout_revokes_refresh_credentials(self):
         smoke = (ROOT / "scripts/native-auth-staging-smoke.py").read_text(encoding="utf-8")
