@@ -8,7 +8,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = "docs/architecture/native-replacement-ownership.md"
 NEGATIVE_TEST = "tests/test_native_mail_provider_policy.py"
-HISTORICAL_MIGRATIONS = {\n    "migrations/20261125_testagram_mail_delivery_events.sql",\n    "migrations/20261126_testagram_native_mail_feedback.sql",\n}
+HISTORICAL_MIGRATIONS = {
+    "migrations/20261125_testagram_mail_delivery_events.sql",
+    "migrations/20261126_testagram_native_mail_feedback.sql",
+}
 LEGACY_CLEANUP = "scripts/start-instabox-deployment.sh"
 HISTORICAL_NATIVE_MAIL_DNS = "docs/native-mail-dns.md"
 
@@ -29,7 +32,8 @@ def main():
     for path in tracked_files():
         relative = path.relative_to(ROOT).as_posix()
         if (
-            relative in {POLICY, NEGATIVE_TEST, HISTORICAL_NATIVE_MAIL_DNS} or relative in HISTORICAL_MIGRATIONS
+            relative in {POLICY, NEGATIVE_TEST, HISTORICAL_NATIVE_MAIL_DNS}
+            or relative in HISTORICAL_MIGRATIONS
             or relative.startswith("tests/")
             or relative.endswith("_test.go")
             or relative == "scripts/guard-native-mail-policy.py"
