@@ -588,7 +588,7 @@ sudo env \
   COMPOSE_FILE="$BASE_COMPOSE" ENV_FILE="$BASE_ENV" BACKUP_DIR="$ROOT/backups" \
   bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
 # Build the Backend once, capture its immutable local image ID, and deploy that exact image.
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api admin-console
 api_image_ref="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config --format json | jq -r '.services.api.image // empty')"
 if [[ -z "$api_image_ref" ]]; then
   echo "::error::Backend Compose service has no explicit image reference; refusing an unverifiable deployment."
@@ -600,7 +600,7 @@ if [[ ! "$api_expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
   exit 1
 fi
 echo "Built Backend image $api_image_ref with immutable ID $api_expected_image_id."
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate object-storage object-init api flutter-web caddy
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate object-storage object-init api admin-console flutter-web caddy
 api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
 if [[ -z "$api_container" ]]; then
   echo "::error::Backend API container was not created after deployment."
@@ -1109,6 +1109,7 @@ verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federati
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" admin-console TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_VERP_KEY "$TESTAGRAM_MAIL_VERP_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"

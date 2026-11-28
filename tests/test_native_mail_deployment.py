@@ -5,6 +5,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeMailDeploymentTest(unittest.TestCase):
+    def test_staff_invitation_producer_shares_outbox_encryption_key_with_api_worker(self):
+        compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
+        deploy = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
+        admin = compose.split("  admin-console:\n", 1)[1].split("\n  flutter-web:", 1)[0]
+        api = compose.split("  api:\n", 1)[1].split("\n  admin-console:", 1)[0]
+        self.assertIn("TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:?Set TESTAGRAM_MAIL_ENCRYPTION_KEY in .env}", admin)
+        self.assertIn("TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}", api)
+        self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"', deploy)
+        self.assertIn('verify_container_env "$BASE_ENV" "$BASE_COMPOSE" admin-console TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"', deploy)
+        self.assertIn('build api admin-console', deploy)
+        self.assertIn('up -d --force-recreate object-storage object-init api admin-console flutter-web caddy', deploy)
+
     def test_vps_owns_and_mounts_dkim_private_key(self):
         script = (ROOT / "scripts/start-instabox-deployment.sh").read_text()
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
