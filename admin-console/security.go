@@ -57,6 +57,7 @@ func permissionForAction(action string) (string, error) {
 	case "security.change": return "security.manage", nil
 	case "deployment.production": return "deployment.request", nil
 	case "staff.webauthn.enroll": return "staff.webauthn.enroll.approve", nil
+	case "staff.invite": return "staff.invite.approve", nil
 	default: return "", errors.New("unsupported sensitive action")
 	}
 }
@@ -537,6 +538,11 @@ func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, ex
 			return "", "", 0, err
 		}
 	}
+	if actionType == "staff.invite" && state == "approved" {
+		if err := executeStaffInvitation(ctx, tx, requestID, requesterID, approverID, targetReference, payload); err != nil {
+			return "", "", 0, err
+		}
+	}
 
 	applicationState := ""
 	if actionType == "identity.approve" {
@@ -648,10 +654,14 @@ func (a *app) handleSensitiveActionDecision(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, 503, map[string]string{"error": "Could not safely record the approval"})
 		return
 	}
+	message := "Decision recorded. The underlying action is not executed by this approval ledger."
+	if action == "staff.invite" && state == "approved" {
+		message = "Two-person approval completed. The invitation was created and its verification email was queued."
+	}
 	response := map[string]any{
 		"ok": true, "status": state, "approval_count": count,
 		"required_approvals": 2,
-		"message": "Decision recorded. The underlying action is not executed by this approval ledger.",
+		"message": message,
 	}
 	if action == "identity.approve" {
 		response["application_status"] = applicationState
@@ -664,7 +674,7 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 	if !a.requireRecentStepUp(w,s) { return }
 	canAudit,err:=a.hasPermission(user,"audit.read")
 	if err!=nil { writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"}); return }
-	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve","staff.webauthn.enroll.approve"}
+	approvalPermissions:=[]string{"identity.review","finance.approve","security.manage","deployment.approve","staff.webauthn.enroll.approve","staff.invite.approve"}
 	canReview:=canAudit
 	if !canReview {
 		for _,permission:=range approvalPermissions {
@@ -709,6 +719,13 @@ func (a *app) handleSensitiveActionQueue(w http.ResponseWriter,r *http.Request) 
 				return
 			}
 			if !canReviewIdentity { v.Payload = nil }
+		} else if v.ActionType == "staff.invite" {
+			canReviewInvite, permissionErr := a.hasPermission(user, "staff.invite.approve")
+			if permissionErr != nil {
+				writeJSON(w,503,map[string]string{"error":"Permission service is unavailable"})
+				return
+			}
+			if !canReviewInvite { v.Payload = nil }
 		} else {
 			v.Payload = nil
 		}
