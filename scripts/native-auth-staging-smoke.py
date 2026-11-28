@@ -106,10 +106,10 @@ def main() -> None:
 
     require_status(base, "/api/me/profile", 401)
     require_error_code(
-        base, "/api/auth/signup", 403, "IDENTITY_REVIEW_REQUIRED",
-        body={"email": "blocked-signup@example.invalid", "username": "blocked_signup", "password": "not-a-real-password"},
+        base, "/api/auth/signup", 400, "INVALID_PASSWORD",
+        body={"email": "signup-readiness@example.invalid", "username": "signup_readiness", "password": "short"},
     )
-    print("PASS: anonymous profile access is denied and legacy public signup remains fail-closed")
+    print("PASS: anonymous profile access is denied and public signup reaches ordinary password validation independently of identity review")
 
     first = login(base, email, password)
     require_status(base, "/api/me/profile", 200, bearer=first["access_token"])
