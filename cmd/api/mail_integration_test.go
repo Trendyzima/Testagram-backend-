@@ -316,6 +316,37 @@ func TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail(t *test
 	// The real one-time link path must activate a basic account without creating
 	// an identity-review application, and a consumed link must not be reusable.
 	linkAccount := createAccount("link")
+
+	// A username collision is actionable and must not masquerade as a queued
+	// verification email for a different email address.
+	duplicateEmail := fmt.Sprintf("duplicate-username-%d@example.test", time.Now().UTC().UnixNano())
+	var beforeDuplicateOutbox int64
+	if err := db.QueryRow(ctx, "SELECT COALESCE(max(id),0) FROM testagram_mail.outbox").Scan(&beforeDuplicateOutbox); err != nil {
+		t.Fatal(err)
+	}
+	duplicateBody, err := json.Marshal(authInput{
+		Email: duplicateEmail, Username: linkAccount.username, Password: "correct-horse-battery-staple-2026",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateReq := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(string(duplicateBody)))
+	duplicateReq.RemoteAddr = "192.0.2.215:12345"
+	duplicateRec := httptest.NewRecorder()
+	svc.authRespond(duplicateRec, duplicateReq, "signup")
+	if duplicateRec.Code != http.StatusConflict || !strings.Contains(duplicateRec.Body.String(), "USERNAME_TAKEN") {
+		t.Fatalf("duplicate username status=%d body=%s; expected actionable USERNAME_TAKEN", duplicateRec.Code, duplicateRec.Body.String())
+	}
+	var duplicateIdentityCount, duplicateMailCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", duplicateEmail).Scan(&duplicateIdentityCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.outbox WHERE id>$1", beforeDuplicateOutbox).Scan(&duplicateMailCount); err != nil {
+		t.Fatal(err)
+	}
+	if duplicateIdentityCount != 0 || duplicateMailCount != 0 {
+		t.Fatalf("username conflict left an orphan identity/email: identities=%d queued_mail=%d", duplicateIdentityCount, duplicateMailCount)
+	}
 	linkVerified := verify(map[string]string{"token": linkAccount.token})
 	if linkVerified.Code != http.StatusOK || !strings.Contains(linkVerified.Body.String(), "Email verified") {
 		t.Fatalf("one-time email link verification status=%d body=%s", linkVerified.Code, linkVerified.Body.String())
@@ -345,6 +376,49 @@ func TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail(t *test
 		if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE user_id=$1::uuid", fixture.userID).Scan(&profiles); err != nil || profiles != 1 {
 			t.Fatalf("email verification profile count user=%s count=%d err=%v", fixture.userID, profiles, err)
 		}
+	}
+}
+
+func TestNativeSignupRejectsUsernameReservedByExistingLocalProfile(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx := context.Background()
+	username := fmt.Sprintf("legacy%d", time.Now().UTC().UnixNano())
+	var userID string
+	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_local.accounts(user_id,username,display_name)
+		VALUES($1::uuid,$2,'Existing local profile')
+	`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", userID)
+	}()
+
+	email := fmt.Sprintf("legacy-username-%d@example.test", time.Now().UTC().UnixNano())
+	body, err := json.Marshal(authInput{
+		Email: email, Username: username, Password: "correct-horse-battery-staple-2026",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(string(body)))
+	req.RemoteAddr = "192.0.2.216:12345"
+	rec := httptest.NewRecorder()
+	if !(&service{db: db}).authRespond(rec, req, "signup") {
+		t.Fatal("public signup route was not handled")
+	}
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "USERNAME_TAKEN") {
+		t.Fatalf("existing local-profile username status=%d body=%s; expected USERNAME_TAKEN", rec.Code, rec.Body.String())
+	}
+	var identityCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", email).Scan(&identityCount); err != nil {
+		t.Fatal(err)
+	}
+	if identityCount != 0 {
+		t.Fatalf("signup created %d credentials for a username already reserved by a local profile", identityCount)
 	}
 }
 
