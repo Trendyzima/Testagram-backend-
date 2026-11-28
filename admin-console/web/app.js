@@ -663,6 +663,7 @@ async function decideSensitiveAction(id, decision, reason, approveButton, reject
     notice(result.message || ("Decision recorded: " + result.status + "."), "success");
     await loadApprovalQueue();
     await loadAuditHistory();
+    if (currentUser && currentUser.role === "owner") await loadPendingInvitations();
   } catch (error) {
     notice(error.message, "error");
     approveButton.disabled = false;
