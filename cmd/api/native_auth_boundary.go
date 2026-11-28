@@ -14,7 +14,7 @@ func writeNativeAuthFailure(w http.ResponseWriter, status int, cause error, requ
 	case status == http.StatusForbidden && cause != nil &&
 		strings.Contains(strings.ToLower(cause.Error()), "two-person account approval"):
 		code = "IDENTITY_APPROVAL_REQUIRED"
-		message = "Identity review and two-person account approval are required before accessing Testagram"
+		message = "This protected capability requires separate identity review and two-person approval. Basic Testagram account access does not."
 	case status == http.StatusForbidden && cause != nil &&
 		strings.Contains(strings.ToLower(cause.Error()), "email verification"):
 		code = "EMAIL_VERIFICATION_REQUIRED"
