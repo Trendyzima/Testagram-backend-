@@ -25,11 +25,25 @@ jobs:
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # GitHub intentionally withholds repository secrets from Dependabot and
+          # fork-originated pull_request workflows. Those PRs may validate code,
+          # but must never be mistaken for a live Cloudflare inventory.
+          CLOUDFLARE_AUDIT_CREDENTIALS_UNAVAILABLE_IS_EXPECTED: ${{ github.event_name == 'pull_request' && (github.actor == 'dependabot[bot]' || github.event.pull_request.head.repo.full_name != github.repository) }}
         run: |
           set -euo pipefail
           set +x
           if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-            echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN. Add the token value in GitHub Actions secrets; never put it in workflow code."
+            if [[ "${CLOUDFLARE_AUDIT_CREDENTIALS_UNAVAILABLE_IS_EXPECTED:-false}" == "true" ]]; then
+              echo "::notice::Cloudflare inventory not run: GitHub withholds repository secrets from Dependabot/fork pull requests. This is a credential-isolated PR preflight, not a routing acceptance result."
+              {
+                echo "## Cloudflare read-only audit"
+                echo "- Result: not run (repository secrets are unavailable to this untrusted pull request context)."
+                echo "- No Cloudflare API requests or mutations were performed."
+                echo "- Production routing acceptance remains enforced by the explicit workflow_dispatch audit on a trusted run."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN. Trusted/manual audits require this repository secret; never put the token in workflow code."
             exit 1
           fi
 
