@@ -26,8 +26,8 @@ class CoreDeploymentMediaGateTests(unittest.TestCase):
         condition = "if: steps.media-gates.outputs.media_enabled == 'true'"
         self.assertEqual(WORKFLOW.count(condition), 2)
         self.assertIn('echo "media_enabled=$early_dc_media_enabled" >> "$GITHUB_OUTPUT"', WORKFLOW)
-        self.assertIn("Internal workflow error: R2 provisioning ran without both media gates.", WORKFLOW)
-        self.assertIn("Internal workflow error: B2 provisioning ran without both media gates.", WORKFLOW)
+        self.assertIn("Internal workflow error: R2 provisioning ran without the Data Centre service gate.", WORKFLOW)
+        self.assertIn("Internal workflow error: B2 provisioning ran without the Data Centre service gate.", WORKFLOW)
 
     def test_workflow_validation_accepts_core_only_mode(self):
         self.assertIn("Validate independent production media feature gates", WORKFLOW)
