@@ -91,6 +91,7 @@ AS $function$
       AND second_approval.approver_user_id<>target_staff.user_id
       AND req.requested_by_user_id IS DISTINCT FROM first_approval.approver_user_id
       AND req.requested_by_user_id IS DISTINCT FROM second_approval.approver_user_id
+      AND req.requested_by_user_id IS DISTINCT FROM target_staff.user_id
 
       AND (
         EXISTS (
