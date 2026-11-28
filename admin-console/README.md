@@ -33,8 +33,8 @@ Testagram bearer sessions. It has no external identity-provider dependency.
    `/api/auth/forgot-password` and `/api/auth/reset-password` endpoints.
 7. Sign-out revokes the native Backend session and clears the encrypted cookie.
 
-Supported staff roles: owner, administrator, engineer, operations, support and
-moderator. Role and permission values are never accepted from browser fields.
+Supported staff roles: owner, administrator, identity reviewer, engineer,
+operations, support and moderator. Role and permission values are never accepted from browser fields.
 
 ## Staff provisioning and role changes
 
