@@ -509,7 +509,7 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 	err = tx.QueryRow(ctx, `
 		SELECT count(DISTINCT a.approver_user_id)
 		FROM testagram_auth.native_sensitive_action_approvals a
-		JOIN testagram_auth.staff_principals sp ON sp.user_id=a.approver_user_id AND sp.enabled=TRUE
+		JOIN testagram_auth.staff_principals sp ON sp.user_id=a.approver_user_id AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
 		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.role='owner' AND rg.revoked_at IS NULL
 		JOIN testagram_auth.staff_webauthn_credentials wc
 		  ON wc.user_id=a.approver_user_id AND wc.rpid=a.webauthn_rpid
