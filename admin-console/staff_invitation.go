@@ -254,7 +254,7 @@ func (a *app) handleRevokeStaffInvitation(w http.ResponseWriter, r *http.Request
 		FOR UPDATE OF ni,i
 	`,invitationID).Scan(&targetID,&originalRequestID)
 	if err!=nil {
-		if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusConflict,map[string]string{"error":"Invitation is not pending, has expired, or its verified target no longer exists"}); return }
+		if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusConflict,map[string]string{"error":"Invitation is not pending, has expired, or its canonical target identity no longer exists"}); return }
 		writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Could not validate the pending invitation"}); return
 	}
 	if targetID==actor.ID { writeJSON(w,http.StatusConflict,map[string]string{"error":"The invitation target cannot request its own revocation"}); return }
