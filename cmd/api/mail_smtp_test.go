@@ -11,9 +11,6 @@ import (
 
 func TestNativeMailConfigurationNeedsNoProviderCredentials(t *testing.T) {
 	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("61", 32))
-	t.Setenv("MAILJET_API_KEY", "")
-	t.Setenv("MAILJET_SECRET_KEY", "")
-	t.Setenv("AUTH_FROM_EMAIL", "")
 	if err := mailProviderConfigurationError(); err != nil {
 		t.Fatalf("native mail configuration unexpectedly requires a provider: %v", err)
 	}
