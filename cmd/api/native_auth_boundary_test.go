@@ -27,7 +27,7 @@ func TestNativeAuthFailureUsesProviderNeutralCodes(t *testing.T) {
 		wantCode   string
 		wantStatus int
 	}{
-		{"identity approval", http.StatusForbidden, errors.New("identity review and two-person account approval are required"), "IDENTITY_APPROVAL_REQUIRED", http.StatusForbidden},
+		{"protected capability identity approval", http.StatusForbidden, errors.New("identity review and two-person account approval are required"), "IDENTITY_APPROVAL_REQUIRED", http.StatusForbidden},
 		{"email verification", http.StatusForbidden, errors.New("email verification is required"), "EMAIL_VERIFICATION_REQUIRED", http.StatusForbidden},
 		{"generic forbidden", http.StatusForbidden, errors.New("account is inactive"), "AUTH_FORBIDDEN", http.StatusForbidden},
 		{"invalid token", http.StatusBadGateway, errors.New("native access token invalid"), "AUTH_TOKEN_INVALID", http.StatusBadGateway},
@@ -42,6 +42,9 @@ func TestNativeAuthFailureUsesProviderNeutralCodes(t *testing.T) {
 			}
 			if !strings.Contains(response.Body.String(), test.wantCode) {
 				t.Fatalf("body=%s; expected code %s", response.Body.String(), test.wantCode)
+			}
+			if test.name == "protected capability identity approval" && !strings.Contains(response.Body.String(), "Basic Testagram account access does not") {
+				t.Fatalf("identity approval error must not imply a global account-access requirement: %s", response.Body.String())
 			}
 			if strings.Contains(strings.ToLower(response.Body.String()), "external identity provider") {
 				t.Fatalf("non-native identity error leaked into native response: %s", response.Body.String())
