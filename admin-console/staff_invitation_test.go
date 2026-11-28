@@ -34,7 +34,7 @@ func TestStaffInvitationRoleAllowlist(t *testing.T) {
 			t.Errorf("supported role %q was rejected", role)
 		}
 	}
-	for _, role := range []string{"", "superuser", "authenticated", "owner ", "appwrite_admin"} {
+	for _, role := range []string{"", "superuser", "authenticated", "owner ", "external_admin"} {
 		if validStaffInvitationRole(role) {
 			t.Errorf("unsupported role %q was accepted", role)
 		}
