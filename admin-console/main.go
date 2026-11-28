@@ -179,6 +179,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /api/overview", a.handleOverview)
 	mux.HandleFunc("POST /api/staff/invite", a.handleInvite)
 	mux.HandleFunc("POST /api/staff/invitations/accept", a.handleAcceptStaffInvitation)
+	mux.HandleFunc("GET /api/staff/invitations/pending", a.handlePendingStaffInvitations)
 	mux.HandleFunc("POST /api/staff/invitations/{id}/revoke", a.handleRevokeStaffInvitation)
 	mux.HandleFunc("POST /api/admin/step-up", a.handleStaffWebAuthnLoginBegin)
 	mux.HandleFunc("POST /api/admin/staff/{id}/webauthn/enrollment-authorize", a.handleStaffWebAuthnAuthorize)
