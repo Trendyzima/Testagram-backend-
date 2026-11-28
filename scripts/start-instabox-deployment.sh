@@ -588,7 +588,7 @@ sudo env \
   COMPOSE_FILE="$BASE_COMPOSE" ENV_FILE="$BASE_ENV" BACKUP_DIR="$ROOT/backups" \
   bash "$BACKEND/deploy/self-hosted/apply-native-identity-migrations.sh"
 # Build the Backend once, capture its immutable local image ID, and deploy that exact image.
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" build api admin-console
 api_image_ref="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" config --format json | jq -r '.services.api.image // empty')"
 if [[ -z "$api_image_ref" ]]; then
   echo "::error::Backend Compose service has no explicit image reference; refusing an unverifiable deployment."
@@ -600,7 +600,7 @@ if [[ ! "$api_expected_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
   exit 1
 fi
 echo "Built Backend image $api_image_ref with immutable ID $api_expected_image_id."
-sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate object-storage object-init api flutter-web caddy
+sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" up -d --force-recreate object-storage object-init api admin-console flutter-web caddy
 api_container="$(sudo docker compose --env-file "$BASE_ENV" -f "$BASE_COMPOSE" ps -q api)"
 if [[ -z "$api_container" ]]; then
   echo "::error::Backend API container was not created after deployment."
