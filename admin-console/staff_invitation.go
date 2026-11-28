@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type staffInvitationPayload struct {
@@ -318,11 +319,15 @@ func (a *app) handleAcceptStaffInvitation(w http.ResponseWriter, r *http.Request
 		VALUES($1::uuid,$2,$3::uuid)
 	`, user.ID, role, secondApprover)
 	if err == nil {
-		_, err = tx.Exec(ctx, `
+		var accepted pgconn.CommandTag
+		accepted, err = tx.Exec(ctx, `
 			UPDATE testagram_auth.native_staff_invitations
 			SET accepted_by_user_id=$2::uuid,accepted_at=now()
 			WHERE id=$1::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()
 		`, invitationID, user.ID)
+		if err == nil && accepted.RowsAffected() != 1 {
+			err = errors.New("invitation was concurrently consumed")
+		}
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, `
@@ -440,7 +445,7 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 }
 
 func enqueueStaffInvitationMail(ctx context.Context, tx pgx.Tx, recipient, role, token string) error {
-	key, err := hex.DecodeString(strings.TrimSpace(strings.TrimSpace(getEnvMailKey())))
+	key, err := hex.DecodeString(getEnvMailKey())
 	if err != nil || len(key) != 32 {
 		return errors.New("mail encryption key unavailable")
 	}
