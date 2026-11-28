@@ -273,13 +273,23 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 func TestPublicSignupIsIndependentOfIdentityReviewAndReachesAuthStore(t *testing.T) {
 	handler := (&service{}).routes()
 	cases := []struct {
-		name string
-		body string
-		wantCode int
+		name      string
+		body      string
+		wantCode  int
 		wantError string
 	}{
-		{name: "malformed request is parsed normally", body: "{invalid-json", wantCode: http.StatusBadRequest, wantError: "INVALID_JSON"},
-		{name: "valid signup reaches auth store", body: `{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value"}`, wantCode: http.StatusServiceUnavailable, wantError: "AUTH_STORE_UNAVAILABLE"},
+		{
+			name:      "malformed request is parsed normally",
+			body:      "{invalid-json",
+			wantCode:  http.StatusBadRequest,
+			wantError: "INVALID_JSON",
+		},
+		{
+			name:      "valid signup reaches auth store",
+			body:      `{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value"}`,
+			wantCode:  http.StatusServiceUnavailable,
+			wantError: "AUTH_STORE_UNAVAILABLE",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
