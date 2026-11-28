@@ -553,9 +553,13 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatalf("ordinary signup must persist Terms, Privacy and age self-declaration, got %d records", consentCount)
 	}
 	termsVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION"))
-	if termsVersion == "" { termsVersion = "2026-11-28" }
+	if termsVersion == "" {
+		termsVersion = "2026-11-28"
+	}
 	privacyVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION"))
-	if privacyVersion == "" { privacyVersion = "2026-11-28" }
+	if privacyVersion == "" {
+		privacyVersion = "2026-11-28"
+	}
 	var termsCount, privacyCount, ageCount, attributedCount int
 	if err := db.QueryRow(ctx, `
 		SELECT
@@ -565,7 +569,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 			count(*) FILTER (WHERE request_id <> '')
 		FROM testagram_auth.registration_consents
 		WHERE user_id=$1::uuid
-	`, basicUserID, termsVersion, privacyVersion).Scan(&termsCount,&privacyCount,&ageCount,&attributedCount); err != nil {
+	`, basicUserID, termsVersion, privacyVersion).Scan(&termsCount, &privacyCount, &ageCount, &attributedCount); err != nil {
 		t.Fatalf("read signup legal acceptance details: %v", err)
 	}
 	if termsCount != 1 || privacyCount != 1 || ageCount != 1 || attributedCount != 3 {
