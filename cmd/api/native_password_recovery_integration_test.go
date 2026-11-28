@@ -243,9 +243,6 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 		t.Fatalf("old password remained valid after reset: status=%d body=%s", oldLoginResp.Code, oldLoginResp.Body.String())
 	}
 }
-
-
-
 // TestNativePasswordResetRejectsExpiredToken proves an expired capability
 // cannot change credentials even when its hash is otherwise valid.
 func TestNativePasswordResetRejectsExpiredToken(t *testing.T) {
