@@ -89,6 +89,8 @@
               <label for="invite-reason">Business justification</label><textarea id="invite-reason" required minlength="12" maxlength="1000" rows="3"></textarea>
               <button class="button button-primary full" type="submit">Request two-person invitation approval</button>
             </form>
+            <div class="panel-heading"><div><div class="eyebrow">PENDING INVITATIONS</div><h3>Issued invitations</h3></div><button id="invitation-refresh" class="button button-secondary" type="button">Refresh</button></div>
+            <div id="invitation-list" aria-live="polite"><p class="field-help">Pending invitations load after fresh WebAuthn verification.</p></div>
           </section>
         </div>
         <div class="content-grid">
