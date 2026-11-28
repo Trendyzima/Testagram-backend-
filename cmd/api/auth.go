@@ -493,6 +493,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		}
 		var userID, email, username string
 		var err error
+		var verifyTx pgx.Tx
 		if isOTP {
 			email, err = authEmail(in.Email)
 			if err != nil {
@@ -513,6 +514,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				return true
 			}
 			defer func() { _ = tx.Rollback(context.Background()) }()
+			verifyTx = tx
 			var storedHash []byte
 			var expires time.Time
 			var attempts int
@@ -555,9 +557,6 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				WHERE email_normalized=$1 AND email_verified_at IS NULL
 				RETURNING user_id::text,email,username
 			`, email).Scan(&userID, &email, &username)
-			if txErr == nil {
-				txErr = tx.Commit(ctx)
-			}
 			if txErr != nil {
 				writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
 				return true
@@ -567,13 +566,19 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				writeJSON(w, http.StatusBadRequest, errorBody("INVALID_TOKEN", "Verification token is invalid or expired", requestID(r)))
 				return true
 			}
-			err = s.db.QueryRow(ctx, `
+			verifyTx, err = s.db.Begin(ctx)
+			if err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
+				return true
+			}
+			defer func() { _ = verifyTx.Rollback(context.Background()) }()
+			err = verifyTx.QueryRow(ctx, `
 				UPDATE testagram_auth.identities
-				SET email_verified_at=COALESCE(email_verified_at,now()), updated_at=now(),
+				SET email_verified_at=now(), updated_at=now(),
 				    verification_token_hash=NULL,verification_expires_at=NULL,
 				    verification_otp_hash=NULL,verification_otp_expires_at=NULL,
 				    verification_otp_attempts=0
-				WHERE verification_token_hash=$1 AND verification_expires_at>now()
+				WHERE verification_token_hash=$1 AND verification_expires_at>now() AND email_verified_at IS NULL
 				RETURNING user_id::text,email,username
 			`, authTokenHash(token)).Scan(&userID, &email, &username)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -585,16 +590,23 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				return true
 			}
 		}
-		_, err = s.db.Exec(ctx, `
+		if verifyTx == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to verify account", requestID(r)))
+			return true
+		}
+		_, err = verifyTx.Exec(ctx, `
 			INSERT INTO testagram_local.accounts(user_id,username,display_name)
 			VALUES($1::uuid,$2,$2)
 			ON CONFLICT(user_id) DO NOTHING
 		`, userID, username)
 		if err != nil {
-			writeJSON(w, http.StatusConflict, errorBody("PROFILE_CREATE_FAILED", "Email verified but profile could not be initialized; retry verification after resolving the username conflict", requestID(r)))
+			writeJSON(w, http.StatusConflict, errorBody("PROFILE_CREATE_FAILED", "Account profile could not be initialized; contact support if the problem continues.", requestID(r)))
 			return true
 		}
-		_, _ = s.db.Exec(ctx, `UPDATE testagram_auth.identities SET verification_token_hash=NULL,verification_expires_at=NULL,updated_at=now() WHERE user_id=$1::uuid`, userID)
+		if err = verifyTx.Commit(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Unable to complete account verification", requestID(r)))
+			return true
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Email verified. You can now sign in."})
 		return true
 	case "login":
