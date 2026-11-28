@@ -422,6 +422,7 @@ func issueStaffWebAuthnEnrollmentAuthorization(ctx context.Context, tx pgx.Tx, r
 	rows.Close()
 	if len(approvers) != 2 || approvers[0] == approvers[1] ||
 		approvers[0] == targetReference || approvers[1] == targetReference ||
+		requesterID == targetReference ||
 		len(approverRPs) != 2 || expectedRPID == "" ||
 		approverRPs[0] != expectedRPID || approverRPs[1] != expectedRPID ||
 		(requesterID != "" && (approvers[0] == requesterID || approvers[1] == requesterID)) {
