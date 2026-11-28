@@ -216,6 +216,15 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	if bytes.Contains(ciphertext, []byte(token)) {
 		t.Fatal("plaintext invitation token was persisted in the mail outbox ciphertext field")
 	}
+	pending, err := admin.hasPendingStaffInvitation(ctx, targetID, targetEmail)
+	if err != nil || !pending {
+		t.Fatalf("approved invitation was not exposed to the exact verified invitee: pending=%v err=%v", pending, err)
+	}
+	wrongEmailPending, err := admin.hasPendingStaffInvitation(ctx, targetID, "wrong-"+targetEmail)
+	if err != nil || wrongEmailPending {
+		t.Fatalf("invitation sign-in gate accepted a different email: pending=%v err=%v", wrongEmailPending, err)
+	}
+
 	var lifecycleEvents int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM testagram_auth.native_staff_lifecycle_events
@@ -224,8 +233,17 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		t.Fatalf("invitation creation audit events=%d err=%v; want exactly one", lifecycleEvents, err)
 	}
 
+	wrongAccountCookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, approverOneID, "staff-invite-owner-1-"+approverOneID[:8]+"@example.test", nil, false)
+	wrongAccountRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invitations/accept", bytes.NewReader(bodyForInvitationToken(token)))
+	wrongAccountRequest.AddCookie(wrongAccountCookie)
+	wrongAccountResponse := httptest.NewRecorder()
+	admin.handleAcceptStaffInvitation(wrongAccountResponse, wrongAccountRequest)
+	if wrongAccountResponse.Code != http.StatusConflict {
+		t.Fatalf("wrong-account invitation acceptance status=%d body=%s; want 409", wrongAccountResponse.Code, wrongAccountResponse.Body.String())
+	}
+
 	cookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, targetID, targetEmail, nil, false)
-	body, _ := json.Marshal(map[string]string{"token": token})
+	body := bodyForInvitationToken(token)
 	acceptRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invitations/accept", bytes.NewReader(body))
 	acceptRequest.AddCookie(cookie)
 	acceptResponse := httptest.NewRecorder()
@@ -247,6 +265,10 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		WHERE request_id=$1::uuid AND action='invitation_accepted'
 	`, requestID).Scan(&acceptedEvents); err != nil || acceptedEvents != 1 {
 		t.Fatalf("invitation acceptance audit events=%d err=%v; want exactly one", acceptedEvents, err)
+	}
+	pending, err = admin.hasPendingStaffInvitation(ctx, targetID, targetEmail)
+	if err != nil || pending {
+		t.Fatalf("accepted invitation remained eligible for pending-invitation sign-in: pending=%v err=%v", pending, err)
 	}
 
 	replay := httptest.NewRecorder()
@@ -316,4 +338,9 @@ func nativeStaffInvitationSessionCookie(t *testing.T, ctx context.Context, pool 
 		t.Fatalf("expected one encrypted native session cookie, got %d", len(cookies))
 	}
 	return cookies[0]
+}
+
+func bodyForInvitationToken(token string) []byte {
+	body, _ := json.Marshal(map[string]string{"token": token})
+	return body
 }
