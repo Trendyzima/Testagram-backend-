@@ -107,6 +107,8 @@ jobs:
         run: cp .env.example .env
       - name: Validate Compose model
         working-directory: deploy/self-hosted
+        env:
+          TESTAGRAM_MAIL_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
         run: docker compose config --quiet
       - name: Validate pinned Go CDN and private Backend origin wiring
         working-directory: deploy/self-hosted
