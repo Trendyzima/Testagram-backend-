@@ -29,11 +29,14 @@ const authPasswordRounds = 210000
 const authTokenTTL = 24 * time.Hour
 
 type authInput struct {
-	Email        string `json:"email"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	Token        string `json:"token"`
-	RefreshToken string `json:"refresh_token"`
+	Email           string `json:"email"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	TermsAccepted   bool   `json:"terms_accepted"`
+	PrivacyAccepted bool   `json:"privacy_accepted"`
+	AgeConfirmed    bool   `json:"age_confirmed"`
+	Token           string `json:"token"`
+	RefreshToken    string `json:"refresh_token"`
 }
 
 type authClaims struct {
@@ -303,6 +306,10 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 	ip := authClientIP(r)
 	switch action {
 	case "signup":
+		if !in.TermsAccepted || !in.PrivacyAccepted || !in.AgeConfirmed {
+			writeJSON(w, http.StatusBadRequest, errorBody("LEGAL_ACCEPTANCE_REQUIRED", "Confirm the age declaration and accept the current Terms of Service and Privacy Notice to create an account", requestID(r)))
+			return true
+		}
 		email, err := authEmail(in.Email)
 		if err != nil || !authUsernamePattern.MatchString(in.Username) {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_SIGNUP", "Enter a valid email, username, and password of at least 12 characters", requestID(r)))
@@ -389,6 +396,23 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		}
 		if txErr != nil {
 			writeJSON(w, http.StatusConflict, errorBody("SIGNUP_FAILED", "Account could not be created", requestID(r)))
+			return true
+		}
+		termsVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION"))
+		if termsVersion == "" { termsVersion = "2026-11-11" }
+		privacyVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION"))
+		if privacyVersion == "" { privacyVersion = "2026-11-11" }
+		_, consentErr := tx.Exec(ctx, `
+			INSERT INTO testagram_auth.registration_consents
+				(user_id,email,consent_type,policy_version,accepted_at,request_id)
+			VALUES
+				($1::uuid,$2,'terms',$3,now(),$4),
+				($1::uuid,$2,'privacy',$5,now(),$4),
+				($1::uuid,$2,'age_confirmation','age-self-declaration-v1',now(),$4)
+			ON CONFLICT (user_id,consent_type,policy_version) DO NOTHING
+		`, userID, email, termsVersion, requestID(r), privacyVersion)
+		if consentErr != nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account consent could not be recorded", requestID(r)))
 			return true
 		}
 		base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
