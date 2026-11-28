@@ -110,7 +110,7 @@ func (a *app) handleInvite(w http.ResponseWriter, r *http.Request) {
 		  AND NOT EXISTS (
 		    SELECT 1 FROM testagram_auth.staff_principals sp
 		    JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-		    WHERE sp.user_id=i.user_id AND sp.enabled=TRUE
+		    WHERE sp.user_id=i.user_id
 		  )
 		FOR UPDATE OF i
 	`, email).Scan(&targetID)
@@ -254,6 +254,7 @@ func (a *app) handleAcceptStaffInvitation(w http.ResponseWriter, r *http.Request
 		  AND ni.expires_at>now() AND i.user_id=$2::uuid
 		  AND i.email_verified_at IS NOT NULL AND i.disabled_at IS NULL
 		  AND sar.action_type='staff.invite' AND sar.status='approved'
+		  AND sar.target_reference=i.user_id::text
 		FOR UPDATE OF ni,i
 	`, tokenHash[:], user.ID).Scan(&invitationID, &requestID, &targetEmail, &role, &targetID, &requestStatus, &secondApprover)
 	if err != nil || requestStatus != "approved" || targetID != user.ID ||
@@ -283,7 +284,7 @@ func (a *app) handleAcceptStaffInvitation(w http.ResponseWriter, r *http.Request
 		SELECT EXISTS (
 		  SELECT 1 FROM testagram_auth.staff_principals sp
 		  JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-		  WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
+		  WHERE sp.user_id=$1::uuid
 		)
 	`, user.ID).Scan(&alreadyActive)
 	if err != nil || alreadyActive {
@@ -292,11 +293,11 @@ func (a *app) handleAcceptStaffInvitation(w http.ResponseWriter, r *http.Request
 	}
 
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO testagram_auth.staff_principals(user_id,enabled,enabled_at,enabled_by)
+		INSERT INTO testagram_auth.staff_principals AS existing_staff(user_id,enabled,enabled_at,enabled_by)
 		VALUES($1::uuid,TRUE,now(),$2::uuid)
 		ON CONFLICT(user_id) DO UPDATE
 		  SET enabled=TRUE,enabled_at=now(),enabled_by=EXCLUDED.enabled_by
-		  WHERE testagram_auth.staff_principals.enabled=FALSE
+		  WHERE existing_staff.enabled=FALSE
 		    AND NOT EXISTS (
 		      SELECT 1 FROM testagram_auth.staff_role_grants rg
 		      WHERE rg.user_id=EXCLUDED.user_id AND rg.revoked_at IS NULL
@@ -380,8 +381,8 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 		  ON wc.user_id=a.approver_user_id AND wc.rpid=a.webauthn_rpid
 		 AND wc.credential_id=a.webauthn_credential_id
 		 AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
-		WHERE a.request_id=$1::uuid AND a.decision='approved'
-	`, requestID).Scan(&eligibleApprovers)
+		WHERE a.request_id=$1::uuid AND a.decision='approved' AND a.approver_user_id<>$2::uuid
+	`, requestID, targetID).Scan(&eligibleApprovers)
 	if err != nil || eligibleApprovers != 2 {
 		return errors.New("exactly two distinct, currently eligible owner WebAuthn approvers are required")
 	}
@@ -391,7 +392,7 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 		SELECT EXISTS (
 		  SELECT 1 FROM testagram_auth.staff_principals sp
 		  JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.revoked_at IS NULL
-		  WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE
+		  WHERE sp.user_id=$1::uuid
 		) OR EXISTS (
 		  SELECT 1 FROM testagram_auth.native_staff_invitations
 		  WHERE email_normalized=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()
