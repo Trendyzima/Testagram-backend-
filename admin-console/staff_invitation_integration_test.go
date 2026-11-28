@@ -42,6 +42,7 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	t.Setenv("ADMIN_PUBLIC_URL", "https://ops.example.test")
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("native-staff-invitation-integration-secret-", 2))
 	const rpid = "ops.example.test"
+	t.Setenv("TESTAGRAM_WEBAUTHN_RPID", rpid)
 
 	var requesterID, approverOneID, approverTwoID, targetID string
 	if err := pool.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text").
