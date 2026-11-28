@@ -4,43 +4,50 @@
 
 The Flutter client authenticates directly with the Testagram Backend. The Backend owns password verification, canonical account state, short-lived access JWTs, PostgreSQL-backed sessions, rotating refresh credentials, and server-side revocation. Flutter stores only the refresh credential in platform secure storage; access JWTs remain in memory and are refreshed through the shared session manager.
 
-Public self-service signup at `/api/auth/signup` is intentionally fail-closed and returns `403 IDENTITY_REVIEW_REQUIRED`; it never creates an account. Account creation begins with the native `/api/identity/applications` flow, followed by applicant-scoped evidence submission through the Backend's private evidence path, independent evidence review, two distinct account approvals, one-time provisioning-token redemption, and post-provisioning email verification. The Backend remains the sole authority for identity state and account provisioning. Do not route a client directly from `/api/auth/signup` to email verification or login. `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED` gates the identity-review workflow and remains disabled until real browser ceremony, recovery, replay and independent reviewer/approver acceptance pass. `/api/auth/resend-verification` and `/api/auth/verify-email` are used only for an already provisioned account. No external identity-provider runtime or fallback is permitted.
+## Ordinary public account creation
+
+Public self-service signup at `POST /api/auth/signup` is the standard account-creation path. It does not call identity-application intake, require identity evidence, wait for staff review, or require two-person approval. The native flow:
+
+1. Validates email, username and password, applies rate limits, and stores an Argon2id password hash.
+2. Creates a basic native identity in an unverified state and queues a six-digit OTP plus a single-use email-verification link in the same PostgreSQL transaction.
+3. Requires successful OTP or link verification before sign-in. Verification activates the basic account and initializes its local profile.
+4. Allows ordinary sign-in only after email verification, with account-disablement, password-reset state, session validity and token-version checks still enforced.
+
+The mail outbox encrypts queued payloads with the stable `TESTAGRAM_MAIL_ENCRYPTION_KEY`. The deployment script generates and persists this key on the VPS when absent; the API and mail worker must receive the same value. `AUTH_PUBLIC_BASE_URL` must point to the canonical HTTPS web application so verification and password-reset links return to the Flutter app.
+
+Identity evidence, human review and two-person approval are a separate optional assurance workflow. They do not grant ordinary accounts verified identity, staff status, administrator status or elevated permissions. Sensitive endpoints continue to enforce their own authorization and assurance requirements. The identity-review feature gate must remain disabled unless an operator explicitly enables it after its separate acceptance is complete. It must never be used as a public-signup switch.
 
 ## Automated checks
 
-The normal Backend CI exercises PostgreSQL identity schema and session lifecycle invariants, including refresh-token rotation, replay detection, logout, logout-all, and concurrent refresh attempts. Flutter CI exercises secure refresh-token persistence, in-memory access tokens, refresh retry after a 401, and sign-out behavior. API contract CI validates the published native-auth routes and security scheme.
+Backend CI covers native password validation, email verification rules, PostgreSQL identity/session lifecycle, refresh-token rotation, replay detection, logout, logout-all and concurrent refresh attempts. Flutter CI covers native auth client behavior, token-only email-verification callbacks, secure refresh-token persistence, in-memory access tokens, refresh and sign-out behavior. These automated checks do not substitute for a real mailbox and deployed staging acceptance.
 
-## Registration readiness preflight
+## Identity-application readiness preflight
 
-The manual workflow `.github/workflows/identity-registration-readiness.yml` checks the live registration prerequisites without creating an applicant. It sends deliberately invalid applicant fields to `/api/identity/applications`; the only passing response is HTTP 400 `INVALID_REGISTRATION_APPLICATION`, which is reached after the Backend has checked the explicit identity-review feature gate, the PostgreSQL/WebAuthn quorum, the private Admin Console attestation, private evidence storage and registration policy versions. It refuses canonical production hosts and performs no application, evidence, account or email write. This is a readiness diagnostic, not proof that an applicant can complete evidence review or receive an account.
+The manual identity-registration readiness workflow checks the separate evidence-review workflow. It may validate the explicit identity-review feature gate, PostgreSQL/WebAuthn quorum, private Admin Console attestation, private evidence storage and registration policy versions. It is not required to deploy ordinary native authentication or to create a basic Testagram account. Keep the identity-review gate disabled until real WebAuthn ceremony, recovery, replay and independent reviewer/approver acceptance pass.
 
 ## Deployed staging acceptance
 
-The workflow `.github/workflows/native-auth-staging-smoke.yml` is manual and staging-only. It exercises the deployed API in this order:
+The existing `.github/workflows/native-auth-staging-smoke.yml` is a staging-only session-lifecycle smoke test. It uses a dedicated, email-verified staging account to verify profile access, refresh rotation, replay-family revocation, logout and logout-all. It does not create a new account or prove mailbox delivery.
 
-1. Sign in with a dedicated, approved, email-verified staging identity.
-2. Read `/api/me/profile` using the issued access JWT.
-3. Rotate the refresh credential and confirm both tokens changed.
-4. Replay the consumed refresh credential and confirm the entire session family is revoked.
-5. Sign in again, call logout, and confirm the access JWT is rejected.
-6. Sign in once more, call logout-all, and confirm the access JWT is rejected.
+Before a release is accepted, run a separate real end-to-end signup acceptance against an isolated staging database and controlled mailbox:
 
-Before dispatching, configure these values in the GitHub `staging` environment:
+1. Create a new ordinary account through the real Flutter signup page and deployed Backend.
+2. Confirm the account is initially unverified and cannot sign in.
+3. Confirm the actual verification email reaches the controlled mailbox; do not treat an outbox row as delivery.
+4. Follow the real one-time link and, separately, test the six-digit OTP path.
+5. Confirm verification activates the basic account and creates its local profile.
+6. Confirm the same account can sign in through Flutter, load its profile, restore a session after app restart, rotate refresh credentials, and log out.
+7. Confirm replay of a consumed verification token/OTP is rejected and that the consumed refresh credential revokes its session family.
+8. Exercise password recovery with existing and nonexistent addresses, receive a real reset email, consume its single-use token, and confirm previous sessions are revoked.
 
-- Variable `TESTAGRAM_STAGING_API_URL`: the HTTPS staging API origin, not the production API.
-- Secret `TESTAGRAM_AUTH_SMOKE_EMAIL`: a dedicated staging test account that has completed approval and email verification.
-- Secret `TESTAGRAM_AUTH_SMOKE_PASSWORD`: that staging account's password.
+Use only dedicated staging identities and mailboxes. Never use a production user's credentials or mailbox for acceptance.
 
-Dispatch only with `confirm_staging_only=true` after verifying the origin and account. The script refuses the production host `api.testagram.site`, does not print credentials or tokens, and intentionally invalidates its test sessions through replay detection and logout.
+## Staff authentication and identity assurance
 
-Do not use a production user or production credentials for this test.
+Staff review routes require a native Backend session, an enabled staff principal, the appropriate role grant, an enrolled authenticator and a fresh signed MFA claim bound to the exact WebAuthn credential used for the assertion. Backend rechecks that credential's active, user-verified, non-cloned state for every privileged review request; revoking it invalidates existing elevation immediately. The Admin Console implements native WebAuthn registration/assertion with RP ID/origin validation, user verification, encrypted credential/challenge storage, single-use challenge consumption, counter/clone checks and a short-lived Backend-signed elevation token.
 
-## Staff authentication and identity-intake gate
-
-Staff review routes require a native Backend session, an enabled staff principal, the appropriate role grant, an enrolled authenticator and a fresh signed MFA claim bound to the exact WebAuthn credential used for the assertion. Backend rechecks that credential's active, user-verified, non-cloned state for every privileged review request; revoking it invalidates existing elevation immediately. The Admin Console implements native WebAuthn registration/assertion with RP ID/origin validation, user verification, encrypted credential/challenge storage, single-use challenge consumption, counter/clone checks and a short-lived Backend-signed elevation token. Enrollment is independently authorized and gated by `TESTAGRAM_STAFF_WEBAUTHN_ENROLLMENT_ENABLED=true`.
-
-The Backend checks PostgreSQL staff roles and active verified credentials, then calls the Admin Console's private `/internal/webauthn/readiness` endpoint on every identity-application request. The endpoint is protected by a shared `TESTAGRAM_WEBAUTHN_READINESS_TOKEN` (32+ random bytes) passed only between the API and Admin Console containers; the Admin Console independently verifies RP/origin configuration, credential encryption, database schema/privileges, backend health and at least four distinct eligible credentialed staff so the reviewer pair and approver pair can be disjoint. API intake also requires the explicit `TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED=true` policy gate. Leave it false until real browser ceremony, recovery and replay acceptance pass. A non-null MFA-enrolment timestamp alone is never proof of a fresh assertion.
+The Backend checks PostgreSQL staff roles and active verified credentials, then calls the Admin Console's private `/internal/webauthn/readiness` endpoint for identity-application intake when that separate feature is enabled. The endpoint is protected by a shared `TESTAGRAM_WEBAUTHN_READINESS_TOKEN` passed only between the API and Admin Console containers. Identity intake requires explicit operator opt-in and must remain closed until its independent acceptance passes. A non-null MFA-enrolment timestamp alone is never proof of a fresh assertion.
 
 ## Production boundary
 
-A green CI run or staging smoke does not deploy schema changes, rotate production secrets, grant staff access, or change identity-review feature flags. Public self-service signup remains fail-closed: the production release probe sends a bodyless POST to `/api/auth/signup` and requires `403 IDENTITY_REVIEW_REQUIRED`, matching the Backend handler's gate before request-body parsing. It must not use a deliberately weak password as a deployment signal. This probe creates no account, sends no email, and does not imply that public signup is enabled. Real account creation, OTP delivery, email verification and sign-in must still be exercised with a controlled mailbox before the release is declared fully accepted. Identity-evidence intake remains independently gated and must not be enabled merely to make ordinary signup work.
+A green CI run, a deployment or the existing session smoke does not prove that a real signup email was delivered. The production deployment workflow must not require identity-review WebAuthn readiness for ordinary native-auth deployment. Its safe signup readiness probe sends deliberately invalid signup data and expects `400 INVALID_PASSWORD`, proving the request reached ordinary validation without creating an account or queuing email. Real mailbox delivery, verification, sign-in and session restoration must still be proven in staging before production activation. Identity-evidence intake remains independently gated and must not be enabled merely to make ordinary signup work.

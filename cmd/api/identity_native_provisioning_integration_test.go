@@ -252,6 +252,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 
 	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://testagram.example")
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("ab", 32))
 	type deliveredEmail struct {
 		recipient string
 		subject   string
@@ -526,15 +527,26 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if !svc.authRespond(authResp, authReq, "signup") {
 		t.Fatal("ordinary native signup route was not handled")
 	}
-	if authResp.Code != http.StatusForbidden || !strings.Contains(authResp.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-		t.Fatalf("ordinary public signup must remain fail-closed until evidence review and two-person approval: status=%d body=%s", authResp.Code, authResp.Body.String())
+	if authResp.Code != http.StatusAccepted || !strings.Contains(authResp.Body.String(), "Check your email") {
+		t.Fatalf("ordinary public signup must proceed to email verification without identity review: status=%d body=%s", authResp.Code, authResp.Body.String())
 	}
-	var bypassIdentityCount int
-	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", "bypass@example.test").Scan(&bypassIdentityCount); err != nil {
+	var basicUserID string
+	var basicEmailVerified bool
+	if err := db.QueryRow(ctx, "SELECT user_id::text,email_verified_at IS NOT NULL FROM testagram_auth.identities WHERE email_normalized=$1", "bypass@example.test").Scan(&basicUserID, &basicEmailVerified); err != nil {
+		t.Fatalf("ordinary signup did not persist a basic native identity: %v", err)
+	}
+	if basicUserID == "" || basicEmailVerified {
+		t.Fatalf("ordinary signup must create an unverified basic identity, user_id=%q verified=%v", basicUserID, basicEmailVerified)
+	}
+	var identityApplicationCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.identity_applications WHERE email=$1", "bypass@example.test").Scan(&identityApplicationCount); err != nil {
 		t.Fatal(err)
 	}
-	if bypassIdentityCount != 0 {
-		t.Fatalf("blocked public signup created %d native identity records", bypassIdentityCount)
+	if identityApplicationCount != 0 {
+		t.Fatalf("ordinary signup unexpectedly created %d identity-review applications", identityApplicationCount)
+	}
+	if _, err := db.Exec(ctx, "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", basicUserID); err != nil {
+		t.Fatalf("cleanup ordinary signup fixture: %v", err)
 	}
 	// Existing native identities may predate the approved-registration
 	// ledger. They still require verified email, an enabled account and no

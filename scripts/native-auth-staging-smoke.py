@@ -63,7 +63,7 @@ def login(base: str, email: str, password: str) -> dict:
     if status != 200:
         error = envelope.get("error")
         code = error.get("code", "UNKNOWN") if isinstance(error, dict) else "UNKNOWN"
-        fail(f"Staging test identity cannot sign in (HTTP {status}, {code}); confirm it is approved, email-verified and active")
+        fail(f"Staging test identity cannot sign in (HTTP {status}, {code}); confirm it is email-verified and active")
     tokens = success(envelope, "login")
     access, refresh = tokens.get("access_token"), tokens.get("refresh_token")
     if not isinstance(access, str) or len(access) < 32 or not isinstance(refresh, str) or len(refresh) < 40:
@@ -106,10 +106,10 @@ def main() -> None:
 
     require_status(base, "/api/me/profile", 401)
     require_error_code(
-        base, "/api/auth/signup", 403, "IDENTITY_REVIEW_REQUIRED",
-        body={"email": "blocked-signup@example.invalid", "username": "blocked_signup", "password": "not-a-real-password"},
+        base, "/api/auth/signup", 400, "INVALID_PASSWORD",
+        body={"email": "signup-readiness@example.invalid", "username": "signup_readiness", "password": "short"},
     )
-    print("PASS: anonymous profile access is denied and legacy public signup remains fail-closed")
+    print("PASS: anonymous profile access is denied and public signup reaches ordinary password validation independently of identity review")
 
     first = login(base, email, password)
     require_status(base, "/api/me/profile", 200, bearer=first["access_token"])

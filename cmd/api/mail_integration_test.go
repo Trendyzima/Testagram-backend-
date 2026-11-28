@@ -166,35 +166,272 @@ func TestSocialMailConsentIsRecheckedAgainstCurrentPreference(t *testing.T) {
 	}
 }
 
-func TestNativeSignupFailsClosedBeforeCreatingIdentityOrEmail(t *testing.T) {
+func TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail(t *testing.T) {
+	db := nativeRecoveryTestDatabase(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	t.Setenv("TESTAGRAM_MAIL_ENCRYPTION_KEY", strings.Repeat("7b", 32))
+	t.Setenv("AUTH_PUBLIC_BASE_URL", "https://www.testagram.site")
+	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("s", 48))
+
+	svc := &service{db: db}
+	type signupFixture struct {
+		userID   string
+		email    string
+		username string
+		otp      string
+		token    string
+		outboxID int64
+	}
+	createAccount := func(label string) signupFixture {
+		t.Helper()
+		stamp := time.Now().UTC().UnixNano()
+		email := fmt.Sprintf("native-%s-%d@example.test", label, stamp)
+		username := fmt.Sprintf("n%s%d", label, stamp)
+		var beforeID int64
+		if err := db.QueryRow(ctx, "SELECT COALESCE(max(id),0) FROM testagram_mail.outbox").Scan(&beforeID); err != nil {
+			t.Fatal(err)
+		}
+
+		body, err := json.Marshal(authInput{
+			Email: email, Username: username, Password: "correct-horse-battery-staple-2026",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(string(body)))
+		req.RemoteAddr = fmt.Sprintf("192.0.2.%d:12345", 210+len(label))
+		rec := httptest.NewRecorder()
+		if !svc.authRespond(rec, req, "signup") {
+			t.Fatal("public signup route was not handled")
+		}
+		if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), "Check your email") {
+			t.Fatalf("ordinary signup should queue email verification without identity review: status=%d body=%s", rec.Code, rec.Body.String())
+		}
+
+		var fixture signupFixture
+		fixture.email, fixture.username = email, username
+		var verified bool
+		var otpHash, tokenHash []byte
+		if err := db.QueryRow(ctx, `
+			SELECT user_id::text,email_verified_at IS NOT NULL,
+			       verification_otp_hash,verification_token_hash
+			FROM testagram_auth.identities WHERE email_normalized=$1
+		`, email).Scan(&fixture.userID, &verified, &otpHash, &tokenHash); err != nil {
+			t.Fatalf("ordinary signup did not persist its native identity: %v", err)
+		}
+		if fixture.userID == "" || verified || len(otpHash) != 32 || len(tokenHash) != 32 {
+			t.Fatalf("signup identity state user=%q verified=%v otp_hash=%d token_hash=%d", fixture.userID, verified, len(otpHash), len(tokenHash))
+		}
+		var applications int
+		if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_identity.identity_applications WHERE email=$1", email).Scan(&applications); err != nil {
+			t.Fatal(err)
+		}
+		if applications != 0 {
+			t.Fatalf("ordinary signup unexpectedly created %d identity-review applications", applications)
+		}
+
+		if err := db.QueryRow(ctx, `
+			SELECT id,payload_ciphertext,payload_nonce
+			FROM testagram_mail.outbox WHERE id>$1 ORDER BY id LIMIT 1
+		`, beforeID).Scan(&fixture.outboxID, &otpHash, &tokenHash); err != nil {
+			t.Fatalf("signup committed without a verification email in the transactional outbox: %v", err)
+		}
+		aead, err := mailCipher()
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, err := aead.Open(nil, tokenHash, otpHash, []byte("testagram-mail-v1"))
+		if err != nil {
+			t.Fatalf("verification email payload could not be decrypted: %v", err)
+		}
+		var queued queuedMail
+		if err := json.Unmarshal(plain, &queued); err != nil {
+			t.Fatal(err)
+		}
+		if queued.Recipient != email || queued.Subject != "Your Testagram verification code" {
+			t.Fatalf("verification email does not match signup: recipient=%q subject=%q", queued.Recipient, queued.Subject)
+		}
+		const otpMarker = `letter-spacing:8px">`
+		otpStart := strings.Index(queued.HTML, otpMarker)
+		if otpStart < 0 || len(queued.HTML) < otpStart+len(otpMarker)+6 {
+			t.Fatalf("verification email is missing its six-digit OTP: %s", queued.HTML)
+		}
+		fixture.otp = queued.HTML[otpStart+len(otpMarker) : otpStart+len(otpMarker)+6]
+		for _, digit := range fixture.otp {
+			if digit < '0' || digit > '9' {
+				t.Fatalf("verification email contains malformed OTP %q", fixture.otp)
+			}
+		}
+		const linkMarker = "/verify-email?token="
+		linkStart := strings.Index(queued.HTML, linkMarker)
+		if linkStart < 0 {
+			t.Fatalf("verification email is missing its one-time link: %s", queued.HTML)
+		}
+		linkStart += len(linkMarker)
+		linkEnd := strings.Index(queued.HTML[linkStart:], "\"")
+		if linkEnd < 0 {
+			t.Fatalf("verification email link is malformed: %s", queued.HTML)
+		}
+		fixture.token = queued.HTML[linkStart : linkStart+linkEnd]
+		if len(fixture.token) < 32 {
+			t.Fatalf("verification link token is too short: %q", fixture.token)
+		}
+
+		// An unverified account must not be able to obtain a session.
+		loginBody, _ := json.Marshal(map[string]string{
+			"email": email, "password": "correct-horse-battery-staple-2026",
+		})
+		loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(string(loginBody)))
+		loginReq.RemoteAddr = fmt.Sprintf("192.0.2.%d:12346", 210+len(label))
+		loginRec := httptest.NewRecorder()
+		svc.authRespond(loginRec, loginReq, "login")
+		if loginRec.Code != http.StatusForbidden || !strings.Contains(loginRec.Body.String(), "EMAIL_VERIFICATION_REQUIRED") {
+			t.Fatalf("unverified account login status=%d body=%s; expected EMAIL_VERIFICATION_REQUIRED", loginRec.Code, loginRec.Body.String())
+		}
+		t.Cleanup(func() {
+			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.sessions WHERE user_id=$1::uuid", fixture.userID)
+			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", fixture.userID)
+			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", fixture.userID)
+			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", fixture.outboxID)
+		})
+		return fixture
+	}
+
+	verify := func(payload map[string]string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/verify-email", strings.NewReader(string(body)))
+		req.RemoteAddr = "192.0.2.220:12345"
+		rec := httptest.NewRecorder()
+		if !svc.authRespond(rec, req, "verify-email") {
+			t.Fatal("verify-email route was not handled")
+		}
+		return rec
+	}
+
+	// The real one-time link path must activate a basic account without creating
+	// an identity-review application, and a consumed link must not be reusable.
+	linkAccount := createAccount("link")
+
+	// A username collision is actionable and must not masquerade as a queued
+	// verification email for a different email address.
+	duplicateEmail := fmt.Sprintf("duplicate-username-%d@example.test", time.Now().UTC().UnixNano())
+	var beforeDuplicateOutbox int64
+	if err := db.QueryRow(ctx, "SELECT COALESCE(max(id),0) FROM testagram_mail.outbox").Scan(&beforeDuplicateOutbox); err != nil {
+		t.Fatal(err)
+	}
+	duplicateBody, err := json.Marshal(authInput{
+		Email: duplicateEmail, Username: linkAccount.username, Password: "correct-horse-battery-staple-2026",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateReq := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(string(duplicateBody)))
+	duplicateReq.RemoteAddr = "192.0.2.215:12345"
+	duplicateRec := httptest.NewRecorder()
+	svc.authRespond(duplicateRec, duplicateReq, "signup")
+	if duplicateRec.Code != http.StatusConflict || !strings.Contains(duplicateRec.Body.String(), "USERNAME_TAKEN") {
+		t.Fatalf("duplicate username status=%d body=%s; expected actionable USERNAME_TAKEN", duplicateRec.Code, duplicateRec.Body.String())
+	}
+	var duplicateIdentityCount, duplicateMailCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", duplicateEmail).Scan(&duplicateIdentityCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.outbox WHERE id>$1", beforeDuplicateOutbox).Scan(&duplicateMailCount); err != nil {
+		t.Fatal(err)
+	}
+	if duplicateIdentityCount != 0 || duplicateMailCount != 0 {
+		t.Fatalf("username conflict left an orphan identity/email: identities=%d queued_mail=%d", duplicateIdentityCount, duplicateMailCount)
+	}
+	linkVerified := verify(map[string]string{"token": linkAccount.token})
+	if linkVerified.Code != http.StatusOK || !strings.Contains(linkVerified.Body.String(), "Email verified") {
+		t.Fatalf("one-time email link verification status=%d body=%s", linkVerified.Code, linkVerified.Body.String())
+	}
+	linkReplay := verify(map[string]string{"token": linkAccount.token})
+	if linkReplay.Code != http.StatusBadRequest || !strings.Contains(linkReplay.Body.String(), "INVALID_TOKEN") {
+		t.Fatalf("consumed email link replay status=%d body=%s", linkReplay.Code, linkReplay.Body.String())
+	}
+
+	// The six-digit OTP path must provide the same activation guarantees.
+	otpAccount := createAccount("otp")
+	otpVerified := verify(map[string]string{"email": otpAccount.email, "token": otpAccount.otp})
+	if otpVerified.Code != http.StatusOK || !strings.Contains(otpVerified.Body.String(), "Email verified") {
+		t.Fatalf("OTP email verification status=%d body=%s", otpVerified.Code, otpVerified.Body.String())
+	}
+	otpReplay := verify(map[string]string{"email": otpAccount.email, "token": otpAccount.otp})
+	if otpReplay.Code != http.StatusBadRequest || !strings.Contains(otpReplay.Body.String(), "INVALID_OTP") {
+		t.Fatalf("consumed OTP replay status=%d body=%s", otpReplay.Code, otpReplay.Body.String())
+	}
+
+	for _, fixture := range []signupFixture{linkAccount, otpAccount} {
+		var verified bool
+		if err := db.QueryRow(ctx, "SELECT email_verified_at IS NOT NULL FROM testagram_auth.identities WHERE user_id=$1::uuid", fixture.userID).Scan(&verified); err != nil || !verified {
+			t.Fatalf("verified identity state user=%s verified=%v err=%v", fixture.userID, verified, err)
+		}
+		var profiles int
+		if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE user_id=$1::uuid", fixture.userID).Scan(&profiles); err != nil || profiles != 1 {
+			t.Fatalf("email verification profile count user=%s count=%d err=%v", fixture.userID, profiles, err)
+		}
+		loginPayload, err := json.Marshal(map[string]string{
+			"email": fixture.email, "password": "correct-horse-battery-staple-2026",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(string(loginPayload)))
+		loginReq.RemoteAddr = "192.0.2.230:12345"
+		loginRec := httptest.NewRecorder()
+		svc.authRespond(loginRec, loginReq, "login")
+		if loginRec.Code != http.StatusOK {
+			t.Fatalf("verified basic account could not sign in: status=%d body=%s", loginRec.Code, loginRec.Body.String())
+		}
+	}
+}
+
+func TestNativeSignupRejectsUsernameReservedByExistingLocalProfile(t *testing.T) {
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
-	stamp := time.Now().UnixNano()
-	email := fmt.Sprintf("native-otp-%d@example.test", stamp)
-	username := fmt.Sprintf("otp%d", stamp)
-	svc := &service{db: db}
+	username := fmt.Sprintf("legacy%d", time.Now().UTC().UnixNano())
+	var userID string
+	if err := db.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO testagram_local.accounts(user_id,username,display_name)
+		VALUES($1::uuid,$2,'Existing local profile')
+	`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", userID)
+	}()
 
-	signupBody, err := json.Marshal(authInput{
+	email := fmt.Sprintf("legacy-username-%d@example.test", time.Now().UTC().UnixNano())
+	body, err := json.Marshal(authInput{
 		Email: email, Username: username, Password: "correct-horse-battery-staple-2026",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	signupRequest := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(string(signupBody)))
-	signupResponse := httptest.NewRecorder()
-	if !svc.authRespond(signupResponse, signupRequest, "signup") {
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(string(body)))
+	req.RemoteAddr = "192.0.2.216:12345"
+	rec := httptest.NewRecorder()
+	if !(&service{db: db}).authRespond(rec, req, "signup") {
 		t.Fatal("public signup route was not handled")
 	}
-	if signupResponse.Code != http.StatusForbidden || !strings.Contains(signupResponse.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-		t.Fatalf("public signup must require identity evidence review and two-person approval: status=%d body=%s", signupResponse.Code, signupResponse.Body.String())
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "USERNAME_TAKEN") {
+		t.Fatalf("existing local-profile username status=%d body=%s; expected USERNAME_TAKEN", rec.Code, rec.Body.String())
 	}
-
 	var identityCount int
 	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.identities WHERE email_normalized=$1", email).Scan(&identityCount); err != nil {
 		t.Fatal(err)
 	}
 	if identityCount != 0 {
-		t.Fatalf("blocked public signup created %d native identity records", identityCount)
+		t.Fatalf("signup created %d credentials for a username already reserved by a local profile", identityCount)
 	}
 }
 

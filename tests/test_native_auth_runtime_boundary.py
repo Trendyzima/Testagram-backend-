@@ -57,10 +57,22 @@ class NativeAuthRuntimeBoundaryTests(unittest.TestCase):
                         content = path.read_text(encoding="utf-8", errors="ignore")
                         self.assertNotIn(fixture, content, f"{path.relative_to(ROOT)} must not invoke a test fixture")
 
-    def test_staging_auth_smoke_checks_public_signup_and_anonymous_access_are_denied(self):
+    def test_staging_auth_smoke_checks_public_signup_is_independent_of_identity_review(self):
         smoke = (ROOT / "scripts/native-auth-staging-smoke.py").read_text(encoding="utf-8")
         self.assertIn('require_status(base, "/api/me/profile", 401)', smoke)
-        self.assertIn('"/api/auth/signup", 403, "IDENTITY_REVIEW_REQUIRED"', smoke)
+        self.assertIn('"/api/auth/signup", 400, "INVALID_PASSWORD"', smoke)
+        self.assertIn('independently of identity review', smoke)
+
+    def test_identity_review_is_not_a_deployment_or_signup_prerequisite(self):
+        workflow = (ROOT / ".github" / "workflows" / "instabox-deploy.yml").read_text(encoding="utf-8")
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        acceptance = (ROOT / "docs" / "platform" / "native-auth-acceptance.md").read_text(encoding="utf-8")
+        self.assertIn("vars.TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED || 'false'", workflow)
+        self.assertIn('if [[ "$TESTAGRAM_IDENTITY_REVIEW_WEBAUTHN_ENABLED" == "true" ]]; then', workflow)
+        self.assertIn("Optional identity-evidence intake gate only", compose)
+        self.assertIn("does not call identity-application intake", acceptance)
+        self.assertNotIn("intentionally fail-closed and returns", acceptance)
+        self.assertNotIn("public signup remains fail-closed", acceptance.lower())
 
     def test_staging_auth_smoke_checks_logout_revokes_refresh_credentials(self):
         smoke = (ROOT / "scripts/native-auth-staging-smoke.py").read_text(encoding="utf-8")

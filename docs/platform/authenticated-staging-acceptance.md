@@ -9,7 +9,7 @@ It requires all three explicit workflow confirmations:
 
 The workflow uses the `staging` GitHub Actions environment. It does not deploy services or change production.
 
-The Android AuthScreen integration step requires Flutter PR #166 to be merged to the Flutter default branch first, because this workflow checks out Flutter `main` and runs `integration_test/native_auth_staging_test.dart`. Backend PR #576 must also be merged before this workflow is available on Backend `main`.
+The Android AuthScreen integration step runs the Flutter default branch and executes `integration_test/native_auth_staging_test.dart`. The matching native-auth changes must be merged to both default branches before this combined workflow can validate the deployed release.
 
 ## Required staging environment
 
@@ -24,7 +24,7 @@ Environment secrets:
 - `TESTAGRAM_AUTH_SMOKE_EMAIL`
 - `TESTAGRAM_AUTH_SMOKE_PASSWORD`
 
-The smoke identity must already be a dedicated, approved, active and email-verified staging account. The workflow does not create identities, approve applicants, send verification email, or bypass identity review. The native-auth smoke deliberately replays a refresh token and calls `logout-all`, which revokes every session belonging to that identity. Never use a human, shared, or production account for this workflow.
+The smoke identity must be a dedicated, active and email-verified staging account. It may be created through ordinary public signup and real mailbox verification; identity evidence review or two-person approval is not required for a basic account. This combined workflow does not itself create the account or prove verification-mail delivery. The native-auth smoke deliberately replays a refresh token and calls `logout-all`, which revokes every session belonging to that identity. Never use a human, shared, or production account for this workflow.
 
 The CDN and object-store hostnames must be staging-only. The API, CDN, B2 and R2 hostnames must also be four distinct origins, so one endpoint cannot masquerade as separate provider replication. The media acceptance script rejects canonical production Testagram hosts, requires clean HTTPS origins, refuses redirects for signed object URLs, and never prints bearer tokens, signed URLs or CDN authorization assertions.
 
@@ -47,4 +47,4 @@ The Backend **Backblaze B2 storage smoke test** and Data Centre **Data Centre me
 
 ## Remaining acceptance boundary
 
-This combined workflow tests an already verified staging identity. It does not prove new-account email delivery, identity-evidence intake, independent reviewer decisions, two-person provisioning approval, staff WebAuthn recovery, or production account creation. Those remain separately gated identity-application acceptance work. Keep public signup fail-closed until those flows pass their own staging evidence and approval requirements.
+This combined workflow tests an already verified staging identity. It does not prove new-account email delivery, token/OTP verification, or signup-to-login completion; those require the separate real-mailbox acceptance described in `native-auth-acceptance.md`. Identity-evidence intake, independent reviewer decisions, two-person provisioning approval and staff WebAuthn recovery remain separate privileged-workflow acceptance. Do not make those workflows prerequisites for ordinary public signup.
