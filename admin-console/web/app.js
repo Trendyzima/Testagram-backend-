@@ -213,6 +213,9 @@ const recoveryParams = new URLSearchParams(location.search);
 const recoveryToken = recoveryParams.get("token") || "";
 if (location.pathname === "/staff/invitations/accept") {
   staffInvitationToken = recoveryToken;
+  // Keep the one-time capability in memory only; do not leave it in browser
+  // history, referrers, screenshots, or copied URLs while the invitee signs in.
+  history.replaceState(null, "", "/staff/invitations/accept");
 }
 if (recoveryToken && location.pathname !== "/staff/invitations/accept") {
   resetToken = recoveryToken;
