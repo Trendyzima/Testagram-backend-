@@ -355,6 +355,12 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	if revokeResponse.Code!=http.StatusCreated { t.Fatalf("request invitation revocation status=%d body=%s",revokeResponse.Code,revokeResponse.Body.String()) }
 	var revokeResult struct { ID string `json:"id"`; RequiredApprovals int `json:"required_approvals"` }
 	if err:=json.Unmarshal(revokeResponse.Body.Bytes(),&revokeResult); err!=nil || revokeResult.ID=="" || revokeResult.RequiredApprovals!=2 { t.Fatalf("decode revocation request: %#v err=%v",revokeResult,err) }
+	var pendingListRequest=httptest.NewRequest(http.MethodGet,"https://ops.example.test/api/staff/invitations/pending",nil)
+	pendingListRequest.AddCookie(requesterCookie)
+	pendingListResponse:=httptest.NewRecorder(); router.ServeHTTP(pendingListResponse,pendingListRequest)
+	if pendingListResponse.Code!=http.StatusOK || !bytes.Contains(pendingListResponse.Body.Bytes(),[]byte(revokeInvitationID)) {
+		t.Fatalf("owner pending invitation inventory status=%d body=%s; expected invitation %s",pendingListResponse.Code,pendingListResponse.Body.String(),revokeInvitationID)
+	}
 	for index,approverID:=range []string{approverOneID,approverTwoID} {
 		approverCredentialID:=[]byte("native-invitation-webauthn-credential-"+approverID)
 		approverEmail:=fmt.Sprintf("staff-invite-owner-%d-%s@example.test",index+1,approverID[:8])
