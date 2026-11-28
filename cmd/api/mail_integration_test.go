@@ -293,6 +293,7 @@ func TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail(t *test
 		t.Cleanup(func() {
 			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.sessions WHERE user_id=$1::uuid", fixture.userID)
 			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", fixture.userID)
+			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.registration_consents WHERE user_id=$1::uuid", fixture.userID)
 			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", fixture.userID)
 			_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE id=$1", fixture.outboxID)
 		})
