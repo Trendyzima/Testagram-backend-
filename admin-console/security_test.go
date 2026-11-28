@@ -188,6 +188,7 @@ func TestStaffWebAuthnEnrollmentEndpointRequiresDualControlLedger(t *testing.T) 
 		"second_approver_user_id",
 		"webauthn_enrollment_authorized",
 		"FOR UPDATE OF sp,i",
+		"requesterID == targetReference",
 	} {
 		if !strings.Contains(security, required) {
 			t.Fatalf("dual-control executor is missing required invariant %q", required)
