@@ -89,7 +89,7 @@ function renderDashboard(user) {
   loadApprovalQueue();
   loadIdentityReviewQueue();
   loadAuditHistory();
-  if (user.role === "owner") loadStaffDirectory();
+  if (user.role === "owner") { loadStaffDirectory(); loadPendingInvitations(); }
   loadWebAuthnReadiness();
 }
 async function loadSession() {
@@ -292,6 +292,44 @@ async function authenticateStaffAuthenticator() {
 byId("webauthn-enroll").addEventListener("click",enrollStaffAuthenticator);
 byId("stepup-form").addEventListener("submit",async event=>{event.preventDefault();await authenticateStaffAuthenticator();});
 
+
+
+async function loadPendingInvitations() {
+  const list=byId("invitation-list");
+  if(!list)return;
+  list.replaceChildren();
+  try {
+    const data=await api("/api/staff/invitations/pending");
+    const items=data.items||[];
+    if(!items.length) {
+      const empty=document.createElement("p"); empty.className="field-help";
+      empty.textContent="No live pending staff invitations."; list.appendChild(empty); return;
+    }
+    for(const item of items) {
+      const card=document.createElement("article"); card.className="approval-item";
+      const heading=document.createElement("b"); heading.textContent=item.email+" · "+item.role;
+      const detail=document.createElement("p");
+      detail.textContent="Issued "+new Date(item.created_at).toLocaleString()+" · expires "+new Date(item.expires_at).toLocaleString();
+      const revoke=document.createElement("button"); revoke.type="button"; revoke.className="button button-secondary";
+      revoke.textContent="Request two-person revocation";
+      revoke.addEventListener("click",async()=>{
+        const reason=window.prompt("Why must this pending invitation be revoked? (12–1000 characters)");
+        if(reason===null)return;
+        if(reason.trim().length<12||reason.trim().length>1000){notice("Enter a revocation reason between 12 and 1000 characters.","error");return;}
+        revoke.disabled=true;
+        try {
+          const result=await api("/api/staff/invitations/"+encodeURIComponent(item.id)+"/revoke",{reason:reason.trim()});
+          notice(result.message||"Two-person revocation request recorded.","success");
+          await loadApprovalQueue(); await loadAuditHistory(); await loadPendingInvitations();
+        } catch(error) { notice(error.message,"error"); revoke.disabled=false; }
+      });
+      card.append(heading,detail,revoke); list.appendChild(card);
+    }
+  } catch(error) {
+    const failed=document.createElement("p"); failed.className="field-help"; failed.textContent=error.message; list.appendChild(failed);
+  }
+}
+byId("invitation-refresh").addEventListener("click",loadPendingInvitations);
 
 byId("invite-form").addEventListener("submit", async (event) => {
   event.preventDefault();
