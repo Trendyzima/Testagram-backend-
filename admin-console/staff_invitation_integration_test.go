@@ -293,6 +293,97 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	if replay.Code != http.StatusConflict {
 		t.Fatalf("replayed invitation status=%d body=%s; want 409", replay.Code, replay.Body.String())
 	}
+
+	// Exercise revocation through the real HTTP handlers and isolated PostgreSQL.
+	// This second invitation is revoked before acceptance; the first invitation
+	// above has already exercised the normal acceptance and replay lifecycle.
+	var revokeTargetID string
+	if err := pool.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&revokeTargetID); err != nil { t.Fatal(err) }
+	revokeTargetEmail := "staff-revoke-" + revokeTargetID[:8] + "@example.test"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
+		VALUES($1::uuid,$2,$3,'test-only-invalid-password-hash',now())
+	`, revokeTargetID, revokeTargetEmail, "staffrevoke_"+revokeTargetID[:8]); err != nil { t.Fatalf("insert revocation target identity: %v",err) }
+	revokeInviteBody,_:=json.Marshal(map[string]string{
+		"email":revokeTargetEmail,"role":"support","reason":"Integration test invitation for revocation lifecycle",
+	})
+	revokeInviteRequest:=httptest.NewRequest(http.MethodPost,"https://ops.example.test/api/staff/invite",bytes.NewReader(revokeInviteBody))
+	revokeInviteRequest.AddCookie(requesterCookie)
+	revokeInviteRequest.Header.Set("Origin","https://ops.example.test")
+	revokeInviteResponse:=httptest.NewRecorder()
+	router.ServeHTTP(revokeInviteResponse,revokeInviteRequest)
+	if revokeInviteResponse.Code!=http.StatusCreated { t.Fatalf("revocation fixture invitation request status=%d body=%s",revokeInviteResponse.Code,revokeInviteResponse.Body.String()) }
+	var revokeInviteResult struct { ID string `json:"id"` }
+	if err:=json.Unmarshal(revokeInviteResponse.Body.Bytes(),&revokeInviteResult); err!=nil || revokeInviteResult.ID=="" { t.Fatalf("decode revocation fixture invitation: id=%q err=%v",revokeInviteResult.ID,err) }
+	for index,approverID:=range []string{approverOneID,approverTwoID} {
+		approverCredentialID:=[]byte("native-invitation-webauthn-credential-"+approverID)
+		approverEmail:=fmt.Sprintf("staff-invite-owner-%d-%s@example.test",index+1,approverID[:8])
+		approverCookie:=nativeStaffInvitationSessionCookie(t,ctx,pool,admin,approverID,approverEmail,approverCredentialID,true)
+		body,_:=json.Marshal(map[string]string{"decision":"approved","reason":"Independent owner approval for revocation fixture invitation"})
+		req:=httptest.NewRequest(http.MethodPost,"https://ops.example.test/api/admin/sensitive-actions/"+revokeInviteResult.ID+"/decision",bytes.NewReader(body))
+		req.AddCookie(approverCookie); req.Header.Set("Origin","https://ops.example.test")
+		rec:=httptest.NewRecorder(); router.ServeHTTP(rec,req)
+		if rec.Code!=http.StatusOK { t.Fatalf("revocation fixture invitation approval %d status=%d body=%s",index+1,rec.Code,rec.Body.String()) }
+	}
+	var revokeInvitationID string
+	var revokeCiphertext,revokeNonce []byte
+	revokeMAC:=hmac.New(sha256.New,mailKey); _,_=revokeMAC.Write([]byte(strings.ToLower(revokeTargetEmail)))
+	if err:=pool.QueryRow(ctx,`
+		SELECT ni.id::text,o.payload_ciphertext,o.payload_nonce
+		FROM testagram_auth.native_staff_invitations ni
+		JOIN testagram_mail.outbox o ON o.recipient_fingerprint=$2 AND o.status='pending'
+		WHERE ni.request_id=$1::uuid ORDER BY o.id DESC LIMIT 1
+	`,revokeInviteResult.ID,revokeMAC.Sum(nil)).Scan(&revokeInvitationID,&revokeCiphertext,&revokeNonce); err!=nil { t.Fatalf("load revocation test invitation and encrypted mail: %v",err) }
+	revokePlain,err:=aead.Open(nil,revokeNonce,revokeCiphertext,[]byte("testagram-mail-v1"))
+	if err!=nil { t.Fatalf("decrypt revocation test invitation mail: %v",err) }
+	var revokeMail staffInvitationMail
+	if err:=json.Unmarshal(revokePlain,&revokeMail); err!=nil { t.Fatalf("decode revocation test invitation mail: %v",err) }
+	revokeLinkStart:=strings.Index(revokeMail.HTML,`href="`)
+	if revokeLinkStart<0 { t.Fatal("revocation test mail has no acceptance link") }
+	revokeLinkStart+=len(`href="`)
+	revokeLinkEnd:=strings.Index(revokeMail.HTML[revokeLinkStart:],`"`)
+	if revokeLinkEnd<0 { t.Fatal("revocation test acceptance link is malformed") }
+	revokeURL,err:=url.Parse(revokeMail.HTML[revokeLinkStart:revokeLinkStart+revokeLinkEnd])
+	if err!=nil { t.Fatalf("parse revocation test acceptance link: %v",err) }
+	revokeToken:=revokeURL.Query().Get("token")
+	if revokeToken=="" { t.Fatal("revocation test invitation token missing from encrypted mail") }
+
+	revokeBody,_:=json.Marshal(map[string]string{"reason":"Invitation is no longer required by the business"})
+	revokeRequest:=httptest.NewRequest(http.MethodPost,"https://ops.example.test/api/staff/invitations/"+revokeInvitationID+"/revoke",bytes.NewReader(revokeBody))
+	revokeRequest.AddCookie(requesterCookie); revokeRequest.Header.Set("Origin","https://ops.example.test")
+	revokeResponse:=httptest.NewRecorder(); router.ServeHTTP(revokeResponse,revokeRequest)
+	if revokeResponse.Code!=http.StatusCreated { t.Fatalf("request invitation revocation status=%d body=%s",revokeResponse.Code,revokeResponse.Body.String()) }
+	var revokeResult struct { ID string `json:"id"`; RequiredApprovals int `json:"required_approvals"` }
+	if err:=json.Unmarshal(revokeResponse.Body.Bytes(),&revokeResult); err!=nil || revokeResult.ID=="" || revokeResult.RequiredApprovals!=2 { t.Fatalf("decode revocation request: %#v err=%v",revokeResult,err) }
+	for index,approverID:=range []string{approverOneID,approverTwoID} {
+		approverCredentialID:=[]byte("native-invitation-webauthn-credential-"+approverID)
+		approverEmail:=fmt.Sprintf("staff-invite-owner-%d-%s@example.test",index+1,approverID[:8])
+		approverCookie:=nativeStaffInvitationSessionCookie(t,ctx,pool,admin,approverID,approverEmail,approverCredentialID,true)
+		body,_:=json.Marshal(map[string]string{"decision":"approved","reason":"Independent owner approval to revoke pending invitation"})
+		req:=httptest.NewRequest(http.MethodPost,"https://ops.example.test/api/admin/sensitive-actions/"+revokeResult.ID+"/decision",bytes.NewReader(body))
+		req.AddCookie(approverCookie); req.Header.Set("Origin","https://ops.example.test")
+		rec:=httptest.NewRecorder(); router.ServeHTTP(rec,req)
+		if rec.Code!=http.StatusOK { t.Fatalf("invitation revocation approval %d status=%d body=%s",index+1,rec.Code,rec.Body.String()) }
+		var decision struct { Status string `json:"status"`; ApprovalCount int `json:"approval_count"` }
+		if err:=json.Unmarshal(rec.Body.Bytes(),&decision); err!=nil { t.Fatalf("decode revocation approval %d: %v",index+1,err) }
+		if index==0 && (decision.Status!="pending" || decision.ApprovalCount!=1) { t.Fatalf("first revocation approval state=%s count=%d",decision.Status,decision.ApprovalCount) }
+		if index==1 && (decision.Status!="approved" || decision.ApprovalCount!=2) { t.Fatalf("second revocation approval state=%s count=%d",decision.Status,decision.ApprovalCount) }
+	}
+	var revoked,accepted bool
+	if err:=pool.QueryRow(ctx,"SELECT revoked_at IS NOT NULL,accepted_at IS NOT NULL FROM testagram_auth.native_staff_invitations WHERE id=$1::uuid",revokeInvitationID).Scan(&revoked,&accepted); err!=nil || !revoked || accepted {
+		t.Fatalf("revoked invitation state revoked=%v accepted=%v err=%v; want true/false",revoked,accepted,err)
+	}
+	var revokedEvents int
+	if err:=pool.QueryRow(ctx,`SELECT count(*) FROM testagram_auth.native_staff_lifecycle_events WHERE request_id=$1::uuid AND action='invitation_revoked'`,revokeResult.ID).Scan(&revokedEvents); err!=nil || revokedEvents!=1 {
+		t.Fatalf("invitation revocation audit events=%d err=%v; want exactly one",revokedEvents,err)
+	}
+	revokeTargetCookie:=nativeStaffInvitationSessionCookie(t,ctx,pool,admin,revokeTargetID,revokeTargetEmail,nil,false)
+	revokedAccept:=httptest.NewRecorder()
+	revokedAcceptRequest:=httptest.NewRequest(http.MethodPost,"https://ops.example.test/api/staff/invitations/accept",bytes.NewReader(bodyForInvitationToken(revokeToken)))
+	revokedAcceptRequest.AddCookie(revokeTargetCookie); revokedAcceptRequest.Header.Set("Origin","https://ops.example.test")
+	router.ServeHTTP(revokedAccept,revokedAcceptRequest)
+	if revokedAccept.Code!=http.StatusConflict { t.Fatalf("revoked invitation acceptance status=%d body=%s; want 409",revokedAccept.Code,revokedAccept.Body.String()) }
+
 }
 
 
