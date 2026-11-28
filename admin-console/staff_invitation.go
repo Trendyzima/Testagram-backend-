@@ -188,6 +188,41 @@ func (a *app) handleInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 
+
+func (a *app) handlePendingStaffInvitations(w http.ResponseWriter, r *http.Request) {
+	s, actor, ok := a.requireStaff(w,r,"owner")
+	if !ok { return }
+	claims, ok := a.requireRecentStepUpClaims(w,s)
+	if !ok { return }
+	if claims.Subject!=actor.ID { writeJSON(w,http.StatusUnauthorized,map[string]string{"error":"WebAuthn elevation does not belong to the authenticated staff principal"}); return }
+	ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second); defer cancel()
+	rows,err:=a.database.Query(ctx,`
+		SELECT ni.id::text,ni.email_normalized,ni.role,ni.created_at,ni.expires_at
+		FROM testagram_auth.native_staff_invitations ni
+		JOIN testagram_auth.native_sensitive_action_requests sar
+		  ON sar.id=ni.request_id AND sar.action_type='staff.invite' AND sar.status='approved'
+		WHERE ni.accepted_at IS NULL AND ni.revoked_at IS NULL AND ni.expires_at>now()
+		ORDER BY ni.created_at DESC LIMIT 100
+	`)
+	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Could not load pending staff invitations"}); return }
+	defer rows.Close()
+	type invitation struct {
+		ID string `json:"id"`
+		Email string `json:"email"`
+		Role string `json:"role"`
+		CreatedAt time.Time `json:"created_at"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	items:=make([]invitation,0)
+	for rows.Next() {
+		var item invitation
+		if err:=rows.Scan(&item.ID,&item.Email,&item.Role,&item.CreatedAt,&item.ExpiresAt); err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Could not read pending staff invitations"}); return }
+		items=append(items,item)
+	}
+	if err:=rows.Err(); err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Could not read pending staff invitations"}); return }
+	writeJSON(w,http.StatusOK,map[string]any{"items":items})
+}
+
 func (a *app) handleRevokeStaffInvitation(w http.ResponseWriter, r *http.Request) {
 	s, actor, ok := a.requireStaff(w, r, "owner")
 	if !ok { return }
