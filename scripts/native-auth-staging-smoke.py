@@ -63,7 +63,7 @@ def login(base: str, email: str, password: str) -> dict:
     if status != 200:
         error = envelope.get("error")
         code = error.get("code", "UNKNOWN") if isinstance(error, dict) else "UNKNOWN"
-        fail(f"Staging test identity cannot sign in (HTTP {status}, {code}); confirm it is approved, email-verified and active")
+        fail(f"Staging test identity cannot sign in (HTTP {status}, {code}); confirm it is email-verified and active")
     tokens = success(envelope, "login")
     access, refresh = tokens.get("access_token"), tokens.get("refresh_token")
     if not isinstance(access, str) or len(access) < 32 or not isinstance(refresh, str) or len(refresh) < 40:
