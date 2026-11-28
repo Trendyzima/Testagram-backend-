@@ -380,8 +380,8 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	}
 	var revoked,accepted bool
 	var revokedByRequestID string
-	if err:=pool.QueryRow(ctx,"SELECT revoked_at IS NOT NULL,accepted_at IS NOT NULL,revoked_by_request_id::text FROM testagram_auth.native_staff_invitations WHERE id=$1::uuid",revokeInvitationID).Scan(&revoked,&accepted,&revokedByRequestID); err!=nil || !revoked || accepted {
-		t.Fatalf("revoked invitation state revoked=%v accepted=%v err=%v; want true/false",revoked,accepted,err)
+	if err:=pool.QueryRow(ctx,"SELECT revoked_at IS NOT NULL,accepted_at IS NOT NULL,revoked_by_request_id::text FROM testagram_auth.native_staff_invitations WHERE id=$1::uuid",revokeInvitationID).Scan(&revoked,&accepted,&revokedByRequestID); err!=nil || !revoked || accepted || revokedByRequestID!=revokeResult.ID {
+		t.Fatalf("revoked invitation state revoked=%v accepted=%v request=%s err=%v; want true/false and exact request binding",revoked,accepted,revokedByRequestID,err)
 	}
 	var revokedEvents int
 	if err:=pool.QueryRow(ctx,`SELECT count(*) FROM testagram_auth.native_staff_lifecycle_events WHERE request_id=$1::uuid AND action='invitation_revoked'`,revokeResult.ID).Scan(&revokedEvents); err!=nil || revokedEvents!=1 {
