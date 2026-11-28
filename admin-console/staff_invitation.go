@@ -10,12 +10,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	htmlstd "html"
 	"errors"
+	htmlstd "html"
 	"net/http"
 	"net/mail"
-	"regexp"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -556,9 +556,16 @@ func executeStaffInvitationRevocation(ctx context.Context, tx pgx.Tx, requestID,
 	var targetID string
 	err=tx.QueryRow(ctx,`SELECT user_id::text FROM testagram_auth.identities WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL FOR UPDATE`,email).Scan(&targetID)
 	if err!=nil || targetID!=targetReference || targetID==requesterID || targetID==approverID { return errors.New("invitation target no longer matches the immutable revocation request") }
-	var originalAction,originalStatus string
-	err=tx.QueryRow(ctx,`SELECT action_type,status FROM testagram_auth.native_sensitive_action_requests WHERE id=$1::uuid FOR UPDATE`,originalRequestID).Scan(&originalAction,&originalStatus)
-	if err!=nil || originalAction!="staff.invite" || originalStatus!="approved" { return errors.New("original invitation approval is not valid") }
+	var originalAction,originalStatus,originalTarget string
+	var originalPayload []byte
+	err=tx.QueryRow(ctx,`SELECT action_type,status,target_reference,payload FROM testagram_auth.native_sensitive_action_requests WHERE id=$1::uuid FOR UPDATE`,originalRequestID).Scan(&originalAction,&originalStatus,&originalTarget,&originalPayload)
+	if err!=nil || originalAction!="staff.invite" || originalStatus!="approved" || originalTarget!=targetID {
+		return errors.New("original invitation approval is not valid for this target")
+	}
+	var originalInvitation staffInvitationPayload
+	if err=json.Unmarshal(originalPayload,&originalInvitation); err!=nil || !strings.EqualFold(originalInvitation.Email,email) || originalInvitation.Role!=role {
+		return errors.New("original invitation payload does not match the pending invitation")
+	}
 	var requesterEligible bool
 	err=tx.QueryRow(ctx,`
 		SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_principals sp
