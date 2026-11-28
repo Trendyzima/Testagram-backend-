@@ -1,4 +1,6 @@
-# Native identity registration and provisioning
+# Optional identity-assurance application and provisioning
+
+> Scope: this document describes the separate applicant/evidence/review workflow for specifically protected capabilities. It is not the public self-service signup path. Ordinary Testagram accounts are created with email/password, required legal/age declarations and email verification; no government ID, selfie, evidence, manual review or identity approval is required.
 
 ## Canonical owner
 
