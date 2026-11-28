@@ -552,6 +552,25 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	if consentCount != 3 {
 		t.Fatalf("ordinary signup must persist Terms, Privacy and age self-declaration, got %d records", consentCount)
 	}
+	termsVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION"))
+	if termsVersion == "" { termsVersion = "2026-11-11" }
+	privacyVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION"))
+	if privacyVersion == "" { privacyVersion = "2026-11-28" }
+	var termsCount, privacyCount, ageCount, attributedCount int
+	if err := db.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE consent_type='terms' AND policy_version=$2),
+			count(*) FILTER (WHERE consent_type='privacy' AND policy_version=$3),
+			count(*) FILTER (WHERE consent_type='age_confirmation' AND policy_version='age-self-declaration-v1'),
+			count(*) FILTER (WHERE request_id <> '')
+		FROM testagram_auth.registration_consents
+		WHERE user_id=$1::uuid
+	`, basicUserID, termsVersion, privacyVersion).Scan(&termsCount,&privacyCount,&ageCount,&attributedCount); err != nil {
+		t.Fatalf("read signup legal acceptance details: %v", err)
+	}
+	if termsCount != 1 || privacyCount != 1 || ageCount != 1 || attributedCount != 3 {
+		t.Fatalf("signup legal acceptance ledger mismatch: terms=%d privacy=%d age=%d attributed=%d", termsCount, privacyCount, ageCount, attributedCount)
+	}
 	if _, err := db.Exec(ctx, "DELETE FROM testagram_auth.registration_consents WHERE user_id=$1::uuid", basicUserID); err != nil {
 		t.Fatalf("cleanup ordinary signup consent fixture: %v", err)
 	}
