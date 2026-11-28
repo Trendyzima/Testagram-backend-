@@ -553,7 +553,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		t.Fatalf("ordinary signup must persist Terms, Privacy and age self-declaration, got %d records", consentCount)
 	}
 	termsVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION"))
-	if termsVersion == "" { termsVersion = "2026-11-11" }
+	if termsVersion == "" { termsVersion = "2026-11-28" }
 	privacyVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION"))
 	if privacyVersion == "" { privacyVersion = "2026-11-28" }
 	var termsCount, privacyCount, ageCount, attributedCount int
