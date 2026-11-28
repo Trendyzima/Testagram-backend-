@@ -1577,12 +1577,6 @@ func nativeAuthReadinessRelations() []string {
 
 func nativeAuthReadinessSchema(ctx context.Context, db *pgxpool.Pool) error {
 	for _, relation := range nativeAuthReadinessRelations() {
-		"testagram_auth.identities",
-		"testagram_auth.sessions",
-		"testagram_auth.rate_limits",
-		"testagram_auth.security_audit",
-		"testagram_local.accounts",
-	} {
 		rows, err := db.Query(ctx, "SELECT 1 FROM "+relation+" LIMIT 0")
 		if err != nil {
 			return fmt.Errorf("required native-auth relation %s is unavailable: %w", relation, err)
