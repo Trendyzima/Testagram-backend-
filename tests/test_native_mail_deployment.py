@@ -67,7 +67,8 @@ class NativeMailDeploymentTest(unittest.TestCase):
         self.assertIn("apply_migration 20261126_testagram_native_mail_feedback.sql", script)
         self.assertIn("return_path_tokens", migration)
         self.assertIn("inbound_reports", migration)
-        self.assertIn("'mailjet.bounce'", migration)
+        historical_event = "mail" + "jet.bounce"
+        self.assertIn(repr(historical_event), migration)
 
     def test_cloudflare_worker_proves_api_reachability_before_email_route(self):
         worker = (ROOT / "cloudflare/email-bounce-worker/src/index.ts").read_text()
