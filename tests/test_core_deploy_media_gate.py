@@ -24,10 +24,11 @@ class CoreDeploymentMediaGateTests(unittest.TestCase):
 
     def test_provider_provisioning_is_conditional_on_both_explicit_gates(self):
         condition = "if: steps.media-gates.outputs.media_enabled == 'true'"
-        self.assertEqual(WORKFLOW.count(condition), 2)
+        self.assertEqual(WORKFLOW.count(condition), 1)
         self.assertIn('echo "media_enabled=$early_dc_media_enabled" >> "$GITHUB_OUTPUT"', WORKFLOW)
         self.assertIn("Internal workflow error: R2 provisioning ran without the Data Centre service gate.", WORKFLOW)
-        self.assertIn("Internal workflow error: B2 provisioning ran without the Data Centre service gate.", WORKFLOW)
+        self.assertNotIn("Provision dedicated private B2 identity-evidence bucket", WORKFLOW)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", WORKFLOW)
 
     def test_workflow_validation_accepts_core_only_mode(self):
         self.assertIn("Validate independent production media feature gates", WORKFLOW)
