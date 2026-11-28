@@ -462,6 +462,33 @@ func issueStaffWebAuthnEnrollmentAuthorization(ctx context.Context, tx pgx.Tx, r
 }
 
 func recordSensitiveActionDecision(ctx context.Context, tx pgx.Tx, requestID, expectedAction, expectedRequester, approverID, webauthnRPID string, webauthnCredentialID []byte, decision, reason string) (string, string, int, error) {
+	// Acceptance locks invitation + identity before its approval request. Keep the
+	// revocation path on the same lock order before taking the request-row lock.
+	var preAction string
+	var prePayload []byte
+	if err := tx.QueryRow(ctx, `
+		SELECT action_type,payload FROM testagram_auth.native_sensitive_action_requests
+		WHERE id=$1::uuid AND expires_at>now()
+	`,requestID).Scan(&preAction,&prePayload); err != nil {
+		return "", "", 0, errors.New("approval request is missing or expired")
+	}
+	if preAction == "staff.invitation.revoke" {
+		var invitation struct { InvitationID string `json:"invitation_id"` }
+		if err := json.Unmarshal(prePayload,&invitation); err != nil || len(invitation.InvitationID)!=36 {
+			return "", "", 0, errors.New("staff invitation revocation payload is invalid")
+		}
+		var lockedID string
+		if err := tx.QueryRow(ctx,`
+			SELECT ni.id::text
+			FROM testagram_auth.native_staff_invitations ni
+			JOIN testagram_auth.identities i ON i.email_normalized=ni.email_normalized
+			  AND i.email_verified_at IS NOT NULL AND i.disabled_at IS NULL
+			WHERE ni.id=$1::uuid AND ni.accepted_at IS NULL AND ni.revoked_at IS NULL AND ni.expires_at>now()
+			FOR UPDATE OF ni,i
+		`,invitation.InvitationID).Scan(&lockedID); err != nil || lockedID!=invitation.InvitationID {
+			return "", "", 0, errors.New("invitation is no longer pending and cannot be revoked")
+		}
+	}
 	var actionType, requesterID, requesterService, requestStatus, targetReference string
 	var payload []byte
 	var payloadDigest string
