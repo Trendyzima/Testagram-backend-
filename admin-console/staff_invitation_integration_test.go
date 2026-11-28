@@ -130,6 +130,20 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatalf("commit owner approval %d: %v", index+1, err)
 		}
+		if index == 0 {
+			var prematureInvitations, prematureMail int
+			if err := pool.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.native_staff_invitations WHERE request_id=$1::uuid", requestID).Scan(&prematureInvitations); err != nil {
+				t.Fatal(err)
+			}
+			fingerprintMAC := hmac.New(sha256.New, mailKey)
+			_, _ = fingerprintMAC.Write([]byte(strings.ToLower(targetEmail)))
+			if err := pool.QueryRow(ctx, "SELECT count(*) FROM testagram_mail.outbox WHERE recipient_fingerprint=$1", fingerprintMAC.Sum(nil)).Scan(&prematureMail); err != nil {
+				t.Fatal(err)
+			}
+			if prematureInvitations != 0 || prematureMail != 0 {
+				t.Fatalf("first approval created invitation=%d mail=%d; no side effects are allowed before the second approval", prematureInvitations, prematureMail)
+			}
+		}
 	}
 
 	var invitationID string
