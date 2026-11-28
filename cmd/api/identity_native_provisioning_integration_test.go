@@ -522,7 +522,7 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 
 	authReq := httptest.NewRequest(http.MethodPost, "/api/auth/signup",
-		strings.NewReader("{\"email\":\"bypass@example.test\",\"username\":\"bypass_user\",\"password\":\"native-ci-password-123\"}"))
+		strings.NewReader("{\"email\":\"bypass@example.test\",\"username\":\"bypass_user\",\"password\":\"native-ci-password-123\",\"terms_accepted\":true,\"privacy_accepted\":true,\"age_confirmed\":true}"))
 	authResp := httptest.NewRecorder()
 	if !svc.authRespond(authResp, authReq, "signup") {
 		t.Fatal("ordinary native signup route was not handled")
@@ -544,6 +544,13 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 	}
 	if identityApplicationCount != 0 {
 		t.Fatalf("ordinary signup unexpectedly created %d identity-review applications", identityApplicationCount)
+	}
+	var consentCount int
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_auth.registration_consents WHERE user_id=$1::uuid", basicUserID).Scan(&consentCount); err != nil {
+		t.Fatalf("ordinary signup legal consent audit was not readable: %v", err)
+	}
+	if consentCount != 3 {
+		t.Fatalf("ordinary signup must persist Terms, Privacy and age self-declaration, got %d records", consentCount)
 	}
 	if _, err := db.Exec(ctx, "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", basicUserID); err != nil {
 		t.Fatalf("cleanup ordinary signup fixture: %v", err)
