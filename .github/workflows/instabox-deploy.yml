@@ -286,8 +286,21 @@ jobs:
             exit 1
           fi
 
-          machines="$(curl --retry 3 --retry-all-errors --retry-delay 2 -fsS \
-            -H "X-API-Key: $INSTABOX_API_KEY" -H "Idempotency-Key: testagram-list-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$API/v1/machines?limit=100")"
+          # Inventory is a read-only GET: do not attach an Idempotency-Key.
+          # Capture non-2xx bodies so provider validation errors are actionable,
+          # and never retry permanent 4xx responses.
+          inventory_response="$(mktemp)"
+          trap 'rm -f "$inventory_response"' EXIT
+          inventory_status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --retry 3 --retry-connrefused --retry-delay 2 --retry-max-time 45 \
+            -o "$inventory_response" -w '%{http_code}' \
+            -H "X-API-Key: $INSTABOX_API_KEY" "$API/v1/machines?limit=100")"
+          if [[ "$inventory_status" != 2?? ]]; then
+            echo "::error::InstaBox machine inventory request failed (HTTP $inventory_status)."
+            jq -c 'if type == "object" then (.error // .message // .) else . end' "$inventory_response" 2>/dev/null || head -c 2000 "$inventory_response"
+            exit 1
+          fi
+          machines="$(cat "$inventory_response")"
           if ! jq -e '.machines | type == "array"' <<<"$machines" >/dev/null; then
             echo "::error::InstaBox machine inventory response is malformed."
             exit 1
