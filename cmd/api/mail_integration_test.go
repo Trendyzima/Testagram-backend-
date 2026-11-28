@@ -376,6 +376,19 @@ func TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail(t *test
 		if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE user_id=$1::uuid", fixture.userID).Scan(&profiles); err != nil || profiles != 1 {
 			t.Fatalf("email verification profile count user=%s count=%d err=%v", fixture.userID, profiles, err)
 		}
+		loginPayload, err := json.Marshal(map[string]string{
+			"email": fixture.email, "password": "correct-horse-battery-staple-2026",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(string(loginPayload)))
+		loginReq.RemoteAddr = "192.0.2.230:12345"
+		loginRec := httptest.NewRecorder()
+		svc.authRespond(loginRec, loginReq, "login")
+		if loginRec.Code != http.StatusOK {
+			t.Fatalf("verified basic account could not sign in: status=%d body=%s", loginRec.Code, loginRec.Body.String())
+		}
 	}
 }
 
