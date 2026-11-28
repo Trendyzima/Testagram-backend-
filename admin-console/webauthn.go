@@ -464,7 +464,19 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
    AND to_regclass('testagram_auth.staff_webauthn_users') IS NOT NULL
    AND to_regclass('testagram_auth.staff_webauthn_credentials') IS NOT NULL
    AND to_regclass('testagram_auth.staff_webauthn_challenges') IS NOT NULL
-   AND to_regclass('testagram_auth.staff_webauthn_enrollment_authorizations') IS NOT NULL`).Scan(&schemaOK)
+   AND to_regclass('testagram_auth.staff_webauthn_enrollment_authorizations') IS NOT NULL
+   AND to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL
+   AND to_regclass('testagram_auth.native_sensitive_action_approvals') IS NOT NULL
+   AND to_regclass('testagram_auth.native_staff_lifecycle_events') IS NOT NULL
+   AND to_regprocedure('testagram_auth.staff_webauthn_enrollment_authorization_is_valid(bigint,uuid,text)') IS NOT NULL
+   AND (SELECT count(*)=4 FROM information_schema.columns
+        WHERE table_schema='testagram_auth'
+          AND table_name='staff_webauthn_enrollment_authorizations'
+          AND column_name IN ('request_id','first_approver_user_id','second_approver_user_id','revoked_at'))
+   AND EXISTS (SELECT 1 FROM pg_trigger
+        WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals')
+          AND tgname='native_staff_webauthn_enrollment_approver_permission'
+          AND NOT tgisinternal)`).Scan(&schemaOK)
  }
  privilegesOK:=false
  if dbOK&&schemaOK {
@@ -491,7 +503,8 @@ func (a *app) staffWebAuthnReadiness(ctx context.Context) map[string]any {
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_challenges','DELETE')
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','SELECT')
    AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','INSERT')
-   AND has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','UPDATE')`).Scan(&privilegesOK)
+   AND has_column_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','consumed_at','UPDATE')
+   AND has_column_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','revoked_at','UPDATE')`).Scan(&privilegesOK)
  }
  credentialedStaff:=0
  credentialedReviewers:=0
