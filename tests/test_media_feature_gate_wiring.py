@@ -37,41 +37,36 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.splitlines(), ["true", "false"])
 
-    def test_b2_identity_bucket_gate_uses_same_normalized_private_media_flags(self):
-        start = self.workflow.index("Provision dedicated private B2 identity-evidence bucket")
-        end = self.workflow.index("Start deployment on the machine", start)
-        step = self.workflow[start:end]
-        self.assertIn("if: steps.media-gates.outputs.media_enabled == 'true'", step)
-        self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", step)
-        self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", step)
-        self.assertIn("normalize_flag", step)
-        self.assertIn('normalize_flag "$DATA_CENTRE_MEDIA_ENABLED"', step)
-        self.assertIn('normalize_flag "$FRESH_MEDIA_ENABLED"', step)
+    def test_identity_bucket_is_not_a_media_deployment_gate(self):
+        self.assertNotIn("Provision dedicated private B2 identity-evidence bucket", self.workflow)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.workflow)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", self.workflow)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", self.workflow)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer.replace('write_env_value B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET ""', ''))
+        self.assertNotIn("mc stat", self.deployer[self.deployer.find("media_enabled=false"):self.deployer.find("printf '%s\\n' \"$media_enabled\"")])
 
     def test_workflow_local_fresh_media_gate_name_does_not_shadow_step_environment(self):
-        self.assertEqual(self.workflow.count('fresh_gate_enabled="$(normalize_flag'), 2)
+        self.assertEqual(self.workflow.count('fresh_gate_enabled="$(normalize_flag'), 1)
         self.assertNotIn('fresh_media_enabled="$(normalize_flag', self.workflow)
         self.assertIn('Internal workflow error: R2 provisioning ran without the Data Centre service gate.', self.workflow)
-        self.assertIn('Internal workflow error: B2 provisioning ran without the Data Centre service gate.', self.workflow)
+        self.assertNotIn('Internal workflow error: B2 provisioning ran without the Data Centre service gate.', self.workflow)
         self.assertIn("FRESH_MEDIA_ENABLED: ${{ vars.FRESH_MEDIA_ENABLED || 'false' }}", self.workflow)
 
-    def test_identity_storage_service_can_run_while_general_media_uploads_stay_disabled(self):
-        self.assertNotIn("DATA_CENTRE_MEDIA_ENABLED and FRESH_MEDIA_ENABLED must match", self.workflow + self.deployer)
-        self.assertIn('if [[ "$early_fresh_gate" == true && "$early_dc_media_enabled" != true ]]', self.workflow)
-        self.assertIn('media_enabled=$early_dc_media_enabled', self.workflow)
+    def test_identity_storage_is_not_required_for_general_media_service(self):
         self.assertIn('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then', self.deployer)
-        self.assertIn('if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then\n  b2_endpoint=', self.deployer)
-        self.assertIn('FRESH_MEDIA_ENABLED=$FRESH_MEDIA_ENABLED', self.deployer)
         self.assertIn('FRESH_MEDIA_ENABLED=true requires DATA_CENTRE_MEDIA_ENABLED=true', self.deployer)
-        self.assertIn("B2 identity evidence bucket must be configured and distinct from general-media buckets.", self.deployer)
+        self.assertNotIn("B2 identity evidence bucket must be configured", self.deployer)
+        self.assertNotIn("Identity evidence requires its own bucket-scoped", self.deployer)
+        self.assertNotIn("mc stat \"b2/$B2_BUCKET\"", self.deployer)
+        self.assertIn('write_dc_env_value IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN ""', self.deployer)
 
     def test_provider_native_private_access_controls_replace_unsupported_s3_policy_calls(self):
         self.assertNotIn("mc anonymous set none", self.workflow + self.deployer)
-        self.assertIn("B2 identity-evidence bucket ACL is private", self.workflow)
+        self.assertNotIn("B2 identity-evidence bucket ACL is private", self.workflow)
         self.assertNotIn("R2_IDENTITY_BUCKET", self.workflow)
         self.assertNotIn("DC_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
         self.assertNotIn("write_dc_env_value CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET", self.deployer)
-        self.assertIn("identity evidence has no R2 or InstaBox storage copy", self.deployer)
+        self.assertIn("ordinary B2/R2 media and metadata only", self.deployer)
 
     def test_pinned_minio_client_alias_commands_use_supported_flags(self):
         for source in (self.workflow, self.deployer):
@@ -82,21 +77,18 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
                 self.assertIn("--api S3v4", line)
                 self.assertIn("--path auto", line)
 
-    def test_production_evidence_bucket_names_are_dedicated_and_provisioned_private(self):
+    def test_production_deploy_does_not_provision_identity_evidence_storage(self):
         for token in (
             "testagram-identity-evidence-production-b2",
             'aws s3api put-bucket-acl --bucket "$B2_BUCKET" --acl private',
             'aws s3api get-bucket-acl --bucket "$B2_BUCKET"',
             'mc stat "b2_provision/$B2_BUCKET"',
             "B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:",
-            'mc stat "b2_media/$B2_MEDIA_BUCKET"',
             'mc stat "b2_identity/$B2_BUCKET"',
-            'if mc stat "b2_media/$B2_BUCKET"',
-            'if mc stat "b2_identity/$B2_MEDIA_BUCKET"',
-            'B2 provisioning, ordinary-media and identity-evidence credentials must be three distinct application keys.',
         ):
             with self.subTest(token=token):
-                self.assertIn(token, self.workflow)
+                self.assertNotIn(token, self.workflow)
+                self.assertNotIn(token, self.deployer)
 
     def test_workflow_keeps_legacy_replicator_off_and_preserves_data_centre_gates(self):
         self.assertIn("DATA_CENTRE_MEDIA_ENABLED: ${{ vars.DATA_CENTRE_MEDIA_ENABLED || 'false' }}", self.workflow)
@@ -344,52 +336,21 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
         self.assertNotIn('write_env_value FRESH_MEDIA_ENABLED "$media_enabled"', self.deployer)
 
 
-    def test_identity_evidence_bucket_is_b2_only_and_independent_of_legacy_replicator(self):
-        for token in (
-            'DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET="${B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET:-testagram-identity-evidence-private-b2}"',
-            'DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID="${B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:-}"',
-            'DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY="${B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:-}"',
-            'if [[ "${DATA_CENTRE_MEDIA_ENABLED:-false}" == "true" ]]; then',
-            'B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
-            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID',
-            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY',
-            'mc alias set b2 "$B2_ENDPOINT" "$B2_IDENTITY_ACCESS" "$B2_IDENTITY_SECRET"',
-            'mc stat "b2/$B2_BUCKET"',
-            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET',
-            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID',
-            'verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" media B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY',
-            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:$b2_identity_access',
-            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:$b2_identity_secret',
-            'internal/v1/identity-evidence/readyz',
-        ):
-            with self.subTest(token=token):
-                self.assertIn(token, self.deployer)
+    def test_identity_evidence_bucket_is_not_provisioned_by_the_deployer(self):
+        self.assertNotIn("DC_B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=", self.deployer)
+        self.assertNotIn("B2_IDENTITY_ACCESS", self.deployer)
+        self.assertNotIn("B2_IDENTITY_SECRET", self.deployer)
+        self.assertNotIn("mc alias set b2", self.deployer)
+        self.assertIn('write_dc_env_value B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET ""', self.deployer)
 
-
-    def test_identity_evidence_provider_key_is_forwarded_separately_from_ordinary_b2_key(self):
-        for token in (
-            "B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}",
-            "B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}",
-            "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID: ${{ secrets.B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID }}",
-            "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY }}",
-            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:$b2_identity_access',
-            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:$b2_identity_secret',
-            'B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID="$DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID"',
-            'B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY="$DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY"',
-        ):
-            with self.subTest(token=token):
-                self.assertIn(token, self.workflow + self.deployer)
-
-        self.assertIn("B2_IDENTITY_ACCESS", self.deployer)
-        self.assertIn("B2_IDENTITY_SECRET", self.deployer)
-        self.assertNotIn('-e B2_ACCESS="$B2_S3_ACCESS_KEY_ID"', self.deployer)
-        self.assertNotIn('mc mb --ignore-existing "b2/$B2_BUCKET"', self.deployer)
-        self.assertNotIn('write_env_value B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID', self.deployer)
+    def test_identity_evidence_credentials_are_not_forwarded_to_production_media(self):
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:", self.workflow + self.deployer)
+        self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:", self.workflow + self.deployer)
+        self.assertNotIn("B2_IDENTITY_ACCESS", self.deployer)
+        self.assertNotIn("B2_IDENTITY_SECRET", self.deployer)
         backend_compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
         self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", backend_compose)
         self.assertNotIn("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", backend_compose)
-        self.assertNotIn("B2_S3_ACCESS_KEY_ID: ${{ secrets.B2_APPLICATION_KEY_ID", self.workflow)
-        self.assertNotIn("B2_S3_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY", self.workflow)
 
     def test_optional_fingerprint_migration_is_mounted_for_remote_preflight(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text()
@@ -401,9 +362,8 @@ class MediaFeatureGateWiringTests(unittest.TestCase):
     def test_b2_s3_credentials_are_trimmed_before_provider_calls(self):
         self.assertIn("B2 S3 access key ID length after whitespace normalization", self.workflow)
         self.assertIn("tr -d '\\r\\n[:space:]'", self.workflow)
-        self.assertIn('DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID="$(printf \'%s\' "$DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID" | tr -d', self.deployer)
-        self.assertIn('DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY="$(printf \'%s\' "$DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY" | tr -d', self.deployer)
-        self.assertIn("tr -d '\\r\\n[:space:]'", self.deployer)
+        self.assertNotIn("DC_B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", self.deployer)
+        self.assertNotIn("DC_B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", self.deployer)
 
     def test_backend_container_is_pinned_to_the_exact_built_image_id(self):
         compose = (ROOT / "deploy/self-hosted/docker-compose.yml").read_text(encoding="utf-8")
