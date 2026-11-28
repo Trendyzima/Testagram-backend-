@@ -235,6 +235,16 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		t.Fatalf("invitation creation audit events=%d err=%v; want exactly one", lifecycleEvents, err)
 	}
 
+	landingRequest := httptest.NewRequest(http.MethodGet, "https://ops.example.test/staff/invitations/accept?token="+url.QueryEscape(token), nil)
+	landingResponse := httptest.NewRecorder()
+	router.ServeHTTP(landingResponse, landingRequest)
+	if landingResponse.Code != http.StatusOK || !strings.Contains(landingResponse.Body.String(), `id="accept-invitation"`) {
+		t.Fatalf("invitation landing page status=%d body=%s", landingResponse.Code, landingResponse.Body.String())
+	}
+	if landingResponse.Header().Get("Referrer-Policy") != "no-referrer" || landingResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("invitation landing page leaks bearer token through headers: referrer=%q cache=%q", landingResponse.Header().Get("Referrer-Policy"), landingResponse.Header().Get("Cache-Control"))
+	}
+
 	wrongAccountCookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, approverOneID, "staff-invite-owner-1-"+approverOneID[:8]+"@example.test", nil, false)
 	wrongAccountRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invitations/accept", bytes.NewReader(bodyForInvitationToken(token)))
 	wrongAccountRequest.AddCookie(wrongAccountCookie)
