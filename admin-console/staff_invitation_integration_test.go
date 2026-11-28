@@ -98,6 +98,7 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 
 	admin := testApp(t)
 	admin.database = pool
+	router := admin.routes()
 	requesterCredentialID := []byte("native-invitation-webauthn-credential-" + requesterID)
 	requesterCookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, requesterID, requesterEmail, requesterCredentialID, true)
 	requestBody, _ := json.Marshal(map[string]string{
@@ -106,8 +107,9 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	})
 	requestRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invite", bytes.NewReader(requestBody))
 	requestRequest.AddCookie(requesterCookie)
+	requestRequest.Header.Set("Origin", "https://ops.example.test")
 	requestResponse := httptest.NewRecorder()
-	admin.handleInvite(requestResponse, requestRequest)
+	router.ServeHTTP(requestResponse, requestRequest)
 	if requestResponse.Code != http.StatusCreated {
 		t.Fatalf("request invitation status=%d body=%s", requestResponse.Code, requestResponse.Body.String())
 	}
@@ -125,10 +127,10 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 			"decision": "approved", "reason": "Independent owner approval for invitation",
 		})
 		decisionRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/admin/sensitive-actions/"+requestID+"/decision", bytes.NewReader(decisionBody))
-		decisionRequest.SetPathValue("id", requestID)
 		decisionRequest.AddCookie(approverCookie)
+		decisionRequest.Header.Set("Origin", "https://ops.example.test")
 		decisionResponse := httptest.NewRecorder()
-		admin.handleSensitiveActionDecision(decisionResponse, decisionRequest)
+		router.ServeHTTP(decisionResponse, decisionRequest)
 		if decisionResponse.Code != http.StatusOK {
 			t.Fatalf("owner approval %d status=%d body=%s", index+1, decisionResponse.Code, decisionResponse.Body.String())
 		}
@@ -236,8 +238,9 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	wrongAccountCookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, approverOneID, "staff-invite-owner-1-"+approverOneID[:8]+"@example.test", nil, false)
 	wrongAccountRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invitations/accept", bytes.NewReader(bodyForInvitationToken(token)))
 	wrongAccountRequest.AddCookie(wrongAccountCookie)
+	wrongAccountRequest.Header.Set("Origin", "https://ops.example.test")
 	wrongAccountResponse := httptest.NewRecorder()
-	admin.handleAcceptStaffInvitation(wrongAccountResponse, wrongAccountRequest)
+	router.ServeHTTP(wrongAccountResponse, wrongAccountRequest)
 	if wrongAccountResponse.Code != http.StatusConflict {
 		t.Fatalf("wrong-account invitation acceptance status=%d body=%s; want 409", wrongAccountResponse.Code, wrongAccountResponse.Body.String())
 	}
@@ -246,8 +249,9 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	body := bodyForInvitationToken(token)
 	acceptRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invitations/accept", bytes.NewReader(body))
 	acceptRequest.AddCookie(cookie)
+	acceptRequest.Header.Set("Origin", "https://ops.example.test")
 	acceptResponse := httptest.NewRecorder()
-	admin.handleAcceptStaffInvitation(acceptResponse, acceptRequest)
+	router.ServeHTTP(acceptResponse, acceptRequest)
 	if acceptResponse.Code != http.StatusOK {
 		t.Fatalf("accept invitation status=%d body=%s", acceptResponse.Code, acceptResponse.Body.String())
 	}
@@ -274,7 +278,8 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	replay := httptest.NewRecorder()
 	replayRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invitations/accept", bytes.NewReader(body))
 	replayRequest.AddCookie(cookie)
-	admin.handleAcceptStaffInvitation(replay, replayRequest)
+	replayRequest.Header.Set("Origin", "https://ops.example.test")
+	router.ServeHTTP(replay, replayRequest)
 	if replay.Code != http.StatusConflict {
 		t.Fatalf("replayed invitation status=%d body=%s; want 409", replay.Code, replay.Body.String())
 	}
