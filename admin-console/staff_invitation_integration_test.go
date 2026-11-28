@@ -348,6 +348,9 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	revokeToken:=revokeURL.Query().Get("token")
 	if revokeToken=="" { t.Fatal("revocation test invitation token missing from encrypted mail") }
 
+	if _,err:=pool.Exec(ctx,"UPDATE testagram_auth.native_staff_invitations SET revoked_at=now() WHERE id=$1::uuid",revokeInvitationID); err==nil {
+		t.Fatal("direct one-owner database update bypassed the two-person invitation revocation guard")
+	}
 	revokeBody,_:=json.Marshal(map[string]string{"reason":"Invitation is no longer required by the business"})
 	revokeRequest:=httptest.NewRequest(http.MethodPost,"https://ops.example.test/api/staff/invitations/"+revokeInvitationID+"/revoke",bytes.NewReader(revokeBody))
 	revokeRequest.AddCookie(requesterCookie); revokeRequest.Header.Set("Origin","https://ops.example.test")
@@ -376,7 +379,8 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		if index==1 && (decision.Status!="approved" || decision.ApprovalCount!=2) { t.Fatalf("second revocation approval state=%s count=%d",decision.Status,decision.ApprovalCount) }
 	}
 	var revoked,accepted bool
-	if err:=pool.QueryRow(ctx,"SELECT revoked_at IS NOT NULL,accepted_at IS NOT NULL FROM testagram_auth.native_staff_invitations WHERE id=$1::uuid",revokeInvitationID).Scan(&revoked,&accepted); err!=nil || !revoked || accepted {
+	var revokedByRequestID string
+	if err:=pool.QueryRow(ctx,"SELECT revoked_at IS NOT NULL,accepted_at IS NOT NULL,revoked_by_request_id::text FROM testagram_auth.native_staff_invitations WHERE id=$1::uuid",revokeInvitationID).Scan(&revoked,&accepted,&revokedByRequestID); err!=nil || !revoked || accepted {
 		t.Fatalf("revoked invitation state revoked=%v accepted=%v err=%v; want true/false",revoked,accepted,err)
 	}
 	var revokedEvents int
