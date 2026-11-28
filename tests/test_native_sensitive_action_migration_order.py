@@ -97,7 +97,6 @@ def main() -> None:
         "staff_webauthn_enrollment_authorization_is_valid",
         "native_sensitive_action_approvals",
         "consumed_at IS NULL AND revoked_at IS NULL",
-        "req.requested_by_user_id IS DISTINCT FROM target_staff.user_id",
     ):
         assert invariant in enrollment_sql, f"missing WebAuthn dual-control invariant: {invariant}"
     assert "BEGIN;" in sql and "COMMIT;" in sql, "migration must remain transactional"
@@ -108,6 +107,7 @@ def main() -> None:
         "staff.webauthn.enroll.approve",
         "owner_role.role='owner'",
         "override.granted=TRUE",
+        "req.requested_by_user_id IS DISTINCT FROM target_staff.user_id",
     ):
         assert invariant in permission_sql, f"missing live approver permission revalidation: {invariant}"
     assert "BEGIN;" in permission_sql and "COMMIT;" in permission_sql, (
