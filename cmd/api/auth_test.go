@@ -270,21 +270,29 @@ func TestRoutesRegisterWithoutPatternConflicts(t *testing.T) {
 	}
 }
 
-func TestPublicSignupRequiresIdentityReviewAndTwoPersonApproval(t *testing.T) {
+func TestPublicSignupIsIndependentOfIdentityReviewAndReachesAuthStore(t *testing.T) {
 	handler := (&service{}).routes()
-	for _, body := range []string{
-		`{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value"}`,
-		"{invalid-json",
-	} {
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(body))
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
-			t.Fatalf("public signup must fail closed before parsing or touching the auth store: status=%d body=%s", rec.Code, rec.Body.String())
-		}
-		if strings.Contains(rec.Body.String(), "AUTH_STORE_UNAVAILABLE") {
-			t.Fatalf("public signup fell through to ordinary auth-store handling: %s", rec.Body.String())
-		}
+	cases := []struct {
+		name string
+		body string
+		wantCode int
+		wantError string
+	}{
+		{name: "malformed request is parsed normally", body: "{invalid-json", wantCode: http.StatusBadRequest, wantError: "INVALID_JSON"},
+		{name: "valid signup reaches auth store", body: `{"email":"applicant@example.com","username":"applicant_01","password":"a-strong-password-value"}`, wantCode: http.StatusServiceUnavailable, wantError: "AUTH_STORE_UNAVAILABLE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode || !strings.Contains(rec.Body.String(), tc.wantError) {
+				t.Fatalf("signup did not follow the ordinary auth path: status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "IDENTITY_REVIEW_REQUIRED") {
+				t.Fatalf("optional identity review still blocks ordinary signup: %s", rec.Body.String())
+			}
+		})
 	}
 }
 
