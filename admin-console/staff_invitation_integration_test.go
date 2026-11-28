@@ -43,15 +43,17 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	t.Setenv("TESTAGRAM_AUTH_JWT_SECRET", strings.Repeat("native-staff-invitation-integration-secret-", 2))
 	const rpid = "ops.example.test"
 
-	var requesterID, approverOneID, approverTwoID, targetID, sessionID string
-	if err := pool.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text").
-		Scan(&requesterID, &approverOneID, &approverTwoID, &targetID, &sessionID); err != nil {
+	var requesterID, approverOneID, approverTwoID, targetID string
+	if err := pool.QueryRow(ctx, "SELECT gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text,gen_random_uuid()::text").
+		Scan(&requesterID, &approverOneID, &approverTwoID, &targetID); err != nil {
 		t.Fatalf("generate fixture IDs: %v", err)
 	}
 	targetEmail := "staff-invite-" + targetID[:8] + "@example.test"
 	owners := []string{requesterID, approverOneID, approverTwoID}
+	requesterEmail := ""
 	for index, ownerID := range owners {
 		email := fmt.Sprintf("staff-invite-owner-%d-%s@example.test", index, ownerID[:8])
+		if index == 0 { requesterEmail = email }
 		username := fmt.Sprintf("staffinviteowner%d_%s", index, ownerID[:8])
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO testagram_auth.identities(user_id,email,username,password_hash,email_verified_at)
@@ -87,48 +89,51 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		t.Fatalf("insert invitation target identity: %v", err)
 	}
 
-	payload, err := json.Marshal(staffInvitationPayload{Email: targetEmail, Role: "engineer"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(payload)
-	var requestID string
-	err = pool.QueryRow(ctx, `
-		INSERT INTO testagram_auth.native_sensitive_action_requests
-		  (action_type,requested_by_user_id,requested_by_service,target_reference,reason,payload,payload_sha256,required_approvals)
-		VALUES('staff.invite',$1::uuid,'staff',$2,'Integration test invitation with verified mailbox',$3::jsonb,$4,2)
-		RETURNING id::text
-	`, requesterID, targetID, string(payload), hex.EncodeToString(digest[:])).Scan(&requestID)
-	if err != nil {
-		t.Fatalf("create invitation approval request: %v", err)
-	}
-
 	admin := testApp(t)
 	admin.database = pool
+	requesterCredentialID := []byte("native-invitation-webauthn-credential-" + requesterID)
+	requesterCookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, requesterID, requesterEmail, requesterCredentialID, true)
+	requestBody, _ := json.Marshal(map[string]string{
+		"email": targetEmail, "role": "engineer",
+		"reason": "Integration test invitation with verified mailbox",
+	})
+	requestRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invite", bytes.NewReader(requestBody))
+	requestRequest.AddCookie(requesterCookie)
+	requestResponse := httptest.NewRecorder()
+	admin.handleInvite(requestResponse, requestRequest)
+	if requestResponse.Code != http.StatusCreated {
+		t.Fatalf("request invitation status=%d body=%s", requestResponse.Code, requestResponse.Body.String())
+	}
+	var requestResult struct { ID string `json:"id"` }
+	if err := json.Unmarshal(requestResponse.Body.Bytes(), &requestResult); err != nil || requestResult.ID == "" {
+		t.Fatalf("decode invitation request response: id=%q err=%v body=%s", requestResult.ID, err, requestResponse.Body.String())
+	}
+	requestID := requestResult.ID
+
 	for index, approverID := range []string{approverOneID, approverTwoID} {
 		credentialID := []byte("native-invitation-webauthn-credential-" + approverID)
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			t.Fatalf("begin approval transaction %d: %v", index+1, err)
+		approverEmail := fmt.Sprintf("staff-invite-owner-%d-%s@example.test", index+1, approverID[:8])
+		approverCookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, approverID, approverEmail, credentialID, true)
+		decisionBody, _ := json.Marshal(map[string]string{
+			"decision": "approved", "reason": "Independent owner approval for invitation",
+		})
+		decisionRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/admin/sensitive-actions/"+requestID+"/decision", bytes.NewReader(decisionBody))
+		decisionRequest.SetPathValue("id", requestID)
+		decisionRequest.AddCookie(approverCookie)
+		decisionResponse := httptest.NewRecorder()
+		admin.handleSensitiveActionDecision(decisionResponse, decisionRequest)
+		if decisionResponse.Code != http.StatusOK {
+			t.Fatalf("owner approval %d status=%d body=%s", index+1, decisionResponse.Code, decisionResponse.Body.String())
 		}
-		state, _, count, decisionErr := recordSensitiveActionDecision(
-			ctx, tx, requestID, "staff.invite", requesterID, approverID,
-			rpid, credentialID, "approved", "Independent owner approval for invitation",
-		)
-		if decisionErr != nil {
-			_ = tx.Rollback(ctx)
-			t.Fatalf("record owner approval %d: %v", index+1, decisionErr)
+		var decisionResult struct { Status string `json:"status"`; ApprovalCount int `json:"approval_count"` }
+		if err := json.Unmarshal(decisionResponse.Body.Bytes(), &decisionResult); err != nil {
+			t.Fatalf("decode owner approval %d response: %v", index+1, err)
 		}
-		if index == 0 && (state != "pending" || count != 1) {
-			_ = tx.Rollback(ctx)
-			t.Fatalf("first approval state=%s count=%d; want pending/1", state, count)
+		if index == 0 && (decisionResult.Status != "pending" || decisionResult.ApprovalCount != 1) {
+			t.Fatalf("first approval state=%s count=%d; want pending/1", decisionResult.Status, decisionResult.ApprovalCount)
 		}
-		if index == 1 && (state != "approved" || count != 2) {
-			_ = tx.Rollback(ctx)
-			t.Fatalf("second approval state=%s count=%d; want approved/2", state, count)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			t.Fatalf("commit owner approval %d: %v", index+1, err)
+		if index == 1 && (decisionResult.Status != "approved" || decisionResult.ApprovalCount != 2) {
+			t.Fatalf("second approval state=%s count=%d; want approved/2", decisionResult.Status, decisionResult.ApprovalCount)
 		}
 		if index == 0 {
 			var prematureInvitations, prematureMail int
@@ -212,42 +217,7 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		t.Fatalf("invitation creation audit events=%d err=%v; want exactly one", lifecycleEvents, err)
 	}
 
-	var tokenVersion int64
-	if err := pool.QueryRow(ctx, "SELECT token_version FROM testagram_auth.identities WHERE user_id=$1::uuid", targetID).Scan(&tokenVersion); err != nil {
-		t.Fatalf("read invitee token version: %v", err)
-	}
-	refreshBytes := make([]byte, 32)
-	if _, err := rand.Read(refreshBytes); err != nil {
-		t.Fatal(err)
-	}
-	refreshToken := base64.RawURLEncoding.EncodeToString(refreshBytes)
-	refreshHash := sha256.Sum256([]byte(refreshToken))
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO testagram_auth.sessions(session_id,user_id,refresh_token_hash,family_id,token_version,expires_at)
-		VALUES($1::uuid,$2::uuid,$3,gen_random_uuid(),$4,now()+interval '1 day')
-	`, sessionID, targetID, refreshHash[:], tokenVersion); err != nil {
-		t.Fatalf("create invitee native session: %v", err)
-	}
-	now := time.Now().UTC().Unix()
-	claims := nativeJWTClaims{
-		Subject: targetID, Email: targetEmail, Role: "authenticated",
-		Issuer: "testagram-auth", Audience: "testagram-api",
-		IssuedAt: now, ExpiresAt: now + 600, TokenVersion: tokenVersion, SessionID: sessionID,
-	}
-	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
-	claimsJSON, _ := json.Marshal(claims)
-	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claimsJSON)
-	mac := hmac.New(sha256.New, []byte(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
-	_, _ = mac.Write([]byte(unsigned))
-	accessToken := unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	sessionResponse := httptest.NewRecorder()
-	if err := admin.setSession(sessionResponse, session{
-		AccessToken: accessToken, RefreshToken: refreshToken,
-		AccessExpiresAt: now + 600, RefreshExpiresAt: now + 86400,
-	}); err != nil {
-		t.Fatalf("create encrypted invitee session cookie: %v", err)
-	}
-	cookie := sessionResponse.Result().Cookies()[0]
+	cookie := nativeStaffInvitationSessionCookie(t, ctx, pool, admin, targetID, targetEmail, nil, false)
 	body, _ := json.Marshal(map[string]string{"token": token})
 	acceptRequest := httptest.NewRequest(http.MethodPost, "https://ops.example.test/api/staff/invitations/accept", bytes.NewReader(body))
 	acceptRequest.AddCookie(cookie)
@@ -279,4 +249,64 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 	if replay.Code != http.StatusConflict {
 		t.Fatalf("replayed invitation status=%d body=%s; want 409", replay.Code, replay.Body.String())
 	}
+}
+
+
+func nativeStaffInvitationSessionCookie(t *testing.T, ctx context.Context, pool *pgxpool.Pool, admin *app, userID, email string, credentialID []byte, elevated bool) *http.Cookie {
+	t.Helper()
+	var tokenVersion int64
+	if err := pool.QueryRow(ctx, "SELECT token_version FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&tokenVersion); err != nil {
+		t.Fatalf("read native session token version: %v", err)
+	}
+	var sessionID string
+	if err := pool.QueryRow(ctx, "SELECT gen_random_uuid()::text").Scan(&sessionID); err != nil {
+		t.Fatalf("generate native session ID: %v", err)
+	}
+	refreshBytes := make([]byte, 32)
+	if _, err := rand.Read(refreshBytes); err != nil {
+		t.Fatal(err)
+	}
+	refreshToken := base64.RawURLEncoding.EncodeToString(refreshBytes)
+	refreshHash := sha256.Sum256([]byte(refreshToken))
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO testagram_auth.sessions(session_id,user_id,refresh_token_hash,family_id,token_version,expires_at)
+		VALUES($1::uuid,$2::uuid,$3,gen_random_uuid(),$4,now()+interval '1 day')
+	`, sessionID, userID, refreshHash[:], tokenVersion); err != nil {
+		t.Fatalf("create native session: %v", err)
+	}
+	now := time.Now().UTC().Unix()
+	claims := nativeJWTClaims{
+		Subject: userID, Email: email, Role: "authenticated",
+		Issuer: "testagram-auth", Audience: "testagram-api",
+		IssuedAt: now, ExpiresAt: now + 600, TokenVersion: tokenVersion, SessionID: sessionID,
+	}
+	header, _ := json.Marshal(map[string]string{"alg": "HS256", "typ": "JWT"})
+	claimsJSON, _ := json.Marshal(claims)
+	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claimsJSON)
+	mac := hmac.New(sha256.New, []byte(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET")))
+	_, _ = mac.Write([]byte(unsigned))
+	accessToken := unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	elevatedToken := ""
+	if elevated {
+		if len(credentialID) == 0 {
+			t.Fatal("credential-bound test elevation requires an authenticator ID")
+		}
+		var err error
+		elevatedToken, _, err = admin.mintStaffElevation(authUser{ID: userID}, accessToken, credentialID)
+		if err != nil {
+			t.Fatalf("mint native staff WebAuthn elevation: %v", err)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	if err := admin.setSession(recorder, session{
+		AccessToken: accessToken, RefreshToken: refreshToken, ElevatedToken: elevatedToken,
+		AccessExpiresAt: now + 600, RefreshExpiresAt: now + 86400,
+	}); err != nil {
+		t.Fatalf("create encrypted native session cookie: %v", err)
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one encrypted native session cookie, got %d", len(cookies))
+	}
+	return cookies[0]
 }
