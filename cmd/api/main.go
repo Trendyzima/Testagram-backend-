@@ -1565,13 +1565,22 @@ func main() {
 // session creation and the first authenticated profile read are present and
 // readable by the configured PostgreSQL application role. The names are
 // compile-time constants, never request-derived SQL identifiers.
-func nativeAuthReadinessSchema(ctx context.Context, db *pgxpool.Pool) error {
-	for _, relation := range []string{
+func nativeAuthReadinessRelations() []string {
+	return []string{
 		"testagram_auth.identities",
 		"testagram_auth.sessions",
 		"testagram_auth.rate_limits",
 		"testagram_auth.security_audit",
-		"testagram_identity.native_registration_provisioning",
+		"testagram_local.accounts",
+	}
+}
+
+func nativeAuthReadinessSchema(ctx context.Context, db *pgxpool.Pool) error {
+	for _, relation := range nativeAuthReadinessRelations() {
+		"testagram_auth.identities",
+		"testagram_auth.sessions",
+		"testagram_auth.rate_limits",
+		"testagram_auth.security_audit",
 		"testagram_local.accounts",
 	} {
 		rows, err := db.Query(ctx, "SELECT 1 FROM "+relation+" LIMIT 0")
