@@ -11,6 +11,12 @@ func TestMailWorkerNeverSendsPendingSocialMailAfterConsentWithdrawal(t *testing.
 	db := nativeRecoveryTestDatabase(t)
 	ctx := context.Background()
 	configureMailWorkerTest(t)
+	// The shared isolated integration database may contain pending messages from
+	// earlier worker cases encrypted with a different fixture key. Keep those
+	// rows out of this worker pass so the test exercises only its own message.
+	if _, err := db.Exec(ctx, "UPDATE testagram_mail.outbox SET available_at=now()+interval '1 day' WHERE status='pending'"); err != nil {
+		t.Fatal(err)
+	}
 	userID := "123e4567-e89b-42d3-a456-426614174198"
 	username := fmt.Sprintf("mailwithdraw%d", time.Now().UnixNano()%1000000)
 	recipient := username + "@example.test"
