@@ -76,6 +76,12 @@ func TestNativeStaffInvitationLifecycleIntegration(t *testing.T) {
 		}
 		credentialID := []byte("native-invitation-webauthn-credential-" + ownerID)
 		if _, err := pool.Exec(ctx, `
+			INSERT INTO testagram_auth.staff_webauthn_users(rpid,user_id,user_handle)
+			VALUES($1,$2::uuid,digest($2::text,'sha256'))
+		`, rpid, ownerID); err != nil {
+			t.Fatalf("insert owner WebAuthn user handle: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
 			INSERT INTO testagram_auth.staff_webauthn_credentials
 			  (rpid,user_id,credential_id,credential,user_verified,clone_warning)
 			VALUES($1,$2::uuid,$3,'test-only-encrypted-credential',TRUE,FALSE)
