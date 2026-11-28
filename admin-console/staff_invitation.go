@@ -352,6 +352,24 @@ func (a *app) handleAcceptStaffInvitation(w http.ResponseWriter, r *http.Request
 }
 
 func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requesterID, approverID, targetReference string, payload []byte) error {
+	var actionType, requestStatus, immutableTarget string
+	var quorum int
+	if err := tx.QueryRow(ctx, `
+		SELECT action_type,status,target_reference,required_approvals
+		FROM testagram_auth.native_sensitive_action_requests
+		WHERE id=$1::uuid FOR UPDATE
+	`, requestID).Scan(&actionType, &requestStatus, &immutableTarget, &quorum); err != nil ||
+		actionType != "staff.invite" || requestStatus != "approved" || immutableTarget != targetReference || quorum != 2 {
+		return errors.New("staff invitation request state or two-person quorum is invalid")
+	}
+	var totalApprovals int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(DISTINCT approver_user_id)
+		FROM testagram_auth.native_sensitive_action_approvals
+		WHERE request_id=$1::uuid AND decision='approved'
+	`, requestID).Scan(&totalApprovals); err != nil || totalApprovals != 2 {
+		return errors.New("exactly two independent approvals are required")
+	}
 	var invitation staffInvitationPayload
 	if err := json.Unmarshal(payload, &invitation); err != nil {
 		return errors.New("staff invitation payload is invalid")
