@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "migrations"
 TARGET = "061_native_sensitive_action_integrity.sql"
 WEBAUTHN_DUAL_CONTROL = "20261128_native_staff_webauthn_dual_control.sql"
+APPROVER_REVALIDATION = "20261128_native_staff_webauthn_approver_permission_revalidation.sql"
 STAFF_LIFECYCLE = "20261127_native_staff_lifecycle_executor.sql"
 PREREQUISITES = (
     "20261019_testagram_independent_auth.sql",
@@ -48,11 +49,18 @@ def main() -> None:
     assert f"../../migrations/{TARGET}:/docker-entrypoint-initdb.d/{TARGET}:ro" in compose
     assert f"apply_migration {TARGET}" in runner
     assert f"../../migrations/{WEBAUTHN_DUAL_CONTROL}:/docker-entrypoint-initdb.d/{WEBAUTHN_DUAL_CONTROL}:ro" in compose
+    assert f"../../migrations/{APPROVER_REVALIDATION}:/docker-entrypoint-initdb.d/{APPROVER_REVALIDATION}:ro" in compose
     migration_list = runner[runner.index("for file in"):runner.index("apply_migration() {")]
     assert WEBAUTHN_DUAL_CONTROL in migration_list, "runner omits dual-control enrollment migration"
     assert migration_list.index(TARGET) < migration_list.index(STAFF_LIFECYCLE) < migration_list.index(
         WEBAUTHN_DUAL_CONTROL
     ), "dual-control enrollment schema must follow the sensitive-action ledger and staff lifecycle tables"
+    assert APPROVER_REVALIDATION in migration_list
+    assert runner.index(f"apply_migration {STAFF_LIFECYCLE}") < runner.index(
+        f"apply_migration {WEBAUTHN_DUAL_CONTROL}"
+    ) < runner.index(f"apply_migration {APPROVER_REVALIDATION}"), (
+        "staff lifecycle, dual-control and permission revalidation migrations must be applied in order"
+    )
     assert runner.index("apply_migration 060_native_staff_webauthn.sql") < runner.index(
         f"apply_migration {TARGET}"
     ), "WebAuthn credentials must exist before sensitive-action integrity triggers are installed"
@@ -71,6 +79,7 @@ def main() -> None:
         f"migrations/{TARGET}",
         f"migrations/{STAFF_LIFECYCLE}",
         f"migrations/{WEBAUTHN_DUAL_CONTROL}",
+        f"migrations/{APPROVER_REVALIDATION}",
     )
     positions = [admin_job.index(item) for item in ordered]
     assert positions == sorted(positions), "Backend PostgreSQL integration migration order regressed"
@@ -91,6 +100,18 @@ def main() -> None:
     ):
         assert invariant in enrollment_sql, f"missing WebAuthn dual-control invariant: {invariant}"
     assert "BEGIN;" in sql and "COMMIT;" in sql, "migration must remain transactional"
+    permission_sql = (MIGRATIONS / APPROVER_REVALIDATION).read_text()
+    for invariant in (
+        "native_staff_permission_overrides",
+        "staff_role_permissions",
+        "staff.webauthn.enroll.approve",
+        "owner_role.role='owner'",
+        "override.granted=TRUE",
+    ):
+        assert invariant in permission_sql, f"missing live approver permission revalidation: {invariant}"
+    assert "BEGIN;" in permission_sql and "COMMIT;" in permission_sql, (
+        "approver permission revalidation migration must remain transactional"
+    )
     assert "BEGIN;" in enrollment_sql and "COMMIT;" in enrollment_sql, (
         "WebAuthn dual-control migration must remain transactional"
     )
