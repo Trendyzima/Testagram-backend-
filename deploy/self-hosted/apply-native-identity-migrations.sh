@@ -79,6 +79,16 @@ WITH checks(check_name, ok) AS (VALUES
       AND conname='native_sensitive_action_requests_action_type_check'
       AND pg_get_constraintdef(oid) LIKE '%staff.invitation.revoke%'
   )),
+  ('native staff invitation revocation request binding column', EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='testagram_auth' AND table_name='native_staff_invitations'
+      AND column_name='revoked_by_request_id'
+  )),
+  ('native staff invitation database revocation guard', EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid=to_regclass('testagram_auth.native_staff_invitations')
+      AND tgname='native_staff_invitation_mutation_guard' AND NOT tgisinternal
+  )),
   ('native_sensitive_action_requests.requested_by_service', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
   ('native sensitive action request source column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='native_sensitive_action_requests' AND column_name='requested_by_service')),
   ('identity application review stage column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_identity' AND table_name='identity_application_reviews' AND column_name='review_stage')),
