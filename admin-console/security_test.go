@@ -188,6 +188,7 @@ func TestStaffWebAuthnEnrollmentEndpointRequiresDualControlLedger(t *testing.T) 
 		"second_approver_user_id",
 		"webauthn_enrollment_authorized",
 		"FOR UPDATE OF sp,i",
+		"requesterID == targetReference",
 	} {
 		if !strings.Contains(security, required) {
 			t.Fatalf("dual-control executor is missing required invariant %q", required)
@@ -211,5 +212,18 @@ func TestStaffWebAuthnEnrollmentEndpointRequiresDualControlLedger(t *testing.T) 
 		if !strings.Contains(sql, required) {
 			t.Fatalf("dual-control migration is missing database invariant %q", required)
 		}
+	}
+	for _, required := range []string{
+		"to_regprocedure('testagram_auth.staff_webauthn_enrollment_authorization_is_valid(bigint,uuid,text)') IS NOT NULL",
+		"native_staff_lifecycle_events",
+		"has_column_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','consumed_at','UPDATE')",
+		"has_column_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','revoked_at','UPDATE')",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("WebAuthn readiness omits dual-control prerequisite %q", required)
+		}
+	}
+	if strings.Contains(source, "has_table_privilege(current_user,'testagram_auth.staff_webauthn_enrollment_authorizations','UPDATE')") {
+		t.Fatal("WebAuthn readiness must recognize column-scoped UPDATE grants")
 	}
 }

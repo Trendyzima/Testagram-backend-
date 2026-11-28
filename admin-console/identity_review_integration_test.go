@@ -105,9 +105,27 @@ func TestRecordIdentityApplicationReviewIntegration(t *testing.T) {
 	admin.database = pool
 	admin.apiHealthURL = health.URL
 	admin.client = health.Client()
+	var readinessSchemaDiagnostics string
+	if err := conn.QueryRow(ctx, `
+		SELECT jsonb_build_object(
+		  'native_sensitive_action_requests',to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL,
+		  'native_sensitive_action_approvals',to_regclass('testagram_auth.native_sensitive_action_approvals') IS NOT NULL,
+		  'native_staff_lifecycle_events',to_regclass('testagram_auth.native_staff_lifecycle_events') IS NOT NULL,
+		  'role_permissions',to_regclass('testagram_auth.staff_role_permissions') IS NOT NULL,
+		  'authorization_validator',to_regprocedure('testagram_auth.staff_webauthn_enrollment_authorization_is_valid(bigint,uuid,text)') IS NOT NULL,
+		  'authorization_columns',(SELECT array_agg(column_name ORDER BY column_name) FROM information_schema.columns
+		    WHERE table_schema='testagram_auth' AND table_name='staff_webauthn_enrollment_authorizations'
+		      AND column_name IN ('request_id','first_approver_user_id','second_approver_user_id','revoked_at')),
+		  'approver_permission_trigger',EXISTS(SELECT 1 FROM pg_trigger
+		    WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals')
+		      AND tgname='native_staff_webauthn_enrollment_approver_permission' AND NOT tgisinternal)
+		)::text
+	`).Scan(&readinessSchemaDiagnostics); err != nil {
+		t.Fatalf("inspect WebAuthn readiness schema prerequisites: %v", err)
+	}
 	readiness := admin.staffWebAuthnReadiness(ctx)
 	if ready, _ := readiness["identity_review_ready"].(bool); !ready {
-		t.Fatalf("Admin Console rejected complete PostgreSQL WebAuthn readiness: %#v", readiness)
+		t.Fatalf("Admin Console rejected complete PostgreSQL WebAuthn readiness: %#v; schema prerequisites=%s", readiness, readinessSchemaDiagnostics)
 	}
 
 	// A valid MFA elevation is accepted only while the exact authenticator

@@ -52,6 +52,8 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261125_testagram_mail_delivery_events.sql",
             "20261126_testagram_native_mail_feedback.sql",
             "20261127_identity_evidence_retention_audit.sql",
+            "20261128_native_staff_webauthn_dual_control.sql",
+            "20261128_native_staff_webauthn_approver_permission_revalidation.sql",
         ]
         manifest = SOURCE.split("for file in", 1)[1].split("; do", 1)[0]
         applied = set(re.findall(r"(?m)^apply_migration\s+(\S+)", SOURCE))
@@ -198,6 +200,53 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
                 self.assertIn(expected, sql)
         self.assertIn("token_sha256 BYTEA NOT NULL UNIQUE", sql)
         self.assertNotIn("token TEXT", sql)
+
+    def test_staff_webauthn_dual_control_migrations_are_mounted_and_applied(self):
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        migrations = (
+            "20261128_native_staff_webauthn_dual_control.sql",
+            "20261128_native_staff_webauthn_approver_permission_revalidation.sql",
+        )
+        for migration in migrations:
+            with self.subTest(migration=migration):
+                self.assertIn(
+                    f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro",
+                    compose,
+                )
+                self.assertIn(f"apply_migration {migration}", SOURCE)
+                self.assertIn(migration, SOURCE.split("for file in", 1)[1].split("; do", 1)[0])
+        self.assertLess(
+            SOURCE.index("apply_migration 20261127_native_staff_lifecycle_executor.sql"),
+            SOURCE.index("apply_migration 20261128_native_staff_webauthn_dual_control.sql"),
+        )
+        self.assertLess(
+            SOURCE.index("apply_migration 20261128_native_staff_webauthn_dual_control.sql"),
+            SOURCE.index("apply_migration 20261128_native_staff_webauthn_approver_permission_revalidation.sql"),
+        )
+        revalidation = (ROOT / "migrations" / migrations[1]).read_text(encoding="utf-8")
+        for invariant in (
+            "native_staff_permission_overrides",
+            "staff_role_permissions",
+            "staff.webauthn.enroll.approve",
+            "owner_role.role='owner'",
+            "override.granted=TRUE",
+        ):
+            with self.subTest(invariant=invariant):
+                self.assertIn(invariant, revalidation)
+
+    def test_identity_registration_postgres_fixture_applies_staff_webauthn_prerequisites(self):
+        script = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+        ordered = (
+            "migrations/061_native_sensitive_action_integrity.sql",
+            "migrations/20261127_native_staff_lifecycle_executor.sql",
+            "migrations/20261128_native_staff_webauthn_dual_control.sql",
+            "migrations/20261128_native_staff_webauthn_approver_permission_revalidation.sql",
+        )
+        initial = script.split("# Re-apply the new migration", 1)[0]
+        positions = [initial.index(item) for item in ordered]
+        self.assertEqual(positions, sorted(positions), "identity registration fixture must apply staff WebAuthn prerequisites in dependency order")
+        for migration in ordered[2:]:
+            self.assertIn(f"psql_ci < {migration}", script, f"fixture must reapply {migration} to test idempotency")
 
     def test_archive_migrations_are_mounted_and_applied_in_order(self):
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")

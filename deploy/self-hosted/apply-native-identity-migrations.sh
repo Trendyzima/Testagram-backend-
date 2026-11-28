@@ -61,6 +61,15 @@ WITH checks(check_name, ok) AS (VALUES
   ('staff WebAuthn credentials table', to_regclass('testagram_auth.staff_webauthn_credentials') IS NOT NULL),
   ('staff WebAuthn challenges table', to_regclass('testagram_auth.staff_webauthn_challenges') IS NOT NULL),
   ('staff WebAuthn enrollment authorizations table', to_regclass('testagram_auth.staff_webauthn_enrollment_authorizations') IS NOT NULL),
+  ('staff WebAuthn dual-control lifecycle events table', to_regclass('testagram_auth.native_staff_lifecycle_events') IS NOT NULL),
+  ('staff WebAuthn role permission map', to_regclass('testagram_auth.staff_role_permissions') IS NOT NULL),
+  ('staff WebAuthn authorization request binding', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='staff_webauthn_enrollment_authorizations' AND column_name='request_id')),
+  ('staff WebAuthn first approver binding', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='staff_webauthn_enrollment_authorizations' AND column_name='first_approver_user_id')),
+  ('staff WebAuthn second approver binding', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='staff_webauthn_enrollment_authorizations' AND column_name='second_approver_user_id')),
+  ('staff WebAuthn authorization revocation column', EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='testagram_auth' AND table_name='staff_webauthn_enrollment_authorizations' AND column_name='revoked_at')),
+  ('staff WebAuthn authorization validator function', to_regprocedure('testagram_auth.staff_webauthn_enrollment_authorization_is_valid(bigint,uuid,text)') IS NOT NULL),
+  ('staff WebAuthn approver permission trigger', EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('testagram_auth.native_sensitive_action_approvals') AND tgname='native_staff_webauthn_enrollment_approver_permission' AND NOT tgisinternal)),
+  ('staff WebAuthn approver permission revalidation function body', COALESCE(pg_get_functiondef(to_regprocedure('testagram_auth.staff_webauthn_enrollment_authorization_is_valid(bigint,uuid,text)')) LIKE '%native_staff_permission_overrides%' AND pg_get_functiondef(to_regprocedure('testagram_auth.staff_webauthn_enrollment_authorization_is_valid(bigint,uuid,text)')) LIKE '%staff_role_permissions%',false)),
   ('testagram_app staff MFA timestamp update', COALESCE((SELECT has_column_privilege(oid,'testagram_auth.staff_principals','mfa_enrolled_at','UPDATE') FROM pg_roles WHERE rolname='testagram_app'),false)),
   ('native_staff_permission_overrides table', to_regclass('testagram_auth.native_staff_permission_overrides') IS NOT NULL),
   ('native_sensitive_action_requests table', to_regclass('testagram_auth.native_sensitive_action_requests') IS NOT NULL),
@@ -212,6 +221,7 @@ for file in \
   061_native_sensitive_action_integrity.sql \
   20261127_native_staff_lifecycle_executor.sql \
   20261128_native_staff_webauthn_dual_control.sql \
+  20261128_native_staff_webauthn_approver_permission_revalidation.sql \
   20261124_testagram_email_verification_otp.sql \
   20261124_testagram_social_email_consent.sql \
   20261125_testagram_mail_delivery_events.sql \
@@ -254,6 +264,8 @@ apply_migration 20261121_native_identity_intake_optional_fingerprint.sql
 apply_migration 060_native_staff_webauthn.sql
 apply_migration 061_native_sensitive_action_integrity.sql
 apply_migration 20261127_native_staff_lifecycle_executor.sql
+apply_migration 20261128_native_staff_webauthn_dual_control.sql
+apply_migration 20261128_native_staff_webauthn_approver_permission_revalidation.sql
 apply_migration 20261124_testagram_email_verification_otp.sql
 apply_migration 20261124_testagram_social_email_consent.sql
 apply_migration 20261125_testagram_mail_delivery_events.sql
