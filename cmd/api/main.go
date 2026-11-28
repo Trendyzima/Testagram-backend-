@@ -1567,7 +1567,6 @@ func nativeAuthReadinessSchema(ctx context.Context, db *pgxpool.Pool) error {
 		"testagram_auth.sessions",
 		"testagram_auth.rate_limits",
 		"testagram_auth.security_audit",
-		"testagram_auth.registration_consents",
 		"testagram_identity.native_registration_provisioning",
 		"testagram_local.accounts",
 	} {
