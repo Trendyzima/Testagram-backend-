@@ -292,6 +292,8 @@ services:
       API_HEALTH_URL: http://api:8082/readyz
       BACKEND_INTERNAL_URL: http://api:8080
       TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set the same native JWT secret used by Backend}
+      # Must match the API mail worker key so invitation payloads use the same authenticated encryption context.
+      TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:?Set TESTAGRAM_MAIL_ENCRYPTION_KEY in .env}
       TESTAGRAM_WEBAUTHN_READINESS_TOKEN: ${TESTAGRAM_WEBAUTHN_READINESS_TOKEN:-}
       TESTAGRAM_WEBAUTHN_RPID: ${TESTAGRAM_WEBAUTHN_RPID:-}
       TESTAGRAM_WEBAUTHN_ORIGINS: ${TESTAGRAM_WEBAUTHN_ORIGINS:-}
