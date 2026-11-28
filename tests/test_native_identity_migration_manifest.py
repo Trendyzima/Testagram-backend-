@@ -52,6 +52,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "20261125_testagram_mail_delivery_events.sql",
             "20261126_testagram_native_mail_feedback.sql",
             "20261127_identity_evidence_retention_audit.sql",
+            "20261128_native_auth_registration_consent.sql",
             "20261128_native_staff_webauthn_dual_control.sql",
             "20261128_native_staff_webauthn_approver_permission_revalidation.sql",
         ]
