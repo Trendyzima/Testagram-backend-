@@ -293,6 +293,10 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		writeJSON(w, http.StatusBadRequest, errorBody("INVALID_JSON", "Request body is invalid", requestID(r)))
 		return true
 	}
+	if action == "signup" && (!in.TermsAccepted || !in.PrivacyAccepted || !in.AgeConfirmed) {
+		writeJSON(w, http.StatusBadRequest, errorBody("LEGAL_ACCEPTANCE_REQUIRED", "Confirm the age declaration and accept the current Terms of Service and Privacy Notice to create an account", requestID(r)))
+		return true
+	}
 	if s.db == nil {
 		writeJSON(w, http.StatusServiceUnavailable, errorBody("AUTH_STORE_UNAVAILABLE", "Authentication store is unavailable", requestID(r)))
 		return true
@@ -306,10 +310,6 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 	ip := authClientIP(r)
 	switch action {
 	case "signup":
-		if !in.TermsAccepted || !in.PrivacyAccepted || !in.AgeConfirmed {
-			writeJSON(w, http.StatusBadRequest, errorBody("LEGAL_ACCEPTANCE_REQUIRED", "Confirm the age declaration and accept the current Terms of Service and Privacy Notice to create an account", requestID(r)))
-			return true
-		}
 		email, err := authEmail(in.Email)
 		if err != nil || !authUsernamePattern.MatchString(in.Username) {
 			writeJSON(w, http.StatusBadRequest, errorBody("INVALID_SIGNUP", "Enter a valid email, username, and password of at least 12 characters", requestID(r)))
