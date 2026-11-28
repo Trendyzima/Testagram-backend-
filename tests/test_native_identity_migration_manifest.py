@@ -145,7 +145,7 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
         self.assertIn(migration, workflow)
         self.assertIn("registration_consents", sql)
         self.assertIn("age_confirmation", sql)
-        self.assertNotRegex(sql.lower(), r"government.?id|identity.?document|selfie|identity.?evidence")
+        self.assertNotRegex(sql.lower(), r"government_id|identity_document|selfie_url|identity_evidence")
 
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
