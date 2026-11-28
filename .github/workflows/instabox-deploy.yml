@@ -69,7 +69,8 @@ jobs:
           python3 tests/test_instabox_native_mail_egress.py -v
           python3 tests/test_native_mail_deployment.py -v
           python3 tests/test_instabox_b2_credentials.py -v
-          python3 tests/test_instabox_mailjet_port.py -v
+          python3 scripts/guard-native-mail-policy.py
+          python3 tests/test_native_mail_provider_policy.py -v
           python3 tests/test_instabox_edge_proxy_secret.py -v
           python3 tests/test_instabox_image_digest_verification.py -v
           python3 tests/test_instabox_web_image_release_wiring.py -v
