@@ -14,6 +14,7 @@ import (
 	"errors"
 	"net/http"
 	"net/mail"
+	"regexp"
 	"net/url"
 	"strings"
 	"time"
@@ -184,6 +185,65 @@ func (a *app) handleInvite(w http.ResponseWriter, r *http.Request) {
 		"id": requestID, "status": "pending", "required_approvals": 2,
 		"message": "Invitation request recorded. Two different eligible owners must approve it before an email is sent.",
 	})
+}
+
+
+func (a *app) handleRevokeStaffInvitation(w http.ResponseWriter, r *http.Request) {
+	s, actor, ok := a.requireStaff(w, r, "owner")
+	if !ok { return }
+	claims, ok := a.requireRecentStepUpClaims(w, s)
+	if !ok { return }
+	if claims.Subject != actor.ID { writeJSON(w, http.StatusUnauthorized, map[string]string{"error":"WebAuthn elevation does not belong to the authenticated staff principal"}); return }
+	var input struct { Reason string `json:"reason"` }
+	if !decodeBody(w, r, &input) { return }
+	input.Reason = strings.TrimSpace(input.Reason)
+	if len(input.Reason)<12 || len(input.Reason)>1000 { writeJSON(w,http.StatusBadRequest,map[string]string{"error":"A revocation reason of 12 to 1000 characters is required"}); return }
+	if allowed, rateErr := a.consumeAdminRateLimit(r.Context(),actor.ID,"staff-invitation-revoke-request",5,time.Hour); rateErr!=nil {
+		writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Security rate-limit service is unavailable"}); return
+	} else if !allowed { writeJSON(w,http.StatusTooManyRequests,map[string]string{"error":"Too many invitation revocation requests. Try again later."}); return }
+	invitationID:=strings.TrimSpace(r.PathValue("id"))
+	if len(invitationID)!=36 || !regexp.MustCompile("^[0-9a-fA-F-]{36}$").MatchString(invitationID) { writeJSON(w,http.StatusBadRequest,map[string]string{"error":"Invalid invitation ID"}); return }
+	ctx,cancel:=context.WithTimeout(r.Context(),6*time.Second); defer cancel()
+	tx,err:=a.database.Begin(ctx)
+	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Invitation revocation service is unavailable"}); return }
+	defer func(){ _=tx.Rollback(context.Background()) }()
+	var targetID, originalRequestID string
+	err=tx.QueryRow(ctx,`
+		SELECT i.user_id::text,ni.request_id::text
+		FROM testagram_auth.native_staff_invitations ni
+		JOIN testagram_auth.native_sensitive_action_requests original
+		  ON original.id=ni.request_id AND original.action_type='staff.invite' AND original.status='approved'
+		JOIN testagram_auth.identities i
+		  ON i.email_normalized=ni.email_normalized AND i.email_verified_at IS NOT NULL AND i.disabled_at IS NULL
+		WHERE ni.id=$1::uuid AND ni.accepted_at IS NULL AND ni.revoked_at IS NULL AND ni.expires_at>now()
+		FOR UPDATE OF ni,i
+	`,invitationID).Scan(&targetID,&originalRequestID)
+	if err!=nil {
+		if errors.Is(err,pgx.ErrNoRows) { writeJSON(w,http.StatusConflict,map[string]string{"error":"Invitation is not pending, has expired, or its verified target no longer exists"}); return }
+		writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Could not validate the pending invitation"}); return
+	}
+	if targetID==actor.ID { writeJSON(w,http.StatusConflict,map[string]string{"error":"The invitation target cannot request its own revocation"}); return }
+	var duplicate bool
+	err=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM testagram_auth.native_sensitive_action_requests WHERE action_type='staff.invitation.revoke' AND payload->>'invitation_id'=$1 AND status='pending' AND expires_at>now())`,invitationID).Scan(&duplicate)
+	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Could not check existing revocation requests"}); return }
+	if duplicate { writeJSON(w,http.StatusConflict,map[string]string{"error":"A two-person revocation request is already pending for this invitation"}); return }
+	payload,err:=json.Marshal(struct { InvitationID string `json:"invitation_id"` }{InvitationID:invitationID})
+	if err!=nil { writeJSON(w,http.StatusInternalServerError,map[string]string{"error":"Could not prepare the revocation request"}); return }
+	digest:=sha256.Sum256(payload)
+	var requestID string
+	err=tx.QueryRow(ctx,`
+		INSERT INTO testagram_auth.native_sensitive_action_requests
+		  (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256,required_approvals)
+		VALUES ('staff.invitation.revoke',$1::uuid,$2,$3,$4::jsonb,$5,2) RETURNING id::text
+	`,actor.ID,targetID,input.Reason,string(payload),hex.EncodeToString(digest[:])).Scan(&requestID)
+	if err==nil { _,err=tx.Exec(ctx,`
+		INSERT INTO testagram_auth.native_admin_security_audit(actor_user_id,action,target_reference,request_id,metadata)
+		VALUES($1::uuid,'staff.invitation.revocation_requested',$2,$3::uuid,
+		       jsonb_build_object('invitation_id',$4::uuid,'original_invitation_request_id',$5::uuid,'required_approvals',2))
+	`,actor.ID,targetID,requestID,invitationID,originalRequestID) }
+	if err==nil { err=tx.Commit(ctx) }
+	if err!=nil { writeJSON(w,http.StatusServiceUnavailable,map[string]string{"error":"Could not safely record the revocation request"}); return }
+	writeJSON(w,http.StatusCreated,map[string]any{"id":requestID,"status":"pending","required_approvals":2,"message":"Revocation request recorded. Two different eligible owners must approve it before the invitation token is invalidated."})
 }
 
 func (a *app) hasPendingStaffInvitation(ctx context.Context, userID, email string) (bool, error) {
@@ -471,6 +531,70 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 	`, requestID, approverID, targetID, email, invitation.Role, invitationID)
 	return err
 }
+
+
+func executeStaffInvitationRevocation(ctx context.Context, tx pgx.Tx, requestID, requesterID, approverID, targetReference string, payload []byte) error {
+	var actionType,requestStatus,immutableTarget string
+	var quorum int
+	if err:=tx.QueryRow(ctx,`SELECT action_type,status,target_reference,required_approvals FROM testagram_auth.native_sensitive_action_requests WHERE id=$1::uuid FOR UPDATE`,requestID).Scan(&actionType,&requestStatus,&immutableTarget,&quorum); err!=nil || actionType!="staff.invitation.revoke" || requestStatus!="approved" || immutableTarget!=targetReference || quorum!=2 {
+		return errors.New("staff invitation revocation request state or two-person quorum is invalid")
+	}
+	var request struct { InvitationID string `json:"invitation_id"` }
+	if err:=json.Unmarshal(payload,&request); err!=nil || len(request.InvitationID)!=36 { return errors.New("staff invitation revocation payload is invalid") }
+	var count int
+	if err:=tx.QueryRow(ctx,`SELECT count(DISTINCT approver_user_id) FROM testagram_auth.native_sensitive_action_approvals WHERE request_id=$1::uuid AND decision='approved'`,requestID).Scan(&count); err!=nil || count!=2 {
+		return errors.New("exactly two independent approvals are required to revoke an invitation")
+	}
+	var originalRequestID,email,role string
+	err:=tx.QueryRow(ctx,`
+		SELECT ni.request_id::text,ni.email_normalized,ni.role
+		FROM testagram_auth.native_staff_invitations ni
+		WHERE ni.id=$1::uuid AND ni.accepted_at IS NULL AND ni.revoked_at IS NULL AND ni.expires_at>now()
+		FOR UPDATE
+	`,request.InvitationID).Scan(&originalRequestID,&email,&role)
+	if err!=nil { return errors.New("invitation was accepted, revoked, expired or no longer exists") }
+	var targetID string
+	err=tx.QueryRow(ctx,`SELECT user_id::text FROM testagram_auth.identities WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL FOR UPDATE`,email).Scan(&targetID)
+	if err!=nil || targetID!=targetReference || targetID==requesterID || targetID==approverID { return errors.New("invitation target no longer matches the immutable revocation request") }
+	var originalAction,originalStatus string
+	err=tx.QueryRow(ctx,`SELECT action_type,status FROM testagram_auth.native_sensitive_action_requests WHERE id=$1::uuid FOR UPDATE`,originalRequestID).Scan(&originalAction,&originalStatus)
+	if err!=nil || originalAction!="staff.invite" || originalStatus!="approved" { return errors.New("original invitation approval is not valid") }
+	var requesterEligible bool
+	err=tx.QueryRow(ctx,`
+		SELECT EXISTS(SELECT 1 FROM testagram_auth.staff_principals sp
+		  JOIN testagram_auth.identities i ON i.user_id=sp.user_id
+		  JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id
+		  WHERE sp.user_id=$1::uuid AND sp.enabled=TRUE AND sp.mfa_enrolled_at IS NOT NULL
+		    AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+		    AND rg.role='owner' AND rg.revoked_at IS NULL
+		    AND EXISTS(SELECT 1 FROM testagram_auth.staff_webauthn_credentials wc
+		      WHERE wc.user_id=sp.user_id AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE))
+	`,requesterID).Scan(&requesterEligible)
+	if err!=nil || !requesterEligible { return errors.New("revocation requester is no longer an eligible owner") }
+	var eligibleApprovers int
+	err=tx.QueryRow(ctx,`
+		SELECT count(DISTINCT a.approver_user_id)
+		FROM testagram_auth.native_sensitive_action_approvals a
+		JOIN testagram_auth.staff_principals sp ON sp.user_id=a.approver_user_id AND sp.enabled=TRUE
+		JOIN testagram_auth.identities i ON i.user_id=sp.user_id AND i.disabled_at IS NULL AND i.email_verified_at IS NOT NULL
+		JOIN testagram_auth.staff_role_grants rg ON rg.user_id=sp.user_id AND rg.role='owner' AND rg.revoked_at IS NULL
+		JOIN testagram_auth.staff_webauthn_credentials wc ON wc.user_id=a.approver_user_id
+		  AND wc.rpid=a.webauthn_rpid AND wc.credential_id=a.webauthn_credential_id
+		  AND wc.revoked_at IS NULL AND wc.user_verified=TRUE AND wc.clone_warning=FALSE
+		WHERE a.request_id=$1::uuid AND a.decision='approved'
+		  AND a.approver_user_id<>$2::uuid AND a.approver_user_id<>$3::uuid
+	`,requestID,requesterID,targetID).Scan(&eligibleApprovers)
+	if err!=nil || eligibleApprovers!=2 { return errors.New("two distinct, currently eligible owner WebAuthn approvers are required") }
+	tag,err:=tx.Exec(ctx,`UPDATE testagram_auth.native_staff_invitations SET revoked_at=now() WHERE id=$1::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,request.InvitationID)
+	if err!=nil || tag.RowsAffected()!=1 { return errors.New("invitation could not be atomically revoked") }
+	_,err=tx.Exec(ctx,`
+		INSERT INTO testagram_auth.native_staff_lifecycle_events(request_id,actor_user_id,target_user_id,target_email,action,role,metadata)
+		VALUES($1::uuid,$2::uuid,$3::uuid,$4,'invitation_revoked',$5,
+		       jsonb_build_object('invitation_id',$6::uuid,'original_invitation_request_id',$7::uuid,'two_person_approval_count',2))
+	`,requestID,approverID,targetID,email,role,request.InvitationID,originalRequestID)
+	return err
+}
+
 
 func enqueueStaffInvitationMail(ctx context.Context, tx pgx.Tx, recipient, role, token string) error {
 	key, err := hex.DecodeString(getEnvMailKey())
