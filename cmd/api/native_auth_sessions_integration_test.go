@@ -15,6 +15,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestNativeAuthSessionSourceDoesNotDependOnIdentityProvisioningSchema(t *testing.T) {
+	source, err := os.ReadFile("native_sessions.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, forbidden := range []string{
+		"testagram_identity.native_registration_provisioning",
+		"lockNativeProvisioningAllowsAccess",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("ordinary native session lifecycle still depends on optional identity provisioning: %s", forbidden)
+		}
+	}
+	if !strings.Contains(text, "i.disabled_at IS NULL") {
+		t.Fatal("native access-token validation must continue enforcing canonical account disablement")
+	}
+}
+
 func TestNativeAuthSessionRotationReplayAndRevocation(t *testing.T) {
 	dsn := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if dsn == "" {

@@ -497,11 +497,13 @@ func TestNativeApprovedIdentityProvisioningAndEmailVerification(t *testing.T) {
 		!strings.Contains(activeLoginResp.Body.String(), "access_token") {
 		t.Fatalf("approved verified identity login status=%d body=%s", activeLoginResp.Code, activeLoginResp.Body.String())
 	}
+	// Canonical account disablement is stored on the native account row.
+	// The optional identity-provisioning ledger must not be the session gate.
 	if _, err := db.Exec(ctx, `
-		UPDATE testagram_identity.native_registration_provisioning
-		SET status='disabled',updated_at=now()
-		WHERE application_id=$1::uuid AND user_id=$2::uuid AND status='active'
-	`, applicationID, userID); err != nil {
+		UPDATE testagram_auth.identities
+		SET disabled_at=now(),updated_at=now()
+		WHERE user_id=$1::uuid
+	`, userID); err != nil {
 		t.Fatal(err)
 	}
 	_, disabledStatus, disabledErr := verifyNativeAccessToken(ctx, db, tokens.AccessToken)

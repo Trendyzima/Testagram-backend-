@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Backend is the sole authority for Testagram-native credentials, account status, session state and authorization. Flutter and private user-aware services consume Backend-issued native access JWTs; no external-provider bearer fallback is accepted by the native API path.
+The Backend is the sole authority for Testagram-native credentials, account status, session state and authorization. Ordinary public accounts use the native email/password signup and email-verification flow; government ID, selfie, identity evidence, manual review and identity approval are not prerequisites. The applicant/evidence/review lifecycle documented here is a separate optional assurance workflow for specifically protected capabilities. Flutter and private user-aware services consume Backend-issued native access JWTs; no external-provider bearer fallback is accepted by the native API path.
 
 ## Identity lifecycle
 
@@ -19,7 +19,7 @@ The Backend is the sole authority for Testagram-native credentials, account stat
 
 - Argon2id password hashes are the write format; PBKDF2 is accepted only to upgrade explicitly reconciled legacy hashes.
 - Access JWT lifetime is 15 minutes. The opaque refresh token is stored as a one-way hash and rotates on every successful refresh.
-- Session ID, token version, issuer, audience, account state, email verification and provisioning status are checked on protected requests.
+- Session ID, token version, issuer, audience, canonical account enabled/disabled state and email verification are checked on protected requests. Ordinary authorization does not query the optional identity-application or provisioning ledger.
 - Refresh-token replay revokes the token family. Logout revokes one session; logout-all revokes all sessions by incrementing token version.
 - Password recovery is anti-enumerating and single-use; successful reset revokes all active sessions.
 - Data Centre user-aware video/notification routes verify the same native JWT and independently query live PostgreSQL session/account state. Platform internal tokens remain separate.
@@ -34,4 +34,4 @@ The supported product runtime has no external identity-provider integration, tok
 
 ## Release boundary
 
-Registration remains fail-closed until the dedicated private Backblaze B2 evidence bucket, B2-only upload/read-back/delete acceptance, email transport, policy versions, PostgreSQL grants and independent approval workflow pass staging acceptance. Source-code implementation and green CI do not prove that the production API or Flutter build has been switched to native auth. Production cutover and account activation require separate explicit approval.
+Optional identity-assurance application intake remains fail-closed until the dedicated private Backblaze B2 evidence bucket, B2-only upload/read-back/delete acceptance, email transport, policy versions, PostgreSQL grants and independent approval workflow pass staging acceptance. These requirements apply only to the separate identity-assurance workflow; they must never gate ordinary email/password signup, email verification, login, refresh or logout. Source-code implementation and green CI do not prove that production deployment or live mailbox acceptance has passed.

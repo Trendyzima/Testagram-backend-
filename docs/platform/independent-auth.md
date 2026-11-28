@@ -22,7 +22,7 @@ This document describes the current Backend and Flutter source implementation. I
 
 ## Login eligibility
 
-A login succeeds only when the canonical identity exists, the password verifies, the account is not disabled, email is verified, password reset is not required, and any native registration-provisioning record is active. Pending or unapproved applications cannot create a login-capable account.
+A login succeeds when the canonical identity exists, the password verifies, the canonical account is not disabled (`testagram_auth.identities.disabled_at IS NULL`), email is verified, password reset is not required, and the native session is valid. Ordinary signup/login/refresh/access-token validation do not query or require identity-application or native-registration-provisioning tables. An optional identity application's pending or unapproved state never blocks a basic account; explicit canonical account disablement still does.
 
 ## Flutter client contract
 

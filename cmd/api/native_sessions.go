@@ -16,38 +16,6 @@ import (
 
 const nativeRefreshTTL = 30 * 24 * time.Hour
 
-// lockNativeProvisioningAllowsAccess serializes sign-in with explicit account
-// disablement while keeping pending identity review independent of native auth.
-// Only a provisioning record explicitly marked disabled blocks access.
-func lockNativeProvisioningAllowsAccess(ctx context.Context, tx pgx.Tx, userID string) (bool, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT status
-		FROM testagram_identity.native_registration_provisioning
-		WHERE user_id=$1::uuid
-		FOR UPDATE
-	`, userID)
-	if err != nil {
-		return false, err
-	}
-	allowed := true
-	for rows.Next() {
-		var status string
-		if err := rows.Scan(&status); err != nil {
-			rows.Close()
-			return false, err
-		}
-		if status == "disabled" {
-			allowed = false
-		}
-	}
-	rowsErr := rows.Err()
-	rows.Close()
-	if rowsErr != nil {
-		return false, rowsErr
-	}
-	return allowed, nil
-}
-
 type nativeSessionTokens struct {
 	AccessToken  string         `json:"access_token"`
 	RefreshToken string         `json:"refresh_token"`
@@ -90,15 +58,11 @@ func issueNativeSession(ctx context.Context, db interface {
 		return nativeSessionTokens{}, err
 	}
 
-	// Ordinary native sign-in is independent of the separate identity-evidence
-	// and account-provisioning workflow. Email verification, account state,
-	// password-reset state, and token version remain enforced here.
-	provisioningAllowsAccess, err := lockNativeProvisioningAllowsAccess(ctx, tx, userID)
-	if err != nil {
-		return nativeSessionTokens{}, err
-	}
+	// Ordinary native sign-in depends only on canonical account state.
+	// Identity-application/provisioning tables are intentionally not queried:
+	// optional identity storage or schema availability cannot gate a basic session.
 	if currentEmail != strings.ToLower(strings.TrimSpace(email)) || currentVersion != version ||
-		!emailVerified || !accountEnabled || !resetNotRequired || !provisioningAllowsAccess {
+		!emailVerified || !accountEnabled || !resetNotRequired {
 		return nativeSessionTokens{}, errors.New("identity changed during sign-in")
 	}
 	var sessionID, familyID string
@@ -183,8 +147,6 @@ func verifyNativeAccessToken(ctx context.Context, db interface {
 			  AND s.token_version=$3 AND s.revoked_at IS NULL AND s.expires_at>now()
 			  AND i.token_version=$3 AND i.disabled_at IS NULL
 			  AND i.email_verified_at IS NOT NULL AND NOT i.password_reset_required
-			  AND NOT EXISTS(SELECT 1 FROM testagram_identity.native_registration_provisioning p
-			                 WHERE p.user_id=i.user_id AND p.status='disabled')
 		)
 	`, claims.SessionID, claims.Subject, claims.TokenVersion).Scan(&active)
 	if err != nil {
@@ -234,11 +196,9 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token reuse detected; session family revoked")
 	}
-	provisioningAllowsAccess, err := lockNativeProvisioningAllowsAccess(ctx, tx, userID)
-	if err != nil {
-		return nativeSessionTokens{}, err
-	}
-	if !expires.After(time.Now()) || disabled || !verified || resetRequired || !provisioningAllowsAccess {
+	// Refresh uses the canonical account row only; the optional identity
+	// provisioning ledger is not an authentication dependency.
+	if !expires.After(time.Now()) || disabled || !verified || resetRequired {
 		_, _ = tx.Exec(ctx, "UPDATE testagram_auth.sessions SET revoked_at=now(),revoke_reason='refresh_invalidated' WHERE family_id=$1::uuid AND revoked_at IS NULL", familyID)
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token is expired or account is disabled")

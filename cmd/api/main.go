@@ -1501,7 +1501,11 @@ func main() {
 	}
 	go svc.runStorageDeletionWorker(signalCtx)
 	go svc.runStorageCleanupWorker(signalCtx)
-	go svc.runIdentityEvidenceRetentionWorker(signalCtx)
+	if svc.identityEvidenceStorageConfigured() {
+		go svc.runIdentityEvidenceRetentionWorker(signalCtx)
+	} else {
+		log.Printf("identity evidence retention worker remains stopped; optional identity-evidence storage is disabled")
+	}
 	go svc.runMailOutboxWorker(signalCtx)
 
 	if bounceAddr := strings.TrimSpace(os.Getenv("TESTAGRAM_MAIL_BOUNCE_LISTEN_ADDR")); bounceAddr != "" {
@@ -1561,15 +1565,18 @@ func main() {
 // session creation and the first authenticated profile read are present and
 // readable by the configured PostgreSQL application role. The names are
 // compile-time constants, never request-derived SQL identifiers.
-func nativeAuthReadinessSchema(ctx context.Context, db *pgxpool.Pool) error {
-	for _, relation := range []string{
+func nativeAuthReadinessRelations() []string {
+	return []string{
 		"testagram_auth.identities",
 		"testagram_auth.sessions",
 		"testagram_auth.rate_limits",
 		"testagram_auth.security_audit",
-		"testagram_identity.native_registration_provisioning",
 		"testagram_local.accounts",
-	} {
+	}
+}
+
+func nativeAuthReadinessSchema(ctx context.Context, db *pgxpool.Pool) error {
+	for _, relation := range nativeAuthReadinessRelations() {
 		rows, err := db.Query(ctx, "SELECT 1 FROM "+relation+" LIMIT 0")
 		if err != nil {
 			return fmt.Errorf("required native-auth relation %s is unavailable: %w", relation, err)
