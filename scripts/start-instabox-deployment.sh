@@ -1109,6 +1109,7 @@ verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federati
 verify_container_env "$DC_ENV" "$DATACENTRE/backend/docker-compose.yml" federation-api FEDERATION_INGRESS_TOKEN "$FEDERATION_INGRESS_TOKEN"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_AUTH_JWT_SECRET "$TESTAGRAM_AUTH_JWT_SECRET"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
+verify_container_env "$BASE_ENV" "$BASE_COMPOSE" admin-console TESTAGRAM_MAIL_ENCRYPTION_KEY "$TESTAGRAM_MAIL_ENCRYPTION_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_MAIL_VERP_KEY "$TESTAGRAM_MAIL_VERP_KEY"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_PRIVATE_KEY_FILE "/run/testagram-mail/dkim-private.pem"
 verify_container_env "$BASE_ENV" "$BASE_COMPOSE" api TESTAGRAM_DKIM_SELECTOR "tg2026"
