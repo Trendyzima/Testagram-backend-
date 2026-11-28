@@ -13,17 +13,17 @@ LEGACY_CLEANUP = "scripts/start-instabox-deployment.sh"
 
 # Match provider spelling even when separators/case are varied, without
 # making this guard itself an allowed source of the forbidden identifier.
-PROVIDER = re.compile(r"mail[\\s._-]*jet|api[.]mailjet[.]com", re.IGNORECASE)
+PROVIDER = re.compile(r"mail[\s._-]*jet|api[.]mailjet[.]com", re.IGNORECASE)
 RETIRED_CONFIG = re.compile(
-    r"\\b(?:MAILJET_API_KEY|MAILJET_SECRET_KEY|SMTP_HOST|SMTP_USERNAME|SMTP_PASSWORD|"
-    r"CLOUDFLARE_EMAIL_ACCOUNT_ID|CLOUDFLARE_EMAIL_API_TOKEN|AUTH_FROM_EMAIL)\\b"
+    r"\b(?:MAILJET_API_KEY|MAILJET_SECRET_KEY|SMTP_HOST|SMTP_USERNAME|SMTP_PASSWORD|"
+    r"CLOUDFLARE_EMAIL_ACCOUNT_ID|CLOUDFLARE_EMAIL_API_TOKEN|AUTH_FROM_EMAIL)\b"
 )
 
 def tracked_files():
     result = subprocess.run(
         ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True
     )
-    return [ROOT / item.decode() for item in result.stdout.split(b"\\0") if item]
+    return [ROOT / item.decode() for item in result.stdout.split(b"\0") if item]
 
 def main():
     violations = []
@@ -38,7 +38,7 @@ def main():
         if relative == LEGACY_CLEANUP:
             # This one-way cleanup only removes old values from an existing
             # VPS .env. It cannot configure or activate a retired transport.
-            content = "\\n".join(
+            content = "\n".join(
                 line for line in content.splitlines()
                 if "sed -i '/^MAILJET_/d; /^AUTH_FROM_EMAIL=/d'" not in line
             )
