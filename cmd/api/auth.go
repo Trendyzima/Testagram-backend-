@@ -428,7 +428,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("SIGNUP_UNAVAILABLE", "Account consent could not be recorded", requestID(r)))
 			return true
 		}
-		base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+		base := testagramMailBaseURL()
 		link := base + "/verify-email?token=" + url.QueryEscape(token)
 		if err := enqueueAuthEmailWith(ctx, tx, email, "Your Testagram verification code", "<p>Welcome to Testagram. Enter this verification code in the app:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:8px\">"+otp+"</p><p>Your code expires in 10 minutes and can be used once.</p><p>You can also verify using this secure link:</p><p><a href=\""+link+"\">Verify email</a></p><p>The link expires in 24 hours. If you did not create this account, ignore this email.</p>"); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody("EMAIL_UNAVAILABLE", "Unable to queue verification email. Please try again.", requestID(r)))
@@ -464,7 +464,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 							WHERE email_normalized=$1 AND email_verified_at IS NULL RETURNING email
 						`, email, authTokenHash(token), otpHash).Scan(&savedEmail)
 						if updateErr == nil {
-							base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+							base := testagramMailBaseURL()
 							link := base + "/verify-email?token=" + url.QueryEscape(token)
 							updateErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Your Testagram verification code", "<p>Enter this verification code in Testagram:</p><p style=\"font-size:28px;font-weight:700;letter-spacing:8px\">"+otp+"</p><p>Your code expires in 10 minutes and can be used once.</p><p><a href=\""+link+"\">Verify email</a> using the secure link (expires in 24 hours).</p>")
 						}
@@ -748,7 +748,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 				txErr = err
 			}
 			if txErr == nil && savedEmail != "" {
-				base := strings.TrimRight(strings.TrimSpace(os.Getenv("AUTH_PUBLIC_BASE_URL")), "/")
+				base := testagramMailBaseURL()
 				link := base + "/reset-password?token=" + url.QueryEscape(token)
 				txErr = enqueueAuthEmailWith(ctx, tx, savedEmail, "Reset your Testagram password", "<p>Use this link to reset your Testagram password:</p><p><a href=\""+link+"\">Reset password</a></p><p>This link expires in 30 minutes and can only be used once. If you did not request this, ignore this email.</p>")
 			}
