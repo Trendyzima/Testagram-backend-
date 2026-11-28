@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 )
 
 const nativeRefreshTTL = 30 * 24 * time.Hour
@@ -195,11 +196,9 @@ func (s *service) rotateNativeRefresh(ctx context.Context, raw, userAgent, ip st
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token reuse detected; session family revoked")
 	}
-	provisioningAllowsAccess, err := lockNativeProvisioningAllowsAccess(ctx, tx, userID)
-	if err != nil {
-		return nativeSessionTokens{}, err
-	}
-	if !expires.After(time.Now()) || disabled || !verified || resetRequired || !provisioningAllowsAccess {
+	// Refresh uses the canonical account row only; the optional identity
+	// provisioning ledger is not an authentication dependency.
+	if !expires.After(time.Now()) || disabled || !verified || resetRequired {
 		_, _ = tx.Exec(ctx, "UPDATE testagram_auth.sessions SET revoked_at=now(),revoke_reason='refresh_invalidated' WHERE family_id=$1::uuid AND revoked_at IS NULL", familyID)
 		_ = tx.Commit(ctx)
 		return nativeSessionTokens{}, errors.New("refresh token is expired or account is disabled")
