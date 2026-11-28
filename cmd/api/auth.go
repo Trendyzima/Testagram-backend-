@@ -401,7 +401,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 		termsVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION"))
 		if termsVersion == "" { termsVersion = "2026-11-11" }
 		privacyVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION"))
-		if privacyVersion == "" { privacyVersion = "2026-11-11" }
+		if privacyVersion == "" { privacyVersion = "2026-11-28" }
 		_, consentErr := tx.Exec(ctx, `
 			INSERT INTO testagram_auth.registration_consents
 				(user_id,email,consent_type,policy_version,accepted_at,request_id)
