@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeStaffInvitationEmail(t *testing.T) {
 	cases := []struct {
@@ -47,5 +51,25 @@ func TestStaffInvitationRevocationApprovalPermission(t *testing.T) {
 	if permission != "staff.invite.approve" { t.Fatalf("revocation permission=%q; want staff.invite.approve", permission) }
 	if _, err := approvalPermissionForAction("staff.invitation.delete"); err == nil {
 		t.Fatal("unsupported invitation action was accepted")
+	}
+}
+
+func TestStaffInvitationTokenIsRemovedFromBrowserURL(t *testing.T) {
+	app, err := os.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read Admin Console browser application: %v", err)
+	}
+	source := string(app)
+	capture := `if (location.pathname === "/staff/invitations/accept") {
+  staffInvitationToken = recoveryToken;
+  // Keep the one-time capability in memory only; do not leave it in browser
+  // history, referrers, screenshots, or copied URLs while the invitee signs in.
+  history.replaceState(null, "", "/staff/invitations/accept");
+}`
+	if !strings.Contains(source, capture) {
+		t.Fatal("staff invitation token must be captured in memory and immediately removed from browser history")
+	}
+	if strings.Contains(source, `history.replaceState(null, "", "/staff/invitations/accept?token=`) {
+		t.Fatal("staff invitation token must never be retained in the replacement URL")
 	}
 }
