@@ -214,7 +214,7 @@ const recoveryToken = recoveryParams.get("token") || "";
 if (location.pathname === "/staff/invitations/accept") {
   staffInvitationToken = recoveryToken;
 }
-if (recoveryToken) {
+if (recoveryToken && location.pathname !== "/staff/invitations/accept") {
   resetToken = recoveryToken;
   showView("update-password");
   history.replaceState(null, "", "/reset-password");
