@@ -134,7 +134,7 @@ func (a *app) handleInvite(w http.ResponseWriter, r *http.Request) {
 		  WHERE email_normalized=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()
 		) OR EXISTS (
 		  SELECT 1 FROM testagram_auth.native_sensitive_action_requests
-		  WHERE action_type='staff.invite' AND target_reference=$1
+		  WHERE action_type='staff.invite' AND payload->>'email'=$1
 		    AND status='pending' AND expires_at>now()
 		)
 	`, email).Scan(&duplicate)
@@ -159,14 +159,14 @@ func (a *app) handleInvite(w http.ResponseWriter, r *http.Request) {
 		  (action_type,requested_by_user_id,target_reference,reason,payload,payload_sha256,required_approvals)
 		VALUES ('staff.invite',$1::uuid,$2,$3,$4::jsonb,$5,2)
 		RETURNING id::text
-	`, actor.ID, email, input.Reason, string(payload), hex.EncodeToString(digest[:])).Scan(&requestID)
+	`, actor.ID, targetID, input.Reason, string(payload), hex.EncodeToString(digest[:])).Scan(&requestID)
 	if err == nil {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO testagram_auth.native_admin_security_audit
 			  (actor_user_id,action,target_reference,request_id,metadata)
 			VALUES ($1::uuid,'staff.invitation.requested',$2,$3::uuid,
 			        jsonb_build_object('role',$4::text,'required_approvals',2))
-		`, actor.ID, email, requestID, input.Role)
+		`, actor.ID, targetID, requestID, input.Role)
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
@@ -344,7 +344,7 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 		return errors.New("staff invitation payload is invalid")
 	}
 	email, err := normalizeStaffInvitationEmail(invitation.Email)
-	if err != nil || email != targetEmail || !validStaffInvitationRole(invitation.Role) {
+	if err != nil || !validStaffInvitationRole(invitation.Role) {
 		return errors.New("staff invitation payload does not match its immutable target")
 	}
 
@@ -354,7 +354,7 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 		WHERE email_normalized=$1 AND email_verified_at IS NOT NULL AND disabled_at IS NULL
 		FOR UPDATE
 	`, email).Scan(&targetID)
-	if err != nil || targetID == requesterID || targetID == approverID {
+	if err != nil || targetID != targetEmail || targetID == requesterID || targetID == approverID {
 		return errors.New("invitation target is missing, unverified, disabled or conflicts with an approver")
 	}
 
@@ -413,7 +413,7 @@ func executeStaffInvitation(ctx context.Context, tx pgx.Tx, requestID, requester
 		  (request_id,email_normalized,role,token_sha256,created_by,expires_at)
 		VALUES ($1::uuid,$2,$3,$4,$5::uuid,now()+interval '7 days')
 		RETURNING id::text
-	`, requestID, email, invitation.Role, tokenHash[:], approverID).Scan(&invitationID)
+	`, requestID, email, invitation.Role, tokenHash[:], requesterID).Scan(&invitationID)
 	if err != nil {
 		return errors.New("staff invitation record could not be created")
 	}
