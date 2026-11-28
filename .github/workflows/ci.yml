@@ -1311,13 +1311,13 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: go test ./cmd/api -run '^TestNativeApprovedIdentityProvisioningAndEmailVerification$' -count=1 -v
-      - name: Run native login, refresh rotation, replay and logout integration
-        env:
-          TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
       - name: Run ordinary public signup, email verification and replay PostgreSQL integration
         env:
           TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: go test ./cmd/api -run TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail -count=1 -v
+      - name: Run native login, refresh rotation, replay and logout integration
+        env:
+          TEST_DATABASE_URL: postgres://postgres:ci-only-password@localhost:5432/postgres?sslmode=disable
         run: go test ./cmd/api -run '^TestNativeAuthSessionRotationReplayAndRevocation$' -count=1 -v
       - name: Verify Admin Console elevation token against Backend staff MFA authorization
         env:
