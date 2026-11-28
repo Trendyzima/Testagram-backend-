@@ -412,7 +412,7 @@ func (s *service) authRespond(w http.ResponseWriter, r *http.Request, action str
 			return true
 		}
 		termsVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_TERMS_VERSION"))
-		if termsVersion == "" { termsVersion = "2026-11-11" }
+		if termsVersion == "" { termsVersion = "2026-11-28" }
 		privacyVersion := strings.TrimSpace(os.Getenv("TESTAGRAM_PRIVACY_VERSION"))
 		if privacyVersion == "" { privacyVersion = "2026-11-28" }
 		_, consentErr := tx.Exec(ctx, `
