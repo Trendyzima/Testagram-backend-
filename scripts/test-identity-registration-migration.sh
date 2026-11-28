@@ -503,6 +503,8 @@ psql_ci < migrations/20261115_identity_evidence_access_audit.sql
 # Re-apply the retention extension after the older audit migration so its
 # historical CHECK-constraint definition cannot remove the new retention events.
 psql_ci < migrations/20261127_identity_evidence_retention_audit.sql
+psql_ci < migrations/20261128_native_auth_registration_consent.sql
+psql_ci < migrations/20261128_native_auth_registration_consent.sql
 psql_ci <<'SQL'
 DO $verify_historical_verification_events$
 BEGIN
