@@ -2,6 +2,7 @@ const byId = (id) => document.getElementById(id);
 const views = ["login", "recover", "update-password"];
 let currentUser = null;
 let resetToken = "";
+let staffInvitationToken = "";
 let overviewRefreshing = false;
 
 function notice(message, kind = "info") {
@@ -99,7 +100,11 @@ async function loadSession() {
       byId("auth-screen").classList.remove("hidden");
       return;
     }
-    if (!state.staff) { renderPending(state.email); return; }
+    if (!state.staff) {
+      renderPending(state.email);
+      if (staffInvitationToken) byId("accept-invitation-panel").classList.remove("hidden");
+      return;
+    }
     renderDashboard(state);
   } catch (_) {
     hideScreens();
@@ -206,6 +211,9 @@ window.setInterval(() => {
 }, 30000);
 const recoveryParams = new URLSearchParams(location.search);
 const recoveryToken = recoveryParams.get("token") || "";
+if (location.pathname === "/staff/invitations/accept") {
+  staffInvitationToken = recoveryToken;
+}
 if (recoveryToken) {
   resetToken = recoveryToken;
   showView("update-password");
@@ -285,6 +293,43 @@ byId("webauthn-enroll").addEventListener("click",enrollStaffAuthenticator);
 byId("stepup-form").addEventListener("submit",async event=>{event.preventDefault();await authenticateStaffAuthenticator();});
 
 
+byId("invite-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget; busy(form, true);
+  try {
+    const result = await api("/api/staff/invite", {
+      email: byId("invite-email").value.trim(),
+      role: byId("invite-role").value,
+      reason: byId("invite-reason").value.trim()
+    });
+    notice(result.message || "Two-person invitation request recorded.", "success");
+    byId("invite-email").value = "";
+    byId("invite-reason").value = "";
+    await loadApprovalQueue();
+    await loadAuditHistory();
+  } catch (error) { notice(error.message, "error"); }
+  finally { busy(form, false); }
+});
+
+byId("accept-invitation").addEventListener("click", async () => {
+  const button = byId("accept-invitation");
+  if (!staffInvitationToken) {
+    notice("Open the original invitation link to accept this invitation.", "error");
+    return;
+  }
+  button.disabled = true;
+  try {
+    const result = await api("/api/staff/invitations/accept", { token: staffInvitationToken });
+    staffInvitationToken = "";
+    history.replaceState(null, "", "/");
+    notice(result.message || "Staff invitation accepted.", "success");
+    await loadSession();
+  } catch (error) {
+    notice(error.message, "error");
+    button.disabled = false;
+  }
+});
+
 byId("permission-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget; busy(form, true);
@@ -325,6 +370,11 @@ async function loadApprovalQueue() {
       const requester = document.createElement("small");
       requester.textContent = "Requested by " + item.requested_by + " · expires " + new Date(item.expires_at).toLocaleString();
       card.append(heading, detail, requester);
+      if (item.action_type === "staff.invite" && item.payload) {
+        const invite = document.createElement("p");
+        invite.textContent = "Invite: " + (item.payload.email || "—") + " · Role: " + (item.payload.role || "—");
+        card.append(invite);
+      }
       if (item.action_type === "identity.approve" && item.payload) {
         const applicant = document.createElement("p");
         applicant.textContent = "Applicant: " + (item.payload.display_name || "—") +
@@ -570,7 +620,7 @@ async function decideSensitiveAction(id, decision, reason, approveButton, reject
       decision,
       reason: reason.value.trim()
     });
-    notice("Decision recorded: " + result.status + ". The underlying action has not been executed.", "success");
+    notice(result.message || ("Decision recorded: " + result.status + "."), "success");
     await loadApprovalQueue();
     await loadAuditHistory();
   } catch (error) {
