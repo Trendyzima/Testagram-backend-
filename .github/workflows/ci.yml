@@ -645,6 +645,7 @@ jobs:
           EDGE_PROXY_SHARED_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           DATABASE_URL: postgres://testagram:ci-only-password-not-for-production@db:5432/testagram?sslmode=disable
           TESTAGRAM_AUTH_JWT_SECRET: ci-only-native-auth-jwt-secret-not-for-production-32
+          TESTAGRAM_MAIL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           VPS_INTERNAL_TOKEN: ci-only-vps-token-not-for-production
           VPS_NODE_BOOTSTRAP_TOKEN: ci-only-node-token-not-for-production
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password-not-for-production
