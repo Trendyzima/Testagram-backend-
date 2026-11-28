@@ -13,7 +13,6 @@ HISTORICAL_MIGRATIONS = {
     "migrations/20261126_testagram_native_mail_feedback.sql",
 }
 LEGACY_CLEANUP = "scripts/start-instabox-deployment.sh"
-HISTORICAL_NATIVE_MAIL_DNS = "docs/native-mail-dns.md"
 
 PROVIDER = re.compile(r"mail[\s._-]*jet|api[.]mailjet[.]com", re.IGNORECASE)
 RETIRED_CONFIG = re.compile(
@@ -32,7 +31,7 @@ def main():
     for path in tracked_files():
         relative = path.relative_to(ROOT).as_posix()
         if (
-            relative in {POLICY, NEGATIVE_TEST, HISTORICAL_NATIVE_MAIL_DNS}
+            relative in {POLICY, NEGATIVE_TEST}
             or relative in HISTORICAL_MIGRATIONS
             or relative.startswith("tests/")
             or relative.endswith("_test.go")
