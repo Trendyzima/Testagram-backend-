@@ -504,16 +504,21 @@ func (s *service) routes() http.Handler {
 	mux.HandleFunc("GET /api/identity/applications/{application_id}", s.identityApplicationStatus)
 	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}", s.mediaPreflight)
 	mux.HandleFunc("GET /api/identity/sessions/{session_id}", s.identitySessionStatus)
-	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/upload-url", s.mediaPreflight)
-	mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/upload-url", s.identityEvidenceUploadURL)
-	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/{evidence_id}/upload", s.mediaPreflight)
-	mux.HandleFunc("PUT /api/identity/sessions/{session_id}/evidence/{evidence_id}/upload", s.identityEvidenceUpload)
-	mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/submit", s.mediaPreflight)
-	mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/submit", s.identityEvidenceSubmit)
+	if s.identityEvidenceStorageConfigured() {
+		// Evidence endpoints do not exist on the public API when the dedicated
+		// Data Centre identity-evidence capability is disabled. This is a route
+		// boundary, not merely a handler-level 503 response.
+		mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/upload-url", s.mediaPreflight)
+		mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/upload-url", s.identityEvidenceUploadURL)
+		mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/{evidence_id}/upload", s.mediaPreflight)
+		mux.HandleFunc("PUT /api/identity/sessions/{session_id}/evidence/{evidence_id}/upload", s.identityEvidenceUpload)
+		mux.HandleFunc("OPTIONS /api/identity/sessions/{session_id}/evidence/submit", s.mediaPreflight)
+		mux.HandleFunc("POST /api/identity/sessions/{session_id}/evidence/submit", s.identityEvidenceSubmit)
+		mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.mediaPreflight)
+		mux.HandleFunc("GET /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.identityReviewEvidence)
+	}
 	mux.HandleFunc("OPTIONS /api/admin/identity/review-queue", s.mediaPreflight)
 	mux.HandleFunc("GET /api/admin/identity/review-queue", s.identityReviewQueue)
-	mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.mediaPreflight)
-	mux.HandleFunc("GET /api/admin/identity/sessions/{session_id}/evidence/{evidence_id}", s.identityReviewEvidence)
 	mux.HandleFunc("OPTIONS /api/admin/identity/sessions/{session_id}/decision", s.mediaPreflight)
 	mux.HandleFunc("POST /api/admin/identity/sessions/{session_id}/decision", s.identityReviewDecision)
 	// Independent authentication routes use Testagram-owned PostgreSQL; external caches are not part of this request path.
