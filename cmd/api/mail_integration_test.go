@@ -195,6 +195,7 @@ func TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail(t *test
 
 		body, err := json.Marshal(authInput{
 			Email: email, Username: username, Password: "correct-horse-battery-staple-2026",
+			TermsAccepted: true, PrivacyAccepted: true, AgeConfirmed: true,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -326,6 +327,7 @@ func TestNativeSignupCreatesUnverifiedIdentityAndQueuesVerificationEmail(t *test
 	}
 	duplicateBody, err := json.Marshal(authInput{
 		Email: duplicateEmail, Username: linkAccount.username, Password: "correct-horse-battery-staple-2026",
+			TermsAccepted: true, PrivacyAccepted: true, AgeConfirmed: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -413,6 +415,7 @@ func TestNativeSignupRejectsUsernameReservedByExistingLocalProfile(t *testing.T)
 	email := fmt.Sprintf("legacy-username-%d@example.test", time.Now().UTC().UnixNano())
 	body, err := json.Marshal(authInput{
 		Email: email, Username: username, Password: "correct-horse-battery-staple-2026",
+			TermsAccepted: true, PrivacyAccepted: true, AgeConfirmed: true,
 	})
 	if err != nil {
 		t.Fatal(err)
