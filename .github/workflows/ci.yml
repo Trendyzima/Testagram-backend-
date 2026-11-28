@@ -1287,6 +1287,7 @@ jobs:
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261118_native_admin_console.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261119_native_identity_approval_ledger.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261120_native_identity_approval_circuit.sql
+          docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261128_native_auth_registration_consent.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261120_native_verification_decider.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261121_native_staff_webauthn.sql
           docker exec -i testagram-admin-security-ci psql -U postgres -v ON_ERROR_STOP=1 < migrations/20261121_native_identity_intake_optional_fingerprint.sql
