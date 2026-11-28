@@ -245,6 +245,7 @@ func TestNativePasswordResetConsumesTokenRevokesSessionsAndAllowsNewLogin(t *tes
 }
 
 
+
 // TestNativePasswordResetRejectsExpiredToken proves an expired capability
 // cannot change credentials even when its hash is otherwise valid.
 func TestNativePasswordResetRejectsExpiredToken(t *testing.T) {
@@ -257,23 +258,39 @@ func TestNativePasswordResetRejectsExpiredToken(t *testing.T) {
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", userID)
 	}()
 	token, err := authRandomToken()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO testagram_auth.password_reset_tokens(token_hash,user_id,expires_at,request_ip_hash)
 		VALUES($1,$2::uuid,now()-interval '1 second',$3)
-	`, authTokenHash(token), userID, authFingerprint("192.0.2.31")); err != nil { t.Fatal(err) }
+	`, authTokenHash(token), userID, authFingerprint("192.0.2.31")); err != nil {
+		t.Fatal(err)
+	}
 	var beforeHash string
-	if err := db.QueryRow(ctx, "SELECT password_hash FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&beforeHash); err != nil { t.Fatal(err) }
+	if err := db.QueryRow(ctx, "SELECT password_hash FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&beforeHash); err != nil {
+		t.Fatal(err)
+	}
 	body, err := json.Marshal(map[string]string{"token": token, "password": "NewExpiredPassword-456!"})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/reset-password", strings.NewReader(string(body)))
 	req.RemoteAddr = "192.0.2.31:12345"
 	rec := httptest.NewRecorder()
-	if !(&service{db: db}).authRespond(rec, req, "reset-password") { t.Fatal("reset-password handler did not handle expired token") }
-	if rec.Code != http.StatusBadRequest { t.Fatalf("expired reset token status=%d body=%s; want 400", rec.Code, rec.Body.String()) }
+	if !(&service{db: db}).authRespond(rec, req, "reset-password") {
+		t.Fatal("reset-password handler did not handle expired token")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expired reset token status=%d body=%s; want 400", rec.Code, rec.Body.String())
+	}
 	var afterHash string
-	if err := db.QueryRow(ctx, "SELECT password_hash FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&afterHash); err != nil { t.Fatal(err) }
-	if afterHash != beforeHash { t.Fatal("expired reset token changed the account password") }
+	if err := db.QueryRow(ctx, "SELECT password_hash FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&afterHash); err != nil {
+		t.Fatal(err)
+	}
+	if afterHash != beforeHash {
+		t.Fatal("expired reset token changed the account password")
+	}
 }
 
 // TestNativeVerificationResendRotatesCredentialsAndQueuesEncryptedMail
@@ -287,13 +304,21 @@ func TestNativeVerificationResendRotatesCredentialsAndQueuesEncryptedMail(t *tes
 	email := fmt.Sprintf("resend-%d@example.test", time.Now().UTC().UnixNano())
 	username := fmt.Sprintf("rs%d", time.Now().UTC().UnixNano()%1_000_000_000_000)
 	oldToken, err := authRandomToken()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	oldOTP, err := authRandomOTP()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	oldOTPHash, err := authOTPHash(oldOTP)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	passwordHash, err := authPasswordHash("OldResendPassword-123!")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	var userID string
 	if err := db.QueryRow(ctx, `
 		INSERT INTO testagram_auth.identities(
@@ -301,25 +326,35 @@ func TestNativeVerificationResendRotatesCredentialsAndQueuesEncryptedMail(t *tes
 			verification_otp_hash,verification_otp_expires_at,verification_otp_attempts
 		) VALUES($1,$2,$3,$4,now()+interval '24 hours',$5,now()+interval '10 minutes',0)
 		RETURNING user_id::text
-	`, email, username, passwordHash, authTokenHash(oldToken), oldOTPHash).Scan(&userID); err != nil { t.Fatal(err) }
+	`, email, username, passwordHash, authTokenHash(oldToken), oldOTPHash).Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_mail.outbox WHERE recipient_fingerprint=$1", mustMailFingerprint(t, email))
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_local.accounts WHERE user_id=$1::uuid", userID)
 		_, _ = db.Exec(context.Background(), "DELETE FROM testagram_auth.identities WHERE user_id=$1::uuid", userID)
 	}()
 	body, err := json.Marshal(map[string]string{"email": email})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/resend-verification", strings.NewReader(string(body)))
 	req.RemoteAddr = "192.0.2.41:12345"
 	rec := httptest.NewRecorder()
-	if !(&service{db: db}).authRespond(rec, req, "resend-verification") { t.Fatal("resend-verification handler did not handle request") }
-	if rec.Code != http.StatusAccepted { t.Fatalf("resend status=%d body=%s; want 202", rec.Code, rec.Body.String()) }
+	if !(&service{db: db}).authRespond(rec, req, "resend-verification") {
+		t.Fatal("resend-verification handler did not handle request")
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("resend status=%d body=%s; want 202", rec.Code, rec.Body.String())
+	}
 	var newTokenHash, newOTPHash []byte
 	var linkExpiry, otpExpiry time.Time
 	if err := db.QueryRow(ctx, `
 		SELECT verification_token_hash,verification_otp_hash,verification_expires_at,verification_otp_expires_at
 		FROM testagram_auth.identities WHERE user_id=$1::uuid
-	`, userID).Scan(&newTokenHash, &newOTPHash, &linkExpiry, &otpExpiry); err != nil { t.Fatal(err) }
+	`, userID).Scan(&newTokenHash, &newOTPHash, &linkExpiry, &otpExpiry); err != nil {
+		t.Fatal(err)
+	}
 	if len(newTokenHash) != 32 || len(newOTPHash) != 32 ||
 		string(newTokenHash) == string(authTokenHash(oldToken)) ||
 		string(newOTPHash) == string(oldOTPHash) ||
@@ -337,45 +372,73 @@ func TestNativeVerificationResendRotatesCredentialsAndQueuesEncryptedMail(t *tes
 		t.Fatal("verification message content was persisted in plaintext")
 	}
 	aead, err := mailCipher()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	plain, err := aead.Open(nil, nonce, ciphertext, []byte("testagram-mail-v1"))
-	if err != nil { t.Fatalf("replacement verification message could not be decrypted: %v", err) }
+	if err != nil {
+		t.Fatalf("replacement verification message could not be decrypted: %v", err)
+	}
 	var queued queuedMail
-	if err := json.Unmarshal(plain, &queued); err != nil { t.Fatal(err) }
+	if err := json.Unmarshal(plain, &queued); err != nil {
+		t.Fatal(err)
+	}
 	if queued.Recipient != email || queued.Subject != "Your Testagram verification code" {
 		t.Fatalf("replacement email does not match recipient: %#v", queued)
 	}
 	const otpMarker = `letter-spacing:8px">`
 	otpStart := strings.Index(queued.HTML, otpMarker)
-	if otpStart < 0 || len(queued.HTML) < otpStart+len(otpMarker)+6 { t.Fatal("replacement verification email does not contain a six-digit code") }
-	newOTP := queued.HTML[otpStart+len(otpMarker):otpStart+len(otpMarker)+6]
+	if otpStart < 0 || len(queued.HTML) < otpStart+len(otpMarker)+6 {
+		t.Fatal("replacement verification email does not contain a six-digit code")
+	}
+	newOTP := queued.HTML[otpStart+len(otpMarker) : otpStart+len(otpMarker)+6]
 	emailOTPHash, err := authOTPHash(newOTP)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	const linkMarker = "/verify-email?token="
 	linkStart := strings.Index(queued.HTML, linkMarker)
-	if linkStart < 0 { t.Fatal("replacement verification email does not contain a verification link") }
+	if linkStart < 0 {
+		t.Fatal("replacement verification email does not contain a verification link")
+	}
 	linkStart += len(linkMarker)
 	linkEnd := strings.Index(queued.HTML[linkStart:], "\"")
-	if linkEnd < 0 { t.Fatal("replacement verification link is malformed") }
-	newToken := queued.HTML[linkStart:linkStart+linkEnd]
+	if linkEnd < 0 {
+		t.Fatal("replacement verification link is malformed")
+	}
+	newToken := queued.HTML[linkStart : linkStart+linkEnd]
 	if string(newTokenHash) != string(authTokenHash(newToken)) || string(newOTPHash) != string(emailOTPHash) {
 		t.Fatal("replacement email credentials do not match the committed identity hashes")
 	}
 	verify := func(token string) *httptest.ResponseRecorder {
 		payload, err := json.Marshal(map[string]string{"token": token})
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		verifyReq := httptest.NewRequest(http.MethodPost, "/api/auth/verify-email", strings.NewReader(string(payload)))
 		verifyReq.RemoteAddr = "192.0.2.42:12345"
 		verifyRec := httptest.NewRecorder()
 		(&service{db: db}).authRespond(verifyRec, verifyReq, "verify-email")
 		return verifyRec
 	}
-	if got := verify(oldToken); got.Code != http.StatusBadRequest { t.Fatalf("superseded verification token remained valid: status=%d body=%s", got.Code, got.Body.String()) }
-	if got := verify(newToken); got.Code != http.StatusOK { t.Fatalf("replacement verification link failed: status=%d body=%s", got.Code, got.Body.String()) }
-	if got := verify(newToken); got.Code != http.StatusBadRequest { t.Fatalf("replacement verification link replay status=%d; want 400", got.Code) }
+	if got := verify(oldToken); got.Code != http.StatusBadRequest {
+		t.Fatalf("superseded verification token remained valid: status=%d body=%s", got.Code, got.Body.String())
+	}
+	if got := verify(newToken); got.Code != http.StatusOK {
+		t.Fatalf("replacement verification link failed: status=%d body=%s", got.Code, got.Body.String())
+	}
+	if got := verify(newToken); got.Code != http.StatusBadRequest {
+		t.Fatalf("replacement verification link replay status=%d; want 400", got.Code)
+	}
 	var verified bool
 	var profiles int
-	if err := db.QueryRow(ctx, "SELECT email_verified_at IS NOT NULL FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&verified); err != nil { t.Fatal(err) }
-	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE user_id=$1::uuid", userID).Scan(&profiles); err != nil { t.Fatal(err) }
-	if !verified || profiles != 1 { t.Fatalf("resend verification final state verified=%v profiles=%d; want true,1", verified, profiles) }
+	if err := db.QueryRow(ctx, "SELECT email_verified_at IS NOT NULL FROM testagram_auth.identities WHERE user_id=$1::uuid", userID).Scan(&verified); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, "SELECT count(*) FROM testagram_local.accounts WHERE user_id=$1::uuid", userID).Scan(&profiles); err != nil {
+		t.Fatal(err)
+	}
+	if !verified || profiles != 1 {
+		t.Fatalf("resend verification final state verified=%v profiles=%d; want true,1", verified, profiles)
+	}
 }
