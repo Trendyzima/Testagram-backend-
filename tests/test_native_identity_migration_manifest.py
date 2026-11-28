@@ -132,6 +132,21 @@ class NativeIdentityMigrationManifestTests(unittest.TestCase):
             "retention event types must be restored after the legacy provisioning migration resets the event CHECK",
         )
 
+    def test_native_signup_consent_migration_is_mounted_and_applied(self):
+        migration = "20261128_native_auth_registration_consent.sql"
+        compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
+        sql = (ROOT / "migrations" / migration).read_text(encoding="utf-8")
+        migration_script = (ROOT / "scripts" / "test-identity-registration-migration.sh").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn(f"../../migrations/{migration}:/docker-entrypoint-initdb.d/{migration}:ro", compose)
+        self.assertIn(f"apply_migration {migration}", SOURCE)
+        self.assertIn(migration, SOURCE.split("for file in", 1)[1].split("; do", 1)[0])
+        self.assertIn(f"psql_ci < migrations/{migration}", migration_script)
+        self.assertIn(migration, workflow)
+        self.assertIn("registration_consents", sql)
+        self.assertIn("age_confirmation", sql)
+        self.assertNotRegex(sql.lower(), r"government.?id|identity.?document|selfie|identity.?evidence")
+
     def test_sensitive_action_integrity_migration_is_mounted_and_applied(self):
         migration = "061_native_sensitive_action_integrity.sql"
         compose = (ROOT / "deploy" / "self-hosted" / "docker-compose.yml").read_text(encoding="utf-8")
